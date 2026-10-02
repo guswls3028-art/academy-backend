@@ -615,6 +615,17 @@ class HostBoundaryApplyTests(unittest.TestCase):
 
 
 class DevelopmentParameterBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        # Load every unrelated real script normally; fake only the candidate probe.
+        self.account_probe = SimpleNamespace(cleanup_snapshots=Mock(), run_probe=Mock())
+        probe_spec = SimpleNamespace(loader=SimpleNamespace(exec_module=Mock()))
+        real_spec = importlib.util.spec_from_file_location
+        real_module = importlib.util.module_from_spec
+        self.enterContext(patch("importlib.util.spec_from_file_location", side_effect=lambda name, path:
+            probe_spec if str(path).endswith("probe-account-registration-development.py") else real_spec(name, path)))
+        self.enterContext(patch("importlib.util.module_from_spec", side_effect=lambda spec:
+            self.account_probe if spec is probe_spec else real_module(spec)))
+
     def test_cleanup_binds_creation_capability_and_refuses_other_runs_offline(self):
         session = json.loads((ROOT / "scripts/v1/templates/ssm/frontend_development_qa.json").read_text())
         shell_script = shlex.split(session["properties"]["linux"]["commands"], posix=True)[2]
@@ -772,6 +783,7 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
         digest = "sha256:" + "b" * 64
         release = "sha-" + "a" * 40 + "-run-123-1"
         env = {
+            "QA_ACCOUNT_STUDENT_ID": "0", "QA_ACCOUNT_PROBE_MODE": "verify", "QA_ACCOUNT_PROBE_KIND": "fixed",
             "QA_ACTION": "Inspect",
             "QA_TENANT": tenant,
             "QA_TENANT_ID": "0",
@@ -967,7 +979,7 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
         }
         digest = "sha256:" + "b" * 64
         release = "sha-" + "a" * 40 + "-run-123-1"
-        env = {"QA_ACTION": "Cleanup", "QA_TENANT": tenant, "QA_CAPABILITY": capability,
+        env = {"QA_ACCOUNT_STUDENT_ID": "0", "QA_ACCOUNT_PROBE_MODE": "verify", "QA_ACCOUNT_PROBE_KIND": "fixed", "QA_ACTION": "Cleanup", "QA_TENANT": tenant, "QA_CAPABILITY": capability,
                "QA_TENANT_ID": "72",
                "QA_RELEASE": release, "QA_DIGEST": digest,
                "QA_SYNTHETIC_LONG_VIDEO": "false",
@@ -1003,6 +1015,7 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
             self.assertEqual(result["video_residue"], video_zero)
             self.assertEqual(result["tenant_id"], 72)
             self.assertEqual(result["r2_cleanup"], {"deleted": 2, "remaining": 0})
+            self.account_probe.cleanup_snapshots.assert_called_once_with(command._exact_tenant_or_fail_on_case_variant.return_value)
             self.assertEqual(events, ["r2", "database"])
             self.assertEqual(destroy.call_count, 1)
             self.assertTrue(destroy.call_args.kwargs["destroy"])
@@ -1074,7 +1087,7 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
         }
         digest = "sha256:" + "b" * 64
         release = "sha-" + "a" * 40 + "-run-123-1"
-        env = {"QA_ACTION": "Cleanup", "QA_TENANT": tenant, "QA_TENANT_ID": "72",
+        env = {"QA_ACCOUNT_STUDENT_ID": "0", "QA_ACCOUNT_PROBE_MODE": "verify", "QA_ACCOUNT_PROBE_KIND": "fixed", "QA_ACTION": "Cleanup", "QA_TENANT": tenant, "QA_TENANT_ID": "72",
                "QA_CAPABILITY": capability, "QA_RELEASE": release, "QA_DIGEST": digest,
                "QA_SYNTHETIC_LONG_VIDEO": "false",
                "QA_IMAGE": "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api@" + digest,
@@ -1190,6 +1203,7 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
         digest = "sha256:" + "b" * 64
         release = "sha-" + "a" * 40 + "-run-123-1"
         env = {
+            "QA_ACCOUNT_STUDENT_ID": "0", "QA_ACCOUNT_PROBE_MODE": "verify", "QA_ACCOUNT_PROBE_KIND": "fixed",
             "QA_ACTION": "Setup",
             "QA_TENANT": tenant,
             "QA_TENANT_ID": "0",
@@ -1331,7 +1345,7 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
                          "187f6ac218435d3b3f938d903153c5785db3529ace89f4e79ea9b6e1bde8ddb6")
         for path, expected in (
             ("iam/trust_frontend_development_qa.json", "aa2c1a60b63ad287c2e8caba7257beaafe5d602df66659c3093f917ad670713a"),
-            ("ssm/frontend_development_qa.json", "300cb5fb9ea700a2fbb7d1002df8d6c6ef3ed05578fb7041cb23c29766df3af1"),
+            ("ssm/frontend_development_qa.json", "67446cc610e64d33189287e6322e73c3464563c13b691d40a7e57ab2059028d4"),
             ("ssm/frontend_development_api_port.json", "373e62348d13b81b5c83b7a1fb78b674902d86c11402793b6facdf0a56f1f516"),
         ):
             with self.subTest(path=path):
@@ -1353,6 +1367,9 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
                 "ApiDigest",
                 "OwnershipCapability",
                 "SyntheticLongVideo",
+                "AccountStudentId",
+                "AccountProbeMode",
+                "AccountProbeKind",
             },
         )
         self.assertEqual(
