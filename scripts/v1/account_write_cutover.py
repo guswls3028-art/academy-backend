@@ -7,6 +7,7 @@ An interrupted window remains on the shared lock until its exact owner restores 
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
 import hashlib
 import json
@@ -254,17 +255,68 @@ def verify_aws(aws):
         f"arn:aws:sts::{ACCOUNT}:assumed-role/academy-gha-ecr-build/"), "production-ci-role-required")
 
 
-def fleet(aws, repo):
+def fleet_group(aws, repo):
     asg = COMPONENTS[repo][0]
     groups = aws("autoscaling", "describe-auto-scaling-groups", auto_scaling_group_names=asg).get("AutoScalingGroups", [])
     require(len(groups) == 1 and groups[0].get("AutoScalingGroupName") == asg, "fleet-identity")
-    group = groups[0]
+    return groups[0]
+
+
+def fleet(aws, repo):
+    group = fleet_group(aws, repo)
     members = group.get("Instances", [])
     desired = group.get("DesiredCapacity", 0)
     require(isinstance(desired, int) and desired >= 1 and len(members) == desired, "fleet-capacity-not-converged")
     require(all(row.get("LifecycleState") == "InService" and row.get("HealthStatus") == "Healthy"
                 and re.fullmatch(r"i-[0-9a-f]{8,17}", row.get("InstanceId", "")) for row in members), "fleet-not-healthy")
     return sorted(row["InstanceId"] for row in members)
+
+
+def future_launch(aws, repo, expected):
+    """Resolve the ASG's effective version; keep userdata private and unexecuted."""
+    group = fleet_group(aws, repo)
+    require(not group.get("MixedInstancesPolicy") and not group.get("LaunchConfigurationName"),
+            "future-launch-policy-unresolved")
+    template = group.get("LaunchTemplate")
+    require(isinstance(template, dict), "future-launch-template-missing")
+    template_id = template.get("LaunchTemplateId", "")
+    selector = template.get("Version", "")
+    require(isinstance(template_id, str) and bool(re.fullmatch(r"lt-[0-9a-f]{8,17}", template_id))
+            and isinstance(selector, str)
+            and (selector in ("$Latest", "$Default") or bool(re.fullmatch(r"[1-9][0-9]*", selector))),
+            "future-launch-reference-unresolved")
+    versions = aws("ec2", "describe-launch-template-versions", launch_template_id=template_id,
+                   versions=[selector]).get("LaunchTemplateVersions", [])
+    require(isinstance(versions, list) and len(versions) == 1 and isinstance(versions[0], dict)
+            and versions[0].get("LaunchTemplateId") == template_id,
+            "future-launch-version-unresolved")
+    version = versions[0].get("VersionNumber")
+    require(type(version) is int and version > 0
+            and (selector in ("$Latest", "$Default") or version == int(selector)),
+            "future-launch-version-unresolved")
+    try:
+        data = versions[0].get("LaunchTemplateData")
+        require(isinstance(data, dict), "future-launch-userdata-unresolved")
+        encoded = data.get("UserData", "")
+        require(isinstance(encoded, str) and len(encoded) <= 24_000, "future-launch-userdata-unresolved")
+        userdata = base64.b64decode(encoded, validate=True).decode("utf-8")
+    except (ValueError, UnicodeError):
+        raise CutoverError("future-launch-userdata-unresolved") from None
+    uri = f"{REGISTRY}/{repo}@{expected}"
+    commands = re.findall(r"(?m)^[ \t]*(?:if[ \t]+(?:![ \t]+)?)?docker[ \t]+(pull|run)[ \t]+([^\n]+)$", userdata)
+    require([command for command, _ in commands].count("pull") == 1
+            and [command for command, _ in commands].count("run") == 1,
+            "future-launch-image-unresolved")
+    for command, line in commands:
+        # Only generated literal immutable image markers are supported. Tags,
+        # variable-based images, extra images, and mismatched pulls fail closed.
+        images = re.findall(r"[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/[^\s\"';]+", line)
+        require(images == [uri] and re.search(r"(?<!\S)" + re.escape(uri) + r"(?=\s|;|$)", line),
+                "future-launch-image-mismatch")
+        if command == "run":
+            require(re.search(r"--name[ \t]+" + re.escape(COMPONENTS[repo][1]) + r"(?=\s|$)", line),
+                    "future-launch-container-mismatch")
+    return {"templateId": template_id, "selector": selector, "version": version, "digest": expected}
 
 
 def live_tagged_instances(aws, repo):
@@ -581,12 +633,14 @@ class Window:
         self.save(phase="drained", drain={"observedAt": int(self.clock()), "workers": observations})
 
     def verify_retirement(self, previous=False):
+        future = {}
         for repo in COMPONENTS:
             current = fleet(self.aws, repo)
             require(live_tagged_instances(self.aws, repo) == current, "live-runtime-outside-healthy-fleet")
             refreshes = self.aws("autoscaling", "describe-instance-refreshes", auto_scaling_group_name=COMPONENTS[repo][0], max_records=1).get("InstanceRefreshes", [])
             require(not refreshes or refreshes[0].get("Status") in ("Successful", "Cancelled", "RollbackSuccessful"), "fleet-refresh-not-converged")
             expected = self.plan["previous" if previous else "candidate"]["images"][repo]["digest"]
+            future[repo] = future_launch(self.aws, repo, expected)
             changed = expected != self.plan["previous"]["images"][repo]["digest"]
             old = self.state["oldFleet"][repo]
             if changed and not previous:
@@ -604,6 +658,7 @@ class Window:
             active = [row for row in targets if row.get("TargetHealth", {}).get("State") != "unused"]
             require({row.get("Target", {}).get("Id") for row in active} == current_api
                     and all(row.get("TargetHealth", {}).get("State") == "healthy" for row in active), "api-targets-not-converged")
+        return future
 
     def verify_restored(self):
         require(not self.owned_rules(), "admission-rule-remains")
@@ -618,20 +673,22 @@ class Window:
         # Restore only a complete healthy candidate or previous runtime.
         # A partial open or failed rollout must not reopen a mixed fleet.
         try:
-            self.verify_retirement()
+            future = self.verify_retirement()
             restoration = "candidate"
         except CutoverError:
             # A complete previous runtime permits a safe abort, including normal
             # scaling. A mixture passes neither complete-runtime check.
-            self.verify_retirement(previous=True)
+            future = self.verify_retirement(previous=True)
             restoration = "previous"
         self.restoration_runtime = restoration
         if inspect_only:
             self.verify_restored()
+            require(self.verify_retirement(previous=restoration == "previous") == future,
+                    "future-launch-config-changed")
             self.lock.clear_window(self.table, self.owner, expected=self.state)
             self.state = None
             return
-        self.save(phase="closing", restorationRuntime=restoration)
+        self.save(phase="closing", restorationRuntime=restoration, futureLaunch=future)
         for queue in self.plan["queues"]:
             current = policy_from(queue_attrs(self.aws, queue))
             restored = restored_policy(current, queue["original"], self.sid, queue["arn"])
@@ -644,7 +701,8 @@ class Window:
             self.checked_mutation({"op": "delete-rule", "priority": priority, "arn": arn},
                 lambda arn=arn: self.aws("elbv2", "delete-rule", rule_arn=arn),
                 lambda priority=priority: require(priority not in self.owned_rules(), "rule-delete-unconfirmed"))
-        self.verify_retirement(previous=restoration == "previous")
+        require(self.verify_retirement(previous=restoration == "previous") == future,
+                "future-launch-config-changed")
         self.verify_restored()
         self.save(phase="restored", intent=None)
         self.lock.clear_window(self.table, self.owner, expected=self.state)

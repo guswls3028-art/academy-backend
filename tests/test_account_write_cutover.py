@@ -1,4 +1,5 @@
 """Offline AWS/lock failure injection; these tests are not live rollout evidence."""
+import base64
 import copy
 import io
 import json
@@ -85,6 +86,13 @@ class FakeAws:
         self.detached = set()
         self.counts = (1, 1)
         self.queue_names = copy.deepcopy(c.QUEUE_NAMES)
+        self.launch_templates = {repo: {"LaunchTemplateId": f"lt-{index + 1:017x}", "Version": "$Latest"}
+                                 for index, repo in enumerate(c.COMPONENTS)}
+        self.latest_versions = {repo: 7 for repo in c.COMPONENTS}
+        self.default_versions = {repo: 7 for repo in c.COMPONENTS}
+        self.userdata_override = {}
+        self.mixed_policy = False
+        self.bad_version = False
 
     def mutation(self, operation):
         c.require(self.lock.state is not None and self.lock.state["intent"]["op"] == {
@@ -128,9 +136,24 @@ class FakeAws:
         elif operation == "describe-auto-scaling-groups":
             asg = args["auto_scaling_group_names"]
             repo = next(repo for repo in c.COMPONENTS if c.COMPONENTS[repo][0] == asg)
-            return {"AutoScalingGroups": [{"AutoScalingGroupName": asg, "DesiredCapacity": len(self.members[repo]),
+            group = {"AutoScalingGroupName": asg, "DesiredCapacity": len(self.members[repo]),
+                "LaunchTemplate": copy.deepcopy(self.launch_templates[repo]),
                 "Instances": [{"InstanceId": instance, "LifecycleState": "InService", "HealthStatus": "Healthy"}
-                              for instance in self.members[repo]]}]}
+                              for instance in self.members[repo]]}
+            if self.mixed_policy:
+                group["MixedInstancesPolicy"] = {"LaunchTemplate": {"LaunchTemplateSpecification": group["LaunchTemplate"]}}
+            return {"AutoScalingGroups": [group]}
+        elif operation == "describe-launch-template-versions":
+            repo = next(repo for repo in c.COMPONENTS if self.launch_templates[repo]["LaunchTemplateId"] == args["launch_template_id"])
+            selector = args["versions"][0]
+            version = (self.latest_versions[repo] if selector == "$Latest" else
+                       self.default_versions[repo] if selector == "$Default" else int(selector))
+            selected = "previous" if version == 7 else "candidate"
+            uri = f"{c.REGISTRY}/{repo}@{self.plan[selected]['images'][repo]['digest']}"
+            userdata = self.userdata_override.get(repo, self.launch_userdata(repo, uri))
+            return {"LaunchTemplateVersions": [{"LaunchTemplateId": args["launch_template_id"],
+                "VersionNumber": 999 if self.bad_version else version,
+                "LaunchTemplateData": {"UserData": base64.b64encode(userdata.encode()).decode()}}]}
         elif operation == "describe-instance-refreshes":
             return {"InstanceRefreshes": [{"Status": self.refresh}]}
         elif operation == "describe-instances":
@@ -160,6 +183,14 @@ class FakeAws:
                 "queueNames": self.queue_names,
                 "terminalCount": self.counts[0], "ackCount": self.counts[1], "errorCount": self.errors}
 
+    @staticmethod
+    def launch_userdata(repo, uri):
+        return ("#!/bin/bash\nENV_PRIVATE=private-env-body\n"
+                f'  if docker pull {uri} 2>>"$LOG"; then ecr_ok=true; break; fi\n'
+                f'if ! docker run -d --restart unless-stopped --name {c.COMPONENTS[repo][1]} '
+                f'$WORKER_ENV_FILE ${{LOG_DRIVER_ARGS[@]}} {uri} 2>>"$LOG"; then\n'
+                f'  log "docker run failed. Image: {uri}"\nfi\n')
+
     def promote(self):
         for index, repo in enumerate(c.COMPONENTS):
             old = self.members[repo]
@@ -167,6 +198,7 @@ class FakeAws:
             self.members[repo] = [new]
             self.images[new] = self.plan["candidate"]["images"][repo]["digest"]
             self.terminated.update(old)
+            self.latest_versions[repo] = 8
 
 
 class CutoverTests(unittest.TestCase):
@@ -441,6 +473,131 @@ class CutoverTests(unittest.TestCase):
         self.aws.refresh = "InProgress"
         with self.assertRaises(c.CutoverError):
             self.window.close()
+
+    def test_cancelled_refresh_previous_instances_future_candidate_preserves_window(self):
+        self.opened()
+        self.aws.refresh = "Cancelled"
+        self.aws.latest_versions["academy-api"] = 8
+        count = len(self.aws.events)
+        with self.assertRaisesRegex(c.CutoverError, "future-launch-image-mismatch"):
+            self.window.close()
+        self.assertEqual(len(self.aws.events), count)
+        self.assertIsNotNone(self.lock.state)
+        self.window.verify_pause()
+
+    def test_cancelled_refresh_correct_previous_future_allows_abort(self):
+        self.opened()
+        self.aws.refresh = "Cancelled"
+        self.window.close()
+        self.assertIsNone(self.lock.state)
+        restored = self.lock.events[-1][1]
+        self.assertEqual(restored["restorationRuntime"], "previous")
+        self.assertTrue(all(row["version"] == 7 for row in restored["futureLaunch"].values()))
+        self.assertNotIn("private-env-body", json.dumps(restored))
+
+    def test_candidate_future_launch_pinned_and_checked_before_clear(self):
+        self.opened().drain()
+        self.aws.promote()
+        self.window.close()
+        self.assertIsNone(self.lock.state)
+        restored = self.lock.events[-1][1]
+        self.assertEqual(restored["restorationRuntime"], "candidate")
+        self.assertTrue(all(row["version"] == 8 for row in restored["futureLaunch"].values()))
+
+    def test_candidate_instances_with_old_future_launch_cannot_reopen(self):
+        self.opened().drain()
+        self.aws.promote()
+        self.aws.latest_versions["academy-tools-worker"] = 7
+        count = len(self.aws.events)
+        with self.assertRaises(c.CutoverError):
+            self.window.close()
+        self.assertIsNotNone(self.lock.state)
+        self.assertEqual(len(self.aws.events), count)
+        self.window.verify_pause()
+
+    def test_explicit_old_version_accepts_even_if_latest_has_candidate(self):
+        self.opened()
+        for repo in c.COMPONENTS:
+            self.aws.launch_templates[repo]["Version"] = "7"
+            self.aws.latest_versions[repo] = 8
+        self.window.close()
+        self.assertIsNone(self.lock.state)
+
+    def test_default_selector_resolves_actual_default_instead_of_latest(self):
+        self.opened()
+        for repo in c.COMPONENTS:
+            self.aws.launch_templates[repo]["Version"] = "$Default"
+            self.aws.latest_versions[repo] = 8
+        self.window.close()
+        self.assertIsNone(self.lock.state)
+        self.assertTrue(all(row["version"] == 7 for row in self.lock.events[-1][1]["futureLaunch"].values()))
+
+    def test_mixed_launch_policy_refuses_close_without_mutation(self):
+        self.opened()
+        self.aws.mixed_policy = True
+        count = len(self.aws.events)
+        with self.assertRaisesRegex(c.CutoverError, "future-launch-policy"):
+            self.window.close()
+        self.assertIsNotNone(self.lock.state)
+        self.assertEqual(len(self.aws.events), count)
+
+    def test_unresolved_template_version_refuses_close(self):
+        self.opened()
+        self.aws.launch_templates["academy-api"]["Version"] = "7"
+        self.aws.bad_version = True
+        with self.assertRaisesRegex(c.CutoverError, "future-launch-version"):
+            self.window.close()
+        self.assertIsNotNone(self.lock.state)
+
+    def test_missing_or_unknown_launch_reference_preserves_pin(self):
+        self.opened()
+        for reference in (None, {"LaunchTemplateId": "lt-00000000000000001", "Version": "$Unknown"}):
+            self.aws.launch_templates["academy-api"] = reference
+            with self.subTest(reference=reference), self.assertRaises(c.CutoverError):
+                self.window.close()
+            self.assertIsNotNone(self.lock.state)
+        self.window.verify_pause()
+
+    def test_future_launch_denial_and_malformed_userdata_use_safe_errors(self):
+        repo = "academy-api"
+        expected = self.plan["previous"]["images"][repo]["digest"]
+        self.aws.failed = "describe-launch-template-versions"
+        with self.assertRaisesRegex(c.CutoverError, "^aws-call-unconfirmed$"):
+            c.future_launch(self.aws, repo, expected)
+        self.aws.failed = None
+        def malformed(service, operation, **args):
+            result = self.aws(service, operation, **args)
+            if operation == "describe-launch-template-versions":
+                result["LaunchTemplateVersions"][0]["LaunchTemplateData"]["UserData"] = "private-invalid-base64!"
+            return result
+        with self.assertRaisesRegex(c.CutoverError, "^future-launch-userdata-unresolved$"):
+            c.future_launch(malformed, repo, expected)
+
+    def test_missing_launch_data_returns_safe_unresolved_error(self):
+        repo = "academy-api"
+        expected = self.plan["previous"]["images"][repo]["digest"]
+        def missing(service, operation, **args):
+            result = self.aws(service, operation, **args)
+            if operation == "describe-launch-template-versions":
+                result["LaunchTemplateVersions"][0]["LaunchTemplateData"] = None
+            return result
+        with self.assertRaisesRegex(c.CutoverError, "^future-launch-userdata-unresolved$"):
+            c.future_launch(missing, repo, expected)
+
+    def test_future_launch_wrong_pull_container_or_variable_is_rejected_privately(self):
+        repo = "academy-api"
+        expected = self.plan["previous"]["images"][repo]["digest"]
+        uri = f"{c.REGISTRY}/{repo}@{expected}"
+        correct = self.aws.launch_userdata(repo, uri)
+        for userdata in (correct.replace("docker pull " + uri, "docker pull " + uri.replace("d" * 64, "c" * 64)),
+                         correct.replace("--name academy-api", "--name different-container"),
+                         correct.replace(uri, "$IMAGE_URI"),
+                         correct.replace(uri, f"{c.REGISTRY}/{repo}:latest")):
+            self.aws.userdata_override[repo] = userdata
+            with self.subTest(), self.assertRaises(c.CutoverError) as raised:
+                c.future_launch(self.aws, repo, expected)
+            self.assertNotIn("private-env-body", str(raised.exception))
+            self.assertNotIn(userdata, str(raised.exception))
 
     def test_inspect_clear_never_removes_live_admission_or_queue_policy(self):
         self.opened()
