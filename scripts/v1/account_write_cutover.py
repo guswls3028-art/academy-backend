@@ -615,15 +615,14 @@ class Window:
         if self.state is None:
             self.verify_restored() if self.plan["required"] else None
             return
-        # Partial open may be restored only if runtime is already safe, never to
-        # paper over a failed mixed-version rollout. Unchanged old fleet is safe
-        # only when every actual digest equals the candidate.
+        # Restore only a complete healthy candidate or previous runtime.
+        # A partial open or failed rollout must not reopen a mixed fleet.
         try:
             self.verify_retirement()
             restoration = "candidate"
         except CutoverError:
-            # Safe abort before any fleet replacement. A mixture passes neither
-            # complete-candidate nor complete-previous checks.
+            # A complete previous runtime permits a safe abort, including normal
+            # scaling. A mixture passes neither complete-runtime check.
             self.verify_retirement(previous=True)
             restoration = "previous"
         self.restoration_runtime = restoration
