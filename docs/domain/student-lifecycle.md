@@ -250,3 +250,16 @@ PostgreSQL 회귀: `tests/test_student_score_profile_concurrency_pg.py`의 역�
 `test_lifecycle_tenant_gate_concurrency_pg.py` 및 Inventory의
 `test_student_upload_lifecycle_concurrency_pg.py`를 함께 사용한다. SQLite 통과는
 PostgreSQL 잠금 동시성 또는 운영 반영 증거를 대신하지 않는다.
+
+### 구·신 API 교체 중 학생 등록
+
+구 API의 학부모 복구가 Parent 다음 User를 잠그는 동안 새 학생 등록은 User 다음
+Parent를 잠글 수 있다. 학생 생성 API는 PostgreSQL 교착 오류(`40P01`)를 받으면
+생성 거래 전체가 롤백된 뒤 같은 요청을 한 번만 다시 검증·실행한다. 학생·계정·안내
+쓰기와 commit callback을 부분적으로 반복하지 않는다. 이미 바깥 거래 안에서
+호출됐거나 다른 DB 오류이거나 재시도도 실패하면 원래 오류를 전파한다. 대기 중 다른
+요청이 학생을 생성했다면 기존 중복/삭제 학생 확인을 다시 적용한다.
+
+이는 구 프로세스의 잠금 순서를 바꾸거나 모든 혼합 세대 요청이 오류 없이 끝난다는
+보장이 아니다. 교체 완료와 구 프로세스 종료를 확인하고, 실제 PostgreSQL에서
+실패 거래의 부분 쓰기 없음, 재시도 성공과 저장·재조회, 기존 학부모 계정 보존을 검증한다.

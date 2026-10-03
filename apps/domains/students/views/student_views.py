@@ -3,7 +3,7 @@
 import logging
 import uuid
 
-from django.db import transaction
+from django.db import OperationalError, transaction
 from django.utils import timezone
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -206,7 +206,6 @@ class StudentViewSet(ModelViewSet):
     # ------------------------------
     # Student account graph 생성 (봉인)
     # ------------------------------
-    @transaction.atomic
     def create(self, request, *args, **kwargs):
         """
         학생 생성 시 처리 흐름
@@ -216,6 +215,22 @@ class StudentViewSet(ModelViewSet):
         3. create_student_account SSOT로 Parent/User/Student/Membership 생성
         4. 계정 안내는 첫 실제 수강 확정 시 발송
         """
+        # A rolling predecessor can still lock Parent before User. Retry only
+        # after this complete account transaction has rolled back, not inside
+        # a caller's transaction that may retain the conflicting locks.
+        can_retry = not transaction.get_connection().in_atomic_block
+        for attempt in range(2):
+            try:
+                return self._create_account(request, *args, **kwargs)
+            except OperationalError as exc:
+                sqlstate = getattr(exc.__cause__, "sqlstate", None) or getattr(
+                    exc.__cause__, "pgcode", None
+                )
+                if not can_retry or attempt or sqlstate != "40P01":
+                    raise
+
+    @transaction.atomic
+    def _create_account(self, request, *args, **kwargs):
         tenant = request.tenant
         raw_data = request.data
         name = str(raw_data.get("name", "")).strip()
