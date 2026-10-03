@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed on unaccepted Critical or regressed High ECR findings."""
+"""Fail closed on ECR findings outside the reviewed Critical/High policy."""
 
 from __future__ import annotations
 
@@ -343,12 +343,17 @@ def evaluate_high_budget(
     maximum = baselines.get(repository)
     if maximum is None:
         raise GateError(f"High finding baseline is missing for {repository}")
+    observed = set(high_finding_keys(repository, findings))
     if high > maximum:
+        detail = ", ".join(
+            f"{cve}/{package}/{version}"
+            for _, cve, package, version in sorted(observed)
+        )
         raise GateError(
-            f"ECR High findings regressed repo={repository}: high={high} maximum={maximum}"
+            f"ECR High reviewed policy exceeded repo={repository}: "
+            f"high={high} maximum={maximum} observed={detail}"
         )
 
-    observed = set(high_finding_keys(repository, findings))
     if len(observed) != high:
         raise GateError(
             "ECR High severity count does not match exact identities "
@@ -370,8 +375,9 @@ def evaluate_high_budget(
             f"{cve}/{package}/{version}"
             for _, cve, package, version in missing
         )
-        raise GateError(
-            f"stale High ECR finding baseline repo={repository}: missing {detail}"
+        print(
+            f"::notice::Reviewed High findings disappeared repo={repository}: {detail}; "
+            "review their retirement from the acceptance policy"
         )
     return high
 
@@ -458,7 +464,7 @@ def main() -> int:
         )
         if high:
             print(
-                f"::notice::ECR High findings match the exact reviewed baseline for "
+                f"::notice::ECR High findings are within the reviewed policy for "
                 f"{repository}@{digest} (high={high})"
             )
         print(

@@ -1,12 +1,29 @@
 {
   "schemaVersion": 3,
   "maximumHighFindings": {
-    "academy-base": 0,
-    "academy-api": 0,
-    "academy-video-worker": 0,
-    "academy-messaging-worker": 0,
-    "academy-ai-worker-cpu": 0,
-    "academy-tools-worker": 0
+    "academy-base": 1,
+    "academy-api": 1,
+    "academy-video-worker": 1,
+    "academy-messaging-worker": 1,
+    "academy-ai-worker-cpu": 1,
+    "academy-tools-worker": 1
   },
-  "acceptedHighFindings": []
+  "acceptedHighFindings": [
+    {
+      "cve": "CVE-2026-102010",
+      "packageName": "gcc-14",
+      "packageVersion": "14.2.0-19",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ],
+      "expiresOn": "2026-10-09",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-102010",
+      "rationale": "Temporary release-owner risk acceptance for the existing production exposure while restoring delivery of independently verified fixes. On 2026-10-03 KST, all six last-successful production image digests still report this exact High identity and Debian has no fixed gcc-14 package. The upstream fix changes the PBDS binary_heap erase_if header; absence of headers or direct calls does not prove prebuilt dependencies unreachable. Academy exploitability remains unknown, including crash or memory-corruption risk. This is not a false-positive or remediation claim. Accept only this exact identity until 2026-10-09 UTC, with no automatic renewal, no Critical acceptance and no other High identity. Every candidate still requires six fresh completed scans, isolated development/preprod, compatible migration, health-gated replacement and runtime/affected-flow verification. Owner and source evidence: docs/operations/container-image-security.md."
+    }
+  ]
 }

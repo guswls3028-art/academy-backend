@@ -5,7 +5,36 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
-## 2026-10-01 GCC 후보 배포 보류
+## 2026-10-03 GCC 한시 위험 수용과 배포 재개 조건
+
+배포 복구와 부적절한 차단 규칙 교정 요청에 따라 release owner는 기존 운영에도
+존재하는 GCC 1건을 모든 패치의 무기한 금지 조건에서 분리한다. 실행 정책은
+`docs/ssot/ecr-high-risk-baseline.json`의 exact identity이며, High 전체를 허용하는
+스위치나 스캐너 필터가 아니다. 이 변경은 아래 10월 1일의 GCC 예외 금지 결정을
+대체하며 취약점 수정 완료, 비도달성 또는 오탐을 선언하지 않는다.
+
+- 대상은 여섯 governed repository의 `CVE-2026-102010` / `gcc-14` /
+  `14.2.0-19` High 1건뿐이다. Critical은 0이며 다른 CVE·package·version 또는
+  severity 상승은 계속 차단한다. 실제 finding이 사라진 후보는 통과하고 정책을
+  후속 검토에서 제거한다.
+- 만료는 **2026-10-09 UTC 종료**이며 한국 시각 **10월 10일 09:00**부터 실패한다.
+  자동 연장은 없으며 만료 전 release owner가 vendor 상태와 실제 노출을 다시
+  검토하고 수정·제거 또는 별도 정책 변경의 근거를 남긴다.
+- 10월 3일 KST 재조회한 마지막 성공 manifest의 여섯 digest는 모두 이 exact
+  High를 보고했다. 이 기존 scan 조회는 새 후보의 신선한 scan을 대체하지 않는다.
+  아래 Debian tracker는 여전히 수정 package를 제공하지 않는다. 현재 운영을
+  그대로 두면서 검증된 앱·보안 수정까지 모두 멈추는 비용과 잔여 위험을 비교한
+  한시적 운영 판단이며, 라이브러리의 사용 가능성이 없다는 증명은 아니다.
+- `erase_if`가 실제 도달 가능하다면 crash나 메모리 손상이 가능하다. 기존
+  wheel·native code의 도달 가능성은 미확인이므로 이 위험을 해결된 것으로
+  기록하지 않는다. package metadata·이름을 바꾸거나 필요한 런타임을 삭제해
+  finding을 감추지 않는다.
+- 여섯 immutable digest의 **신선한 COMPLETE scan**, 격리 development와 실제
+  이용 검증, 격리 preprod 및 임시 인스턴스 종료, 호환 migration, health 기반
+  rolling 교체와 exact runtime·영향 경로 확인은 모두 유지한다. 프런트엔드의
+  동일 artifact QA와 cleanup zero도 별도 필수 조건이다.
+
+### 이력: 2026-10-01 GCC 후보 중단
 
 Django 5.2.17을 고정한 main `2804eb66e2917aee09653ec81eae5f7950ea871c`의
 [공식 실행 36796021929](https://github.com/guswls3028-art/academy-backend/actions/runs/36796021929)은
@@ -18,10 +47,9 @@ Django 5.2.17을 고정한 main `2804eb66e2917aee09653ec81eae5f7950ea871c`의
 이 후보의 development, preprod, 운영 migration·API·worker 교체·검증은 모두
 실행되지 않았고 공유 배포 잠금은 해제됐다. 마지막 성공 운영 이미지와 소스는
 [성공 manifest](../reports/release-manifest.latest.json)를 기준으로 유지한다.
-main의 Django pin 변경을 운영 반영 완료로 기록하지 않는다. 같은 공통 base와
-취약 패키지를 사용하는 새 PR 후보도 완료 scan과 기존 게이트 없이는 배포하지
-않는다. `maximumHighFindings`는 여섯 repository 모두 0,
-`acceptedHighFindings`는 빈 배열을 유지한다.
+main의 Django pin 변경을 운영 반영 완료로 기록하지 않는다. 당시에는 여섯
+repository의 High 상한 0과 빈 acceptance 때문에 중단했다. 현재 후보는 위의
+한시 exact 정책 및 나머지 모든 게이트를 적용한다.
 
 확인 당시 [Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-102010)는
 trixie `gcc-14`를 vulnerable로 분류하며 수정 패키지를 제시하지 않았다.
@@ -31,13 +59,9 @@ PBDS binary heap의 `erase_if` 재할당 뒤 entry pointer를 갱신하는 헤�
 설치돼 있었다. 해당 레이어에서 PBDS 헤더를 찾지 못한 결과만으로 wheel 등
 미리 컴파일된 코드의 비도달성이나 scanner 오탐을 확정하지 않는다.
 
-재개 조건은 실제 수정·호환성 검증과 새 여섯 immutable digest의 완료
-Critical/High 0이다. 수정 검증에 성공해도 scanner가 계속 차단하면 보류를
-유지하며, 버전·source 이름 변경이나 acceptance 추가로 우회하지 않는다.
-스캔을 통과한 뒤에도 기존 persistent development → isolated preprod 및 임시
-인스턴스 종료 확인 → 운영 연속성 → exact runtime readback 순서를 모두 적용한다.
-이 보류는 신규 백엔드 후보에 적용하며 별도 프런트엔드 동일 산출물 검증을
-완료했다는 증거를 대체하지 않는다.
+당시의 '수정 package와 High 0만 허용하고 acceptance는 금지' 조건은 위
+2026-10-03 한시 정책으로 대체됐다. 이전 보고서의 HOLD 표현을 별도의 현재
+배포 금지 규칙으로 중복 적용하지 않는다. 실패 run은 실패 이력으로 보존한다.
 
 ## 빌드 입력과 런타임 패키지
 
@@ -197,9 +221,10 @@ SOABI를 확인한 뒤 `pyexpat`·`_elementtree` 두 확장만 함께 재빌드�
 
 빌드·호환성 실패는 이미지를 중단시키며 운영 데이터의 재처리나 변경을 유발하지
 않는다. 실제 수정과 ECR scan의 판정은 별도 증거다. 이 backport가 동작 검사를
-통과해도 새 여섯 digest의 완료 스캔에서 Critical/High0을 확인하기 전에는 배포
-가능하다고 판단하지 않는다. scanner가 계속 High로 분류하면 실패 상태를 유지하며
-상한·acceptance를 추가하거나 package/source 이름을 바꾸어 넘기지 않는다.
+통과해도 새 여섯 digest의 완료 스캔에서 해당 Expat 취약점의 Critical/High 0과
+현재 exact 정책 준수를 확인하기 전에는 배포 가능하다고 판단하지 않는다.
+scanner가 해당 Expat 취약점을 계속 High로 분류하면 실패 상태를 유지하며
+그 항목의 상한·acceptance를 추가하거나 package/source 이름을 바꾸어 넘기지 않는다.
 향후 공식 수정본으로 전환할 때는 이 취약점 수정 포함 여부, 두 ABI·Python CAPI,
 같은 정상/비정상 입력 회귀와 새 완료 scan을 확인하고 임시 backport를 제거한다.
 전체 배포에는 기존 격리 개발·preprod·운영 연속성·runtime readback 게이트도 적용한다.
@@ -244,11 +269,14 @@ normal·`XML_MIN_SIZE`의 수정 전 실패 재현과 수정 후 upstream·UTF-1
    `acceptedHighFindings` exact identity를 모두 비교한다. metadata 없는 별도 known
    목록은 허용하지 않는다. 모든 High 항목은 exact Debian tracker, 실제 런타임의
    도달 가능성 근거와 hard expiration을 가져야 하며, 만료 다음 날에는 scan 전에
-   실패한다. 수가 같아도 CVE, package, version 중 하나가 바뀌거나 다른 High가 기존
-   항목을 대체하면 실패한다. 반대로 패키지 제거 또는 vendor 수정으로 기존 항목이
-   사라져도 기준선이 stale하다고 실패하므로, 운영 scan readback을 근거로 identity와
-   상한을 같은 PR에서 내려야 한다. 알 수 없는 항목, 누락된 기존 항목,
-   identity/count 불일치 중 어느 것도 development/preprod로 진행할 수 없다.
+   실패한다. 수가 상한 이하라도 CVE, package, version 중 하나가 바뀌거나 다른 High가
+   기존 항목을 대체하면 실패한다. 상한 초과 진단은 검토된 정책을 초과했다는 뜻이며,
+   운영 이미지 대비 회귀를 판정한 것이 아니다. 관측된 High가 유효한 검토 identity의
+   부분집합이고 severity count와 exact identity 수가 일치하면 통과한다.
+   scan에서 사라진 검토 항목은 exact identity를 notice로 보고하며, 운영 scan readback을
+   근거로 검토 후 identity와 상한을 함께 줄인다. notice는 정책을 자동 변경하거나
+   만료를 면제하지 않는다. 알 수 없는 항목, identity/count 불일치, 잘못된 schema,
+   신선도 미충족 scan 또는 만료된 예외는 development/preprod로 진행할 수 없다.
 
 ### 2026-09-20 후보 정책: 수정 패키지 설치와 예외 제거
 
@@ -265,12 +293,11 @@ OCR API·AI·Tools는 Tesseract의 전이 의존성 `libglib2.0-0t64`를
 상위 Python OCI digest와 stable suite는 유지하며, native 검증은 실제 libc 로드와
 SQLite FTS5 생성·쓰기·검색도 실행한다.
 
-두 SSOT의 허용 identity는 비우고 여섯 repository의 High 상한을 모두 0으로
-낮춘다. 이는 새 후보가 통과해야 할 조건이며 운영 이미지가 이미 교체됐다는
-증거가 아니다. 공식 후보 workflow의 여섯 immutable digest 완료 scan에서
-Critical/High 0을 확인해야 development 이후로 진행할 수 있다. 새 finding이
-나오면 후보를 중단하고 패키지 원인을 다시 확인한다.
-이전 만료일·identity 교체·stale 판정 테스트는 `tests/fixtures/security-20260919/`의
+당시 두 SSOT의 허용 identity를 비우고 여섯 repository의 High 상한을 모두
+0으로 낮췄다. 해당 vendor-fixed 취약점의 예외는 현재도 복원하지 않는다.
+현재 후보는 이 문서 상단의 exact·기한부 정책과 여섯 immutable digest 완료
+scan을 적용한다. 검토되지 않은 새 finding은 계속 후보를 중단한다.
+이전 만료일·identity 교체·부분집합 및 사라진 항목 보고 테스트는 `tests/fixtures/security-20260919/`의
 명시적 과거 스냅샷으로 유지한다. 해당 fixture는 배포 허가에 사용하지 않는다.
 
 ### 과거 기준선 증거: 2026-09-12 완료 스캔

@@ -75,17 +75,39 @@ def _high_policy_document(*entries: dict[str, object]) -> dict[str, object]:
 
 
 @pytest.mark.parametrize("repository", gate.REPOSITORIES)
-def test_current_candidate_requires_zero_critical_and_high(repository: str) -> None:
+def test_current_candidate_only_accepts_exact_gcc_high_before_expiry(repository: str) -> None:
     policy_dir = Path(__file__).parents[1] / "docs" / "ssot"
     acceptances = gate.load_acceptances(
         policy_dir / "ecr-critical-risk-acceptance.json", datetime.now(timezone.utc).date()
     )
-    baselines, known = gate.load_high_baselines(policy_dir / "ecr-high-risk-baseline.json")
+    baselines, known = gate.load_high_baselines(
+        policy_dir / "ecr-high-risk-baseline.json", date(2026, 10, 9)
+    )
     assert not acceptances
-    assert not known
-    assert baselines[repository] == 0
+    assert known == {
+        (repo, "CVE-2026-102010", "gcc-14", "14.2.0-19") for repo in gate.REPOSITORIES
+    }
+    assert baselines[repository] == 1
     assert gate.evaluate_findings(repository, _scan(), acceptances) == []
     assert gate.evaluate_high_budget(repository, _scan(), baselines, known) == 0
+    gcc = _scan(_finding("CVE-2026-102010", "gcc-14", "14.2.0-19", "HIGH"))
+    assert gate.evaluate_high_budget(repository, gcc, baselines, known) == 1
+    for finding in [
+        _finding("CVE-2099-9999", "gcc-14", "14.2.0-19", "HIGH"),
+        _finding("CVE-2026-102010", "gcc-14", "14.2.0-20", "HIGH"),
+    ]:
+        with pytest.raises(gate.GateError, match="unreviewed High"):
+            gate.evaluate_high_budget(repository, _scan(finding), baselines, known)
+    with pytest.raises(gate.GateError, match="unaccepted critical"):
+        gate.evaluate_findings(repository, _scan(
+            _finding("CVE-2026-102010", "gcc-14", "14.2.0-19", "CRITICAL")
+        ), acceptances)
+
+
+def test_current_gcc_policy_expires_without_automatic_renewal() -> None:
+    policy = Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
+    with pytest.raises(gate.GateError, match="High risk acceptance expired"):
+        gate.load_high_baselines(policy, date(2026, 10, 10))
 
 
 @pytest.mark.parametrize(
@@ -522,17 +544,23 @@ def test_tesseract_runtimes_pin_security_fixed_libcurl() -> None:
         assert "academy-trixie-backports.list" not in dockerfile
 
 
-def test_high_finding_regression_fails_closed() -> None:
-    with pytest.raises(gate.GateError, match="High findings regressed"):
+@pytest.mark.parametrize("maximum", [0, 1])
+def test_high_findings_exceeding_reviewed_policy_fail_closed(maximum: int) -> None:
+    findings = [
+        _finding("CVE-2099-0001", "demo", "1", "HIGH"),
+        _finding("CVE-2099-0002", "demo", "1", "HIGH"),
+    ][:maximum + 1]
+    with pytest.raises(gate.GateError, match="High reviewed policy exceeded") as error:
         gate.evaluate_high_budget(
             "academy-api",
-            _scan(
-                _finding("CVE-2099-0001", "demo", "1", "HIGH"),
-                _finding("CVE-2099-0002", "demo", "1", "HIGH"),
-            ),
-            {"academy-api": 1},
-            set(),
+            _scan(*findings),
+            {"academy-api": maximum},
+            {("academy-api", "CVE-2099-0001", "demo", "1")} if maximum else set(),
         )
+    assert f"repo=academy-api: high={len(findings)} maximum={maximum}" in str(error.value)
+    for finding in findings:
+        assert f"{finding['name']}/demo/1" in str(error.value)
+    assert "regress" not in str(error.value)
 
 
 def test_high_baseline_requires_all_governed_repositories(tmp_path: Path) -> None:
@@ -548,15 +576,20 @@ def test_high_baseline_requires_all_governed_repositories(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize(
-    ("replacement_cve", "replacement_version"),
+    ("replacement_cve", "replacement_package", "replacement_version"),
     [
-        ("CVE-2099-9999", "3.46.1-7+deb13u1"),
-        ("CVE-2026-11822", "3.46.1-7+deb13u2"),
+        ("CVE-2099-9999", "sqlite3", "3.46.1-7+deb13u1"),
+        ("CVE-2026-11822", "sqlite3", "3.46.1-7+deb13u2"),
+        ("CVE-2026-11822", "other-package", "3.46.1-7+deb13u1"),
     ],
 )
-def test_same_count_high_identity_substitution_fails_closed(
+@pytest.mark.parametrize("observed_count", [1, 3])
+def test_high_identity_substitution_fails_closed_at_or_below_budget(
     replacement_cve: str,
+    replacement_package: str,
     replacement_version: str,
+    observed_count: int,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Evaluate identity against the reviewed snapshot; expiry is tested separately.
     baselines, known = gate.load_high_baselines(
@@ -570,36 +603,94 @@ def test_same_count_high_identity_substitution_fails_closed(
     ]
     findings[0] = _finding(
         replacement_cve,
-        "sqlite3",
+        replacement_package,
         replacement_version,
         "HIGH",
     )
 
-    with pytest.raises(gate.GateError, match="unreviewed High"):
+    with pytest.raises(gate.GateError, match="unreviewed High") as error:
         gate.evaluate_high_budget(
             "academy-base",
-            _scan(*findings),
+            _scan(*findings[:observed_count]),
             baselines,
             known,
         )
+    assert f"{replacement_cve}/{replacement_package}/{replacement_version}" in str(error.value)
+    assert not capsys.readouterr().out
 
 
-def test_removed_high_requires_reviewed_baseline_reduction() -> None:
-    # Evaluate budget against the reviewed snapshot; expiry is tested separately.
+@pytest.mark.parametrize("removed_count", [0, 1, 3])
+def test_reviewed_high_subset_passes_and_reports_disappeared_identities(
+    removed_count: int,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The reviewed policy remains valid through its expiration day.
     baselines, known = gate.load_high_baselines(
         HISTORICAL_POLICY_DIR / "ecr-high-risk-baseline.json",
-        date(2026, 9, 12),
+        date(2026, 9, 19),
     )
     expected = sorted(key for key in known if key[0] == "academy-base")
     findings = _scan(
         *(
             _finding(cve, package, version, "HIGH")
-            for _, cve, package, version in expected[1:]
+            for _, cve, package, version in expected[removed_count:]
         )
     )
 
-    with pytest.raises(gate.GateError, match="stale High"):
+    assert gate.evaluate_high_budget("academy-base", findings, baselines, known) == (
+        len(expected) - removed_count
+    )
+    output = capsys.readouterr().out
+    if removed_count:
+        assert "::notice::Reviewed High findings disappeared repo=academy-base:" in output
+        for _, cve, package, version in expected[:removed_count]:
+            assert f"{cve}/{package}/{version}" in output
+        for _, cve, package, version in expected[removed_count:]:
+            assert f"{cve}/{package}/{version}" not in output
+    else:
+        assert not output
+    assert baselines["academy-base"] == len(expected)
+    assert set(expected).issubset(known)
+
+
+@pytest.mark.parametrize("reported_high", [0, 2])
+def test_high_subset_with_inconsistent_severity_count_fails_closed(
+    reported_high: int,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    baselines, known = gate.load_high_baselines(
+        HISTORICAL_POLICY_DIR / "ecr-high-risk-baseline.json",
+        date(2026, 9, 12),
+    )
+    _, cve, package, version = next(key for key in known if key[0] == "academy-base")
+    findings = _scan(_finding(cve, package, version, "HIGH"))
+    findings["imageScanFindings"]["findingSeverityCounts"]["HIGH"] = reported_high
+
+    with pytest.raises(gate.GateError, match="severity count does not match exact identities"):
         gate.evaluate_high_budget("academy-base", findings, baselines, known)
+    assert not capsys.readouterr().out
+
+
+@pytest.mark.parametrize("high_count", [None, True, -1, "1", 1.5])
+def test_malformed_high_count_fails_closed(high_count: object) -> None:
+    findings = _scan()
+    findings["imageScanFindings"]["findingSeverityCounts"]["HIGH"] = high_count
+    with pytest.raises(gate.GateError, match="High finding count is malformed"):
+        gate.evaluate_high_budget("academy-api", findings, {"academy-api": 0}, set())
+
+
+@pytest.mark.parametrize("schema_version", [None, 2, "3"])
+def test_high_policy_schema_is_required_even_without_findings(
+    tmp_path: Path,
+    schema_version: object,
+) -> None:
+    baseline = tmp_path / "baseline.json"
+    document = _high_policy_document()
+    document["schemaVersion"] = schema_version
+    baseline.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(gate.GateError, match="schemaVersion must be 3"):
+        gate.load_high_baselines(baseline, date(2026, 9, 12))
 
 
 def test_high_finding_without_exact_identity_fails_closed() -> None:
@@ -980,6 +1071,63 @@ def test_existing_in_progress_scan_does_not_need_completion_timestamp_until_comp
     monkeypatch.setattr(gate, "_run_aws_json", lambda *_args, **_kwargs: pytest.fail("existing running scan must not be started again"))
 
     assert gate.wait_for_completed_scan("academy-base", "sha256:" + "c" * 64, "ap-northeast-2", 2, 0) is refreshed
+
+
+@pytest.mark.parametrize("expired", [False, True])
+@pytest.mark.parametrize("observed_high", [0, 1])
+def test_candidate_high_subset_respects_policy_expiration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scan_clock: list[datetime],
+    capsys: pytest.CaptureFixture[str],
+    expired: bool,
+    observed_high: int,
+) -> None:
+    candidate = tmp_path / "candidate.json"
+    candidate.write_text(json.dumps({"images": {
+        repo: {"source": "built", "digest": "sha256:" + "c" * 64}
+        for repo in gate.REPOSITORIES
+    }}), encoding="utf-8")
+    baseline = tmp_path / "baseline.json"
+    expires_on = (scan_clock[0].date() - timedelta(days=int(expired))).isoformat()
+    baseline.write_text(json.dumps(_high_policy_document(
+        _high_policy_entry(expiresOn=expires_on),
+        _high_policy_entry(packageName="disappeared", expiresOn=expires_on),
+    )), encoding="utf-8")
+    acceptances = Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json"
+    monkeypatch.setattr(sys, "argv", [
+        "ecr-critical-scan-gate.py", "--candidate", str(candidate),
+        "--acceptances", str(acceptances), "--high-baseline", str(baseline),
+        "--region", "ap-northeast-2",
+    ])
+    checked = []
+
+    def scan(repository, *_):
+        checked.append(repository)
+        if repository == "academy-api" and observed_high:
+            return _scan(_finding("CVE-2099-9999", "demo", "1", "HIGH"))
+        return _scan()
+
+    monkeypatch.setattr(gate, "wait_for_completed_scan", scan)
+    if expired:
+        with pytest.raises(gate.GateError, match="High risk acceptance expired"):
+            gate.main()
+        assert not checked
+        assert not capsys.readouterr().out
+    else:
+        assert gate.main() == 0
+        assert checked == sorted(gate.REPOSITORIES)
+        output = capsys.readouterr().out
+        assert "Reviewed High findings disappeared repo=academy-api:" in output
+        assert "CVE-2099-9999/disappeared/1" in output
+        if observed_high:
+            assert "ECR High findings are within the reviewed policy for academy-api@" in output
+        else:
+            assert "CVE-2099-9999/demo/1" in output
+        assert (
+            f"ECR_SCAN_PASS repo=academy-api digest=sha256:{'c' * 64} "
+            f"critical=0 acceptedCritical=0 high={observed_high}"
+        ) in output
 
 
 def _invoke_candidate_gate(tmp_path, monkeypatch, images):
