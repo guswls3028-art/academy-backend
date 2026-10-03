@@ -43,7 +43,11 @@ production backend deploy/worker 변경 후에는 `run-production-canary.ps1 -Mo
 계정 잠금 순서 전환은 `account_write_cutover.py`의 plan/open/drain/close를 정식
 workflow의 post-preprod 승인과 공유 잠금 안에서 실행한다. 일반 호환 후보에는
 창을 열지 않는다. 중단된 창의 잠금을 지우거나 CI 환경값을 위장해 수동 재개하지
-않는다. 정확한 영향 범위·복구·IAM owner는
+않는다. 자동 close도 실패한 종료 run은 최신 clean main에서
+`account_write_cutover_recovery.py plan --plan <saved-plan> --owner <original-owner> --source <original-sha>`로
+공식 run/승인/잠금/런타임을 확인한 뒤 같은 인자의 `apply-close`로 복원한다.
+이 경로는 CI owner를 위장하거나 보호 검사를 생략하지 않으며, 복원·readback 전에는
+잠금을 해제하지 않는다. 정확한 영향 범위·복구·IAM owner는
 [배포 방식의 일회성 전환](../../docs/operations/deployment-modes.md#계정-잠금-순서-변경의-일회성-전환)을 따른다.
 
 ### 공용 Alimtalk sender 정합화

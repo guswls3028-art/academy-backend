@@ -86,6 +86,29 @@ rolling 후 이전 API/변경 워커의 퇴역과 전체 후보 런타임을 확
 복구 readback 뒤 pin을 해제하고 성공 manifest를 승격한다. 취소/runner 종료가
 finally 실행을 보장하지 않으므로 미복구 창은 성공으로 기록하지 않는다.
 
+[SQS 정책은 변경 뒤 최대 60초 동안 이전 값이 보일 수 있으므로](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SetQueueAttributes.html), 적용·최종 확인·복원은
+최대 90초 안에서 방금 읽은 이전 정책과 정확한 기대 정책만 기다린다. 다른 Sid나
+권한 변경, 잠금 소유권 상실은 반영 지연으로 취급하지 않는다. 정책 확인 뒤 실제
+워커의 새 backoff 관측도 여전히 필요하다. Docker 프로세스 관측은 운영 호스트에서
+지원되는 기본 `docker top <container>`를 사용하고, 실제 워커 loop가 하나인지 검증한다.
+
+자동 복구까지 실패한 종료 run은 `account_write_cutover_recovery.py`의 별도 수동
+복구 경로로 처리한다. `plan`은 변경 없이 확인하고, `apply-close`만 제한을 복원한다.
+저장된 계획의 `--plan`, 원래 run의 `--owner`와 `--source`를 그대로 지정한다.
+도구는 운영 source freshness 검사로 최신 clean main과 성공 manifest ancestry를
+검증하고, 공식 GitHub API로 원래 run/attempt/source, 배포 workflow, 종료 상태와
+기록된 production 승인을 확인한다. 기존 인증의 정확한 AWS 계정·주체와 저장된
+잠금/계획도 일치해야 한다. 원래 CI 환경값을 위장하거나 잠금 owner를 새 run으로
+바꾸지 않는다. 전체 이전 또는 후보 런타임, 다음 ASG 실행 이미지, ALB 건강 상태를
+정상 close와 동일하게 확인한 후 해당 run의 rule/Sid만 복원한다. 복원 readback과
+창 제거가 끝나야 소유 잠금을 조건부 해제한다. 실패하면 보호 상태를 유지하고,
+복구는 후보의 운영 배포 성공을 대신하지 않는다.
+창은 이미 복원됐지만 잠금 삭제만 실패한 재시도는 같은 row의 `accountRecovery`
+증거로 원래 계획과 이전 fleet을 다시 검증한다. 이 증거는 정확한 원래 창의 CAS로만
+저장하며 다른 복구 증거를 덮어쓰지 않는다. 최종 잠금 삭제와 함께 제거한다.
+현재 GitHub 승인 이력은 run 단위이므로 이 도구는 승인 귀속을 증명할 수 있는
+최초 attempt만 지원하며, 재실행 attempt에 이전 승인을 임의로 적용하지 않는다.
+
 ## 0. 프론트엔드 배포
 
 프론트엔드(`frontend/` 레포)는 백엔드와 완전히 독립된 배포 파이프라인을 가진다.
