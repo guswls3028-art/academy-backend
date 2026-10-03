@@ -42,6 +42,16 @@ development-canary와 tenant/user cleanup zero, 플랫폼 승인·공유 잠금�
 증거가 아니다. 동시에 여러 작업이 배포하지 않고
 [동시 작업 계약](concurrent-codex-sessions.md)의 단일 release 소유권을 유지한다.
 
+API를 바꾸는 릴리스는 개발·격리 preprod 검증 뒤 `run-migrations`의
+`production` environment에서 운영 전환을 한 번 더 확인한다. 앞선 공유 잠금
+승인은 이 뒤의 승인을 대신하지 않는다. 호환 후보는 release owner가 현재 검증을
+읽고 같은 배포 지시 범위에서 공식 API로 즉시 승인한다. 별도 사용자 재확인이나
+고정 시각 대기는 없다. 혼재 쓰기 충돌이 확인된 후보는 이 지점에서 정확한 영향
+범위의 유입 제한·진행 중 작업 완료·복구 절차를 준비한 후에만 전환한다.
+관측·rollback 계획만 세웠거나 변경 창에 이름만 붙인 상태는 충돌 방지 증거가 아니다.
+운영 전환 확인 전에는 production migration과 그에 의존하는 API/worker 교체가
+진행되지 않으며, 개발 검증이나 임시 preprod 정리를 이 승인 뒤로 미루지 않는다.
+
 ## 0. 프론트엔드 배포
 
 프론트엔드(`frontend/` 레포)는 백엔드와 완전히 독립된 배포 파이프라인을 가진다.

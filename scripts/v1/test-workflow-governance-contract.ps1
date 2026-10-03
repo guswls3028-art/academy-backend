@@ -52,6 +52,17 @@ foreach ($marker in $requiredProductionMarkers) {
         $failures += "Production workflow is missing governance marker: $marker"
     }
 }
+$migrationJob = [regex]::Match($productionWorkflow, '(?ms)^  run-migrations:\r?\n(?:(?!^  [a-zA-Z0-9_-]+:).)*').Value
+if ($migrationJob -notmatch '(?m)^    environment: production\s*$' -or
+    -not $migrationJob.Contains('needs: [detect-changes, build-and-push, verify-api-preprod]')) {
+    $failures += "Production migrations must await isolated preprod and the exact production environment review."
+}
+foreach ($jobName in @('deploy-api', 'deploy-messaging', 'deploy-ai', 'deploy-tools', 'deploy-video')) {
+    $job = [regex]::Match($productionWorkflow, ('(?ms)^  ' + [regex]::Escape($jobName) + ':\r?\n(?:(?!^  [a-zA-Z0-9_-]+:).)*')).Value
+    if ($job -notmatch '(?m)^    needs: \[[^\r\n]*\brun-migrations\b[^\r\n]*\]') {
+        $failures += "$jobName must wait for the migration/production cutover boundary."
+    }
+}
 foreach ($marker in @(
     "Backend static and migration contract",
     "Backend Django smoke and deployment contracts",
