@@ -59,7 +59,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ! dpkg-query -W perl-base >/dev/null 2>&1 \
     && for package in perl 'perl-modules-*' 'libperl*' libdpkg-perl liberror-perl; do ! dpkg-query -W "$package" >/dev/null 2>&1; done \
     && ! command -v perl >/dev/null 2>&1 \
-    && python /usr/local/bin/verify-expat.py --library libexpat.so.1 --python --package
+    && python /usr/local/bin/verify-expat.py --library libexpat.so.1 --python --package \
+    && python /usr/local/bin/verify-aligned-new.py
 
 # opencv-python-headless deliberately has no GUI/GLib runtime dependency.
 # Keep the server image on the wheel-owned runtime instead of adding the

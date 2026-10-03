@@ -85,16 +85,22 @@ def test_current_candidate_only_accepts_exact_gcc_high_before_expiry(repository:
     )
     assert not acceptances
     assert known == {
-        (repo, "CVE-2026-102010", "gcc-14", "14.2.0-19") for repo in gate.REPOSITORIES
+        (repo, cve, "gcc-14", "14.2.0-19")
+        for repo in gate.REPOSITORIES
+        for cve in ("CVE-2026-102010", "CVE-2026-95619")
     }
-    assert baselines[repository] == 1
+    assert baselines[repository] == 2
     assert gate.evaluate_findings(repository, _scan(), acceptances) == []
     assert gate.evaluate_high_budget(repository, _scan(), baselines, known) == 0
-    gcc = _scan(_finding("CVE-2026-102010", "gcc-14", "14.2.0-19", "HIGH"))
-    assert gate.evaluate_high_budget(repository, gcc, baselines, known) == 1
+    gcc = _scan(
+        _finding("CVE-2026-102010", "gcc-14", "14.2.0-19", "HIGH"),
+        _finding("CVE-2026-95619", "gcc-14", "14.2.0-19", "HIGH"),
+    )
+    assert gate.evaluate_high_budget(repository, gcc, baselines, known) == 2
     for finding in [
         _finding("CVE-2099-9999", "gcc-14", "14.2.0-19", "HIGH"),
         _finding("CVE-2026-102010", "gcc-14", "14.2.0-20", "HIGH"),
+        _finding("CVE-2026-95619", "gcc-14", "14.2.0-20", "HIGH"),
     ]:
         with pytest.raises(gate.GateError, match="unreviewed High"):
             gate.evaluate_high_budget(repository, _scan(finding), baselines, known)

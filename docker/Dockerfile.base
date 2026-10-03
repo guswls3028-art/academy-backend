@@ -107,8 +107,9 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
     && for package in perl 'perl-modules-*' 'libperl*' libdpkg-perl liberror-perl; do ! dpkg-query -W "$package" >/dev/null 2>&1; done \
     && ! command -v perl >/dev/null 2>&1
 
-COPY docker/native-security/verify-expat.py /usr/local/bin/verify-expat.py
-RUN python /usr/local/bin/verify-expat.py --library libexpat.so.1 --python --package
+COPY docker/native-security/verify-expat.py docker/native-security/verify-aligned-new.py /usr/local/bin/
+RUN python /usr/local/bin/verify-expat.py --library libexpat.so.1 --python --package \
+    && python /usr/local/bin/verify-aligned-new.py
 
 # non-root 사용자 (보안·감사 대비, CMD/경로 규칙 유지)
 RUN groupadd --gid 1000 appuser \

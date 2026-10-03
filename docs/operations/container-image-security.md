@@ -8,20 +8,20 @@
 ## 2026-10-03 GCC 한시 위험 수용과 배포 재개 조건
 
 배포 복구와 부적절한 차단 규칙 교정 요청에 따라 release owner는 기존 운영에도
-존재하는 GCC 1건을 모든 패치의 무기한 금지 조건에서 분리한다. 실행 정책은
+존재하는 GCC 진단 2건을 모든 패치의 무기한 금지 조건에서 분리한다. 실행 정책은
 `docs/ssot/ecr-high-risk-baseline.json`의 exact identity이며, High 전체를 허용하는
 스위치나 스캐너 필터가 아니다. 이 변경은 아래 10월 1일의 GCC 예외 금지 결정을
 대체하며 취약점 수정 완료, 비도달성 또는 오탐을 선언하지 않는다.
 
-- 대상은 여섯 governed repository의 `CVE-2026-102010` / `gcc-14` /
-  `14.2.0-19` High 1건뿐이다. Critical은 0이며 다른 CVE·package·version 또는
+- 대상은 여섯 governed repository의 `CVE-2026-102010`, `CVE-2026-95619` /
+  `gcc-14` / `14.2.0-19` High 2건뿐이다. Critical은 0이며 다른 CVE·package·version 또는
   severity 상승은 계속 차단한다. 실제 finding이 사라진 후보는 통과하고 정책을
   후속 검토에서 제거한다.
 - 만료는 **2026-10-09 UTC 종료**이며 한국 시각 **10월 10일 09:00**부터 실패한다.
   자동 연장은 없으며 만료 전 release owner가 vendor 상태와 실제 노출을 다시
   검토하고 수정·제거 또는 별도 정책 변경의 근거를 남긴다.
-- 10월 3일 KST 재조회한 마지막 성공 manifest의 여섯 digest는 모두 이 exact
-  High를 보고했다. 이 기존 scan 조회는 새 후보의 신선한 scan을 대체하지 않는다.
+- 10월 3일 KST 기존 scan 조회에서는 첫 identity 1건이 보였다. 아래 새 scan의
+  후보·운영 비교에서 두 번째 identity도 확인했다. 운영 scan은 새 후보 scan을 대체하지 않는다.
   아래 Debian tracker는 여전히 수정 package를 제공하지 않는다. 현재 운영을
   그대로 두면서 검증된 앱·보안 수정까지 모두 멈추는 비용과 잔여 위험을 비교한
   한시적 운영 판단이며, 라이브러리의 사용 가능성이 없다는 증명은 아니다.
@@ -33,6 +33,34 @@
   이용 검증, 격리 preprod 및 임시 인스턴스 종료, 호환 migration, health 기반
   rolling 교체와 exact runtime·영향 경로 확인은 모두 유지한다. 프런트엔드의
   동일 artifact QA와 cleanup zero도 별도 필수 조건이다.
+
+### 추가 진단의 개별 검토와 실제 allocator 검사
+
+[공식 후보 37091442044](https://github.com/guswls3028-art/academy-backend/actions/runs/37091442044)는
+첫 identity만 허용된 상태에서 두 번째 High를 탐지해 development 이전에 실패했다.
+이어 마지막 성공 `0ede78be20ee0e39fbbefe5b06a6ff5bebec419d`의 여섯 운영 digest를
+명시적으로 재스캔했고, **2026-10-03 03:24 UTC** 완료 결과와 새 후보 여섯 digest가
+모두 위의 exact High 2건과 Critical 0으로 일치했다. 새 finding을 자동으로
+수용한 것이 아니라 이 비교와 아래 upstream 분석을 토대로 별도 검토했다.
+
+[Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-95619)는 해당
+package를 unfixed로 유지한다. [upstream 수정](https://github.com/gcc-mirror/gcc/commit/59d235ffa5a69231eb42e5290d52dc8c90d28b7a)은
+aligned `operator new`의 크기 반올림 overflow를 다루며 POSIX allocator 경로와
+다른 구현을 구분한다. 운영체제 이름만으로 우리 바이너리가 안전하다고 단정하지 않는다.
+
+`docker/native-security/verify-aligned-new.py`는 system `libstdc++6`를 직접 로드해
+정상 할당·정렬·해제 3건과 upstream의 overflow 입력 9건 거부를 검사한다. 별도
+빌드 프로세스의 주소 공간은 512 MiB로 제한하고 반환 메모리를 읽거나 쓰지 않는다.
+base와 API·Video·AI·Tools의 마지막 APT 설치 뒤 실행하며 Messaging은 검증된 base를
+상속한다. 설치된 library의 누락·ABI 오류·정상 할당 실패·overflow 수용은 빌드를
+실패시킨다. system package가 없는 경우는 별도 결과로 기록하며 검사용 library를
+추가 설치하지 않는다. native arm64 CI와 실제 후보 build 결과를 확인해야 한다.
+
+이 검사는 정적으로 링크되거나 wheel에 포함된 별도 C++ 구현까지 증명하지 않는다.
+취약 package를 수정·오탐 처리했다고 기록하지 않으며, 첫 PBDS 취약점의 미확인
+도달 가능성도 그대로다. 현재 운영을 유지하면서 앱·보안 수정까지 지연하는 비용과
+잔여 메모리 손상 위험을 비교해 두 번째 exact identity에도 같은 짧은 만료일을
+적용한다. 다른 identity나 version은 계속 새 검토 전까지 차단한다.
 
 ### 이력: 2026-10-01 GCC 후보 중단
 
