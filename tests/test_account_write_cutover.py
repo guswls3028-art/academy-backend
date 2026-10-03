@@ -93,6 +93,8 @@ class FakeAws:
         self.userdata_override = {}
         self.mixed_policy = False
         self.bad_version = False
+        self.propagate_policy = False
+        self.policy_reads = {}
 
     def mutation(self, operation):
         c.require(self.lock.state is not None and self.lock.state["intent"]["op"] == {
@@ -128,11 +130,17 @@ class FakeAws:
             return {"QueueUrl": f"https://sqs.{c.REGION}.amazonaws.com/{c.ACCOUNT}/{args['queue_name']}"}
         elif operation == "get-queue-attributes":
             row = next(row for row in self.plan["queues"] if row["url"] == args["queue_url"])
-            return {"Attributes": {"QueueArn": row["arn"], "Policy": json.dumps(self.policies[row["url"]]),
+            reads = self.policy_reads.get(row["url"], [])
+            policy = reads.pop(0) if reads else self.policies[row["url"]]
+            return {"Attributes": {"QueueArn": row["arn"], "Policy": json.dumps(policy),
                                    "ApproximateNumberOfMessagesNotVisible": self.inflight}}
         elif operation == "set-queue-attributes":
             self.mutation(operation)
+            previous = copy.deepcopy(self.policies[args["queue_url"]])
             self.policies[args["queue_url"]] = json.loads(args["attributes"]["Policy"] or "{}")
+            if self.propagate_policy:
+                expected = copy.deepcopy(self.policies[args["queue_url"]])
+                self.policy_reads[args["queue_url"]] = [previous, expected, previous, expected]
         elif operation == "describe-auto-scaling-groups":
             asg = args["auto_scaling_group_names"]
             repo = next(repo for repo in c.COMPONENTS if c.COMPONENTS[repo][0] == asg)
@@ -315,6 +323,126 @@ class CutoverTests(unittest.TestCase):
         self.aws.lost = "set-queue-attributes"
         self.opened()
         self.window.verify_pause()
+
+    def test_policy_propagation_revisits_previous_at_final_open_and_restore(self):
+        self.aws.propagate_policy = True
+        tick = [0]
+        self.window.wait = lambda seconds: tick.__setitem__(0, tick[0] + seconds)
+        with patch.object(c.time, "monotonic", side_effect=lambda: tick[0]):
+            self.opened()
+            self.assertEqual(tick[0], 15)
+            self.window.close()
+        self.assertEqual(tick[0], 30)
+        self.assertIsNone(self.lock.state)
+        self.assertEqual(sum(op == "set-queue-attributes" for op, _ in self.aws.events), 4)
+
+    def test_delayed_lost_pause_and_restore_response_never_repeat_writes(self):
+        self.aws.propagate_policy = True
+        self.aws.lost = "set-queue-attributes"
+        self.opened()
+        self.new_window().open()
+        self.assertEqual(sum(op == "set-queue-attributes" for op, _ in self.aws.events), 2)
+        self.aws.lost = "set-queue-attributes"
+        self.window.close()
+        self.assertIsNone(self.lock.state)
+        self.assertEqual(sum(op == "set-queue-attributes" for op, _ in self.aws.events), 4)
+
+    def test_restore_stale_original_then_paused_pread_restores_without_drift(self):
+        self.opened()
+        first = self.plan["queues"][0]
+        self.aws.policy_reads[first["url"]] = [copy.deepcopy(first["original"])]
+        self.window.close()
+        self.assertIsNone(self.lock.state)
+        self.assertEqual(self.aws.policies[first["url"]], first["original"])
+        self.assertEqual(sum(op == "set-queue-attributes" for op, _ in self.aws.events), 4)
+
+    def test_resume_close_with_stale_reads_does_not_repeat_confirmed_restores(self):
+        self.opened()
+        paused = copy.deepcopy(self.aws.policies)
+        self.aws.failed = "delete-rule"
+        with self.assertRaises(c.CutoverError):
+            self.window.close()
+        self.aws.failed = None
+        for queue in self.plan["queues"]:
+            self.aws.policy_reads[queue["url"]] = [paused[queue["url"]], copy.deepcopy(queue["original"])]
+        self.new_window().close()
+        self.assertIsNone(self.lock.state)
+        self.assertEqual(sum(op == "set-queue-attributes" for op, _ in self.aws.events), 4)
+
+    def test_policy_propagation_deadline_preserves_pin_and_admissions(self):
+        self.opened()
+        tick = [0]
+        self.window.wait = lambda seconds: tick.__setitem__(0, tick[0] + seconds)
+        first = self.plan["queues"][0]
+        self.aws.policy_reads[first["url"]] = [copy.deepcopy(first["original"]) for _ in range(30)]
+        with patch.object(c.time, "monotonic", side_effect=lambda: tick[0]), self.assertRaisesRegex(
+                c.CutoverError, "queue-policy-readback-timeout"):
+            self.window.verify_pause()
+        self.assertEqual(tick[0], 90)
+        self.assertIsNotNone(self.lock.state)
+        self.assertEqual(len(self.aws.rules), len(self.plan["rules"]) + 1)
+
+    def test_unexpected_foreign_policy_fails_without_wait_or_new_write(self):
+        self.opened()
+        first = self.plan["queues"][0]
+        unexpected = copy.deepcopy(self.aws.policies[first["url"]])
+        unexpected["Statement"].append({"Sid": "foreign", "Effect": "Allow", "Action": "sqs:*", "Resource": "*"})
+        self.aws.policy_reads[first["url"]] = [unexpected]
+        waits = []
+        self.window.wait = waits.append
+        count = len(self.aws.events)
+        with self.assertRaisesRegex(c.CutoverError, "queue-policy-unexpected-readback"):
+            self.window.verify_pause()
+        self.assertEqual(waits, [])
+        self.assertEqual(len(self.aws.events), count)
+        self.assertIsNotNone(self.lock.state)
+
+    def test_policy_poll_reasserts_owner_before_each_read(self):
+        self.opened()
+        first = self.plan["queues"][0]
+        self.aws.policy_reads[first["url"]] = [copy.deepcopy(first["original"])]
+        self.window.wait = lambda _: setattr(self.lock, "live", False)
+        with self.assertRaisesRegex(c.CutoverError, "lock-owner"):
+            self.window.verify_pause()
+        self.assertIsNotNone(self.lock.state)
+
+    def test_policy_comparison_keeps_literal_form_and_existing_plan_hash(self):
+        self.opened()
+        first = self.plan["queues"][0]
+        unexpected = copy.deepcopy(self.aws.policies[first["url"]])
+        unexpected["Statement"][-1]["Principal"] = {"AWS": "*"}
+        self.aws.policy_reads[first["url"]] = [unexpected]
+        with self.assertRaisesRegex(c.CutoverError, "queue-policy-unexpected-readback"):
+            self.window.verify_pause()
+        self.assertEqual(self.lock.state["plan"]["id"], self.plan["id"])
+        self.assertEqual(self.lock.state["sid"], self.window.sid)
+
+    def test_real_write_drift_is_not_hidden_by_later_readback(self):
+        self.opened()
+        queue = self.plan["queues"][0]
+        readbacks = []
+        def operation():
+            raise c.CutoverError("queue-policy-concurrent-drift")
+        with self.assertRaisesRegex(c.CutoverError, "queue-policy-concurrent-drift"):
+            self.window.checked_mutation({"op": "restore-queue", "name": queue["name"],
+                "previousPolicy": self.aws.policies[queue["url"]], "expectedPolicy": queue["original"]},
+                operation, lambda: readbacks.append(True))
+        self.assertEqual(readbacks, [])
+        self.assertIsNotNone(self.lock.state)
+
+    def test_expected_response_after_deadline_cannot_pass(self):
+        self.opened()
+        queue = self.plan["queues"][0]
+        expected = self.aws.policies[queue["url"]]
+        tick = [0]
+        def late_attrs(aws, row, timeout=60):
+            self.assertLessEqual(timeout, 10)
+            tick[0] = 91
+            return {"QueueArn": row["arn"], "Policy": json.dumps(expected)}
+        with patch.object(c.time, "monotonic", side_effect=lambda: tick[0]), patch.object(c, "queue_attrs", side_effect=late_attrs), self.assertRaisesRegex(
+                c.CutoverError, "queue-policy-readback-timeout"):
+            self.window.readback_policies([(queue, queue["original"], expected)])
+        self.assertIsNotNone(self.lock.state)
 
     def test_partial_open_before_rollout_restores_previous_fleet(self):
         self.aws.failed = "set-queue-attributes"
@@ -705,6 +833,56 @@ class CutoverTests(unittest.TestCase):
         self.assertEqual((value["terminalCount"], value["ackCount"]), (1, 1))
         self.assertNotIn("private", stream.getvalue())
         self.assertNotIn("customer-body", stream.getvalue())
+
+    def test_generated_observer_default_top_all_hosts_and_real_module_count(self):
+        for repo in c.COMPONENTS:
+            for count in ((1,) if repo == "academy-api" else (0, 1, 2)):
+                with self.subTest(repo=repo, count=count):
+                    code = c.remote_observer(repo, 100).split("\n", 1)[1].rsplit("\n", 1)[0]
+                    module = "apps.worker.ai_worker.sqs_main_cpu" if repo == "academy-ai-worker-cpu" else "apps.worker.tools_worker.sqs_main"
+                    top_calls = []
+                    def run(argv, **kwargs):
+                        if argv[:2] == ["docker", "top"]:
+                            top_calls.append(argv)
+                            if repo == "academy-api" or len(argv) != 3:
+                                return subprocess.CompletedProcess(argv, 1, "", "private-unsupported-args")
+                            output = "UID PID CMD\n" + ("1000 1 python -m " + module + "\n") * count
+                        elif argv[:2] == ["docker", "logs"]:
+                            output = "1970-01-01T00:01:50.123456789Z SQS unavailable, waiting 60s\n"
+                        elif argv[:2] == ["docker", "exec"]:
+                            output = json.dumps(c.QUEUE_NAMES)
+                        elif argv[:3] == ["docker", "image", "inspect"]:
+                            output = json.dumps([f"{c.REGISTRY}/{repo}@sha256:" + "d" * 64])
+                        elif "{{.Image}}" in argv:
+                            output = "sha256:local"
+                        else:
+                            output = json.dumps({"Running": True, "StartedAt": "fixed", "Pid": 7})
+                        return subprocess.CompletedProcess(argv, 0, output, "")
+                    stream = io.StringIO()
+                    with patch.object(c.subprocess, "run", side_effect=run), patch("sys.stdout", stream), patch.object(c.time, "time", return_value=120):
+                        exec(compile(code, "owned-observer", "exec"), {})
+                    value = json.loads(stream.getvalue())
+                    self.assertEqual(top_calls, [] if repo == "academy-api" else [["docker", "top", c.COMPONENTS[repo][1]]])
+                    self.assertEqual(value["singleLoop"], count == 1)
+                    if repo != "academy-api" and count != 1:
+                        with self.assertRaisesRegex(c.CutoverError, "worker-not-quiescent"):
+                            c.verify_observation(value, repo, "sha256:" + "d" * 64, 100, True)
+                    else:
+                        c.verify_observation(value, repo, "sha256:" + "d" * 64, 100, repo != "academy-api")
+
+    def test_observer_failure_exports_only_fixed_step_code(self):
+        def aws(service, operation, **kwargs):
+            if operation == "send-command":
+                return {"Command": {"CommandId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}}
+            return {"Status": "Failed", "StandardErrorContent": "private-env-body\nRuntimeError: observer-command-top\n"}
+        with self.assertRaisesRegex(c.CutoverError, "^observer-failed:observer-command-top$"):
+            c.observe(aws, "academy-tools-worker", "i-00000000000000001", 100)
+
+    def test_policy_cli_timeout_is_private_and_bounded(self):
+        with patch.object(c.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "{}", "")) as run:
+            c.Aws()("sqs", "get-queue-attributes", _timeout=0.5, queue_url="synthetic")
+        self.assertEqual(run.call_args.kwargs["timeout"], 0.5)
+        self.assertNotIn("--_timeout", run.call_args.args[0])
 
     def test_policy_drift_after_intent_is_not_overwritten(self):
         self.opened()

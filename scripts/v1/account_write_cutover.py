@@ -64,7 +64,7 @@ def digest(value):
 
 
 class Aws:
-    def __call__(self, service, operation, **args):
+    def __call__(self, service, operation, _timeout=60, **args):
         command = ["aws", service, operation, "--region", REGION, "--output", "json", "--no-cli-pager"]
         for key, value in args.items():
             command.append("--" + key.replace("_", "-"))
@@ -75,7 +75,7 @@ class Aws:
             else:
                 command.append(str(value))
         try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+            result = subprocess.run(command, capture_output=True, text=True, timeout=_timeout, check=False)
             require(result.returncode == 0, "aws-call-unconfirmed")
             return json.loads(result.stdout or "{}")
         except (OSError, subprocess.TimeoutExpired, ValueError):
@@ -233,8 +233,9 @@ def restored_policy(current, original, sid, arn):
     return copy.deepcopy(original) if current == expected else result
 
 
-def queue_attrs(aws, queue):
-    attrs = aws("sqs", "get-queue-attributes", queue_url=queue["url"], attribute_names="All").get("Attributes", {})
+def queue_attrs(aws, queue, timeout=60):
+    attrs = aws("sqs", "get-queue-attributes", queue_url=queue["url"], attribute_names="All",
+                _timeout=timeout).get("Attributes", {})
     require(attrs.get("QueueArn") == queue["arn"], "queue-identity-mismatch")
     return attrs
 
@@ -387,14 +388,16 @@ def remote_observer(repo, since):
     require(isinstance(since, int) and since > 0, "observation-time-invalid")
     code = '''import datetime,json,subprocess,time
 def run(args,logs=False):
- p=subprocess.run(args,capture_output=True,text=True,timeout=35)
- if p.returncode: raise RuntimeError("observer-command")
+ step=args[1] if args[1] in ("inspect","image","top","exec","logs") else "command"
+ try: p=subprocess.run(args,capture_output=True,text=True,timeout=35)
+ except (OSError,subprocess.TimeoutExpired): raise RuntimeError("observer-command-"+step) from None
+ if p.returncode: raise RuntimeError("observer-command-"+step)
  return p.stdout+p.stderr if logs else p.stdout
 container=CONTAINER
 before=json.loads(run(["docker","inspect","--format","{{json .State}}",container]))
 image=run(["docker","inspect","--format","{{.Image}}",container]).strip()
 digests=json.loads(run(["docker","image","inspect","--format","{{json .RepoDigests}}",image]))
-processes=run(["docker","top",container,"-eo","args"])
+processes=run(["docker","top",container]) if WORKER else ""
 queueNames=json.loads(run(["docker","exec",container,"python","-c",
  "import json,os; print(json.dumps({key:os.environ.get(key) for key in QUEUE_KEYS}))"])) if WORKER else {}
 logs=run(["docker","logs","--since",str(SINCE),"--timestamps",container],logs=True) if WORKER else ""
@@ -439,7 +442,10 @@ def observe(aws, repo, instance, since):
                 return value
             except ValueError:
                 raise CutoverError("observer-result-invalid") from None
-        require(result.get("Status") in ("Pending", "InProgress", "Delayed"), "observer-failed")
+        if result.get("Status") not in ("Pending", "InProgress", "Delayed"):
+            step = re.search(r"RuntimeError: (observer-command-(?:inspect|image|top|exec|logs|command))\b",
+                             result.get("StandardErrorContent", ""))
+            raise CutoverError("observer-failed:" + step.group(1) if step else "observer-failed")
         time.sleep(5)
     raise CutoverError("observer-timeout")
 
@@ -524,20 +530,45 @@ class Window:
 
     def verify_pause(self):
         require(len(self.owned_rules()) == len(self.plan["rules"]), "admission-not-closed")
-        for queue in self.plan["queues"]:
-            current = policy_from(queue_attrs(self.aws, queue))
-            require([row for row in statements(current) if row.get("Sid") == self.sid]
-                    == [pause_statement(self.sid, queue["arn"])], "queue-receive-not-paused")
+        self.readback_policies([(queue, queue["original"], paused_policy(queue["original"], self.sid, queue["arn"]))
+                                for queue in self.plan["queues"]])
+
+    def readback_policies(self, checks):
+        """SQS propagation may revisit the captured previous value for up to 60s."""
+        deadline = time.monotonic() + 90
+        for attempt in range(19):
+            observed = []
+            for queue, previous, expected in checks:
+                require(self.lock.load_window(self.table, self.owner) == self.state, "window-state-conflict")
+                remaining = deadline - time.monotonic()
+                require(remaining > 0, "queue-policy-readback-timeout")
+                current = policy_from(queue_attrs(self.aws, queue, timeout=min(10, remaining)))
+                require(current == previous or current == expected, "queue-policy-unexpected-readback")
+                observed.append(current)
+            require(time.monotonic() <= deadline, "queue-policy-readback-timeout")
+            if all(current == expected for current, (_, _, expected) in zip(observed, checks)):
+                return observed
+            remaining = deadline - time.monotonic()
+            require(attempt < 18 and remaining > 0, "queue-policy-readback-timeout")
+            self.wait(min(5, remaining))
 
     def checked_mutation(self, intent, operation, readback):
         # Revalidate owner and exact last state before writing durable intent.
         require(self.lock.load_window(self.table, self.owner) == self.state, "window-state-conflict")
-        self.save(intent=intent)
+        changes = {"intent": intent}
+        if intent["op"] in ("pause-queue", "restore-queue"):
+            readbacks = copy.deepcopy(self.state.get("policyReadbacks", {}))
+            readbacks[intent["name"]] = {"op": intent["op"], "previous": intent["previousPolicy"],
+                                         "expected": intent["expectedPolicy"]}
+            changes["policyReadbacks"] = readbacks
+        self.save(**changes)
         try:
             operation()
-        except CutoverError:
+        except CutoverError as error:
             # A timeout may follow a successful write. Actual exact-state readback
             # decides; no blind duplicate creation or baseline overwrite.
+            if str(error) != "aws-call-unconfirmed":
+                raise
             readback()
         else:
             readback()
@@ -546,7 +577,8 @@ class Window:
     def write_policy(self, queue, observed, expected):
         # SQS has no conditional policy update. Re-read immediately before the
         # write; preserve all observed foreign statements and reject drift.
-        require(policy_from(queue_attrs(self.aws, queue)) == observed, "queue-policy-concurrent-drift")
+        current = policy_from(queue_attrs(self.aws, queue))
+        require(current == observed or current == expected, "queue-policy-concurrent-drift")
         self.aws("sqs", "set-queue-attributes", queue_url=queue["url"],
                  attributes={"Policy": canonical(expected) if expected else ""})
 
@@ -573,14 +605,27 @@ class Window:
                 lambda rule=rule: self.aws("elbv2", "create-rule", listener_arn=LISTENER, priority=rule["priority"],
                     conditions=rule["conditions"], actions=ACTION, tags=self.tags), read_rule)
         for queue in self.plan["queues"]:
-            current = policy_from(queue_attrs(self.aws, queue))
             expected = paused_policy(queue["original"], self.sid, queue["arn"])
+            recorded = self.state.get("policyReadbacks", {}).get(queue["name"])
+            if recorded is not None:
+                require(recorded == {"op": "pause-queue", "previous": queue["original"], "expected": expected},
+                        "queue-readback-binding-mismatch")
+                try:
+                    self.readback_policies([(queue, recorded["previous"], expected)])
+                    continue
+                except CutoverError as error:
+                    if str(error) != "queue-policy-readback-timeout":
+                        raise
+                    # An earlier unconfirmed write may never have applied. Only
+                    # after its full propagation budget may an exact old value
+                    # be retried; a confirmed/lost-response write is not repeated.
+            current = policy_from(queue_attrs(self.aws, queue))
             if current == expected:
                 continue
             require(current == queue["original"], "queue-policy-changed-before-open")
-            self.checked_mutation({"op": "pause-queue", "name": queue["name"], "expectedPolicy": expected},
+            self.checked_mutation({"op": "pause-queue", "name": queue["name"], "previousPolicy": current, "expectedPolicy": expected},
                 lambda queue=queue, current=current, expected=expected: self.write_policy(queue, current, expected),
-                lambda queue=queue, expected=expected: require(policy_from(queue_attrs(self.aws, queue)) == expected, "queue-pause-write-unconfirmed"))
+                lambda queue=queue, current=current, expected=expected: self.readback_policies([(queue, current, expected)]))
         self.verify_pause()
         self.save(phase=self.state["phase"] if self.state["phase"] == "drained" else "open",
                   pausedAt=self.state.get("pausedAt", int(self.clock()) + 1), intent=None)
@@ -662,8 +707,16 @@ class Window:
 
     def verify_restored(self):
         require(not self.owned_rules(), "admission-rule-remains")
+        checks = []
         for queue in self.plan["queues"]:
-            require(not any(row.get("Sid") == self.sid for row in statements(policy_from(queue_attrs(self.aws, queue)))), "queue-pause-remains")
+            recorded = self.state.get("policyReadbacks", {}).get(queue["name"]) if self.state else None
+            if recorded and recorded["op"] == "restore-queue":
+                require(not any(row.get("Sid") == self.sid for row in statements(recorded["expected"])), "queue-pause-remains")
+                checks.append((queue, recorded["previous"], recorded["expected"]))
+            else:
+                require(not any(row.get("Sid") == self.sid for row in statements(policy_from(queue_attrs(self.aws, queue)))), "queue-pause-remains")
+        if checks:
+            self.readback_policies(checks)
 
     def close(self, inspect_only=False):
         self.load()
@@ -690,13 +743,22 @@ class Window:
             return
         self.save(phase="closing", restorationRuntime=restoration, futureLaunch=future)
         for queue in self.plan["queues"]:
+            recorded = self.state.get("policyReadbacks", {}).get(queue["name"])
+            if recorded and recorded["op"] == "restore-queue":
+                self.readback_policies([(queue, recorded["previous"], recorded["expected"])])
+                continue
             current = policy_from(queue_attrs(self.aws, queue))
             restored = restored_policy(current, queue["original"], self.sid, queue["arn"])
-            if restored == current:
+            if restored == current and not recorded:
                 continue
-            self.checked_mutation({"op": "restore-queue", "name": queue["name"], "expectedPolicy": restored},
-                lambda queue=queue, current=current, restored=restored: self.write_policy(queue, current, restored),
-                lambda queue=queue, restored=restored: require(policy_from(queue_attrs(self.aws, queue)) == restored, "queue-restore-unconfirmed"))
+            previous = current
+            if recorded and recorded["op"] == "pause-queue" and current == recorded["previous"]:
+                # Initial GET can revisit the pre-pause value. The next GET may
+                # expose the captured paused value; both belong to this write.
+                previous = recorded["expected"]
+            self.checked_mutation({"op": "restore-queue", "name": queue["name"], "previousPolicy": previous, "expectedPolicy": restored},
+                lambda queue=queue, previous=previous, restored=restored: self.write_policy(queue, previous, restored),
+                lambda queue=queue, previous=previous, restored=restored: self.readback_policies([(queue, previous, restored)]))
         for priority, arn in self.owned_rules().items():
             self.checked_mutation({"op": "delete-rule", "priority": priority, "arn": arn},
                 lambda arn=arn: self.aws("elbv2", "delete-rule", rule_arn=arn),
