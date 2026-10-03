@@ -26,7 +26,7 @@ class QueueUnavailableError(Exception):
         super().__init__(message)
 
 
-def _is_auth_error(e: Exception) -> bool:
+def _is_auth_error(e: Exception, *, include_access_denied: bool = False) -> bool:
     try:
         from botocore.exceptions import ClientError
         if isinstance(e, ClientError):
@@ -36,6 +36,10 @@ def _is_auth_error(e: Exception) -> bool:
                 "UnrecognizedClientException",
                 "SignatureDoesNotMatch",
                 "InvalidSignatureException",
+            ) or (
+                include_access_denied
+                and e.operation_name == "ReceiveMessage"
+                and code in ("AccessDenied", "AccessDeniedException")
             )
     except ImportError:
         pass
@@ -169,7 +173,7 @@ class SQSQueueClient(QueueClient):
         except QueueUnavailableError:
             raise
         except Exception as e:
-            if _is_auth_error(e):
+            if _is_auth_error(e, include_access_denied=True):
                 _log_auth_error_once(queue_name, "receive_message", e)
                 raise QueueUnavailableError(f"Receive unavailable: {e}", cause=e) from e
             logger.error(f"Failed to receive message from {queue_name}: {e}")
