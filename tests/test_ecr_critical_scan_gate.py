@@ -75,17 +75,39 @@ def _high_policy_document(*entries: dict[str, object]) -> dict[str, object]:
 
 
 @pytest.mark.parametrize("repository", gate.REPOSITORIES)
-def test_current_candidate_requires_zero_critical_and_high(repository: str) -> None:
+def test_current_candidate_only_accepts_exact_gcc_high_before_expiry(repository: str) -> None:
     policy_dir = Path(__file__).parents[1] / "docs" / "ssot"
     acceptances = gate.load_acceptances(
         policy_dir / "ecr-critical-risk-acceptance.json", datetime.now(timezone.utc).date()
     )
-    baselines, known = gate.load_high_baselines(policy_dir / "ecr-high-risk-baseline.json")
+    baselines, known = gate.load_high_baselines(
+        policy_dir / "ecr-high-risk-baseline.json", date(2026, 10, 9)
+    )
     assert not acceptances
-    assert not known
-    assert baselines[repository] == 0
+    assert known == {
+        (repo, "CVE-2026-102010", "gcc-14", "14.2.0-19") for repo in gate.REPOSITORIES
+    }
+    assert baselines[repository] == 1
     assert gate.evaluate_findings(repository, _scan(), acceptances) == []
     assert gate.evaluate_high_budget(repository, _scan(), baselines, known) == 0
+    gcc = _scan(_finding("CVE-2026-102010", "gcc-14", "14.2.0-19", "HIGH"))
+    assert gate.evaluate_high_budget(repository, gcc, baselines, known) == 1
+    for finding in [
+        _finding("CVE-2099-9999", "gcc-14", "14.2.0-19", "HIGH"),
+        _finding("CVE-2026-102010", "gcc-14", "14.2.0-20", "HIGH"),
+    ]:
+        with pytest.raises(gate.GateError, match="unreviewed High"):
+            gate.evaluate_high_budget(repository, _scan(finding), baselines, known)
+    with pytest.raises(gate.GateError, match="unaccepted critical"):
+        gate.evaluate_findings(repository, _scan(
+            _finding("CVE-2026-102010", "gcc-14", "14.2.0-19", "CRITICAL")
+        ), acceptances)
+
+
+def test_current_gcc_policy_expires_without_automatic_renewal() -> None:
+    policy = Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
+    with pytest.raises(gate.GateError, match="High risk acceptance expired"):
+        gate.load_high_baselines(policy, date(2026, 10, 10))
 
 
 @pytest.mark.parametrize(
