@@ -3,7 +3,7 @@
 import logging
 import uuid
 
-from django.db import transaction
+from django.db import OperationalError, transaction
 from django.utils import timezone
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -39,6 +39,9 @@ from apps.support.students.view_dependencies import (
     protect_excel_initial_password,
     send_event_notification,
 )
+from apps.support.students.namespace_lock import (
+    lock_student_creation_tenant_reference,
+)
 
 from academy.adapters.db.django import repositories_students as student_repo
 from ..models import Student
@@ -59,6 +62,7 @@ from ..services import (
     update_student_profile,
 )
 from ..services.account_notifications import send_parent_account_credentials_notice
+from ..services.profile import lock_student_profile_for_update
 from ..serializers import (
     StudentListSerializer,
     StudentDetailSerializer,
@@ -202,7 +206,6 @@ class StudentViewSet(ModelViewSet):
     # ------------------------------
     # Student account graph 생성 (봉인)
     # ------------------------------
-    @transaction.atomic
     def create(self, request, *args, **kwargs):
         """
         학생 생성 시 처리 흐름
@@ -212,6 +215,22 @@ class StudentViewSet(ModelViewSet):
         3. create_student_account SSOT로 Parent/User/Student/Membership 생성
         4. 계정 안내는 첫 실제 수강 확정 시 발송
         """
+        # A rolling predecessor can still lock Parent before User. Retry only
+        # after this complete account transaction has rolled back, not inside
+        # a caller's transaction that may retain the conflicting locks.
+        can_retry = not transaction.get_connection().in_atomic_block
+        for attempt in range(2):
+            try:
+                return self._create_account(request, *args, **kwargs)
+            except OperationalError as exc:
+                sqlstate = getattr(exc.__cause__, "sqlstate", None) or getattr(
+                    exc.__cause__, "pgcode", None
+                )
+                if not can_retry or attempt or sqlstate != "40P01":
+                    raise
+
+    @transaction.atomic
+    def _create_account(self, request, *args, **kwargs):
         tenant = request.tenant
         raw_data = request.data
         name = str(raw_data.get("name", "")).strip()
@@ -293,10 +312,7 @@ class StudentViewSet(ModelViewSet):
     # ------------------------------
     @transaction.atomic
     def perform_update(self, serializer):
-        student_before = serializer.instance
-        old_phone = student_before.phone or ""
-        old_parent_phone = student_before.parent_phone or ""
-        old_ps_number = student_before.ps_number or ""
+        lock_student_creation_tenant_reference(tenant_id=self.request.tenant.id)
         try:
             result = update_student_profile(
                 student=serializer.instance,
@@ -315,15 +331,15 @@ class StudentViewSet(ModelViewSet):
         )
 
         new_phone = student.phone or ""
-        if (student.ps_number or "") != old_ps_number:
+        if "ps_number" in result.changed_fields:
             if not send_student_account_credentials_notice(student=student):
                 raise AccountNoticeDeliveryFailed()
-        elif new_phone and new_phone != old_phone:
+        elif new_phone and "phone" in result.changed_fields:
             if not send_student_account_credentials_notice(student=student, to=new_phone):
                 raise AccountNoticeDeliveryFailed()
 
         if (
-            (student.parent_phone or "") != old_parent_phone
+            "parent_phone" in result.changed_fields
             or result.parent_relinked
             or result.parent_credentials_initialized
         ):
@@ -855,9 +871,6 @@ class StudentViewSet(ModelViewSet):
         # PATCH: 프로필 수정 (아이디 변경, 비밀번호 변경, 기본정보 수정)
         data = request.data
         tenant = request.tenant
-        user = student.user
-        old_phone = student.phone or ""
-        old_parent_phone = student.parent_phone or ""
 
         # --- 기본 정보 필드 유효성 검증 (setattr 전에 수행) ---
         from ..services.school import ALL_SCHOOL_TYPES, get_valid_grades
@@ -913,6 +926,16 @@ class StudentViewSet(ModelViewSet):
                 )
 
         with transaction.atomic():
+            try:
+                student, profile_user_ids = lock_student_profile_for_update(
+                    student=student,
+                    tenant=tenant,
+                    data=dict(data),
+                    allow_parent_phone_change=False,
+                )
+            except StudentProfileUpdateError as e:
+                raise ValidationError(e.detail)
+            user = student.user
             # 아이디 변경
             new_username = (data.get("username") or "").strip()
             if new_username and new_username != user_display_username(user):
@@ -960,6 +983,7 @@ class StudentViewSet(ModelViewSet):
                     data=dict(data),
                     ignore_blank_name=True,
                     allow_parent_phone_change=False,
+                    locked_user_ids=profile_user_ids,
                 )
                 student = result.student
             except StudentProfileUpdateError as e:
@@ -971,15 +995,22 @@ class StudentViewSet(ModelViewSet):
             )
 
             new_phone = student.phone or ""
-            phone_changed = bool(new_phone) and new_phone != old_phone
-            if not password_changed and (username_changed or phone_changed):
+            changed_fields = set(result.changed_fields)
+            if username_changed:
+                changed_fields.add("ps_number")
+            phone_changed = bool(new_phone) and "phone" in changed_fields
+            if not password_changed and ("ps_number" in changed_fields or phone_changed):
                 if not send_student_account_credentials_notice(
                     student=student,
                     to=new_phone if phone_changed else None,
                 ):
                     raise AccountNoticeDeliveryFailed()
 
-            if (student.parent_phone or "") != old_parent_phone:
+            if (
+                "parent_phone" in changed_fields
+                or result.parent_relinked
+                or result.parent_credentials_initialized
+            ):
                 if not send_parent_account_credentials_notice(
                     student=student,
                     parent=getattr(student, "parent", None),

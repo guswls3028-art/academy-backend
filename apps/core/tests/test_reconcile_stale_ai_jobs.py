@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import io
+import json
 import uuid
 from datetime import timedelta
 from unittest.mock import patch
 
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import TestCase
 from django.utils import timezone
 
@@ -103,7 +107,13 @@ class ReconcileStaleAIJobsTests(TestCase):
             include_processing_source=True,
         )
 
-        with patch("apps.domains.matchup.services.retry_document") as retry_document:
+        with (
+            patch("apps.domains.matchup.services.retry_document") as retry_document,
+            patch(
+                "apps.core.management.commands.reconcile_stale_ai_jobs."
+                "cache_terminal_job_status"
+            ) as cache_terminal_status,
+        ):
             with self.captureOnCommitCallbacks(execute=True):
                 updated = reconcile_candidates(candidates, execute=True)
 
@@ -118,3 +128,197 @@ class ReconcileStaleAIJobsTests(TestCase):
         retried_doc = retry_document.call_args.args[0]
         self.assertEqual(retried_doc.id, doc.id)
         self.assertEqual(retry_document.call_args.kwargs, {"require_failed": True})
+        self.assertEqual(cache_terminal_status.call_args.args[0].status, "FAILED")
+
+    def test_dry_run_emits_exact_snapshot_and_execute_requires_it(self):
+        expired_at = timezone.now() - timedelta(hours=3)
+        job = AIJobModel.objects.create(
+            job_id=str(uuid.uuid4()),
+            job_type="matchup_analysis",
+            status="RUNNING",
+            tenant_id=str(self.tenant.id),
+            source_domain="matchup",
+            source_id="999999999",
+            locked_by="ai-sqs-worker",
+            locked_at=expired_at,
+            lease_expires_at=expired_at,
+            last_heartbeat_at=expired_at,
+            started_at=expired_at,
+        )
+        AIJobModel.objects.filter(pk=job.pk).update(updated_at=expired_at)
+        job.refresh_from_db()
+        output = io.StringIO()
+
+        call_command(
+            "reconcile_stale_ai_jobs",
+            older_than_hours=1,
+            job_id=job.job_id,
+            stdout=output,
+        )
+
+        audit = json.loads(output.getvalue().splitlines()[0])
+        self.assertEqual(audit["mode"], "dry-run")
+        self.assertEqual(audit["job_id"], job.job_id)
+        self.assertEqual(audit["status"], "RUNNING")
+        self.assertEqual(audit["tenant_id"], str(self.tenant.id))
+        self.assertEqual(audit["reason"], "orphan_source")
+        self.assertEqual(audit["action"], "fail_job")
+        self.assertEqual(audit["updated_at"], job.updated_at.isoformat())
+        self.assertEqual(audit["lease_expires_at"], expired_at.isoformat())
+        job.refresh_from_db()
+        self.assertEqual(job.status, "RUNNING")
+
+    def test_foreign_source_is_invisible_and_never_mutated(self):
+        foreign_tenant = Tenant.objects.create(
+            code="ai-reconcile-foreign", name="Foreign AI Reconcile", is_active=True,
+        )
+        foreign_inventory = InventoryFile.objects.create(
+            tenant=foreign_tenant,
+            scope="admin",
+            display_name="foreign.pdf",
+            r2_key=f"tests/{uuid.uuid4()}.pdf",
+            original_name="foreign.pdf",
+            content_type="application/pdf",
+        )
+        foreign_doc = MatchupDocument.objects.create(
+            tenant=foreign_tenant,
+            inventory_file=foreign_inventory,
+            title="Foreign private source",
+            r2_key=f"tests/{uuid.uuid4()}.pdf",
+            original_name="foreign.pdf",
+            status="done",
+            ai_job_id="foreign-private-job-id",
+        )
+        expired_at = timezone.now() - timedelta(hours=3)
+        job = AIJobModel.objects.create(
+            job_id=str(uuid.uuid4()),
+            job_type="matchup_analysis",
+            status="RUNNING",
+            tenant_id=str(self.tenant.id),
+            source_domain="matchup",
+            source_id=str(foreign_doc.id),
+            locked_by="ai-sqs-worker",
+            locked_at=expired_at,
+            lease_expires_at=expired_at,
+            started_at=expired_at,
+        )
+
+        candidates = iter_stale_matchup_candidates(older_than_hours=1, limit=10)
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].reason, "orphan_source")
+        self.assertIsNone(candidates[0].observed_source_status)
+        self.assertIsNone(candidates[0].observed_source_job_id)
+        with patch(
+            "apps.core.management.commands.reconcile_stale_ai_jobs.cache_terminal_job_status"
+        ):
+            with self.captureOnCommitCallbacks(execute=True):
+                self.assertEqual(reconcile_candidates(candidates, execute=True), 1)
+        job.refresh_from_db()
+        foreign_doc.refresh_from_db()
+        self.assertEqual(job.status, "FAILED")
+        self.assertEqual(foreign_doc.status, "done")
+        self.assertEqual(foreign_doc.ai_job_id, "foreign-private-job-id")
+
+    def test_missing_job_tenant_scope_requires_manual_review(self):
+        expired_at = timezone.now() - timedelta(hours=3)
+        job = AIJobModel.objects.create(
+            job_id=str(uuid.uuid4()),
+            job_type="matchup_analysis",
+            status="RUNNING",
+            tenant_id=None,
+            source_domain="matchup",
+            source_id="999999997",
+            lease_expires_at=expired_at,
+            started_at=expired_at,
+        )
+        candidates = iter_stale_matchup_candidates(older_than_hours=1, limit=10)
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].job_id, job.job_id)
+        self.assertEqual(candidates[0].reason, "missing_tenant_scope")
+        self.assertEqual(candidates[0].action, "manual_review")
+        self.assertIsNone(candidates[0].observed_source_status)
+
+        with self.assertRaisesRegex(CommandError, "requires exact"):
+            call_command(
+                "reconcile_stale_ai_jobs",
+                execute=True,
+                job_id=job.job_id,
+            )
+
+    def test_execute_rejects_a_changed_snapshot(self):
+        expired_at = timezone.now() - timedelta(hours=3)
+        job = AIJobModel.objects.create(
+            job_id=str(uuid.uuid4()),
+            job_type="matchup_analysis",
+            status="RUNNING",
+            tenant_id=str(self.tenant.id),
+            source_domain="matchup",
+            source_id="999999998",
+            locked_by="ai-sqs-worker",
+            locked_at=expired_at,
+            lease_expires_at=expired_at,
+            last_heartbeat_at=expired_at,
+            started_at=expired_at,
+        )
+        AIJobModel.objects.filter(pk=job.pk).update(updated_at=expired_at)
+        job.refresh_from_db()
+        observed_updated_at = job.updated_at.isoformat()
+
+        refreshed_at = timezone.now() - timedelta(hours=2)
+        AIJobModel.objects.filter(pk=job.pk).update(
+            updated_at=refreshed_at,
+            last_heartbeat_at=refreshed_at,
+        )
+
+        with self.assertRaisesRegex(CommandError, "exact stale RUNNING candidate not found"):
+            call_command(
+                "reconcile_stale_ai_jobs",
+                older_than_hours=1,
+                execute=True,
+                job_id=job.job_id,
+                expected_updated_at=observed_updated_at,
+            )
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, "RUNNING")
+
+    def test_reconcile_rejects_a_changed_source_snapshot(self):
+        job_id = str(uuid.uuid4())
+        expired_at = timezone.now() - timedelta(hours=3)
+        doc = MatchupDocument.objects.create(
+            tenant=self.tenant,
+            inventory_file=self.inventory_file,
+            title="Changing source",
+            r2_key=f"tests/{uuid.uuid4()}.pdf",
+            original_name="changing.pdf",
+            status="processing",
+            ai_job_id=job_id,
+        )
+        job = AIJobModel.objects.create(
+            job_id=job_id,
+            job_type="matchup_analysis",
+            status="RUNNING",
+            tenant_id=str(self.tenant.id),
+            source_domain="matchup",
+            source_id=str(doc.id),
+            locked_by="ai-sqs-worker",
+            locked_at=expired_at,
+            lease_expires_at=expired_at,
+            last_heartbeat_at=expired_at,
+            started_at=expired_at,
+        )
+        candidates = iter_stale_matchup_candidates(
+            older_than_hours=1,
+            limit=10,
+            include_processing_source=True,
+        )
+        self.assertEqual(len(candidates), 1)
+
+        doc.status = "done"
+        doc.save(update_fields=["status", "updated_at"])
+
+        self.assertEqual(reconcile_candidates(candidates, execute=True), 0)
+        job.refresh_from_db()
+        doc.refresh_from_db()
+        self.assertEqual(job.status, "RUNNING")
+        self.assertEqual(doc.status, "done")

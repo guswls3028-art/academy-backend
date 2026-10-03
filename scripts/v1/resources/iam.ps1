@@ -557,6 +557,45 @@ function Legacy-GitHubActionsDeployIAM {
     Write-Ok "GitHub Actions deploy IAM converged and read back with exact SSOT resources"
 }
 
+function Ensure-AccountCutoverManagedPolicy {
+    param([string]$PolicyJson, [string]$RoleName)
+    $policyName = "academy-gha-account-cutover"
+    $policyArn = "arn:aws:iam::$($script:AccountId):policy/$policyName"
+    $expected = ($PolicyJson | ConvertFrom-Json) | ConvertTo-Json -Depth 30 -Compress
+    $current = $null
+    try { $current = Invoke-AwsJson @("iam", "get-policy", "--policy-arn", $policyArn, "--output", "json") }
+    catch { if ($_.Exception.Message -notmatch "NoSuchEntity") { throw } }
+    $actual = ""
+    if ($current) {
+        $version = Invoke-AwsJson @("iam", "get-policy-version", "--policy-arn", $policyArn, "--version-id", $current.Policy.DefaultVersionId, "--output", "json")
+        $actual = $version.PolicyVersion.Document | ConvertTo-Json -Depth 30 -Compress
+    }
+    if ($actual -ne $expected) {
+        $policyRef = Convert-JsonArgToFileRef $expected
+        $policyFile = $policyRef -replace '^file://', ''
+        try {
+            if (-not $current) {
+                Invoke-Aws @("iam", "create-policy", "--policy-name", $policyName, "--policy-document", $policyRef,
+                    "--tags", "Key=Project,Value=academy", "Key=ManagedBy,Value=academy-bootstrap") -ErrorMessage "create account cutover policy" | Out-Null
+            } else {
+                $versions = Invoke-AwsJson @("iam", "list-policy-versions", "--policy-arn", $policyArn, "--output", "json")
+                if (@($versions.Versions).Count -ge 5) {
+                    $oldest = $versions.Versions | Where-Object { -not $_.IsDefaultVersion } | Sort-Object CreateDate | Select-Object -First 1
+                    if (-not $oldest.VersionId) { throw "No owned nondefault cutover policy version can be retired." }
+                    Invoke-Aws @("iam", "delete-policy-version", "--policy-arn", $policyArn, "--version-id", $oldest.VersionId) -ErrorMessage "retire oldest cutover policy version" | Out-Null
+                }
+                Invoke-Aws @("iam", "create-policy-version", "--policy-arn", $policyArn, "--policy-document", $policyRef, "--set-as-default") -ErrorMessage "update account cutover policy" | Out-Null
+            }
+        } finally { Remove-TempFiles @($policyFile) }
+    }
+    Invoke-Aws @("iam", "attach-role-policy", "--role-name", $RoleName, "--policy-arn", $policyArn) -ErrorMessage "attach account cutover policy" | Out-Null
+    $readback = Invoke-AwsJson @("iam", "get-policy", "--policy-arn", $policyArn, "--output", "json")
+    $version = Invoke-AwsJson @("iam", "get-policy-version", "--policy-arn", $policyArn, "--version-id", $readback.Policy.DefaultVersionId, "--output", "json")
+    if (($version.PolicyVersion.Document | ConvertTo-Json -Depth 30 -Compress) -ne $expected) {
+        throw "Account cutover managed policy readback mismatch."
+    }
+}
+
 function Ensure-GitHubActionsDeployIAM {
     if ($script:PlanMode) { return }
     $roleName = if ($script:GitHubActionsDeployRoleName) { $script:GitHubActionsDeployRoleName } else { "academy-gha-ecr-build" }
@@ -771,6 +810,28 @@ function Ensure-GitHubActionsDeployIAM {
         [ordered]@{Sid="StsIdentity";Effect="Allow";Action="sts:GetCallerIdentity";Resource="*"},
         [ordered]@{Sid="DeploymentControlLock";Effect="Allow";Action=@("dynamodb:DeleteItem","dynamodb:GetItem","dynamodb:PutItem","dynamodb:UpdateItem");Resource="arn:aws:dynamodb:$($script:Region):$($script:AccountId):table/$($script:DynamoLockTableName)"}
     )
+    # Bind the temporary account-write window to the existing production listener
+    # and two worker queues. No listener/rule modification or queue data access.
+    if ($script:AccountId -ne "809466760795" -or $script:Region -ne "ap-northeast-2" -or
+        $script:ApiAlbName -ne "academy-v1-api-alb" -or
+        $script:AiSqsQueueName -ne "academy-v1-ai-queue" -or
+        $script:ToolsSqsQueueName -ne "academy-v1-tools-queue") {
+        throw "Account cutover IAM requires the exact production ALB and AI/Tools queues."
+    }
+    $cutoverAlb = Invoke-AwsJson @("elbv2", "describe-load-balancers", "--names", $script:ApiAlbName, "--region", $script:Region, "--output", "json")
+    if (@($cutoverAlb.LoadBalancers).Count -ne 1) { throw "Expected exactly one API ALB for account cutover IAM." }
+    $cutoverListeners = Invoke-AwsJson @("elbv2", "describe-listeners", "--load-balancer-arn", $cutoverAlb.LoadBalancers[0].LoadBalancerArn, "--region", $script:Region, "--output", "json")
+    $cutoverHttps = @($cutoverListeners.Listeners | Where-Object { $_.Port -eq 443 -and $_.Protocol -eq "HTTPS" })
+    if ($cutoverHttps.Count -ne 1) { throw "Expected exactly one HTTPS API listener for account cutover IAM." }
+    $cutoverListenerArn = [string]$cutoverHttps[0].ListenerArn
+    if ($cutoverListenerArn -notmatch '^arn:aws:elasticloadbalancing:ap-northeast-2:809466760795:listener/app/academy-v1-api-alb/[a-f0-9]+/[a-f0-9]+$') {
+        throw "Unexpected account cutover listener ARN."
+    }
+    $cutoverPolicy = Get-Content -LiteralPath (Join-Path $TemplatesPath "policy_gha_account_cutover.json") -Raw
+    $cutoverPolicy = $cutoverPolicy.Replace("__LISTENER_ARN__", $cutoverListenerArn).
+        Replace("__RULE_ARN_PREFIX__", $cutoverListenerArn.Replace(":listener/", ":listener-rule/")).
+        Replace("__AI_QUEUE_ARN__", "arn:aws:sqs:$($script:Region):$($script:AccountId):$($script:AiSqsQueueName)").
+        Replace("__TOOLS_QUEUE_ARN__", "arn:aws:sqs:$($script:Region):$($script:AccountId):$($script:ToolsSqsQueueName)")
     $expected = [ordered]@{Version="2012-10-17";Statement=$statements}
     $expectedJson = $expected | ConvertTo-Json -Depth 50 -Compress
     $currentJson = if ($currentPolicy -and $currentPolicy.PolicyDocument) { $currentPolicy.PolicyDocument | ConvertTo-Json -Depth 50 -Compress } else { "" }
@@ -784,6 +845,9 @@ function Ensure-GitHubActionsDeployIAM {
     $readback = Invoke-AwsJson @("iam", "get-role-policy", "--role-name", $roleName, "--policy-name", $policyName, "--output", "json")
     $actualJson = $readback.PolicyDocument | ConvertTo-Json -Depth 50 -Compress
     if ($actualJson -ne $expectedJson) { throw "GitHub Actions IAM full-policy readback does not exactly match the managed least-privilege contract." }
+    # The existing inline policy is already near the 10,240-character role
+    # limit. Keep cutover permissions in one separately owned managed policy.
+    Ensure-AccountCutoverManagedPolicy -PolicyJson $cutoverPolicy -RoleName $roleName
     $developmentConverger = Join-Path (Get-Item $PSScriptRoot).Parent.FullName "converge-api-development-oidc.ps1"
     $convergerAwsProfile = if ($env:AWS_PROFILE) {
         [string]$env:AWS_PROFILE
@@ -806,10 +870,11 @@ function Ensure-GitHubActionsDeployIAM {
             Sort-Object -Unique
     )
     if (
-        $attachedArns.Count -ne 1 -or
-        $attachedArns[0] -ne $developmentPolicyArn
+        ($attachedArns -join "`n") -cne ((@(
+            $developmentPolicyArn, "arn:aws:iam::$($script:AccountId):policy/academy-gha-account-cutover"
+        ) | Sort-Object) -join "`n")
     ) {
-        throw "GitHub Actions role must have exactly the owned development managed policy attached."
+        throw "GitHub Actions role must have exactly the owned development and account-cutover managed policies attached."
     }
     Write-Ok "GitHub Actions deploy IAM converged with exact inline and attached policy inventory"
 }

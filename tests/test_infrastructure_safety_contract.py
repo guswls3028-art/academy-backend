@@ -260,8 +260,9 @@ def test_shared_mutation_lock_uses_one_ssot_table_and_owner_everywhere() -> None
     assert f"ACADEMY_DEPLOY_LOCK_TABLE: {table}" in weekly
     assert f"table/{table}" in iam
     assert 'attribute_not_exists(videoId) OR #ttl < :now' in lock
-    assert '"#owner = :owner"' in lock
-    assert '"#owner = :owner AND #ttl >= :now"' in lock
+    assert '#owner = :owner AND attribute_not_exists(#window)' in lock
+    assert '#owner = :owner AND #ttl >= :now' in lock
+    assert 'SET #ttl = if_not_exists(#windowTtl, :expires)' in lock
     assert "ACADEMY_DEPLOY_LOCK_OWNER: ci-deploy:${{ github.run_id }}:${{ github.run_attempt }}" in deploy
     assert "ACADEMY_DEPLOY_LOCK_OWNER: weekly-cleanup:${{ github.run_id }}:${{ github.run_attempt }}" in weekly
     assert deploy.count("deployment_lock.py renew") >= 7

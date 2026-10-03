@@ -40,6 +40,12 @@ pwsh scripts/v1/verify.ps1 -AwsProfile default
 실패 시 즉시 중단되고, 실패 지점·명령·로그 경로를 출력. 로그는 `logs/v1/YYYYMMDD-HHMMSS-verify.log`.
 production backend deploy/worker 변경 후에는 `run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -WriteReport`와 `run-deploy-verification.ps1 -AwsProfile default`를 이어서 실행한다.
 
+계정 잠금 순서 전환은 `account_write_cutover.py`의 plan/open/drain/close를 정식
+workflow의 post-preprod 승인과 공유 잠금 안에서 실행한다. 일반 호환 후보에는
+창을 열지 않는다. 중단된 창의 잠금을 지우거나 CI 환경값을 위장해 수동 재개하지
+않는다. 정확한 영향 범위·복구·IAM owner는
+[배포 방식의 일회성 전환](../../docs/operations/deployment-modes.md#계정-잠금-순서-변경의-일회성-전환)을 따른다.
+
 ### 공용 Alimtalk sender 정합화
 
 API와 Messaging worker의 공용 Solapi 설정을 공급자의 유일 ACTIVE sender와

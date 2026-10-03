@@ -1,7 +1,8 @@
 # apps/shared/contracts/ai_job.py
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
+from datetime import datetime
 from typing import Any, Dict, Literal, Optional
 import uuid
 from ._common import contract_from_json, contract_to_json, utc_now_iso
@@ -60,6 +61,9 @@ class AIJob:
     # 추적
     created_at: str = ""
 
+    # Runtime-only: assigned from the committed DB claim, never from an envelope.
+    claim_locked_at: Optional[datetime] = field(default=None, repr=False, compare=False)
+
     @staticmethod
     def new(
         *,
@@ -81,6 +85,7 @@ class AIJob:
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
+        d.pop("claim_locked_at", None)
         if d["payload"] is None:
             d["payload"] = {}
         return d

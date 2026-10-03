@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .namespace_lock import lock_student_ps_namespaces
+
 
 def find_parent_account(
     *,
@@ -18,6 +20,16 @@ def find_parent_account(
     )
 
 
+def find_parent_account_user(
+    *,
+    tenant: Any,
+    parent_phone: str,
+) -> Any | None:
+    from apps.domains.parents.services import find_parent_account_user as _find_user
+
+    return _find_user(tenant=tenant, parent_phone=parent_phone)
+
+
 def ensure_parent_account_for_student(
     *,
     tenant: Any,
@@ -27,6 +39,7 @@ def ensure_parent_account_for_student(
     initial_password_mode: str | None = None,
     initial_password_hash: str | None = None,
     initial_password_notice: str | None = None,
+    locked_user_ids: set[int] | frozenset[int] | None = None,
 ) -> Any:
     from apps.domains.parents.services import ensure_parent_account_for_student as _ensure_parent_account
 
@@ -38,6 +51,7 @@ def ensure_parent_account_for_student(
         initial_password_mode=initial_password_mode,
         initial_password_hash=initial_password_hash,
         initial_password_notice=initial_password_notice,
+        locked_user_ids=locked_user_ids,
     )
 
 
@@ -99,11 +113,42 @@ def update_inventory_student_ps(*, tenant: Any, old_ps: str, new_ps: str) -> Non
     InventoryFile.objects.filter(tenant=tenant, student_ps=old_ps).update(student_ps=new_ps)
 
 
+def inventory_student_ps_metadata_exists(*, tenant_id: int, ps_number: str) -> bool:
+    from apps.domains.inventory.models import InventoryFile, InventoryFolder
+
+    filters = {
+        "tenant_id": int(tenant_id),
+        "scope": "student",
+        "student_ps": ps_number,
+    }
+    return InventoryFolder.objects.filter(**filters).exists() or InventoryFile.objects.filter(
+        **filters
+    ).exists()
+
+
+def student_inventory_namespace_is_attributable(
+    *,
+    tenant_id: int,
+    student_id: int,
+    ps_number: str,
+) -> bool:
+    from apps.support.inventory.student_dependencies import (
+        student_storage_namespace_has_legacy_conflict,
+    )
+
+    return not student_storage_namespace_has_legacy_conflict(
+        tenant_id=tenant_id,
+        student_id=student_id,
+        ps_number=ps_number,
+    )
+
+
 def delete_submission_storage_for_permanent_delete(
     *,
     tenant_id: int,
     submission_ids: list[int],
     wrong_note_pdf_ids: list[int] | tuple[int, ...] = tuple(),
+    inventory_file_ids: list[int] | tuple[int, ...] = tuple(),
 ) -> tuple[int, ...]:
     from apps.domains.submissions.services.lifecycle import (
         delete_submission_storage_for_permanent_delete as _delete_submission_storage,
@@ -113,6 +158,7 @@ def delete_submission_storage_for_permanent_delete(
         tenant_id=tenant_id,
         submission_ids=submission_ids,
         wrong_note_pdf_ids=wrong_note_pdf_ids,
+        inventory_file_ids=inventory_file_ids,
     )
 
 
@@ -136,6 +182,23 @@ def submission_storage_cleanup_status_counts(
         elif status != SubmissionStorageCleanupIntent.Status.CLEANED:
             pending += 1
     return pending, failed
+
+
+def inventory_file_ids_with_cleanup_intents(
+    *,
+    tenant_id: int,
+    inventory_file_ids: list[int] | tuple[int, ...],
+    intent_ids: tuple[int, ...],
+) -> tuple[int, ...]:
+    from apps.domains.submissions.services.lifecycle import (
+        inventory_file_ids_with_cleanup_intents as _owned_inventory_file_ids,
+    )
+
+    return _owned_inventory_file_ids(
+        tenant_id=tenant_id,
+        inventory_file_ids=inventory_file_ids,
+        intent_ids=intent_ids,
+    )
 
 
 def process_pending_submission_storage_cleanup(

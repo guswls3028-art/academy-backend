@@ -154,11 +154,10 @@ $attached = Invoke-AwsJson @(
     "--role-name", $roleName,
     "--output", "json"
 )
-if (
-    @($attached.AttachedPolicies).Count -ne 1 -or
-    [string]$attached.AttachedPolicies[0].PolicyArn -ne $policyArn
-) {
-    throw "Development GitHub OIDC policy must be the role's only attached managed policy."
+$expectedAttached = @($policyArn, "arn:aws:iam::$($script:AccountId):policy/academy-gha-account-cutover") | Sort-Object
+$actualAttached = @($attached.AttachedPolicies | ForEach-Object { [string]$_.PolicyArn } | Sort-Object)
+if (($actualAttached -join "`n") -cne ($expectedAttached -join "`n")) {
+    throw "GitHub OIDC requires exactly the owned development and account-cutover managed policies."
 }
 
 Write-Host (

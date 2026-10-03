@@ -20,6 +20,11 @@ def normalize_parent_phone(parent_phone: str) -> str:
     return digits
 
 
+def parent_account_username(*, tenant, parent_phone: str) -> str:
+    phone = normalize_parent_phone(parent_phone)
+    return f"p_{tenant.id}_{phone}"
+
+
 def _assert_parent_login_identity_available(
     *,
     tenant,
@@ -58,6 +63,7 @@ def ensure_parent_account_for_student(
     initial_password_hash: str | None = None,
     initial_password_notice: str | None = None,
     initial_password_mode: str | None = None,
+    locked_user_ids: set[int] | frozenset[int] | None = None,
 ) -> ParentAccountEnsureResult:
     """
     학부모 전화번호로 기존 계정을 찾거나 명시적 자격 증명으로 새 계정을 만든다.
@@ -91,20 +97,39 @@ def ensure_parent_account_for_student(
 
     User = get_user_model()
     # tenant 내 유일한 학부모 식별: username = p_{tenant_id}_{phone}
-    parent_username = f"p_{tenant.id}_{parent_phone}"
+    parent_username = parent_account_username(tenant=tenant, parent_phone=parent_phone)
 
     # A concurrent enrollment can discover the same new phone before either
     # transaction commits.  The unique username/parent constraints serialize
     # the collision; retry once after the losing savepoint rolls back.
     for attempt in range(2):
+        created_user_id = None
         try:
             with transaction.atomic():
+                existing_user = find_parent_account_user(
+                    tenant=tenant, parent_phone=parent_phone,
+                )
+                user = None
+                reference_changed = "학부모 계정 연결이 변경되었습니다. 다시 시도해 주세요."
+                if existing_user is not None:
+                    if existing_user.tenant_id != tenant.id:
+                        raise ValueError("학부모 계정의 테넌트가 일치하지 않습니다.")
+                    if locked_user_ids is not None and existing_user.pk not in locked_user_ids:
+                        raise ValueError(reference_changed)
+                    user = User.objects.select_for_update().filter(
+                        pk=existing_user.pk, tenant=tenant,
+                    ).first()
+                    if user is None:
+                        raise ValueError(reference_changed)
                 parent = (
                     Parent.objects.select_for_update()
                     .filter(tenant=tenant, phone=parent_phone)
                     .first()
                 )
                 if parent and parent.user_id:
+                    if user is None or parent.user_id != user.pk:
+                        raise ValueError(reference_changed)
+                    parent.user = user
                     _assert_parent_login_identity_available(
                         tenant=tenant,
                         phone=parent_phone,
@@ -139,12 +164,10 @@ def ensure_parent_account_for_student(
                         password_notice=password_notice if credentials_initialized else None,
                     )
 
-                user = (
-                    User.objects.select_for_update()
-                    .filter(username=parent_username)
-                    .first()
-                )
-                if user is None:
+                current_user = User.objects.filter(username=parent_username).first()
+                if current_user is None:
+                    if user is not None:
+                        raise ValueError(reference_changed)
                     resolve_new_credentials()
                     if not initial_pw and not password_hash:
                         raise ValueError(
@@ -161,9 +184,12 @@ def ensure_parent_account_for_student(
                         name=user_name,
                         tenant=tenant,
                     )
-                elif user.tenant_id != tenant.id:
+                    created_user_id = user.pk
+                elif current_user.tenant_id != tenant.id:
                     raise ValueError("학부모 계정의 테넌트가 일치하지 않습니다.")
                 else:
+                    if user is None or current_user.pk != user.pk:
+                        raise ValueError(reference_changed)
                     _assert_parent_login_identity_available(
                         tenant=tenant,
                         phone=parent_phone,
@@ -205,6 +231,8 @@ def ensure_parent_account_for_student(
                     user=user,
                     role="parent",
                 )
+                if created_user_id is not None and isinstance(locked_user_ids, set):
+                    locked_user_ids.add(created_user_id)
                 return ParentAccountEnsureResult(
                     parent=parent,
                     credentials_initialized=credentials_initialized,
@@ -227,12 +255,23 @@ def find_parent_account(*, tenant, parent_phone: str) -> Parent | None:
     )
 
 
+def find_parent_account_user(*, tenant, parent_phone: str):
+    """Read the existing linked or orphan account without creating credentials."""
+    parent = find_parent_account(tenant=tenant, parent_phone=parent_phone)
+    if parent and parent.user_id:
+        return parent.user
+    return get_user_model().objects.filter(
+        tenant=tenant,
+        username=parent_account_username(tenant=tenant, parent_phone=parent_phone),
+    ).first()
+
+
 def parent_account_needs_password(*, tenant, parent_phone: str) -> bool:
     """Return whether this identity lacks usable credentials and needs an explicit password."""
     phone = normalize_parent_phone(parent_phone)
     parent = find_parent_account(tenant=tenant, parent_phone=phone)
     if parent and parent.user_id:
         return not parent.user.has_usable_password()
-    username = f"p_{tenant.id}_{phone}"
+    username = parent_account_username(tenant=tenant, parent_phone=phone)
     user = get_user_model().objects.filter(tenant=tenant, username=username).first()
     return user is None or not user.has_usable_password()

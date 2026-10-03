@@ -403,14 +403,20 @@ pwsh scripts/v1/initialize-api-development.ps1 -AwsProfile <least-privilege-prof
 manifest의 API/Tools digest를 사용해 첫 개발 인스턴스를 만든다. 인스턴스는 사용자가
 명시적으로 폐기하기 전까지 유지한다.
 
-계정 루트 ARN은 `Assert-AwsMutationIdentity`에서 차단한다. CI와 일반 배포는
-`academy-gha-ecr-build` GitHub OIDC 역할만 사용하며 장기 AWS access key를 요구하지 않는다.
+`Assert-AwsMutationIdentity`는 명시적으로 배정된 수동 작업에서 기존 계정 루트
+인증을 경고와 함께 허용한다. 이를 배포의 전역 금지나 게이트 우회로 해석하지 않는다.
+CI와 일반 자동 배포는 `academy-gha-ecr-build` GitHub OIDC 역할을 사용하며 장기
+AWS access key를 요구하지 않는다. 수동 작업도 최신 clean main, 공유 잠금과 검증을 유지한다.
 개발 권한은 기존 운영 inline 정책과 분리된 고객 관리형
 `academy-gha-development-deploy` 정책으로 관리하며
 `converge-api-development-oidc.ps1`이 backend main-ref와 승인된 production
 environment 두 subject만 허용하는 trust와 정책 readback을 강제한다. 환경 없는
 development job은 main-ref subject를 사용하고, production environment가 붙은
 lock/mutation job은 environment subject를 사용한다.
+역할에 연결된 관리형 정책은 development와 별도 운영 전환 정책
+`academy-gha-account-cutover` 두 개로 정확히 검증한다. 운영 전환 권한은 개발 정책에
+섞지 않는다. `Ensure-GitHubActionsDeployIAM`이 두 정책을 소유 순서대로 수렴한 뒤
+전체 inventory를 readback하며, 개발 정책만 수렴하는 스크립트는 운영 정책을 변경하지 않는다.
 
 ## 릴리스 순서
 

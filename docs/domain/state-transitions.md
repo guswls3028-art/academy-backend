@@ -685,34 +685,42 @@ rejected → {} (종단)
 
 ### B11. AIJobModel
 
-**모델:** `apps/domains/ai/models.py`
-**상태 필드:** `status` (CharField)
+**모델:** `apps/domains/ai/models.py`. 저장소와 worker 계약은
+`academy/adapters/db/django/repositories_ai.py` 및
+`academy/application/use_cases/ai/process_ai_job_from_sqs.py`가 소유한다.
 
-#### 상태 목록
+- `PENDING/RETRYING → RUNNING`은 tenant 검증과 작업 선점 뒤 실행한다.
+  만료된 `RUNNING` lease를 다시 선점하면 새 `locked_at`이 실행의 식별자가 된다.
+- 완료는 `RUNNING → DONE` SQL 조건부 쓰기다. 실패는 실행 중인 claim 또는
+  선점 전 `PENDING/RETRYING`에서만 허용한다. 오류 상태는 `status_resolver`의
+  job type/tier 정책을 유지하며 basic/lite의 `DONE + error`도 실패 결과다.
+- 먼저 커밋한 종단 결과가 승자다. 반대 결과는 상태·첫 오류·첫 결과를 바꾸지
+  못한다. 동일 결과 재전달은 빠진 완료 시각/결과 metadata와 공개 cache만
+  복구하며 이미 저장된 결과·오류를 덮어쓰지 않는다.
+- SQS worker는 선점한 `locked_at`을 완료·실패에 전달한다. 다른 worker가 새
+  lease를 얻었다면 이전 실행은 종단 쓰기·도메인 반영·임시 파일 정리를 하지
+  않는다. 재배달은 DB에 저장된 종단 상태·오류·결과로 callback을 재시도한다.
+- terminal Redis 공개 상태는 DB commit 뒤 발행한다. callback 실패나 SQS
+  삭제 실패는 재배달로 회복하며 추론을 다시 실행하지 않는다. 실제 삭제
+  성공을 확인한 기존 ACK 기록 계약을 유지한다.
+- tenant가 누락되거나 다른 선점 전 메시지는 기존 fail-closed 실패 정책을
+  유지한다. 같은 잘못된 메시지가 실행 중인 정상 claim을 실패시킬 수 없다.
+  wrong-note의 명시적인 tenant preflight 거부는 PDF를 건드리지 않고 ACK한다.
+- Excel 등록은 worker의 DB claim을 in-process contract로 전달한다. SQS JSON은
+  claim을 발행하거나 수용하지 않는다. 등록 transaction에서 job→학생/수강
+  순서로 tenant/type/RUNNING/claim을 잠근 뒤 기존 학생 정책으로 등록·pending
+  notice를 저장하고 같은 claim으로 완료한다. 이전 실행은 등록/원본 R2 삭제를
+  하지 않는다. 실행마다 별도의 로컬 파일을 사용한다. 서비스가 먼저 커밋한
+  완료도 worker는 DB 승자 payload로 callback/ACK하며 새 RUNNING은 ACK하지 않는다.
+- Excel 암호화 결과/자격 정보 공개 제한, PPT의 내부 R2 key 공개 제한과 각
+  도구의 terminal payload 정리는 그대로 적용한다. 기존 데이터의 상태나
+  사용자 작성·승인 점수/PDF를 일괄 변경하지 않는다.
 
-| 상태 | 의미 | 활성 여부 |
-|------|------|----------|
-| `PENDING` | 대기 중 | 활성 |
-| `VALIDATING` | 입력 검증 중 | (미사용 — orphan) |
-| `RUNNING` | 실행 중 | 활성 |
-| `DONE` | 완료 | 종단 |
-| `FAILED` | 실패 | 종단 |
-| `REJECTED_BAD_INPUT` | 입력 거부 | 종단 |
-| `FALLBACK_TO_GPU` | GPU 폴백 | (미사용 — orphan) |
-| `RETRYING` | 재시도 중 | (미사용 — orphan) |
-| `REVIEW_REQUIRED` | 검토 필요 | (미사용 — orphan) |
-
-#### 허용 전이 (실제 사용되는 것만)
-
-```
-PENDING → {RUNNING}
-RUNNING → {DONE, FAILED}
-```
-
-#### 불변조건
-
-1. **종단 상태 불변:** DONE, FAILED, REJECTED_BAD_INPUT에 도달한 job은 상태 변경 불가
-2. **하트비트:** RUNNING 상태에서 lease 만료 감지
+검증: `tests/test_ai_job_claim_fence.py`,
+`tests/test_ai_job_terminal_transitions_pg.py`의 실제 PostgreSQL 완료/실패 경합,
+`apps/domains/ai/tests/test_ai_sqs_worker_callback.py`, tenant/worker routing 검사 및
+`tests/test_excel_worker_claim_fence.py`의 실제 계정 그래프/pending notice와 PG lease 경합.
+SQLite 보조 검사는 PostgreSQL 경합 검증을 대체하지 않는다.
 
 ---
 
@@ -880,6 +888,15 @@ EXPIRED → {} (종단)
 | `DONE` | 완료 |
 | `FAILED` | 실패 |
 
+`PENDING/RUNNING → DONE/FAILED`는 tenant·정확한 PDF 생성 row와 기대 storage
+key를 확인하는 조건부 publication이다. `DONE`과 `FAILED`는 이후 callback으로
+바뀌지 않는다. stale 생성 재시도는 기존 row/파일/오류를 보존하고 새 row와
+AI job을 만든다. 늦은 이전 generation 결과가 새 PDF 또는 기존 실패의 파일
+URL을 발행하지 않는다. 정상 생성·상태 조회·다운로드와 실패 재시도의 owner는
+[results README](../../apps/domains/results/README.md#wrong-note-pdf--hwpx)다.
+검증은 `TestC4WrongNotePkCollisionGuard`의 생성→worker→callback→status reload
+및 새 generation 다운로드, duplicate/tenant/storage-key 경계로 수행한다.
+
 ---
 
 ### B18. NotificationLog
@@ -1019,7 +1036,7 @@ true`가 필요하다. `secession_scope=session`은 해당 차시 등록·시험
 ### C11. INFO — AIJobModel Orphan 상태
 
 - **위치:** `apps/domains/ai/models.py`
-- **Orphan:** VALIDATING, FALLBACK_TO_GPU, RETRYING, REVIEW_REQUIRED — 런타임 코드에서 설정되지 않음
+- **호환 상태:** VALIDATING은 실행 진입으로 사용하지 않는다. RETRYING은 재선점 입력, FALLBACK_TO_GPU/REVIEW_REQUIRED는 종단 입력으로 해석하며 기존 row는 보존한다. 실제 오류 전이는 status_resolver 정책을 따른다.
 
 ---
 

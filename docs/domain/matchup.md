@@ -43,6 +43,17 @@ callback 누락·만료 작업의 복구 helper는 정확한 tenant·문서·작
 `tests/test_matchup_document_read_boundaries.py`에서 확인한다. 명시적 만료 작업
 복구의 기존 회귀 검증은 `tests/test_matchup_reconcile_stale_ai_job.py`로 유지한다.
 
+운영용 `reconcile_stale_ai_jobs`는 기본 dry-run이며, source 조회·재시도는
+AI job tenant로 제한한다. tenant가 없으면 수동 검토로 남기고 실행하지 않는다.
+실행은 dry-run의 정확한 `--job-id`와 `--expected-updated-at`이 필요하다.
+job→source의 기존 잠금 순서 아래 tenant/type/source/상태/updated_at/lease/worker와
+source 상태·현재 job pointer를 다시 확인한다. 조회 뒤 heartbeat/재선점/원본
+상태가 바뀌었으면 아무 변경 없이 취소한다. 유효한 expired processing 복구만
+새 retry를 예약하고 수동 자르기·승인 자료를 유지한다. terminal cache는 commit
+뒤 발행한다. 이전 worker의 `locked_at` 완료 fence가 새 claim을 보호한다.
+이 명령의 직접 회귀는 `apps/core/tests/test_reconcile_stale_ai_jobs.py`이며,
+검사나 source publication만으로 운영 명령을 실행하거나 기존 데이터를 바꾸지 않는다.
+
 ### 시험 회차·연도와 직접 자르기
 
 교직원은 업로드에서 시험 회차를 `1학기 중간고사`, `1학기 기말고사`,

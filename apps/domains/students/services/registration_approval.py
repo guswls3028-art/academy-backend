@@ -12,8 +12,12 @@ from apps.core.services.login_identifier import normalize_login_identifier
 from apps.core.services.password import adopt_password_hash
 from apps.core.services.account_credentials import account_notice_password, recover_password, remember_account_password
 from apps.support.students.lifecycle_dependencies import (
+    find_parent_account,
     locked_parent_account_by_phone_for_registration,
     locked_parent_account_for_registration,
+)
+from apps.support.students.namespace_lock import (
+    lock_student_creation_tenant_reference,
 )
 
 from ..models import Student, StudentRegistrationRequest
@@ -152,9 +156,9 @@ def _lock_deleted_recovery_graph(
         )
 
     parent_phone = phone_digits(reg.parent_phone)
-    parent = locked_parent_account_by_phone_for_registration(
-        tenant_id=tenant.id,
-        phone=parent_phone,
+    parent = find_parent_account(
+        tenant=tenant,
+        parent_phone=parent_phone,
     )
     if parent is None or parent.user_id is None:
         raise RegistrationApprovalError(
@@ -173,6 +177,17 @@ def _lock_deleted_recovery_graph(
     if student_user is None or parent_user is None:
         raise RegistrationApprovalError(
             "선택한 학생·학부모 로그인 계정 연결을 먼저 확인해 주세요.",
+            status_code=409,
+        )
+
+    parent_snapshot = parent
+    parent = locked_parent_account_by_phone_for_registration(
+        tenant_id=tenant.id,
+        phone=parent_phone,
+    )
+    if parent is None or (parent.id, parent.user_id) != (parent_snapshot.id, parent_user.id):
+        raise RegistrationApprovalError(
+            "선택한 학부모 계정 연결이 승인 중 변경되었습니다. 다시 확인해 주세요.",
             status_code=409,
         )
 
@@ -412,7 +427,7 @@ def _resolve_existing_student(*, tenant, reg: StudentRegistrationRequest) -> Stu
     candidates = list(
         Student.objects.filter(tenant=tenant)
         .filter(identity_query)
-        .values("id", "user_id", "parent_id", "deleted_at")
+        .values("id", "user_id", "parent_id", "parent__user_id", "deleted_at")
         .order_by("id")[:3]
     )
     deleted = [candidate for candidate in candidates if candidate["deleted_at"] is not None]
@@ -450,18 +465,10 @@ def _resolve_existing_student(*, tenant, reg: StudentRegistrationRequest) -> Stu
 
     candidate = candidates[0]
     User = get_user_model()
-    # Global graph lock order is Parent -> related Users by id -> Student.
-    # Parent account ensure uses Parent -> User, while #277 requires every
-    # persisted student User to be locked before its Student row.
-    parent = None
-    if candidate["parent_id"]:
-        parent = locked_parent_account_for_registration(
-            tenant_id=tenant.id,
-            parent_id=candidate["parent_id"],
-        )
+    # Acquire the complete User set before Parent or Student row locks.
     user_ids = {candidate["user_id"]}
-    if parent is not None and parent.user_id:
-        user_ids.add(parent.user_id)
+    if candidate["parent__user_id"]:
+        user_ids.add(candidate["parent__user_id"])
     locked_users = {
         user.id: user
         for user in User.objects.select_for_update()
@@ -474,6 +481,17 @@ def _resolve_existing_student(*, tenant, reg: StudentRegistrationRequest) -> Stu
             "기존 학생 로그인 계정 연결을 먼저 확인해 주세요.",
             status_code=409,
         )
+    parent = None
+    if candidate["parent_id"]:
+        parent = locked_parent_account_for_registration(
+            tenant_id=tenant.id,
+            parent_id=candidate["parent_id"],
+        )
+        if parent is None or parent.user_id != candidate["parent__user_id"]:
+            raise RegistrationApprovalError(
+                "기존 학부모 계정 연결이 승인 중 변경되었습니다. 다시 확인해 주세요.",
+                status_code=409,
+            )
     # Keep nullable Parent/User joins out of the locking query; PostgreSQL
     # rejects FOR UPDATE on the nullable side of an outer join.
     student = Student.objects.select_for_update().get(pk=candidate["id"])
@@ -501,9 +519,9 @@ def _resolve_existing_student(*, tenant, reg: StudentRegistrationRequest) -> Stu
 
 def _validate_unlinked_account_graph(*, tenant, reg: StudentRegistrationRequest) -> None:
     registration_parent_phone = phone_digits(reg.parent_phone)
-    parent = locked_parent_account_by_phone_for_registration(
-        tenant_id=tenant.id,
-        phone=registration_parent_phone,
+    parent = find_parent_account(
+        tenant=tenant,
+        parent_phone=registration_parent_phone,
     )
     student_phone = phone_digits(reg.phone)
     same_phone_user_ids = []
@@ -522,6 +540,20 @@ def _validate_unlinked_account_graph(*, tenant, reg: StudentRegistrationRequest)
         .filter(pk__in=user_ids)
         .order_by("id")
     }
+    parent_snapshot = parent
+    parent = locked_parent_account_by_phone_for_registration(
+        tenant_id=tenant.id,
+        phone=registration_parent_phone,
+    )
+    if (
+        (parent.id, parent.user_id) if parent else None
+    ) != (
+        (parent_snapshot.id, parent_snapshot.user_id) if parent_snapshot else None
+    ):
+        raise RegistrationApprovalError(
+            "기존 학부모 계정 연결이 승인 중 변경되었습니다. 다시 확인해 주세요.",
+            status_code=409,
+        )
     locked_parent_user = None
     if parent and parent.user_id:
         locked_parent_user = locked_users.get(parent.user_id)
@@ -591,6 +623,7 @@ def approve_registration_request(
     shape and message delivery remain caller concerns.
     """
     with transaction.atomic():
+        lock_student_creation_tenant_reference(tenant_id=tenant.id)
         if not is_student_self_registration_enabled(tenant):
             raise RegistrationApprovalError(
                 "이 학원은 운영정책상 학생 회원가입을 사용하지 않습니다.",
@@ -691,6 +724,7 @@ def resolve_deleted_registration_request(
     conflict response; no automatic winner is inferred when duplicates exist.
     """
     with transaction.atomic():
+        lock_student_creation_tenant_reference(tenant_id=tenant.id)
         if not is_student_self_registration_enabled(tenant):
             raise RegistrationApprovalError(
                 "이 학원은 운영정책상 학생 회원가입을 사용하지 않습니다.",
