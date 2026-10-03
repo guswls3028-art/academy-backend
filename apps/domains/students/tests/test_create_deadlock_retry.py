@@ -12,7 +12,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.core.models import Tenant, TenantMembership
 from apps.core.services.account_credentials import remember_account_password
-from apps.domains.parents.models import Parent
+from apps.domains.parents.test_support import create_parent_account_fixture
 from apps.domains.students.models import Student
 from apps.domains.students.views import student_views
 
@@ -33,14 +33,11 @@ class _CreateFixture:
         self.parent_secret = secrets.token_urlsafe(24)
         self.student_secret = secrets.token_urlsafe(24)
         User = get_user_model()
-        self.parent_user = User.objects.create_user(
-            username=f"p_{self.tenant.pk}_{self.parent_phone}", tenant=self.tenant,
-            phone=self.parent_phone, name="QA Parent", password=self.parent_secret,
-        )
-        self.parent = Parent.objects.create(
-            tenant=self.tenant, user=self.parent_user, phone=self.parent_phone, name="QA Parent",
-        )
-        TenantMembership.ensure_active(tenant=self.tenant, user=self.parent_user, role="parent")
+        self.parent = create_parent_account_fixture(
+            tenant=self.tenant, parent_phone=self.parent_phone,
+            student_name="QA", initial_password=self.parent_secret,
+        ).parent
+        self.parent_user = self.parent.user
         actor = User.objects.create_user(
             username="qa-create-admin", tenant=self.tenant, is_staff=True, is_superuser=True,
         )
@@ -217,7 +214,7 @@ class StudentCreateMixedParentPostgresTests(_CreateFixture, TransactionTestCase)
             try:
                 configure("legacy", "2s")
                 with transaction.atomic():
-                    Parent.objects.select_for_update().get(pk=self.parent.pk)
+                    type(self.parent).objects.select_for_update().get(pk=self.parent.pk)
                     parent_locked.set()
                     if not user_locked.wait(15):
                         raise AssertionError("current User lock was not observed")
