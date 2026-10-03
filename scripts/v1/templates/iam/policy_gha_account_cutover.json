@@ -1,0 +1,38 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AccountCutoverRead",
+      "Effect": "Allow",
+      "Action": ["elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DescribeListeners", "elasticloadbalancing:DescribeRules", "elasticloadbalancing:DescribeTags"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AccountCutoverQueuePolicy",
+      "Effect": "Allow",
+      "Action": ["sqs:GetQueueUrl", "sqs:GetQueueAttributes", "sqs:SetQueueAttributes"],
+      "Resource": ["__AI_QUEUE_ARN__", "__TOOLS_QUEUE_ARN__"]
+    },
+    {
+      "Sid": "AccountCutoverCreateRule",
+      "Effect": "Allow",
+      "Action": "elasticloadbalancing:CreateRule",
+      "Resource": "__LISTENER_ARN__",
+      "Condition": {"StringEquals": {"aws:RequestTag/AcademyCutover": "account-write-v1"}}
+    },
+    {
+      "Sid": "AccountCutoverTagOnCreate",
+      "Effect": "Allow",
+      "Action": "elasticloadbalancing:AddTags",
+      "Resource": "__RULE_ARN_PREFIX__/*",
+      "Condition": {"StringEquals": {"elasticloadbalancing:CreateAction": "CreateRule", "aws:RequestTag/AcademyCutover": "account-write-v1"}}
+    },
+    {
+      "Sid": "AccountCutoverDeleteOwnRule",
+      "Effect": "Allow",
+      "Action": "elasticloadbalancing:DeleteRule",
+      "Resource": "__RULE_ARN_PREFIX__/*",
+      "Condition": {"StringEquals": {"aws:ResourceTag/AcademyCutover": "account-write-v1"}}
+    }
+  ]
+}

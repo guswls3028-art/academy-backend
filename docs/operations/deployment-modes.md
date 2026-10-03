@@ -52,6 +52,37 @@ API를 바꾸는 릴리스는 개발·격리 preprod 검증 뒤 `run-migrations`
 운영 전환 확인 전에는 production migration과 그에 의존하는 API/worker 교체가
 진행되지 않으며, 개발 검증이나 임시 preprod 정리를 이 승인 뒤로 미루지 않는다.
 
+### 계정 잠금 순서 변경의 일회성 전환
+
+`account_write_cutover.py`는 기존 성공 manifest의 API/AI/Tools **각 이미지 tag의
+source**가 계정·claim 전환 기준 commit을 포함하는지 판정한다. 이미 모두 포함한
+호환 릴리스에는 제한을 열지 않는다. manifest 최상위 SHA만으로 오래된 재사용
+이미지의 호환성을 추정하지 않는다. 수신 권한 오류를 빈 큐로 오인하지 않는
+ReceiveMessage backoff 수정은 이전 운영 워커에 먼저 정상 배포되어 있어야 한다.
+
+전환이 필요한 후보만 post-preprod 승인 뒤 동일 GitHub run의 공유 잠금 안에서
+정확한 계정 변경 HTTP action에 ALB 503 응답을 적용하고 AI/Tools 두 큐의
+ReceiveMessage를 일시 제한한다. 일반 조회·로그인·학습·성적·출결·영상 재생과
+메시징 큐는 유지한다. 계정 생성·수정·삭제·복원·가입 승인·비밀번호 변경/복구는
+잠시 재시도가 필요하다. account-recovery dispatch는 본문 mode를 ALB가 구분할 수
+없으므로 해당 POST의 아이디 찾기도 이 범위에 포함한다. broad 학생 경로 wildcard,
+테넌트 maintenance flag, 큐 purge/강제 실패는 사용하지 않는다.
+
+이미 통과한 HTTP 요청은 이전 API에서 완료되고 새 account 요청은 계속 제한한다.
+스키마 변경 없는 이 전환에서 별도 HTTP in-flight ledger를 추가하지 않는다.
+워커는 새 수신 거부 이후의 실제 single-loop backoff·실행 상태·이미지와 진행 작업
+완료를 확인한다. 큐 approximate 0만으로 drain을 통과시키지 않는다. 기존 healthy
+rolling 후 이전 API/변경 워커의 퇴역과 전체 후보 런타임을 확인한 뒤에만 제한을
+해제한다. SendMessage/DeleteMessage/ChangeMessageVisibility와 종단 처리는 유지한다.
+
+계획은 첫 mutation 전에 artifact와 기존 deployment lock item에 저장한다. 열린
+`accountWindow`는 동일 잠금을 pin하며 일반 renew가 이를 만료시키거나 release가
+삭제할 수 없다. `close-account-window`는 일부 open 실패에도 실행하며, 변경 전
+전체 이전 런타임 또는 검증된 전체 후보 런타임일 때만 **해당 run의** rule/Sid를
+복구한다. 혼재·다른 작업의 정책 변경·불명확한 결과는 덮어쓰지 않는다. 실제
+복구 readback 뒤 pin을 해제하고 성공 manifest를 승격한다. 취소/runner 종료가
+finally 실행을 보장하지 않으므로 미복구 창은 성공으로 기록하지 않는다.
+
 ## 0. 프론트엔드 배포
 
 프론트엔드(`frontend/` 레포)는 백엔드와 완전히 독립된 배포 파이프라인을 가진다.
@@ -130,7 +161,7 @@ main에 push하면 아래 후보 검증 절차를 시작한다. 모든 필수 ga
     계속하므로, 이전 attempt의 lock 해제 뒤에도 잠금 없이 compatibility
     alias를 변경하지 않는다.
 
-**IAM:** 일반 CI는 장기 access key가 아니라 backend `main` ref와 승인된 GitHub `production` environment subject만 정확히 신뢰하는 GitHub OIDC 역할 `academy-gha-ecr-build`을 사용한다. 환경 없는 build/development/preprod job은 main-ref subject를, production environment로 보호되는 job은 environment subject를 사용한다. production inline policy와 별도 관리형 development policy `academy-gha-development-deploy`를 저장소가 함께 소유하며, attached policy inventory가 정확히 그 하나인지 readback한다. development EC2는 `academy-api-development-role`, preprod EC2는 `academy-api-preprod-canary-role`을 사용한다. production mutation은 GitHub `production` environment 승인 뒤 시작한다. 사용자가 해당 run의 배포나 계속 진행을 명시한 경우 operator는 별도 재확인 없이 공식 API로 environment review를 제출하고 승인 readback 뒤 계속한다. 상세 저장소 설정과 정확한 run 범위 규칙은 [github-governance.md](github-governance.md)를 따른다.
+**IAM:** 일반 CI는 장기 access key가 아니라 backend `main` ref와 승인된 GitHub `production` environment subject만 정확히 신뢰하는 GitHub OIDC 역할 `academy-gha-ecr-build`을 사용한다. 환경 없는 build/development/preprod job은 main-ref subject를, production environment로 보호되는 job은 environment subject를 사용한다. production inline policy와 별도 관리형 정책 `academy-gha-development-deploy`, `academy-gha-account-cutover`를 저장소가 소유하며, attached policy inventory가 정확히 두 개인지 readback한다. cutover 정책은 inline 총량 제한 때문에 분리하며 정확한 API HTTPS listener의 태그 지정 rule 생성/삭제와 AI/Tools 두 큐의 정책 읽기/쓰기만 추가한다. 기존 listener/rule 수정, 메시지 수신·삭제·purge 권한은 추가하지 않는다. development EC2는 `academy-api-development-role`, preprod EC2는 `academy-api-preprod-canary-role`을 사용한다. production mutation은 GitHub `production` environment 승인 뒤 시작한다. 사용자가 해당 run의 배포나 계속 진행을 명시한 경우 operator는 별도 재확인 없이 공식 API로 environment review를 제출하고 승인 readback 뒤 계속한다. 상세 저장소 설정과 정확한 run 범위 규칙은 [github-governance.md](github-governance.md)를 따른다.
 
 ---
 

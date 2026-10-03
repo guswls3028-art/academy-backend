@@ -1237,6 +1237,8 @@ jobs:
     name: Run database migrations
     runs-on: ubuntu-latest
     environment: production
+    outputs:
+      cutover_planned: ${{ steps.cutover_plan.outputs.planned }}
     permissions:
       contents: read
       id-token: write
@@ -1249,6 +1251,14 @@ jobs:
     steps:
       - name: Checkout deployment scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Download exact migration and cutover candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ci-build-report
+          path: docs/reports
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
@@ -1259,6 +1269,43 @@ jobs:
 
       - name: Renew shared mutation lock before migration
         run: python3 scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
+
+      - name: Plan the one-time account lock transition
+        id: cutover_plan
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          git show origin/main:docs/reports/release-manifest.latest.json > "$RUNNER_TEMP/account-cutover-previous.json"
+          python3 scripts/v1/release_freshness.py \
+            --candidate-sha "$GITHUB_SHA" \
+            --deployed-sha "$(jq -r .gitSha "$RUNNER_TEMP/account-cutover-previous.json")" \
+            --main-sha "$(git rev-parse origin/main)"
+          python3 scripts/v1/account_write_cutover.py plan \
+            --plan "$RUNNER_TEMP/account-cutover-plan.json" \
+            --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --source "$GITHUB_SHA" \
+            --candidate docs/reports/release-manifest.candidate.json \
+            --previous "$RUNNER_TEMP/account-cutover-previous.json"
+          echo "planned=true" >> "$GITHUB_OUTPUT"
+
+      - name: Preserve the exact cutover plan before opening
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-cutover-plan-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/account-cutover-plan.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Pause only account admission and AI Tools receives
+        run: |
+          python3 scripts/v1/account_write_cutover.py open \
+            --plan "$RUNNER_TEMP/account-cutover-plan.json" \
+            --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --source "$GITHUB_SHA"
+
+      - name: Let already-running worker jobs finish before replacement
+        run: |
+          python3 scripts/v1/account_write_cutover.py drain \
+            --plan "$RUNNER_TEMP/account-cutover-plan.json" \
+            --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --source "$GITHUB_SHA"
 
       - name: Run Django migrate via SSM
         id: migrate
@@ -2114,15 +2161,57 @@ jobs:
   # ============================================================
   # Phase 5: Deploy verification
   # ============================================================
+  close-account-window:
+    name: Restore account admission after runtime convergence
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    needs: [run-migrations, deploy-api, deploy-ai, deploy-tools]
+    if: always() && needs.run-migrations.outputs.cutover_planned == 'true'
+    steps:
+      - name: Checkout exact cutover owner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Download original cutover plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: account-cutover-plan-${{ github.run_attempt }}
+          path: ${{ runner.temp }}
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
+      - name: Restore only this window after exact fleet readback
+        run: |
+          python3 scripts/v1/account_write_cutover.py close \
+            --plan "$RUNNER_TEMP/account-cutover-plan.json" \
+            --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --source "$GITHUB_SHA"
+          python3 scripts/v1/account_write_cutover.py inspect-clear \
+            --plan "$RUNNER_TEMP/account-cutover-plan.json" \
+            --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --source "$GITHUB_SHA"
+      - name: Preserve cutover restoration evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-cutover-restoration-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/account-cutover-plan.json
+          if-no-files-found: error
+          retention-days: 14
+
   verify-deployment:
     name: Verify deployment
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
-    needs: [detect-changes, build-and-push, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video]
+    needs: [detect-changes, build-and-push, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video, close-account-window]
     if: |
       always() && needs.build-and-push.result == 'success' &&
+      (needs.close-account-window.result == 'success' || needs.close-account-window.result == 'skipped') &&
       (needs.deploy-api.result == 'success' || needs.deploy-messaging.result == 'success' || needs.deploy-ai.result == 'success' || needs.deploy-tools.result == 'success' || needs.deploy-video.result == 'success')
     steps:
       - name: Checkout verification scripts
@@ -2646,7 +2735,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    needs: [acquire-production-lock, verify-release-freshness, verify-runtime-iam, build-and-push, verify-api-development, verify-api-preprod, run-migrations, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video, verify-deployment]
+    needs: [acquire-production-lock, verify-release-freshness, verify-runtime-iam, build-and-push, verify-api-development, verify-api-preprod, run-migrations, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video, close-account-window, verify-deployment]
     if: always() && needs.acquire-production-lock.result == 'success'
     steps:
       - name: Checkout lock helper
@@ -2676,7 +2765,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    needs: [detect-changes, run-lint, run-tests, acquire-production-lock, verify-release-freshness, verify-runtime-iam, prepare-build, build-runtime-images, build-and-push, verify-api-development, verify-api-preprod, run-migrations, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video, verify-deployment, release-production-lock]
+    needs: [detect-changes, run-lint, run-tests, acquire-production-lock, verify-release-freshness, verify-runtime-iam, prepare-build, build-runtime-images, build-and-push, verify-api-development, verify-api-preprod, run-migrations, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video, close-account-window, verify-deployment, release-production-lock]
     if: always() && contains(needs.*.result, 'failure')
     steps:
       - name: Configure AWS credentials (OIDC)
@@ -2689,7 +2778,7 @@ jobs:
       - name: Publish SNS alert
         run: |
           FAILED_JOBS=""
-          for j in run-lint run-tests acquire-production-lock verify-release-freshness verify-runtime-iam prepare-build build-runtime-images build-and-push verify-api-development verify-api-preprod run-migrations deploy-api deploy-messaging deploy-ai deploy-tools deploy-video verify-deployment release-production-lock; do
+          for j in run-lint run-tests acquire-production-lock verify-release-freshness verify-runtime-iam prepare-build build-runtime-images build-and-push verify-api-development verify-api-preprod run-migrations deploy-api deploy-messaging deploy-ai deploy-tools deploy-video close-account-window verify-deployment release-production-lock; do
             R=$(echo '${{ toJson(needs) }}' | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('$j', {}).get('result',''))")
             if [ "$R" = "failure" ]; then
               FAILED_JOBS="${FAILED_JOBS}${j} "
