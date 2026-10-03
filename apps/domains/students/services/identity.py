@@ -98,6 +98,14 @@ def student_login_id_taken(
     if inventory_student_ps_metadata_exists(
         tenant_id=tenant.id,
         ps_number=username,
+    ) and not (
+        exclude_student_id
+        and Student.objects.filter(
+            tenant=tenant,
+            pk=exclude_student_id,
+            ps_number=username,
+            deleted_at__isnull=True,
+        ).exists()
     ):
         predecessors = tuple(
             student_id
