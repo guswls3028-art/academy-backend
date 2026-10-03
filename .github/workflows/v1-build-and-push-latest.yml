@@ -2187,18 +2187,24 @@ jobs:
           action-timeout-s: 180
       - name: Restore only this window after exact fleet readback
         run: |
+          set -euo pipefail
           python3 scripts/v1/account_write_cutover.py close \
             --plan "$RUNNER_TEMP/account-cutover-plan.json" \
-            --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --source "$GITHUB_SHA"
+            --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --source "$GITHUB_SHA" \
+            | tee "$RUNNER_TEMP/account-cutover-close.json"
           python3 scripts/v1/account_write_cutover.py inspect-clear \
             --plan "$RUNNER_TEMP/account-cutover-plan.json" \
-            --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --source "$GITHUB_SHA"
+            --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --source "$GITHUB_SHA" \
+            | tee "$RUNNER_TEMP/account-cutover-clear.json"
       - name: Preserve cutover restoration evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: account-cutover-restoration-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/account-cutover-plan.json
+          path: |
+            ${{ runner.temp }}/account-cutover-plan.json
+            ${{ runner.temp }}/account-cutover-close.json
+            ${{ runner.temp }}/account-cutover-clear.json
           if-no-files-found: error
           retention-days: 14
 
