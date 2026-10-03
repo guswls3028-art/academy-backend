@@ -12,12 +12,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from django.contrib.auth import get_user_model
 from django.db import transaction
 
 from apps.core.models import Program
 from apps.core.models.user import user_display_username
 from apps.core.services.login_identifier import normalize_login_identifier
-from apps.domains.students.models import Student
+from apps.domains.students.models import Student, StudentInventoryNamespaceConflict
 from apps.domains.students.services.identity import (
     StudentIdentityError,
     canonical_student_phone,
@@ -32,7 +33,13 @@ from apps.domains.students.services.school import (
     get_valid_school_types,
     is_valid_grade,
 )
-from apps.support.students.lifecycle_dependencies import ensure_parent_account_for_student
+from apps.support.students.lifecycle_dependencies import (
+    ensure_parent_account_for_student,
+    find_parent_account_user,
+)
+from apps.support.students.namespace_lock import (
+    lock_student_creation_tenant_reference,
+)
 
 
 class StudentProfileUpdateError(ValueError):
@@ -185,8 +192,7 @@ def _append_unique(fields: list[str], items: Iterable[str]) -> None:
             fields.append(item)
 
 
-@transaction.atomic
-def update_student_profile(
+def _update_student_profile_after_tenant_gate(
     *,
     student: Student,
     tenant,
@@ -195,6 +201,7 @@ def update_student_profile(
     strict_school_validation: bool = True,
     ignore_blank_name: bool = False,
     allow_parent_phone_change: bool = True,
+    locked_user_ids: frozenset[int] | None = None,
 ) -> StudentProfileUpdateResult:
     """
     Update student profile fields through one invariant path.
@@ -318,7 +325,12 @@ def update_student_profile(
             changed.append("omr_code")
 
     if changed:
-        student.save(update_fields=changed)
+        try:
+            student.save(update_fields=changed)
+        except StudentInventoryNamespaceConflict as exc:
+            raise StudentProfileUpdateError(
+                {"detail": "학생 아이디의 이전 저장자료 소유권을 확인한 뒤 다시 시도해 주세요."}
+            ) from exc
 
     if "phone" in data and student.user_id and student.user.phone != student.phone:
         student.user.phone = student.phone
@@ -347,6 +359,7 @@ def update_student_profile(
                     student_name=student.name,
                     initial_password=parent_initial_password,
                     initial_password_mode=parent_initial_password_mode,
+                    locked_user_ids=locked_user_ids,
                 )
             except ValueError as exc:
                 raise StudentProfileUpdateError(
@@ -367,3 +380,122 @@ def update_student_profile(
         parent_password_for_notice=parent_password_for_notice,
         parent_credentials_initialized=parent_credentials_initialized,
     )
+
+
+def lock_student_profile_for_update(
+    *,
+    student: Student,
+    tenant,
+    data: dict[str, Any],
+    allow_parent_phone_change: bool = True,
+    locked_user_ids: frozenset[int] | None = None,
+) -> tuple[Student, frozenset[int]]:
+    """Lock every existing account before Student and return its current row."""
+    if not transaction.get_connection().in_atomic_block:
+        raise RuntimeError("student profile lock requires an atomic transaction")
+    if tenant is None:
+        raise StudentProfileUpdateError({"detail": "Tenant가 resolve되지 않았습니다."})
+    if student.tenant_id != tenant.id:
+        raise StudentProfileUpdateError({"detail": "학생이 현재 테넌트에 속하지 않습니다."})
+
+    lock_student_creation_tenant_reference(tenant_id=tenant.id)
+    snapshot = Student.objects.filter(pk=student.pk, tenant=tenant).values(
+        "user_id", "parent_id", "parent__user_id", "parent__phone",
+        "parent__tenant_id", "parent_phone", "deleted_at",
+    ).first()
+    if snapshot is None:
+        raise StudentProfileUpdateError({"detail": "학생을 찾을 수 없습니다."})
+    error = {"detail": "학생 또는 학부모 계정 정보가 변경되었습니다. 새로고침 후 다시 시도해 주세요."}
+    if snapshot["parent_id"] is not None and snapshot["parent__tenant_id"] != tenant.id:
+        raise StudentProfileUpdateError(error)
+
+    if (
+        not allow_parent_phone_change
+        and "parent_phone" in data
+        and phone_digits(data.get("parent_phone")) != phone_digits(snapshot["parent_phone"])
+    ):
+        raise StudentProfileUpdateError(
+            {"parent_phone": "학부모 계정 연결 변경은 학원에 요청해 주세요."}
+        )
+
+    user_ids = {snapshot["user_id"], snapshot["parent__user_id"]} - {None}
+    desired_parent_phone = None
+    desired_parent_user_id = None
+    if "parent_phone" in data:
+        phone = normalize_phone(data["parent_phone"], required=True, field_label="학부모 전화번호")
+        if (
+            phone != (snapshot["parent_phone"] or "")
+            or snapshot["parent_id"] is None
+            or phone_digits(snapshot["parent__phone"]) != phone_digits(phone)
+            or snapshot["parent__user_id"] is None
+        ):
+            desired_parent_phone = phone
+            try:
+                desired_user = find_parent_account_user(tenant=tenant, parent_phone=phone)
+            except ValueError as exc:
+                raise StudentProfileUpdateError({"parent_initial_password": str(exc)}) from exc
+            desired_parent_user_id = getattr(desired_user, "pk", None)
+            if desired_parent_user_id is not None:
+                user_ids.add(desired_parent_user_id)
+
+    if locked_user_ids is not None and not user_ids.issubset(locked_user_ids):
+        raise StudentProfileUpdateError(error)
+    # Match account notices: acquire the complete User set in one stable order.
+    users = list(get_user_model().objects.select_for_update().filter(
+        pk__in=user_ids, tenant_id=tenant.id,
+    ).order_by("pk"))
+    users_by_id = {user.pk: user for user in users}
+    if snapshot["user_id"] is None or set(users_by_id) != user_ids:
+        raise StudentProfileUpdateError(error)
+
+    current = Student.objects.select_for_update().filter(pk=student.pk, tenant=tenant).first()
+    current_parent = current.parent if current and current.parent_id else None
+    current_parent_user_id = current_parent.user_id if current_parent else None
+    if (
+        current is None
+        or current.user_id != snapshot["user_id"]
+        or current.parent_id != snapshot["parent_id"]
+        or current_parent_user_id != snapshot["parent__user_id"]
+        or (current_parent is not None and current_parent.tenant_id != tenant.id)
+        or current.deleted_at != snapshot["deleted_at"]
+    ):
+        raise StudentProfileUpdateError(error)
+    if desired_parent_phone is not None:
+        # A changed target must retry before acquiring any new, possibly lower UID.
+        desired_user = find_parent_account_user(tenant=tenant, parent_phone=desired_parent_phone)
+        if getattr(desired_user, "pk", None) != desired_parent_user_id:
+            raise StudentProfileUpdateError(error)
+    current.user = users_by_id[current.user_id]
+    return current, frozenset(users_by_id) | (locked_user_ids or frozenset())
+
+
+def update_student_profile(
+    *,
+    student: Student,
+    tenant,
+    data: dict[str, Any],
+    identity_field: str | None = None,
+    strict_school_validation: bool = True,
+    ignore_blank_name: bool = False,
+    allow_parent_phone_change: bool = True,
+    locked_user_ids: frozenset[int] | None = None,
+) -> StudentProfileUpdateResult:
+    """Apply only requested fields to the locked current profile."""
+    with transaction.atomic():
+        student, locked_user_ids = lock_student_profile_for_update(
+            student=student,
+            tenant=tenant,
+            data=data,
+            allow_parent_phone_change=allow_parent_phone_change,
+            locked_user_ids=locked_user_ids,
+        )
+        return _update_student_profile_after_tenant_gate(
+            student=student,
+            tenant=tenant,
+            data=data,
+            identity_field=identity_field,
+            strict_school_validation=strict_school_validation,
+            ignore_blank_name=ignore_blank_name,
+            allow_parent_phone_change=allow_parent_phone_change,
+            locked_user_ids=locked_user_ids,
+        )

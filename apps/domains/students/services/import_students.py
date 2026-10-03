@@ -15,7 +15,9 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
+from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.db.models import Q
 
 from academy.adapters.db.django import repositories_core as core_repo
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
@@ -39,6 +41,10 @@ from .identity import (
 from .import_passwords import build_student_import_password_policy
 from .lifecycle import permanently_delete_students, restore_student
 from .school import get_valid_school_types, is_valid_grade, normalize_school_from_name
+from apps.support.students.namespace_lock import (
+    lock_student_creation_tenant_reference,
+)
+from apps.support.students.lifecycle_dependencies import find_parent_account_user
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +269,7 @@ def resolve_student_import_row(
     valid_school_types: frozenset[str] | None = None,
     custom_field_definitions=None,
     source_job_id: str = "",
+    locked_user_ids: set[int] | None = None,
 ) -> StudentImportRowResolution:
     """Resolve one imported row to an active student in one tenant."""
     initial_password = initial_password or ""
@@ -338,6 +345,7 @@ def resolve_student_import_row(
                 profile_data=normalized.restore_data,
                 parent_initial_password=parent_initial_password,
                 parent_initial_password_mode=parent_initial_password_mode,
+                locked_user_ids=locked_user_ids,
             )
             if restored_result.parent_credentials_initialized:
                 delivered = send_parent_account_credentials_notice(
@@ -383,6 +391,7 @@ def resolve_student_import_row(
         raise StudentImportRowError("신규 학생 초기 비밀번호는 4자 이상 입력해 주세요.")
 
     with transaction.atomic():
+        lock_student_creation_tenant_reference(tenant_id=tenant.id)
         if normalized.phone:
             conflict_deleted = _unique_import_candidate(
                 tenant_students.filter(
@@ -414,6 +423,7 @@ def resolve_student_import_row(
             must_change_password=True,
             account_notice_origin_type=("excel_import" if source_job_id else ""),
             account_notice_origin_id=source_job_id,
+            locked_user_ids=locked_user_ids,
         )
 
     return StudentImportRowResolution(
@@ -424,6 +434,41 @@ def resolve_student_import_row(
         parent_phone=created.parent_phone,
         parent_password_for_notice=created.parent_password_for_notice,
     )
+
+
+def _lock_import_batch_users(*, tenant, rows, valid_school_types, custom_field_definitions):
+    # Standalone imports commit one row at a time. Only an outer transaction
+    # retains earlier row locks and therefore needs the whole batch union.
+    if not transaction.get_connection().in_atomic_block:
+        return None
+    lock_student_creation_tenant_reference(tenant_id=tenant.id)
+    user_ids = set()
+    student_refs = Q(pk__in=[])
+    parent_phones = set()
+    for raw in rows:
+        try:
+            normalized = _normalize_import_row(
+                tenant=tenant, raw=dict(raw) if isinstance(raw, dict) else {},
+                valid_school_types=valid_school_types,
+                custom_field_definitions=custom_field_definitions,
+            )
+        except ValueError:
+            continue  # The row loop keeps its original validation/reporting.
+        parent_phones.add(normalized.parent_phone)
+        student_refs |= Q(name=normalized.name, parent_phone=normalized.parent_phone)
+        if normalized.phone:
+            student_refs |= Q(phone=normalized.phone)
+    for parent_phone in sorted(parent_phones):
+        user = find_parent_account_user(tenant=tenant, parent_phone=parent_phone)
+        if user is not None and user.tenant_id == tenant.id:
+            user_ids.add(user.pk)
+    for student_user_id, parent_user_id in student_repo.student_filter_tenant(tenant).filter(
+        student_refs,
+    ).values_list("user_id", "parent__user_id"):
+        user_ids.update({student_user_id, parent_user_id} - {None})
+    return set(get_user_model().objects.select_for_update().filter(
+        Q(tenant=tenant) | Q(tenant__isnull=True), pk__in=user_ids,
+    ).order_by("pk").values_list("pk", flat=True))
 
 
 def import_students_from_rows(
@@ -470,6 +515,10 @@ def import_students_from_rows(
     skipped_empty = 0
     valid_school_types = student_import_valid_school_types(tenant)
     custom_field_definitions = active_custom_field_definitions(tenant)
+    locked_user_ids = _lock_import_batch_users(
+        tenant=tenant, rows=students_data, valid_school_types=valid_school_types,
+        custom_field_definitions=custom_field_definitions,
+    )
 
     for row_index, raw in enumerate(students_data, start=1):
         if on_row_progress and total > 0:
@@ -487,6 +536,7 @@ def import_students_from_rows(
 
         try:
             row_password = password_policy.password_for_row(row)
+            row_user_ids = set(locked_user_ids) if locked_user_ids is not None else None
             resolved = resolve_student_import_row(
                 tenant,
                 row,
@@ -498,6 +548,7 @@ def import_students_from_rows(
                 valid_school_types=valid_school_types,
                 custom_field_definitions=custom_field_definitions,
                 source_job_id=source_job_id,
+                locked_user_ids=row_user_ids,
             )
         except ValueError as exc:
             error_detail = exc.detail if isinstance(exc, StudentImportRowError) else str(exc)
@@ -533,6 +584,8 @@ def import_students_from_rows(
             })
             continue
 
+        if locked_user_ids is not None:
+            locked_user_ids.update(row_user_ids)
         if resolved.created:
             created_students.append(resolved.student)
             created_rows.append({
