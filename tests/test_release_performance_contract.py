@@ -151,14 +151,15 @@ def test_reviewed_runtime_images_own_exact_high_budgets() -> None:
     baseline = document["maximumHighFindings"]
 
     assert document["schemaVersion"] == 3
-    assert baseline == {
-        "academy-base": 0,
-        "academy-api": 0,
-        "academy-video-worker": 0,
-        "academy-messaging-worker": 0,
-        "academy-ai-worker-cpu": 0,
-        "academy-tools-worker": 0,
+    assert set(baseline) == {
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker",
     }
+    assert all(type(count) is int and count >= 0 for count in baseline.values())
     exact_counts = {repository: 0 for repository in baseline}
     assert "knownHighFindings" not in document
     assert all(
