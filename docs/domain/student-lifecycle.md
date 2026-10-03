@@ -200,6 +200,12 @@ python manage.py purge_deleted_students
 
 ## 5. 학생 자료 소유권과 동시성
 
+프로필 수정에서 삭제되지 않은 현재 학생이 같은 테넌트의 동일 아이디를 유지하면,
+그 아이디에 연결된 자신의 폴더·파일 때문에 아이디 중복으로 거부하지 않는다.
+일반 프로필 수정과 동일 아이디를 명시한 수정 모두 저장자료의 namespace/R2 key를
+보존한다. 다른 아이디로 변경할 때의 고아 자료 보호, 다른 학생·테넌트의 소유권,
+다른 사용자와의 로그인 충돌 검사는 그대로 적용한다.
+
 학생 생성·아이디 변경·삭제·복원·영구삭제와 Inventory 업로드·이동·삭제는 같은
 tenant/학생 번호의 transaction advisory lock을 사용한다. 여러 번호는 정렬해 잠근다.
 PostgreSQL에서 생성 경로는 Tenant/User FK-compatible reference gate를 먼저 잡아
