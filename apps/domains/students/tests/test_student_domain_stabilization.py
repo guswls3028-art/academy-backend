@@ -259,6 +259,44 @@ class TestStudentListQueryShape(TestCase):
             self.assertIn("name_highlight_clinic_target", rows[student.id])
         self.assertEqual(presign.call_count, 8)
 
+    @patch("academy.adapters.storage.r2_presign.create_presigned_get_url")
+    def test_student_detail_reuses_photo_signature_and_preserves_missing_photo(self, presign):
+        student = Student.objects.filter(tenant=self.tenant).first()
+        student.profile_photo_r2_key = f"tenants/{self.tenant.id}/students/{student.id}/photo.png"
+        student.save(update_fields=["profile_photo_r2_key"])
+        presign.return_value = "https://photos.example/signed-photo"
+
+        def retrieve():
+            request = self.factory.get(f"/api/v1/students/{student.id}/")
+            force_authenticate(request, user=self.admin)
+            request.tenant = self.tenant
+            return StudentViewSet.as_view({"get": "retrieve"})(request, pk=student.id)
+
+        response = retrieve()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["profile_photo_url"], presign.return_value)
+        self.assertTrue(response.data["tags"])
+        presign.assert_called_once()
+
+        student.profile_photo_r2_key = ""
+        student.save(update_fields=["profile_photo_r2_key"])
+        presign.reset_mock()
+        self.assertIsNone(retrieve().data["profile_photo_url"])
+        presign.assert_not_called()
+
+    @patch("academy.adapters.storage.r2_presign.create_presigned_get_url", side_effect=RuntimeError("storage unavailable"))
+    def test_student_detail_signing_failure_keeps_existing_null_contract(self, presign):
+        student = Student.objects.filter(tenant=self.tenant).first()
+        student.profile_photo_r2_key = "tenant-photo.png"
+        student.save(update_fields=["profile_photo_r2_key"])
+        request = self.factory.get(f"/api/v1/students/{student.id}/")
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+        response = StudentViewSet.as_view({"get": "retrieve"})(request, pk=student.id)
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data["profile_photo_url"])
+        presign.assert_called_once()
+
 
 class TestStudentClassOrdering(TestCase):
     def setUp(self):

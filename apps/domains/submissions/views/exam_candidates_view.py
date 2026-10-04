@@ -48,10 +48,11 @@ class ExamCandidatesView(APIView):
                 tenant=tenant,
                 target_type=Submission.TargetType.EXAM,
                 target_id=int(exam_id),
-                enrollment_id__isnull=False,
+                enrollment_id__in=[int(row["enrollment_id"]) for row in candidates.rows],
             )
-            .exclude(enrollment_id=0)
+            .order_by()
             .values_list("enrollment_id", flat=True)
+            .distinct()
         )
 
         items = []
