@@ -288,6 +288,9 @@ ahead/behind result to recognize already merged worktrees. Divergent branches
 still receive the full merge/patch/tree-equivalence check. This only reduces
 read-only Git process overhead; `Close` retains its independent fresh-revision,
 dirty/ignored-data and race checks before any removal.
+The lifecycle contract limits inspection of a merged backend/frontend pair to
+12 Git subprocesses (previously 16). Compare timings on the same worktrees and
+alternate baseline/current runs; wall-clock timing is diagnostic, not a release gate.
 
 ## Work and integration
 
