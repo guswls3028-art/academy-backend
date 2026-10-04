@@ -1,8 +1,8 @@
 # 이동휘원소 과학연구소 — 온보딩 메모
 
-**기준일:** 2026-10-01 KST
+**기준일:** 2026-10-04 KST
 
-**상태:** 운영·대표 계정 최초 비밀번호 변경 확인 완료 · 개인 알림톡 채널 템플릿 검수 대기
+**상태:** 운영·대표 계정 최초 비밀번호 변경 확인 완료 · 개인 알림톡 채널 활성화 및 10종 승인·라우팅 확인 완료
 
 **운영 도메인:** `movementhui.com`
 
@@ -58,13 +58,15 @@
 - 사용자가 지정한 `동휘원소` 검색 ID와 PFID 끝자리 `Q7tR`을 공용 Solapi
   계정의 채널 상세 조회로 확인하고 tenant `10`에 새 channel binding을 등록했다.
 - 공용 승인 템플릿 10종을 전달 동작이 동일하게 복제하고 10종 모두 검수 요청했다.
-  현재 `INSPECTING:10`, 승인 `0/10`, binding은 `pending_templates`다.
-- 검수 중에는 기존 공용 경로를 유지한다. 10개 template mapping의 본문·버튼·강조
-  구조 지문 일치와 10개 공용 경로 해석을 운영 DB 재조회로 확인했다.
-- 전용 채널은 아직 활성화되지 않았다. 운영자가 승인 상태를 재조회한 뒤
+  2026-10-04 공급자 재조회에서 `APPROVED:10`과 10개 mapping의 본문·버튼·강조
+  구조 지문 일치를 확인했다.
+- 같은 날 15:45 KST 공식 명령으로 기존 binding을 `active`로 전환했다.
+  16:01 KST 독립 재조회에서 DB 영속성, 공급자 승인 `10/10`, 지문 일치 `10/10`,
+  실제 route `tenant_verified:10`을 확인했다. 새 템플릿 생성·검수 요청은 없었다.
+- 재점검·복구는 등록된 binding과 공급자 상태를 대조한 뒤
   `configure_tenant_alimtalk_channel --tenant-code movementhui --channel-id <등록된 PFID>
-  --apply --activate-if-ready`로 동기화·활성화하고, 모든 mapping이 승인됐고 실제
-  route가 `tenant_verified`인지 확인해야 한다. 검수 반려는 동일 binding에서
+  --apply --activate-if-ready`로 동기화하고, 모든 mapping이 승인됐고 실제
+  route가 `tenant_verified`인지 확인한다. 검수 반려는 동일 binding에서
   공급자 사유를 확인하고 재검수한다. 절차·실패 폐쇄·공용 공급자 경계는
   [알림톡 도메인 문서](../../domain/messaging-alimtalk.md#6-provider채널-정책)가 소유한다.
 - 사용자가 제공한 연락처를 대표·본부 전화번호에 동일하게 저장하고 재조회했다.
@@ -76,8 +78,8 @@
 - apex·`www` HTTPS는 모두 HTTP 200이다. 메시징 활성, 운영 hold 없음, 기존 클리닉
   예약 생성·변경·취소·하원 config의 알림톡 모드와 연결 템플릿을 확인했다.
   다른 자동발송 선택·발송 단가·잔액은 기존 값을 유지했다.
-- 고객 실발송 없이 공급자 등록·검수 상태, DB 영속성, route를 검증했다.
-  검수 승인·전용 채널 활성화·통제된 수신 검증은 후속 완료 조건이다.
+- 고객 실발송 없이 공급자 승인, DB 영속성, 전용 route를 검증했다.
+  지정 수신자에 대한 실제 수신 시험은 하지 않았으므로 전달 성공 증거로 해석하지 않는다.
 
 ## 현재 발급된 네임서버
 
@@ -109,8 +111,9 @@ allowed hosts/CORS/CSRF, Program, billing, owner handoff와 approved messaging
 사용자가 제공한 채널은 `https://pf.kakao.com/_xnjixin`,
 `동휘 원소 과학 연구소 질문방` / 검색 ID `동휘원소`이다.
 공식 공급사 조회에서 등록된 기존 binding과 일치했다.
-`configure_tenant_alimtalk_channel` dry-run 결과 required/matched 10,
+당시 `configure_tenant_alimtalk_channel` dry-run 결과 required/matched 10,
 APPROVED 0, INSPECTING 10, binding `pending_templates`이다.
-기존 검수를 중복 신청하거나 승인 이전에 활성화하지 않는다.
-공급사 승인 후 같은 공식 명령의 apply/activate-if-ready로 대조·활성화한다.
+이 검수 대기는 2026-10-04 승인 재조회 및 공식 명령 활성화로 종료됐다.
+활성화 SSM 실행 ID는 `f6071641-ae32-4a3a-9b7e-5e1b4273819c`,
+독립 readback은 `0f365dcc-e8bf-4771-aefd-4776270ce162`다.
 실제 학생·학부모에게 QA 발송하지 않았다.
