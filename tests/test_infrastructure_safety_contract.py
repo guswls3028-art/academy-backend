@@ -564,7 +564,7 @@ def test_selective_build_diffs_from_each_last_verified_runtime_image() -> None:
     )
     assert "resolve_image_base()" in detect
     assert 'git merge-base --is-ancestor "$resolved" HEAD' in detect
-    assert 'CHANGED_RELEASE=$(git diff --name-only "$RELEASE_PREV" HEAD)' in detect
+    assert 'CHANGED_RELEASE=$(git diff --no-renames --name-only "$RELEASE_PREV" HEAD)' in detect
     for flag, repo in {
         "BASE": "academy-base",
         "API": "academy-api",
@@ -574,7 +574,7 @@ def test_selective_build_diffs_from_each_last_verified_runtime_image() -> None:
         "TOOLS": "academy-tools-worker",
     }.items():
         assert f'{flag}_PREV=$(resolve_image_base "{repo}")' in detect
-        assert f'CHANGED_{flag}=$(git diff --name-only "${flag}_PREV" HEAD)' in detect
+        assert f'CHANGED_{flag}=$(git diff --no-renames --name-only "${flag}_PREV" HEAD)' in detect
         if flag == "BASE":
             assert 'CHANGED="$CHANGED_BASE"' in detect
         else:
