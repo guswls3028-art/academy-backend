@@ -156,6 +156,9 @@ function Invoke-Inspect {
     foreach ($name in Get-RepositoryNames) {
         $root = Get-RepositoryRoot $name
         Update-MainReference $root
+        $mainSha = @(Invoke-GitChecked -Root $root -Arguments @(
+            "rev-parse", "--verify", "refs/remotes/origin/main^{commit}"
+        ))[0]
         foreach ($path in Get-WorktreePaths $root) {
             if ($Session) {
                 $expected = Join-Path $WorkspaceRoot "_worktrees\sessions\$Session\$name"
@@ -173,10 +176,17 @@ function Invoke-Inspect {
             $branch = Get-BranchName $path
             $relation = @(
                 Invoke-GitChecked -Root $path -Arguments @(
-                    "rev-list", "--left-right", "--count", "origin/main...HEAD"
+                    "rev-list", "--left-right", "--count", "$mainSha...HEAD"
                 )
             )[0] -split '\s+'
-            $integration = Get-IntegrationState $path
+            # No exclusive HEAD commits already proves ancestry. Reuse that
+            # graph result for the common merged case instead of spawning
+            # three more Git processes for every old worktree.
+            $integration = if ([int]$relation[1] -eq 0) {
+                "ancestor"
+            } else {
+                Get-IntegrationState -Root $path -MainSha $mainSha
+            }
             Write-Output (
                 'SESSION_WORKTREE_STATUS repo={0} path="{1}" branch={2} dirty={3} behind={4} ahead={5} integration={6}' -f
                 $name,
