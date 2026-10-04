@@ -4,8 +4,8 @@ from django.db.models.query import QuerySet
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.lectures.models import Lecture
+from apps.domains.enrollment.test_support import create_enrollment_fixture
+from apps.domains.lectures.test_support import create_lecture_fixture
 from apps.domains.students.tests.test_student_domain_stabilization import _make_admin, _make_student, _make_tenant
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.views.exam_candidates_view import ExamCandidatesView
@@ -18,8 +18,8 @@ class ExamCandidateQueryShapeTests(TestCase):
         self.other = _make_tenant("Other query", "other-query")
         self.admin = _make_admin(self.tenant, "candidate-query-admin")
         self.factory = APIRequestFactory()
-        lecture = Lecture.objects.create(tenant=self.tenant, title="Query", name="Query")
-        self.enrollment_ids = [Enrollment.objects.create(
+        lecture = create_lecture_fixture(tenant=self.tenant, title="Query", name="Query")
+        self.enrollment_ids = [create_enrollment_fixture(
             tenant=self.tenant, lecture=lecture,
             student=_make_student(self.tenant, f"C{idx}", phone=f"0108899000{idx}"),
             status="ACTIVE",
