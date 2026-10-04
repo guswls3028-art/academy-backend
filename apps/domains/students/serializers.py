@@ -324,12 +324,6 @@ class StudentDetailSerializer(serializers.ModelSerializer):
     def get_account_state(self, obj):
         return _student_account_state(obj)
 
-    def to_representation(self, obj):
-        data = super().to_representation(obj)
-        data["profile_photo_url"] = self.get_profile_photo_url(obj)
-        return data
-
-
 class AddTagSerializer(serializers.Serializer):
     tag_id = serializers.IntegerField()
 

@@ -256,11 +256,13 @@ save failure cleans the newly uploaded key best-effort and preserves the old DB
 key. Invalid content type, image magic bytes, or files larger than 10 MiB are
 rejected before upload.
 
-The admin student list signs each present profile photo once per serialized
+The admin student list and detail responses sign each present profile photo once per serialized
 student through `profile_photo_url`; the final representation reuses that field.
 Missing photos still return `null`. Pagination, tenant scope, tags, enrollments,
 account state and clinic highlights are unchanged. The list regression checks a
 mixed page with and without photos and verifies one signing operation per photo.
+Detail regression also covers a missing photo and signing failure, preserving the
+existing `null` response without a second signing attempt.
 
 ## 2.1 Tenant Custom Student Fields
 
