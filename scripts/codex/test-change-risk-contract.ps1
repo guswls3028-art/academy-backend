@@ -170,4 +170,89 @@ Assert-Contains $governance.Risks "deployment-governance" "deployment paths must
 Assert-Contains $governance.Gates "backend-deployment-contracts" "backend deployment paths must invoke existing contract tests"
 Assert-Contains $governance.Gates "frontend-deployment-contracts" "frontend deployment paths must invoke existing governance guards"
 
+$ssotRuntime = Get-AcademyChangeRiskPlan -BackendPaths @("docs/ssot/params.yaml") -FrontendPaths @("src/app.tsx")
+$frontendQa = Get-AcademyChangeRiskPlan -FrontendPaths @(
+    "playwright.development-release.config.ts", "playwright.config.ts",
+    "scripts/run-development-release-canary.mjs", "scripts/release-canary-progress-reporter.mjs"
+)
+Assert-Contains $frontendQa.Gates "frontend-e2e" "development suite owners must select E2E verification"
+Assert-Contains $frontendQa.Gates "frontend-deployment-contracts" "development suite owners must retain deployment guards"
+Assert-True (-not $frontendQa.RequiresProductionReleaseBundle) "QA-only changes must not invent a cross-repository application release"
+Assert-True (-not $ssotRuntime.DocsOnly) "executable SSOT parameters must not be documentation-only"
+Assert-Contains $ssotRuntime.Gates "backend-core" "SSOT runtime parameters must retain backend core gates"
+Assert-Contains $ssotRuntime.Gates "backend-deployment-contracts" "SSOT runtime parameters must retain deployment contracts"
+Assert-True $ssotRuntime.RequiresProductionReleaseBundle "paired SSOT runtime and frontend changes require release evidence"
+foreach ($policy in @("ecr-lifecycle-policy", "ecr-high-risk-baseline", "ecr-critical-risk-acceptance")) {
+    $ssotPolicy = Get-AcademyChangeRiskPlan -BackendPaths @("docs/ssot/$policy.json")
+    Assert-True (-not $ssotPolicy.DocsOnly) "executable ECR policy must not be documentation-only: $policy"
+    Assert-Contains $ssotPolicy.Gates "backend-deployment-contracts" "ECR policy changes must retain deployment contracts"
+    Assert-True (-not $ssotPolicy.RequiresProductionReleaseBundle) "policy-only changes must not invent an application release"
+}
+
+# Exercise the actual Git collector: rename detection otherwise reports only the
+# destination and can hide removal of runtime code behind a docs-only change.
+Assert-True (Test-AcademyBackendProseOnlyChange @("docs/operations/github-governance.md", "AGENTS.md")) "known Markdown-only changes may omit unchanged application tests"
+foreach ($paths in @(
+    @(), @("apps/service.py", "docs/README.md"), @("docs/ssot/params.yaml"),
+    @("docs/ssot/ecr-high-risk-baseline.json"), @("docs/generated.json"),
+    @("scripts/codex/session-worktree.ps1"), @("unclassified.md"),
+    @("apps/domains/results/tests/test_scores.py")
+)) {
+    Assert-True (-not (Test-AcademyBackendProseOnlyChange -Paths $paths)) "empty, executable, unknown and test changes must retain full CI"
+}
+
+$fixtureParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+$fixtureRoot = Join-Path $fixtureParent ("academy-change-risk-" + [guid]::NewGuid().ToString("N"))
+function Invoke-FixtureGit([string]$Root, [string[]]$Arguments) {
+    $output = @(& git -C $Root @Arguments 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw "Fixture Git failed: $($output -join ', ')" }
+}
+try {
+    foreach ($repo in @("backend", "frontend")) {
+        $root = Join-Path $fixtureRoot $repo
+        [void](New-Item -ItemType Directory -Path $root -Force)
+        Invoke-FixtureGit $root @("init", "-b", "main")
+        Invoke-FixtureGit $root @("config", "user.name", "Academy Contract Test")
+        Invoke-FixtureGit $root @("config", "user.email", "academy-contract@example.invalid")
+        Invoke-FixtureGit $root @("config", "diff.renames", "true")
+        $source = if ($repo -eq "backend") { "apps/service.py" } else { "src/service.ts" }
+        [void](New-Item -ItemType Directory -Path (Join-Path $root (Split-Path $source)) -Force)
+        Set-Content -LiteralPath (Join-Path $root $source) -Value "runtime source" -Encoding utf8
+        Invoke-FixtureGit $root @("add", $source)
+        Invoke-FixtureGit $root @("commit", "-m", "fixture base")
+        [void](New-Item -ItemType Directory -Path (Join-Path $root "docs"))
+        Invoke-FixtureGit $root @("mv", $source, "docs/retired-source.md")
+    }
+    $planner = Join-Path $PSScriptRoot "get-change-risk-plan.ps1"
+    $plannerArgs = @{
+        BackendRoot = Join-Path $fixtureRoot "backend"
+        FrontendRoot = Join-Path $fixtureRoot "frontend"
+        BackendBaseRef = "main"
+        FrontendBaseRef = "main"
+    }
+    foreach ($state in @("staged", "committed")) {
+        if ($state -eq "committed") {
+            foreach ($root in @($plannerArgs.BackendRoot, $plannerArgs.FrontendRoot)) {
+                Invoke-FixtureGit $root @("commit", "-m", "move runtime source into docs")
+            }
+            $plannerArgs.BackendBaseRef = "HEAD^"
+            $plannerArgs.FrontendBaseRef = "HEAD^"
+        }
+        $result = (& $planner @plannerArgs | Out-String) | ConvertFrom-Json
+        Assert-Contains $result.Plan.BackendPaths "apps/service.py" "$state rename must include deleted backend source"
+        Assert-Contains $result.Plan.FrontendPaths "src/service.ts" "$state rename must include deleted frontend source"
+        Assert-Contains $result.Plan.Gates "backend-core" "$state rename must retain backend gates"
+        Assert-Contains $result.Plan.Gates "frontend-core" "$state rename must retain frontend gates"
+        Assert-True $result.Plan.RequiresProductionReleaseBundle "$state cross-repository removal must retain release evidence"
+        Assert-True (-not (Test-AcademyBackendProseOnlyChange $result.Plan.BackendPaths)) "$state rename into Markdown must retain full CI"
+    }
+} finally {
+    $resolvedFixture = [IO.Path]::GetFullPath($fixtureRoot)
+    if ((Split-Path $resolvedFixture -Parent) -ne $fixtureParent.TrimEnd('\', '/') -or
+        (Split-Path $resolvedFixture -Leaf) -notlike "academy-change-risk-*") {
+        throw "Unexpected change-risk fixture cleanup path: $resolvedFixture"
+    }
+    if (Test-Path -LiteralPath $resolvedFixture) { Remove-Item -LiteralPath $resolvedFixture -Recurse -Force }
+}
+
 Write-Host "ACADEMY_CHANGE_RISK_CONTRACT_PASS" -ForegroundColor Green

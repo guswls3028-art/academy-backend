@@ -103,15 +103,25 @@ try {
     $frontendWorktree = Join-Path $fixtureRoot "_worktrees\sessions\contract-test\frontend"
     Assert-True (Test-Path -LiteralPath $backendWorktree) "Backend session worktree is missing."
     Assert-True (Test-Path -LiteralPath $frontendWorktree) "Frontend session worktree is missing."
-    $inspectOutput = @(& $scriptUnderTest `
-        -Action Inspect `
-        -Session contract-test `
-        -Repository both `
-        -WorkspaceRoot $fixtureRoot `
-        -SkipFetch)
+    $inspectCounts = @{ Git = 0; MergeBase = 0 }
+    $gitExecutable = (Get-Command git -CommandType Application | Select-Object -First 1).Source
+    $inspectOutput = @(& {
+        function git {
+            $arguments = @($args)
+            $inspectCounts.Git++
+            if ("merge-base" -in $arguments) { $inspectCounts.MergeBase++ }
+            & $gitExecutable @arguments
+            Set-Variable -Name LASTEXITCODE -Value $LASTEXITCODE -Scope 1
+        }
+        & $scriptUnderTest -Action Inspect -Session contract-test `
+            -Repository both -WorkspaceRoot $fixtureRoot -SkipFetch
+    })
     Assert-True (
         @($inspectOutput -match "SESSION_WORKTREE_STATUS").Count -eq 2
     ) "Scoped Inspect must report only the requested paired worktrees."
+    Assert-True (@($inspectOutput -match "integration=ancestor").Count -eq 2) "Inspect must classify merged worktrees correctly."
+    Assert-True ($inspectCounts.MergeBase -eq 0) "Merged inspection must reuse the ahead count instead of repeating ancestry queries."
+    Assert-True ($inspectCounts.Git -le 12) "Paired merged inspection must not regress its Git subprocess budget."
 
     Set-Content -LiteralPath (Join-Path $backendWorktree "dirty.txt") -Value "dirty" -Encoding UTF8
     $dirtyRefused = $false
@@ -132,6 +142,9 @@ try {
     Set-Content -LiteralPath (Join-Path $backendWorktree "feature.txt") -Value "feature" -Encoding UTF8
     [void](Invoke-Git -Root $backendWorktree -Arguments @("add", "feature.txt"))
     [void](Invoke-Git -Root $backendWorktree -Arguments @("commit", "-m", "fixture feature"))
+    $unmergedInspect = @(& $scriptUnderTest -Action Inspect -Session contract-test `
+        -Repository backend -WorkspaceRoot $fixtureRoot -SkipFetch)
+    Assert-True (@($unmergedInspect -match "ahead=1 integration=unmerged").Count -eq 1) "Divergent inspection must retain full integration checks."
     $unmergedRefused = $false
     try {
         & $scriptUnderTest `

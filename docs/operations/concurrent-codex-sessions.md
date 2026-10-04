@@ -283,6 +283,12 @@ After creation, lifecycle commands may use that owned checkout's current helper.
 Keep using `-Session` for inspection; canonical synchronization remains separate
 and must not overwrite foreign changes or run while another task owns release.
 
+`Inspect` resolves the fetched main revision once per repository and reuses its
+ahead/behind result to recognize already merged worktrees. Divergent branches
+still receive the full merge/patch/tree-equivalence check. This only reduces
+read-only Git process overhead; `Close` retains its independent fresh-revision,
+dirty/ignored-data and race checks before any removal.
+
 ## Work and integration
 
 - Run commands, generators, local servers, and tests only from the owned path.

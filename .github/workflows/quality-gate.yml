@@ -13,6 +13,33 @@ permissions:
   contents: read
 
 jobs:
+  change-scope:
+    name: Classify exact backend change scope
+    runs-on: ubuntu-latest
+    outputs:
+      prose_only: ${{ steps.scope.outputs.prose_only }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Classify committed paths through the shared risk owner
+        id: scope
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          . ./scripts/codex/stability-contract.ps1
+          $proseOnly = $false
+          if ($env:EVENT_NAME -eq 'pull_request') {
+            $paths = @(git -c core.quotePath=false diff --no-renames --name-only "$env:BASE_SHA...HEAD")
+            if ($LASTEXITCODE -ne 0) { throw "Cannot classify the exact PR diff." }
+            $proseOnly = Test-AcademyBackendProseOnlyChange -Paths $paths
+          }
+          "prose_only=$($proseOnly.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          Write-Host "BACKEND_PROSE_ONLY=$proseOnly"
+
   session-worktree-contract:
     name: Windows session worktree lifecycle contract
     runs-on: windows-latest
@@ -122,9 +149,18 @@ jobs:
 
   django-contract:
     name: Backend Django smoke and deployment contracts
+    needs: change-scope
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      - name: Require a valid completed change classification
+        env:
+          SCOPE_RESULT: ${{ needs.change-scope.result }}
+          PROSE_ONLY: ${{ needs.change-scope.outputs.prose_only }}
+        run: |
+          test "$SCOPE_RESULT" = success
+          test "$PROSE_ONLY" = true || test "$PROSE_ONLY" = false
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Python
@@ -144,20 +180,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes poppler-utils
       - name: Django configuration and migrations
+        if: needs.change-scope.outputs.prose_only != 'true'
         env:
           DJANGO_SETTINGS_MODULE: apps.api.config.settings.test
         run: |
           python manage.py check --settings apps.api.config.settings.test
           python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test
       - name: OpenAPI generated contract drift
+        if: needs.change-scope.outputs.prose_only != 'true'
         run: python scripts/generate_openapi_schema.py --check
       - name: Smoke tests and coverage seed
+        if: needs.change-scope.outputs.prose_only != 'true'
         env:
           DJANGO_SETTINGS_MODULE: apps.api.config.settings.test
         run: |
           python -m coverage erase
           python -m coverage run --parallel-mode --source=apps,academy -m pytest tests/test_smoke.py tests/test_critical_academy_journey.py -v --tb=short -x
       - name: Full backend tests and coverage
+        if: needs.change-scope.outputs.prose_only != 'true'
         env:
           DJANGO_SETTINGS_MODULE: apps.api.config.settings.test
         run: |
@@ -201,9 +241,14 @@ jobs:
           }
           if ($errors) { throw ($errors -join [Environment]::NewLine) }
           Write-Host "POWERSHELL_PARSE_PASS"
+      - name: Record unchanged application test scope
+        if: needs.change-scope.outputs.prose_only == 'true'
+        run: echo "Known Markdown-only diff; static, migration, lifecycle and deployment contracts remain required. Application tests are unchanged."
 
   postgresql-contract:
     name: PostgreSQL transaction and tenant contracts
+    needs: change-scope
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     timeout-minutes: 60
     services:
@@ -228,9 +273,17 @@ jobs:
       DB_HOST: 127.0.0.1
       DB_PORT: "5432"
     steps:
+      - name: Require a valid completed change classification
+        env:
+          SCOPE_RESULT: ${{ needs.change-scope.result }}
+          PROSE_ONLY: ${{ needs.change-scope.outputs.prose_only }}
+        run: |
+          test "$SCOPE_RESULT" = success
+          test "$PROSE_ONLY" = true || test "$PROSE_ONLY" = false
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Python
+        if: needs.change-scope.outputs.prose_only != 'true'
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
@@ -241,12 +294,14 @@ jobs:
             requirements/api.txt
             requirements/test.txt
       - name: Install application test dependencies
+        if: needs.change-scope.outputs.prose_only != 'true'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements/test.txt
           sudo apt-get update
           sudo apt-get install --yes poppler-utils
       - name: Verify isolated PostgreSQL boundary
+        if: needs.change-scope.outputs.prose_only != 'true'
         run: |
           python manage.py check --settings apps.api.config.settings.test_pg
           python - <<'PY'
@@ -264,6 +319,10 @@ jobs:
           assert database_user == "postgres", database_user
           PY
       - name: Full backend regression on PostgreSQL
+        if: needs.change-scope.outputs.prose_only != 'true'
         run: |
           python -m pytest -q --tb=short \
             apps/api apps/billing apps/core apps/shared apps/support apps/domains tests
+      - name: Record unchanged PostgreSQL test scope
+        if: needs.change-scope.outputs.prose_only == 'true'
+        run: echo "Known Markdown-only diff; no application, test, schema, runtime, dependency or executable policy changes."

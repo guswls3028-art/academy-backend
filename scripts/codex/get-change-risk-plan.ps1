@@ -43,9 +43,9 @@ function Get-ChangedPaths {
 
     $paths = [Collections.Generic.List[string]]::new()
     foreach ($gitArgs in @(
-        @("diff", "--name-only", "$BaseRef...HEAD"),
-        @("diff", "--cached", "--name-only"),
-        @("diff", "--name-only"),
+        @("diff", "--no-renames", "--name-only", "$BaseRef...HEAD"),
+        @("diff", "--no-renames", "--cached", "--name-only"),
+        @("diff", "--no-renames", "--name-only"),
         @("ls-files", "--others", "--exclude-standard")
     )) {
         $output = @(& git -C $Root @gitArgs 2>&1)

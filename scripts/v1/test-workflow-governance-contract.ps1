@@ -78,6 +78,26 @@ foreach ($marker in @(
 if (-not $productionWorkflow.Contains("scripts/lint/check_safe_method_writes.py")) {
     $failures += "Production workflow is missing the safe-method write boundary."
 }
+foreach ($jobName in @('django-contract', 'postgresql-contract')) {
+    $job = [regex]::Match($qualityWorkflow, ('(?ms)^  ' + [regex]::Escape($jobName) + ':\r?\n(?:(?!^  [a-zA-Z0-9_-]+:).)*')).Value
+    foreach ($required in @(
+        'needs: change-scope',
+        'if: always() && !cancelled()',
+        'SCOPE_RESULT: ${{ needs.change-scope.result }}',
+        'PROSE_ONLY: ${{ needs.change-scope.outputs.prose_only }}',
+        'test "$SCOPE_RESULT" = success',
+        'test "$PROSE_ONLY" = true || test "$PROSE_ONLY" = false',
+        "if: needs.change-scope.outputs.prose_only != 'true'"
+    )) {
+        if (-not $job.Contains($required)) {
+            $failures += "$jobName must fail closed on missing/failed change classification: $required"
+        }
+    }
+}
+if (-not $qualityWorkflow.Contains('Test-AcademyBackendProseOnlyChange -Paths $paths') -or
+    -not $qualityWorkflow.Contains('diff --no-renames --name-only')) {
+    $failures += 'Quality scope must use the shared prose classifier and both sides of renames.'
+}
 if (-not $productionWorkflow.Contains('ARGS+=(--allow-contract)')) {
     $failures += "Production workflow is missing the explicit contract execution marker."
 }

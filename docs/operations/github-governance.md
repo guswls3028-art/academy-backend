@@ -32,6 +32,14 @@ Buildx·build/push·QEMU 갱신은 기존 major와 Node 24를 유지하며 workf
 입력·권한·실행 순서는 그대로 둔다. 갱신 PR도 필수 CI를 통과해야 하고, 이미지
 보안·소스 freshness·공유 잠금·격리 검증·production 승인 조건을 유지한다.
 
+Backend Quality Gate는 PR의 정확한 base→merge diff를 rename 탐지 없이 읽고
+`stability-contract.ps1`의 문서 분류를 재사용한다. 알려진 경로의 Markdown만
+바뀐 경우 Django 앱·coverage·PostgreSQL 전체 회귀 단계만 생략한다. 필수 job은
+계속 실행하며 static/migration, Windows lifecycle, 배포 계약과 PowerShell 구문
+검사를 유지하고 생략 사유를 기록한다. 빈 diff, 수동 실행, 알 수 없는 경로,
+테스트·코드·의존성·실행 스크립트와 YAML/JSON SSOT 입력은 전체 앱·DB 검증을
+실행한다. 분류 실패나 누락된 출력은 문서 변경으로 인정하지 않는다.
+
 개인 계정 소유 저장소 ruleset은 소유 조직에 속하지 않은 GitHub App을 bypass
 actor로 받을 수 없다. 따라서 백엔드 `academy-main-governance`의 유일한 bypass는
 `academy-release-manifest-actions` write deploy key이고, private key는 값 조회 없이

@@ -44,15 +44,17 @@ function Get-AcademyChangeRiskPlan {
     $all = @($backend) + @($frontend)
     if (-not $all.Count) { throw "At least one changed backend or frontend path is required." }
 
-    $docsPattern = '^(docs/)|(^|/)(agents|readme(?:[-_.][^/]*)?|conventions|contributing|security|code_of_conduct|changelog|license)\.md$'
+    # These SSOT files are inputs to deployment/runtime tools, not prose.
+    $docsPattern = '^(docs/(?!ssot/(?:params\.yaml|ecr-(?:lifecycle-policy|high-risk-baseline|critical-risk-acceptance)\.json)$))|(^|/)(agents|readme(?:[-_.][^/]*)?|conventions|contributing|security|code_of_conduct|changelog|license)\.md$'
     $backendTestPattern = '(^|/)__tests__(/|$)|(^|/)tests?(/|\.py$)|(^|/)test_[^/]+\.py$|_test\.py$'
     $frontendTestPattern = '^e2e/|(^|/)(__tests__|tests?)(/|$)|\.(spec|test)\.[^/]+$|(^|/)test\.[^/]+$'
     $backendProductPattern = '^(apps/|academy/|schema/|scripts/lint/|manage\.py$)'
-    $backendRuntimeBuildPattern = '^(libs/|docker/|requirements/)'
+    $backendRuntimeBuildPattern = '^(libs/|docker/|requirements/|docs/ssot/params\.yaml$)'
     $frontendRuntimePattern = '^(src/|public/|functions/)'
     $frontendRuntimeBuildPattern = '^(package\.json$|pnpm-lock\.yaml$|vite\.config\.[^/]+$|tsconfig(?:\.[^/]+)?\.json$|eslint\.config\.[^/]+$|index\.html$)'
-    $backendGovernancePattern = '^((\.github/workflows/)|(scripts/(v1|codex|post_deploy_smoke)/)|(docs/(operations|infrastructure)/))'
+    $backendGovernancePattern = '^((\.github/workflows/)|(scripts/(v1|codex|post_deploy_smoke)/)|(docs/(operations|infrastructure)/)|(docs/ssot/ecr-(lifecycle-policy|high-risk-baseline|critical-risk-acceptance)\.json$))'
     $frontendGovernancePattern = '^((\.github/workflows/)|(scripts/guard-deployment-governance\.mjs$)|(scripts/guard-runtime)|(scripts/tests/(visual-audit-workflow|workspace-deployment-contract))|(docs/deployment-operations\.md$))'
+    $frontendQaPattern = '^(playwright(?:\.[^/]+)?\.config\.[cm]?[jt]s$|scripts/(run-development-release-canary|release-canary-progress-reporter)\.mjs$)'
     $docsOnly = -not [bool](@($all | Where-Object { $_ -notmatch $docsPattern }).Count)
     $backendProduct = Test-AnyPath $backend $backendProductPattern
     $backendRuntimePaths = @($backend | Where-Object {
@@ -75,11 +77,11 @@ function Get-AcademyChangeRiskPlan {
     })
     $frontendRuntimeBuild = Test-AnyPath $frontendRuntimePaths $frontendRuntimeBuildPattern
     $frontendRuntime = [bool]$frontendRuntimePaths.Count
-    $frontendE2e = Test-AnyPath $frontend '^e2e/'
+    $frontendE2e = (Test-AnyPath $frontend '^e2e/') -or (Test-AnyPath $frontend $frontendQaPattern)
     $backendMigration = Test-AnyPath $backend '(^|/)migrations/'
     $asyncWorker = Test-AnyPath $backendRuntimePaths '(^|/)(messaging|video|ai|tools|queues?|workers?)(/|$)'
     $backendGovernance = Test-AnyPath $backend $backendGovernancePattern
-    $frontendGovernance = Test-AnyPath $frontend $frontendGovernancePattern
+    $frontendGovernance = (Test-AnyPath $frontend $frontendGovernancePattern) -or (Test-AnyPath $frontend $frontendQaPattern)
     $crossRepositoryProduct = $backendRuntime -and $frontendRuntime
 
     $unknownBackend = @($backend | Where-Object {
@@ -94,7 +96,8 @@ function Get-AcademyChangeRiskPlan {
         $_ -notmatch $frontendTestPattern -and
         $_ -notmatch $frontendRuntimePattern -and
         $_ -notmatch $frontendRuntimeBuildPattern -and
-        $_ -notmatch $frontendGovernancePattern
+        $_ -notmatch $frontendGovernancePattern -and
+        $_ -notmatch $frontendQaPattern
     })
     if ($unknownBackend.Count -or $unknownFrontend.Count) {
         $unknownPaths = @($unknownBackend | ForEach-Object { "backend:$_" }) +
@@ -165,6 +168,23 @@ function Get-AcademyChangeRiskPlan {
         Requirements = @($requirements)
         Gates = @($gates)
         RequiresProductionReleaseBundle = $crossRepositoryProduct
+    }
+}
+
+function Test-AcademyBackendProseOnlyChange {
+    param([AllowEmptyCollection()][string[]]$Paths = @())
+    # Unknown, empty and executable inputs keep the full CI suite. The shared
+    # risk router owns document paths; extensions alone never grant the skip.
+    if (-not $Paths.Count -or @($Paths | Where-Object { $_ -notmatch '\.md$' }).Count) {
+        return $false
+    }
+    try {
+        return (Get-AcademyChangeRiskPlan -BackendPaths $Paths).DocsOnly
+    } catch {
+        if ($_.Exception.Message.StartsWith("Unclassified non-documentation path(s):")) {
+            return $false
+        }
+        throw
     }
 }
 

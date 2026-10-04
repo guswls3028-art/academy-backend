@@ -27,6 +27,9 @@ transaction이나 하나의 통합 SHA가 존재한다고 표현하지 않는다
 경로를 읽고 필요한 기존 게이트를 계획한다. `-RunLocalGates`를 주면 계획된 로컬
 게이트를 그대로 실행한다.
 
+커밋·staged·미커밋 diff는 rename 탐지를 끄고 이동 전 삭제 경로와 이동 후 추가
+경로를 함께 읽는다. 제품 코드를 문서 경로로 옮겨도 기존 제품 검증이 빠지지 않는다.
+
 ```powershell
 pwsh scripts/codex/get-change-risk-plan.ps1 `
   -BackendRoot C:\academy\_worktrees\sessions\<session>\backend `
@@ -55,7 +58,11 @@ pwsh scripts/codex/get-change-risk-plan.ps1 `
 증거를 대체하지 않는다.
 
 `docs/`, `AGENTS.md`, `README*.md`, `CONVENTIONS.md` 같은 관례적 문서와 명시적
-테스트 경로는 runtime/build 판정보다 먼저 제외한다. worker 위험은 `ai`, `queue`,
+테스트 경로는 runtime/build 판정보다 먼저 제외한다. 단, 실행 입력인
+`docs/ssot/params.yaml`은 backend runtime/build로, `docs/ssot/ecr-lifecycle-policy.json`,
+`ecr-high-risk-baseline.json`, `ecr-critical-risk-acceptance.json`은 배포/governance로
+분류한다. SSOT 경로에 있다는 이유로 이 파일들을 문서 검증만으로 통과시키지 않는다.
+worker 위험은 `ai`, `queue`,
 `worker` 등의 정확한 경로 segment로만 판정한다. frontend의 `tsconfig*.json`과
 `eslint.config.*`는 runtime/build 설정으로 라우팅한다. 그 밖의 변경은 알려진
 제품/runtime/build/governance 범주에 반드시 속해야 하며, 새 비문서 경로가 어느
