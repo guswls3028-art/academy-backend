@@ -84,6 +84,12 @@ Assert-Contains $frontendProduct.Requirements "desktop-390-live-readback" "front
 Assert-Contains $frontendProduct.Gates "frontend-core" "frontend UI changes must include the core frontend gates"
 Assert-Contains $frontendProduct.Gates "frontend-e2e" "frontend UI changes must include the PR E2E gate"
 
+$backendReadiness = Get-AcademyChangeRiskPlan -BackendPaths @() `
+    -FrontendPaths @("scripts/wait-development-backend.mjs")
+Assert-Contains $backendReadiness.Gates "frontend-e2e" "backend readiness must retain frontend E2E gates"
+Assert-Contains $backendReadiness.Gates "frontend-deployment-contracts" "backend readiness must retain deployment contracts"
+Assert-True (-not $backendReadiness.DocsOnly) "executable readiness is not documentation-only"
+
 $crossRepository = Get-AcademyChangeRiskPlan `
     -BackendPaths @("apps/domains/enrollment/services.py") `
     -FrontendPaths @("src/app_admin/domains/students/api.ts")

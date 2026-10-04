@@ -52,7 +52,9 @@ pwsh scripts/codex/get-change-risk-plan.ps1 `
 | 배포/governance | 기존 `scripts/v1/test-*-contract.ps1`와 frontend governance guard |
 | backend+frontend 제품 계약 | 일시적 교차 버전 호환성과 최종 production release bundle |
 
-라우터는 제품별 focused test 이름을 추측하지 않는다. 담당 작업은 실제 실패를
+라우터는 제품별 focused test 이름을 추측하지 않는다.
+frontend의 `scripts/wait-development-backend.mjs`도 개발 QA 진입점으로 분류해
+frontend E2E·deployment contract를 유지한다. 담당 작업은 실제 실패를
 먼저 재현하는 focused regression을 추가하고, 라우터는 공통·운영 게이트의 누락을
 막는다. 테스트 개수나 mock E2E 성공만으로 PostgreSQL, tenant, worker, 운영 UI
 증거를 대체하지 않는다.
