@@ -119,6 +119,9 @@ def test_previous_base_source_does_not_reintroduce_already_shipped_app_changes(t
     "apps/worker/tools_worker/tests/test_jobs.py",
     "academy/application/tests/test_use_case.py",
     "tests/fixtures/security-20260919/ecr-high-risk-baseline.json",
+    "scripts/v1/test-workflow-governance-contract.ps1",
+    "scripts/v1/test-production-source-freshness.ps1",
+    "scripts/v1/test_frontend_development_qa.py",
 ])
 def test_test_only_accumulated_diffs_do_not_rebuild_any_runtime(tmp_path, changed):
     outputs = classify(tmp_path, runtime=changed)
@@ -134,6 +137,59 @@ def test_test_filter_preserves_mixed_product_change(tmp_path):
     assert outputs["build_base"] == "false"
     assert outputs["build_api"] == "true"
     assert outputs["build_ai"] == "true"
+
+
+@pytest.mark.parametrize("changed", [
+    "scripts/v1/frontend_development_qa.py",
+    "scripts/v1/deploy.ps1",
+    "scripts/v1/test-named-runtime.py",
+    "scripts/v1/nested/test-runtime.ps1",
+])
+def test_contract_test_filter_preserves_operational_scripts(tmp_path, changed):
+    outputs = classify(tmp_path, runtime=(
+        "scripts/v1/test-workflow-governance-contract.ps1\n" + changed
+    ))
+    assert outputs["build_api"] == "true"
+    assert outputs["build_ai"] == "true"
+
+
+def test_actual_release_collectors_preserve_both_sides_of_runtime_rename(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        return subprocess.check_output(
+            ["git", *args], cwd=repo, text=True, encoding="utf-8", stderr=subprocess.STDOUT
+        ).strip()
+
+    git("init", "-q")
+    git("config", "user.email", "fixture@example.invalid")
+    git("config", "user.name", "Release fixture")
+    (repo / "apps").mkdir()
+    (repo / "docs").mkdir()
+    (repo / "apps/runtime.py").write_text("runtime = True\n", encoding="utf-8")
+    git("add", "--", "apps/runtime.py")
+    git("commit", "-qm", "baseline")
+    baseline = git("rev-parse", "HEAD")
+    git("mv", "apps/runtime.py", "docs/runtime.md")
+    git("commit", "-qm", "move runtime into docs")
+    # Git's default rename detection loses the removed runtime path.
+    assert git("diff", "--name-only", baseline, "HEAD") == "docs/runtime.md"
+
+    collectors = [line.strip() for line in WORKFLOW.read_text(encoding="utf-8").splitlines()
+                  if line.strip().startswith("CHANGED_") and "$(git diff " in line]
+    names = ("RELEASE", "BASE", "API", "VIDEO", "MSG", "AI", "TOOLS")
+    assert len(collectors) == len(names)
+    env = dict(os.environ, **{f"{name}_PREV": baseline for name in names})
+    script = "\n".join(collectors) + "\n" + "\n".join(
+        f'printf "%s\\n" "$CHANGED_{name}"' for name in names
+    )
+    paths = subprocess.check_output(
+        ["bash", "-e", "-o", "pipefail"], input=script, cwd=repo, env=env,
+        text=True, encoding="utf-8",
+    ).splitlines()
+    assert paths.count("apps/runtime.py") == len(names)
+    assert paths.count("docs/runtime.md") == len(names)
 
 
 def test_api_patch_after_all_runtimes_shipped_shared_change_does_not_rebuild_workers(tmp_path):
