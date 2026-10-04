@@ -90,12 +90,14 @@ EXPOSE 8000
 # 환경 변수로 오버라이드 가능:
 # - GUNICORN_WORKERS: 워커 수 (기본값: 4)
 # - GUNICORN_WORKER_CONNECTIONS: 연결 수 (기본값: 1000)
+# ALB idle timeout 60초보다 길게 연결을 유지해 upstream 재사용 중 502를 방지한다.
 CMD ["sh", "-c", \
     "exec gunicorn \
     --bind 0.0.0.0:8000 \
     --workers ${GUNICORN_WORKERS:-4} \
     --worker-class gevent \
     --worker-connections ${GUNICORN_WORKER_CONNECTIONS:-1000} \
+    --keep-alive 75 \
     --timeout 120 \
     --no-control-socket \
     --access-logfile - \
