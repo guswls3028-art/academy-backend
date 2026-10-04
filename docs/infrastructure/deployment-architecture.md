@@ -120,6 +120,13 @@ Evidence-only pushes under `docs/reports/**` and updates to
 Local worktree lifecycle tooling under `scripts/codex/**` is also excluded from
 the push trigger and from accumulated API/AI image diffs; it is exercised by
 the backend quality gate but cannot request production approval or AWS work.
+The same exclusions apply to direct `scripts/v1/test-*.ps1` and
+`scripts/v1/test_*.py` contract tests. Accumulated per-image diffs filter these
+paths too, so a later workflow edit cannot turn an already checked test change
+into an API/AI image rebuild. Mixed changes still select their runtime images;
+operational scripts and nested paths remain eligible.
+Release and per-image Git diffs disable rename detection so both the removed
+source and added destination reach classification, including code moved into docs.
 Other non-runtime changes may still run lint and smoke checks, but the
 production environment approval, shared mutation lock, AWS readbacks, image
 builds, and deploy jobs are all skipped unless change detection selects at

@@ -20,6 +20,8 @@ on:
       - '.github/workflows/candidate-build-only.yml'
       - 'scripts/v1/candidate_build_only.py'
       - 'scripts/v1/test_candidate_build_only.py'
+      - 'scripts/v1/test-*.ps1'
+      - 'scripts/v1/test_*.py'
       - '**/tests/**'
       - '**/tests.py'
       - '.gitignore'
@@ -182,13 +184,13 @@ jobs:
           TOOLS_PREV=$(resolve_image_base "academy-tools-worker") ||
             force_full_build "academy-tools-worker source commit is unavailable"
 
-          CHANGED_RELEASE=$(git diff --name-only "$RELEASE_PREV" HEAD)
-          CHANGED_BASE=$(git diff --name-only "$BASE_PREV" HEAD)
-          CHANGED_API=$(git diff --name-only "$API_PREV" HEAD)
-          CHANGED_VIDEO=$(git diff --name-only "$VIDEO_PREV" HEAD)
-          CHANGED_MSG=$(git diff --name-only "$MSG_PREV" HEAD)
-          CHANGED_AI=$(git diff --name-only "$AI_PREV" HEAD)
-          CHANGED_TOOLS=$(git diff --name-only "$TOOLS_PREV" HEAD)
+          CHANGED_RELEASE=$(git diff --no-renames --name-only "$RELEASE_PREV" HEAD)
+          CHANGED_BASE=$(git diff --no-renames --name-only "$BASE_PREV" HEAD)
+          CHANGED_API=$(git diff --no-renames --name-only "$API_PREV" HEAD)
+          CHANGED_VIDEO=$(git diff --no-renames --name-only "$VIDEO_PREV" HEAD)
+          CHANGED_MSG=$(git diff --no-renames --name-only "$MSG_PREV" HEAD)
+          CHANGED_AI=$(git diff --no-renames --name-only "$AI_PREV" HEAD)
+          CHANGED_TOOLS=$(git diff --no-renames --name-only "$TOOLS_PREV" HEAD)
           CHANGED=$(printf '%s\n' \
             "$CHANGED_RELEASE" "$CHANGED_API" \
             "$CHANGED_VIDEO" "$CHANGED_MSG" "$CHANGED_AI" "$CHANGED_TOOLS" |
@@ -200,7 +202,7 @@ jobs:
           # not change product behavior.
           # Exclude them from accumulated per-image diffs as well as push triggers,
           # otherwise a later workflow-file change would reclassify it as API/AI.
-          runtime_changes() { grep -vE '^scripts/codex/|^scripts/v1/(candidate_build_only|test_candidate_build_only)\.py$|^\.github/workflows/candidate-build-only\.yml$|(^|/)tests(/|\.py$)' <<< "$1" || true; }
+          runtime_changes() { grep -vE '^scripts/codex/|^scripts/v1/candidate_build_only\.py$|^scripts/v1/(test-[^/]+\.ps1|test_[^/]+\.py)$|^\.github/workflows/candidate-build-only\.yml$|(^|/)tests(/|\.py$)' <<< "$1" || true; }
 
           # Base contains dependencies only, not academy/apps/libs source. Compare
           # its actual inputs separately; old base source must not reintroduce

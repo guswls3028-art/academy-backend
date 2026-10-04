@@ -564,7 +564,7 @@ def test_selective_build_diffs_from_each_last_verified_runtime_image() -> None:
     )
     assert "resolve_image_base()" in detect
     assert 'git merge-base --is-ancestor "$resolved" HEAD' in detect
-    assert 'CHANGED_RELEASE=$(git diff --name-only "$RELEASE_PREV" HEAD)' in detect
+    assert 'CHANGED_RELEASE=$(git diff --no-renames --name-only "$RELEASE_PREV" HEAD)' in detect
     for flag, repo in {
         "BASE": "academy-base",
         "API": "academy-api",
@@ -574,7 +574,7 @@ def test_selective_build_diffs_from_each_last_verified_runtime_image() -> None:
         "TOOLS": "academy-tools-worker",
     }.items():
         assert f'{flag}_PREV=$(resolve_image_base "{repo}")' in detect
-        assert f'CHANGED_{flag}=$(git diff --name-only "${flag}_PREV" HEAD)' in detect
+        assert f'CHANGED_{flag}=$(git diff --no-renames --name-only "${flag}_PREV" HEAD)' in detect
         if flag == "BASE":
             assert 'CHANGED="$CHANGED_BASE"' in detect
         else:
@@ -763,6 +763,7 @@ def test_stateful_image_rollback_fails_closed_before_aws(service: str) -> None:
             "-WhatIf",
         ],
         text=True,
+        encoding="utf-8",
         capture_output=True,
         check=False,
     )
@@ -773,7 +774,7 @@ def test_stateful_image_rollback_fails_closed_before_aws(service: str) -> None:
     )
     assert completed.returncode != 0
     assert f"STATEFUL_IMAGE_ROLLBACK_BLOCKED service={service}" in normalized_output
-    assert re.search(r"immutable\s+(?:\|\s*)?release image", normalized_output)
+    assert re.search(r"immutable\s+(?:\|\s*)?release\s+(?:\|\s*)?image", normalized_output)
 
 
 def test_remote_api_tools_reuse_the_running_digest_pinned_image() -> None:
@@ -1518,9 +1519,12 @@ def test_workflow_checks_release_freshness_under_lock_and_always_releases() -> N
     assert "'docs/reports/**'" in workflow
     assert "'docs/ssot/runtime-current.md'" in workflow
     assert "'scripts/codex/**'" in workflow
+    assert "'scripts/v1/test-*.ps1'" in workflow
+    assert "'scripts/v1/test_*.py'" in workflow
     assert (
         r"runtime_changes() { grep -vE '^scripts/codex/"
-        r"|^scripts/v1/(candidate_build_only|test_candidate_build_only)\.py$"
+        r"|^scripts/v1/candidate_build_only\.py$"
+        r"|^scripts/v1/(test-[^/]+\.ps1|test_[^/]+\.py)$"
         r"|^\.github/workflows/candidate-build-only\.yml$"
         r"|(^|/)tests(/|\.py$)'"
     ) in workflow
