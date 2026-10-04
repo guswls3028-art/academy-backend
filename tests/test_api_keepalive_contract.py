@@ -25,7 +25,8 @@ def test_api_keepalive_exceeds_load_balancer_idle_timeout():
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Gunicorn is a POSIX server")
-def test_actual_api_command_reuses_connection_after_old_two_second_expiry(tmp_path):
+@pytest.mark.parametrize("use_old_timeout", [False, True], ids=["configured", "old-default"])
+def test_actual_api_command_reuses_connection_after_old_two_second_expiry(tmp_path, use_old_timeout):
     (tmp_path / "keepalive_probe.py").write_text(
         "def application(environ, start_response):\n"
         "    start_response('200 OK', [('Content-Length', '2')])\n"
@@ -37,6 +38,8 @@ def test_actual_api_command_reuses_connection_after_old_two_second_expiry(tmp_pa
         port = listener.getsockname()[1]
         command = api_command().replace("--bind 0.0.0.0:8000", f"--bind fd://{listener.fileno()}")
         command = command.replace("apps.api.config.wsgi:application", "keepalive_probe:application")
+        if use_old_timeout:
+            command = re.sub(r"--keep-alive\s+\d+", "--keep-alive 2", command)
         env = dict(os.environ, GUNICORN_WORKERS="1", GUNICORN_WORKER_CONNECTIONS="10", PYTHONPATH=str(tmp_path))
         env.pop("GUNICORN_CMD_ARGS", None)
         with (tmp_path / "gunicorn.log").open("w") as log:
@@ -53,6 +56,11 @@ def test_actual_api_command_reuses_connection_after_old_two_second_expiry(tmp_pa
                 original_socket = connection.sock
                 assert original_socket is not None
                 time.sleep(3)
+                if use_old_timeout:
+                    with pytest.raises((http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError)):
+                        connection.request("GET", "/healthz")
+                        connection.getresponse()
+                    return
                 connection.request("GET", "/healthz")
                 response = connection.getresponse()
                 assert response.status == 200 and response.read() == b"OK"
