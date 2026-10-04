@@ -257,7 +257,6 @@ class StudentListSerializer(serializers.ModelSerializer):
 
     def to_representation(self, obj):
         data = super().to_representation(obj)
-        data["profile_photo_url"] = self.get_profile_photo_url(obj)
 
         # 클리닉 하이라이트: 해당 학생의 활성 enrollment 중 하나라도 True이면 True
         highlight_map = self._get_clinic_highlight_map()

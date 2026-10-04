@@ -233,6 +233,32 @@ class TestStudentListQueryShape(TestCase):
             f"태그 조회가 학생 수만큼 반복됨: {tag_queries}",
         )
 
+    @patch("academy.adapters.storage.r2_presign.create_presigned_get_url")
+    def test_student_list_signs_each_present_photo_once(self, presign):
+        students = list(Student.objects.filter(tenant=self.tenant).order_by("id"))
+        for student in students[:8]:
+            student.profile_photo_r2_key = f"tenants/{self.tenant.id}/students/{student.id}/photo.png"
+        Student.objects.bulk_update(students[:8], ["profile_photo_r2_key"])
+        presign.side_effect = lambda key, **kwargs: f"https://photos.example/{key}"
+
+        request = self.factory.get("/api/v1/students/")
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+        response = StudentViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        rows = {row["id"]: row for row in response.data["results"]}
+        self.assertEqual(len(rows), 12)
+        for student in students:
+            expected = (
+                f"https://photos.example/{student.profile_photo_r2_key}"
+                if student.profile_photo_r2_key else None
+            )
+            self.assertEqual(rows[student.id]["profile_photo_url"], expected)
+            self.assertTrue(rows[student.id]["tags"])
+            self.assertIn("name_highlight_clinic_target", rows[student.id])
+        self.assertEqual(presign.call_count, 8)
+
 
 class TestStudentClassOrdering(TestCase):
     def setUp(self):

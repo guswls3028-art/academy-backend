@@ -216,6 +216,17 @@ Dependencies:
    capacity.
 3. UserData installs Docker, logs in to ECR, pulls `repo@sha256:...`, fetches SSM env, and starts the container. `/academy/api/env` 동기화는 `DJANGO_SETTINGS_MODULE=apps.api.config.settings.prod`를 강제하고 atomic file replacement 후 재시작한다. worker 런타임만 `apps.api.config.settings.worker`를 사용하며, SSM command 또는 `docker run` 실패는 배포 실패로 전파한다.
    The API container disables Gunicorn's unused control socket; runtime operations use the guarded ASG/SSM deployment path, and the non-root app directory is not treated as a writable control-socket location.
+   Each WSGI worker resolves the root URL configuration during startup, before
+   accepting requests. Isolated profiling found roughly 2.3–2.7 seconds of route
+   import work on each fresh worker's first request, while its health handler
+   completed within 91 milliseconds. Startup now pays that existing cost before
+   readiness; route import failures fail worker startup and preserve the old
+   healthy capacity through the normal rollout gate. Request handling, database
+   connections, worker count and the existing preprod latency thresholds remain
+   unchanged. `tests/test_wsgi_startup.py` checks real routes in a fresh process
+   and rejects a broken URL configuration before the first request. The earlier
+   isolated p99 failure lacked per-worker telemetry, so it is not attributed
+   conclusively to this measured cold-route path.
    API Gunicorn/gevent keeps idle target connections for 75 seconds, longer than the API ALB's 60-second idle timeout. The former 2-second default could close a connection while the ALB still intended to reuse it, producing an ALB 502 that also lacks application CORS headers. This fixes a transport risk; a single correlated ALB 502 is not proof that every CORS failure has this cause. Keep the application idle timeout above the ALB value when changing either. Request timeout (120 seconds), workers, tenant/authentication policy and data are unchanged. Verify the effective container setting and ALB attribute after the normal candidate/development/preprod/rolling gates; `tests/test_api_keepalive_contract.py` also runs the Docker startup command with a local probe and verifies reuse of the same connection beyond the previous two-second expiry. Connection/header failures still block release and follow the existing rollback procedure. See [AWS idle-timeout guidance](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/edit-load-balancer-attributes.html#connection-idle-timeout).
 4. ALB health check passes on the new instance.
 5. The old instance is drained and terminated.

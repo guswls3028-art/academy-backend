@@ -256,6 +256,12 @@ save failure cleans the newly uploaded key best-effort and preserves the old DB
 key. Invalid content type, image magic bytes, or files larger than 10 MiB are
 rejected before upload.
 
+The admin student list signs each present profile photo once per serialized
+student through `profile_photo_url`; the final representation reuses that field.
+Missing photos still return `null`. Pagination, tenant scope, tags, enrollments,
+account state and clinic highlights are unchanged. The list regression checks a
+mixed page with and without photos and verifies one signing operation per photo.
+
 ## 2.1 Tenant Custom Student Fields
 
 Teacher-specific profile columns are a tenant-scoped extension of the canonical
