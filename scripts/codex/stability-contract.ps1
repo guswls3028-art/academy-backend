@@ -54,6 +54,7 @@ function Get-AcademyChangeRiskPlan {
     $frontendRuntimeBuildPattern = '^(package\.json$|pnpm-lock\.yaml$|vite\.config\.[^/]+$|tsconfig(?:\.[^/]+)?\.json$|eslint\.config\.[^/]+$|index\.html$)'
     $backendGovernancePattern = '^((\.github/workflows/)|(scripts/(v1|codex|post_deploy_smoke)/)|(docs/(operations|infrastructure)/)|(docs/ssot/ecr-(lifecycle-policy|high-risk-baseline|critical-risk-acceptance)\.json$))'
     $frontendGovernancePattern = '^((\.github/workflows/)|(scripts/guard-deployment-governance\.mjs$)|(scripts/guard-runtime)|(scripts/tests/(visual-audit-workflow|workspace-deployment-contract))|(docs/deployment-operations\.md$))'
+    $frontendQaPattern = '^(playwright(?:\.[^/]+)?\.config\.[cm]?[jt]s$|scripts/(run-development-release-canary|release-canary-progress-reporter)\.mjs$)'
     $docsOnly = -not [bool](@($all | Where-Object { $_ -notmatch $docsPattern }).Count)
     $backendProduct = Test-AnyPath $backend $backendProductPattern
     $backendRuntimePaths = @($backend | Where-Object {
@@ -76,11 +77,11 @@ function Get-AcademyChangeRiskPlan {
     })
     $frontendRuntimeBuild = Test-AnyPath $frontendRuntimePaths $frontendRuntimeBuildPattern
     $frontendRuntime = [bool]$frontendRuntimePaths.Count
-    $frontendE2e = Test-AnyPath $frontend '^e2e/'
+    $frontendE2e = (Test-AnyPath $frontend '^e2e/') -or (Test-AnyPath $frontend $frontendQaPattern)
     $backendMigration = Test-AnyPath $backend '(^|/)migrations/'
     $asyncWorker = Test-AnyPath $backendRuntimePaths '(^|/)(messaging|video|ai|tools|queues?|workers?)(/|$)'
     $backendGovernance = Test-AnyPath $backend $backendGovernancePattern
-    $frontendGovernance = Test-AnyPath $frontend $frontendGovernancePattern
+    $frontendGovernance = (Test-AnyPath $frontend $frontendGovernancePattern) -or (Test-AnyPath $frontend $frontendQaPattern)
     $crossRepositoryProduct = $backendRuntime -and $frontendRuntime
 
     $unknownBackend = @($backend | Where-Object {
@@ -95,7 +96,8 @@ function Get-AcademyChangeRiskPlan {
         $_ -notmatch $frontendTestPattern -and
         $_ -notmatch $frontendRuntimePattern -and
         $_ -notmatch $frontendRuntimeBuildPattern -and
-        $_ -notmatch $frontendGovernancePattern
+        $_ -notmatch $frontendGovernancePattern -and
+        $_ -notmatch $frontendQaPattern
     })
     if ($unknownBackend.Count -or $unknownFrontend.Count) {
         $unknownPaths = @($unknownBackend | ForEach-Object { "backend:$_" }) +

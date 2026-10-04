@@ -171,6 +171,13 @@ Assert-Contains $governance.Gates "backend-deployment-contracts" "backend deploy
 Assert-Contains $governance.Gates "frontend-deployment-contracts" "frontend deployment paths must invoke existing governance guards"
 
 $ssotRuntime = Get-AcademyChangeRiskPlan -BackendPaths @("docs/ssot/params.yaml") -FrontendPaths @("src/app.tsx")
+$frontendQa = Get-AcademyChangeRiskPlan -FrontendPaths @(
+    "playwright.development-release.config.ts", "playwright.config.ts",
+    "scripts/run-development-release-canary.mjs", "scripts/release-canary-progress-reporter.mjs"
+)
+Assert-Contains $frontendQa.Gates "frontend-e2e" "development suite owners must select E2E verification"
+Assert-Contains $frontendQa.Gates "frontend-deployment-contracts" "development suite owners must retain deployment guards"
+Assert-True (-not $frontendQa.RequiresProductionReleaseBundle) "QA-only changes must not invent a cross-repository application release"
 Assert-True (-not $ssotRuntime.DocsOnly) "executable SSOT parameters must not be documentation-only"
 Assert-Contains $ssotRuntime.Gates "backend-core" "SSOT runtime parameters must retain backend core gates"
 Assert-Contains $ssotRuntime.Gates "backend-deployment-contracts" "SSOT runtime parameters must retain deployment contracts"
