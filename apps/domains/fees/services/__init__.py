@@ -275,6 +275,7 @@ def generate_monthly_invoices(
                         billing_month=billing_month,
                         total_amount=total,
                         due_date=due_date,
+                        status="OVERDUE" if due_date < timezone.localdate() else "PENDING",
                         created_by=created_by,
                     )
 
