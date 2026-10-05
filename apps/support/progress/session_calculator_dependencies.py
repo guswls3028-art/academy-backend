@@ -113,10 +113,31 @@ def get_ids_for_session_as_ints(exam_ids) -> list[int]:
     return [int(exam_id) for exam_id in exam_ids]
 
 
-def homework_score_exists(**filters) -> bool:
+def homework_score_passed(*, enrollment_id: int, session) -> bool:
+    """Every current assignment needs a passing first attempt; keep legacy history usable."""
+    from apps.domains.homework.models import HomeworkAssignment
     from apps.domains.homework_results.models import HomeworkScore
 
-    return HomeworkScore.objects.filter(**filters).exists()
+    tenant_id = session.lecture.tenant_id
+    scope = {
+        "enrollment_id": enrollment_id,
+        "enrollment__tenant_id": tenant_id,
+        "enrollment__lecture_id": session.lecture_id,
+        "session_id": session.id,
+        "homework__tenant_id": tenant_id,
+        "homework__session_id": session.id,
+    }
+    assigned_ids = set(
+        HomeworkAssignment.objects.filter(tenant_id=tenant_id, **scope)
+        .exclude(homework__meta__removed_from_session_at__isnull=False)
+        .values_list("homework_id", flat=True)
+    )
+    passing_ids = set(
+        HomeworkScore.objects.filter(attempt_index=1, passed=True, **scope)
+        .exclude(homework__meta__removed_from_session_at__isnull=False)
+        .values_list("homework_id", flat=True)
+    )
+    return assigned_ids.issubset(passing_ids) if assigned_ids else bool(passing_ids)
 
 
 def homework_teacher_approval_passed(*, enrollment_id: int, session) -> bool:

@@ -92,6 +92,15 @@ Ymath는 `Program.feature_flags.assessment_status_display=wrong_completion`을
 
 ## 성장 그래프 구성
 
+성적 요약의 시험·과제와 분석 API의 강좌별 평균은 `lecture_id` 단위로 구분한다.
+원문 강좌명은 tenant 내 유일하지만 공백·서식을 화면에서 정리하면 같은 이름으로
+보일 수 있다. 표시 이름은 식별자로 쓰지 않는다. ID 없는 구응답은
+`enrollment_id`로 구분하고, 분석 입력에 두 ID 모두 없는 과거 형식만 이름으로
+호환한다. 분석 `lecture_breakdown`에 두 ID를 추가해 클라이언트도 같은 강좌를
+안정적으로 구분한다. 기존 필드는 유지하며 저장된 원점수·수강 이력을 변경하지 않는다.
+`apps/support/results/tests/test_enterprise_analytics.py`에서 동일 이름의 두 강좌와
+서로 다른 만점의 시험을 학생 API로 조회하여 독립된 득점률을 검증한다.
+
 표시 순서와 노출 여부는 `Program.ui_config.student_grade_report_layout`에 저장한다.
 런타임에서 YMath 또는 다른 테넌트 코드를 분기하지 않는다.
 

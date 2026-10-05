@@ -17,6 +17,7 @@ from django.utils import timezone
 from apps.domains.homework_results.models import HomeworkScore
 from apps.support.homework_results.score_dependencies import (
     calc_homework_passed_and_clinic,
+    schedule_homework_score_progress,
     sync_homework_clinic_link,
 )
 
@@ -68,6 +69,14 @@ def _recalc_scores(*, queryset) -> int:
             score=score_snapshot.score,
             max_score=score_snapshot.max_score,
         )
+
+    # Dispatch after commit, outside the score/assignment locks. Policy edits do
+    # not imply online submission or a new teacher review of uploaded evidence.
+    enrollment_ids_by_session: dict[int, set[int]] = {}
+    for score_snapshot in changed:
+        enrollment_ids_by_session.setdefault(score_snapshot.session_id, set()).add(score_snapshot.enrollment_id)
+    for session_id, enrollment_ids in sorted(enrollment_ids_by_session.items()):
+        schedule_homework_score_progress(session_id=session_id, enrollment_ids=enrollment_ids)
 
     return len(changed)
 
