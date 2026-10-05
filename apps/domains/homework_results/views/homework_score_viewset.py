@@ -58,6 +58,7 @@ from apps.support.homework_results.score_dependencies import (
     calc_homework_passed_and_clinic,
     dispatch_progress_pipeline,
     latest_homework_submission,
+    schedule_homework_score_progress,
     sync_homework_clinic_link,
     validate_enrollment_belongs_to_tenant,
 )
@@ -346,12 +347,16 @@ class HomeworkScoreViewSet(ModelViewSet):
                     try:
                         dispatch_progress_pipeline(submission_id=sub_id)
                     except Exception:
-                        pass
+                        logger.exception("partial_update: submission progress failed (submission=%s)", sub_id)
 
                 transaction.on_commit(_dispatch)
                 progress_info = {"dispatched": True, "reason": None}
             else:
-                progress_info = {"dispatched": False, "reason": "NO_SUBMISSION"}
+                schedule_homework_score_progress(
+                    session_id=score_obj.session_id,
+                    enrollment_ids=[score_obj.enrollment_id],
+                )
+                progress_info = {"dispatched": True, "reason": None}
 
             try:
                 with transaction.atomic():
@@ -559,6 +564,10 @@ class HomeworkScoreViewSet(ModelViewSet):
                         "quick_patch: clinic link sync failed (hw=%s, enrollment=%s)",
                         homework_id, enrollment_id,
                     )
+
+                schedule_homework_score_progress(
+                    session_id=session.id, enrollment_ids=[enrollment_id],
+                )
 
             return Response(
                 HomeworkScoreSerializer(obj).data,

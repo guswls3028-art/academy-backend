@@ -123,6 +123,30 @@ class EnterpriseAnalyticsTests(TestCase):
         self.assertEqual(normalize_analytics_days("9999"), 730)
         self.assertEqual(normalize_analytics_days("bad", default=365), 365)
 
+    def test_same_display_title_lectures_expose_independent_analytics_identity(self):
+        student = self._student(self.tenant, "same-title")
+        enrollments = []
+        for title, score, maximum in [("First weekly exam", 10, 50), ("Second weekly exam", 100, 100)]:
+            _, enrollment, _ = self._exam_result_for_student(
+                tenant=self.tenant, student=student, title=title, score=score, max_score=maximum,
+                pass_score=maximum * 0.6,
+            )
+            # Raw titles are tenant-unique; the client collapses internal spaces.
+            enrollment.lecture.title = "Same course name" if not enrollments else "Same  course name"
+            enrollment.lecture.save(update_fields=["title"])
+            enrollments.append(enrollment)
+
+        request = self.factory.get("/api/v1/student/grades/analytics/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=student.user)
+        response = MyGradesAnalyticsView.as_view()(request)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["lecture_breakdown"], [
+            {"lecture_id": enrollment.lecture_id, "enrollment_id": enrollment.id,
+             "lecture_title": enrollment.lecture.title, "exam_count": 1, "avg_score_pct": percentage}
+            for enrollment, percentage in zip(enrollments, [20.0, 100.0])
+        ])
+
     def test_admin_analytics_is_tenant_scoped_and_filters_demo_exams(self):
         student = self._student(self.tenant, "main")
         exam, enrollment, _ = self._exam_result_for_student(

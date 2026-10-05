@@ -683,16 +683,24 @@ def build_student_enterprise_analytics(*, tenant: Any, student: Any, days: int =
             "cohort_size": exam.get("cohort_size"),
         })
 
-    lecture_map: dict[str, list[float]] = defaultdict(list)
+    lecture_map: dict[tuple[str, Any], list[dict[str, Any]]] = defaultdict(list)
     for exam in scored_exams:
-        lecture_map[str(exam.get("lecture_title") or "기타")].append(float(exam["score_pct"]))
+        if exam.get("lecture_id") is not None:
+            key = ("lecture", exam["lecture_id"])
+        elif exam.get("enrollment_id") is not None:
+            key = ("enrollment", exam["enrollment_id"])
+        else:
+            key = ("legacy", str(exam.get("lecture_title") or "기타"))
+        lecture_map[key].append(exam)
     lecture_breakdown = [
         {
-            "lecture_title": lecture,
-            "exam_count": len(values),
-            "avg_score_pct": _stats(values)["avg"],
+            "lecture_id": rows[0].get("lecture_id"),
+            "enrollment_id": rows[0].get("enrollment_id"),
+            "lecture_title": rows[0].get("lecture_title") or "기타",
+            "exam_count": len(rows),
+            "avg_score_pct": _stats([float(row["score_pct"]) for row in rows])["avg"],
         }
-        for lecture, values in lecture_map.items()
+        for rows in lecture_map.values()
     ]
     lecture_breakdown.sort(key=lambda row: (row["avg_score_pct"] is None, row["avg_score_pct"] or 0))
 

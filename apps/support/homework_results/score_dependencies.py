@@ -53,6 +53,12 @@ def dispatch_progress_pipeline(*, submission_id: int) -> None:
     dispatch(submission_id=submission_id)
 
 
+def schedule_homework_score_progress(*, session_id: int, enrollment_ids) -> None:
+    from apps.domains.progress.dispatcher import schedule_homework_target_progress
+
+    schedule_homework_target_progress(session_id=session_id, enrollment_ids=enrollment_ids)
+
+
 def resolve_homework_clinic_pass(
     *,
     enrollment_id: int,
