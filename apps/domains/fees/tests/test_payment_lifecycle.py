@@ -447,6 +447,31 @@ class IdempotencyTest(FeesTestMixin, TestCase):
 
 
 class InvoiceGenerationSnapshotTest(FeesTestMixin, TestCase):
+    def test_generated_invoice_status_and_dashboard_follow_due_date(self):
+        today = timezone.localdate()
+        for index, (offset, expected) in enumerate(((-1, "OVERDUE"), (0, "PENDING"), (1, "PENDING")), 1):
+            with self.subTest(due_date_offset=offset):
+                tenant = self.make_tenant(code=f"t_generated_due_{index}")
+                student = self.make_student(tenant)
+                StudentFee.objects.create(
+                    tenant=tenant,
+                    student=student,
+                    fee_template=self.make_fee_template(tenant),
+                )
+                with patch("apps.domains.fees.services.timezone.localdate", return_value=today):
+                    result = generate_monthly_invoices(
+                        tenant, today.year, today.month, today + timedelta(days=offset),
+                    )
+                self.assertEqual(result, {"created": 1, "skipped": 0, "errors": []})
+                invoice = StudentInvoice.objects.get(tenant=tenant, student=student)
+                self.assertEqual(invoice.status, expected)
+                self.assertEqual(invoice.paid_amount, 0)
+                self.assertIsNone(invoice.paid_at)
+                stats = get_dashboard_stats(tenant, today.year, today.month)
+                self.assertEqual(stats["overdue_count"], int(expected == "OVERDUE"))
+                self.assertEqual(stats["pending_count"], int(expected == "PENDING"))
+                self.assertEqual(stats["total_outstanding"], 100_000)
+
     def test_generation_reloads_amount_and_discount_after_candidate_snapshot(self):
         tenant = self.make_tenant(code="t_generation_snapshot")
         student = self.make_student(tenant)
@@ -722,6 +747,24 @@ class InvoiceCancelGuardTest(FeesTestMixin, TestCase):
         self.assertEqual(invoices[0].status, "CANCELLED")
         self.assertEqual(invoices[1].status, "PENDING")
         self.assertNotEqual(invoices[0].invoice_number, invoices[1].invoice_number)
+
+    def test_cancelled_invoice_reissued_after_due_date_is_overdue(self):
+        StudentFee.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            fee_template=self.make_fee_template(self.tenant),
+        )
+        cancel_invoice(self.tenant, self.invoice.id)
+        result = generate_monthly_invoices(
+            self.tenant, self.invoice.billing_year, self.invoice.billing_month,
+            timezone.localdate() - timedelta(days=1),
+        )
+        self.assertEqual(result, {"created": 1, "skipped": 0, "errors": []})
+        self.invoice.refresh_from_db()
+        self.assertEqual(self.invoice.status, "CANCELLED")
+        reissued = StudentInvoice.objects.get(tenant=self.tenant, status="OVERDUE")
+        self.assertNotEqual(reissued.pk, self.invoice.pk)
+        self.assertEqual(reissued.items.count(), 1)
 
 
 class FeeDashboardQueryTest(FeesTestMixin, TestCase):
