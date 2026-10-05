@@ -9,10 +9,12 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.homework_results.models import Homework, HomeworkScore
-from apps.domains.homework_results.services.policy_recalc import recalc_scores_for_homework_change
 from apps.domains.progress.models import LectureProgress, ProgressPolicy, SessionProgress
 from apps.domains.progress.services.progress_pipeline import ProgressPipelineService
+
+
+Homework = apps.get_model("homework_results", "Homework")
+HomeworkScore = apps.get_model("homework_results", "HomeworkScore")
 
 
 class HomeworkScoreProgressTests(TestCase):
@@ -179,11 +181,13 @@ class HomeworkScoreProgressTests(TestCase):
         self._recompute()
         self._assert_progress(True)
         for cutline, maximum, expected in [(95, 100, False), (80, 100, True), (80, 200, False)]:
-            with self.captureOnCommitCallbacks(execute=True), transaction.atomic():
-                self.homework.cutline_value = cutline
-                self.homework.meta = {**self.homework.meta, "default_max_score": maximum}
-                self.homework.save()
-                recalc_scores_for_homework_change(homework=self.homework)
+            with self.captureOnCommitCallbacks(execute=True):
+                response = self.client.patch(
+                    f"/api/v1/homeworks/{self.homework.id}/",
+                    {"cutline_value": cutline, "max_score": maximum},
+                    format="json", **self.headers,
+                )
+            self.assertEqual(response.status_code, 200, response.data)
             self._assert_progress(expected)
             score.refresh_from_db()
             self.assertEqual(score.score, 90)
