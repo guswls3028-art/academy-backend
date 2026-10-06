@@ -220,6 +220,25 @@ def test_production_source_copies_have_final_ownership() -> None:
                 raise AssertionError(f"{service} has an ownership-copy regression: {line}")
 
 
+
+def test_api_waits_for_tools_consumers_before_producing_new_job_types() -> None:
+    workflow = _read(WORKFLOW)
+    api = workflow.split("\n  deploy-api:\n", maxsplit=1)[1].split(
+        "\n  deploy-messaging:\n", maxsplit=1
+    )[0]
+    tools = workflow.split("\n  deploy-tools:\n", maxsplit=1)[1].split(
+        "\n  deploy-video:\n", maxsplit=1
+    )[0]
+
+    # A selected Tools refresh must fully finish and verify the immutable runtime
+    # before API producers can enqueue newly introduced deterministic job types.
+    assert re.search(r"needs: \[[^\n]*\bdeploy-tools\b[^\n]*\]", api)
+    assert "(needs.deploy-tools.result == 'success' || needs.deploy-tools.result == 'skipped')" in api
+    assert "needs: [detect-changes, build-and-push, verify-api-preprod, run-migrations]" in tools
+    assert "Wait for Tools refresh to complete" in tools
+    assert "Verify Tools warm runtime digest" in tools
+
+
 def test_api_refresh_preserves_capacity_and_uses_native_replacement_headroom() -> None:
     workflow = _read(WORKFLOW)
     deploy_api = workflow.split("\n  deploy-api:\n", maxsplit=1)[1].split(

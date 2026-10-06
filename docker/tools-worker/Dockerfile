@@ -57,9 +57,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Official, checksum-pinned MIT-licensed native HWP/HWPX renderer. No Python
 # binding, browser service or external document upload is involved.
-COPY scripts/install-resource-reader.py /tmp/install-resource-reader.py
+COPY --chown=appuser:appuser scripts/install-resource-reader.py /tmp/install-resource-reader.py
 RUN python /tmp/install-resource-reader.py && rm /tmp/install-resource-reader.py
-COPY scripts/install-resource-office.py /tmp/install-resource-office.py
+COPY --chown=appuser:appuser scripts/install-resource-office.py /tmp/install-resource-office.py
 RUN python /tmp/install-resource-office.py && rm /tmp/install-resource-office.py \
     && test -z "$(dpkg --audit)" && apt-get check \
     && ! command -v perl >/dev/null 2>&1

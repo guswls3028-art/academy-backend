@@ -155,3 +155,5 @@ Runtime owners: [deployment modes](../operations/deployment-modes.md),
 [persistent development](../operations/persistent-development-runtime.md),
 [container security](../operations/container-image-security.md).
 Frontend interactions: academy-frontend `docs/PUBLIC-RESOURCE-BOARD.md`.
+
+The release installs and verifies the Tools consumer before refreshing API producers; API and Tools must not roll out this new queue job type in parallel. The additive reader fields retain database defaults for old API instances during migration. See [deployment order](../operations/deployment-modes.md).
