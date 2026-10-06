@@ -181,9 +181,18 @@ class PublicResourceContractTests(TestCase):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(first.data["id"], second.data["id"])
         response = self.call("post", "create", {**body, "title": "changed"}, user=self.one)
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["published_title"], body["title"])
+        self.assertEqual(int(response.data["post_id"]), first.data["id"])
+        self.assertEqual(list(response.data["file_ids"]), [str(file.id)])
         self.assertEqual(PublicResourcePost.objects.count(), 1)
         self.assertEqual(PublicResourcePost.objects.first().title, body["title"])
+        recovered = self.call("patch", "partial_update", {
+            **body, "title": "changed", "expected_updated_at": str(response.data["updated_at"]),
+        }, user=self.one, pk=first.data["id"])
+        self.assertEqual(recovered.status_code, 200, recovered.data)
+        self.assertEqual(recovered.data["title"], "changed")
+        self.assertEqual(PublicResourcePost.objects.count(), 1)
 
     @patch(
         "apps.domains.landing_public.api.views.resource_views.generate_presigned_get_url_admin",
@@ -280,6 +289,44 @@ class PublicResourceContractTests(TestCase):
         self.assertEqual(self.call("post", "create", self.body(file), user=self.one).status_code, 400)
         self.assertEqual(self.call("delete", user=self.one, file_id=file.pk).status_code, 204)
 
+    @patch("apps.domains.landing_public.api.views.resource_views.upload_fileobj_to_r2_admin")
+    def test_generic_upload_publish_reload_and_anonymous_download(self, upload):
+        response = self.call("post", "upload", {
+            "file": SimpleUploadedFile('분석.긴확장자입니다', b"original bytes", content_type="text/html"),
+        }, user=self.one)
+        self.assertEqual(response.status_code, 201, response.data)
+        file = PublicResourceFile.objects.get(pk=response.data["id"])
+        self.assertEqual(file.content_type, "application/octet-stream")
+        self.assertEqual(response.data["extension"], "긴확장자입니다")
+        self.assertEqual(file.extension, "")
+        self.assertTrue(file.storage_key.endswith(str(file.id)))
+        self.assertEqual(upload.call_args.kwargs["content_type"], "application/octet-stream")
+        created = self.call("post", "create", self.body(file), user=self.one)
+        self.assertEqual(created.status_code, 201, created.data)
+        reread = self.call("get", "retrieve", pk=created.data["id"])
+        self.assertEqual(reread.data["files"][0]["filename"], '분석.긴확장자입니다')
+        with patch("apps.domains.landing_public.api.views.resource_views.generate_presigned_get_url_admin", return_value="https://qa.invalid/signed"):
+            self.assertEqual(self.call("get", file_id=file.pk).status_code, 200)
+            self.assertEqual(self.call("get", file_id=file.pk, tenant=self.other).status_code, 404)
+
+    def test_stale_edit_preserves_newer_content_and_removed_file_while_retry_succeeds(self):
+        post, file = self.publish()
+        version = post.updated_at.isoformat()
+        replacement = self.file(user=self.two)
+        update = self.body(replacement, title="newer", expected_updated_at=version)
+        first = self.call("patch", "partial_update", update, user=self.two, pk=post.pk)
+        self.assertEqual(first.status_code, 200, first.data)
+        replay = self.call("patch", "partial_update", update, user=self.two, pk=post.pk)
+        self.assertEqual(replay.status_code, 200, replay.data)
+        self.assertEqual(replay.data["updated_at"], first.data["updated_at"])
+        stale = self.call("patch", "partial_update", self.body(file, title="stale", expected_updated_at=version), user=self.one, pk=post.pk)
+        self.assertEqual(stale.status_code, 409, stale.data)
+        post.refresh_from_db(); file.refresh_from_db()
+        self.assertEqual(post.title, "newer")
+        self.assertTrue(file.is_removed)
+        recovered = self.call("patch", "partial_update", self.body(replacement, title="reviewed", expected_updated_at=first.data["updated_at"]), user=self.one, pk=post.pk)
+        self.assertEqual(recovered.status_code, 200, recovered.data)
+
     def test_publisher_ids_are_distinct_at_database_boundary(self):
         from django.db import IntegrityError, transaction
 
@@ -292,6 +339,21 @@ class PublicResourceContractTests(TestCase):
 
 
 class ResourceFormatTests(TestCase):
+    def test_arbitrary_original_formats_and_safe_download_names(self):
+        for name in ("분석.xlsx", "발표.pptx", "자료.zip", "자료.긴확장자입니다", "README", "a.html", 'quoted.x"y'):
+            with self.subTest(name=name):
+                upload = SimpleUploadedFile(name, b"original bytes", content_type="text/html")
+                filename, extension, mime = validate_resource_file(upload)
+                self.assertEqual(filename, name)
+                self.assertEqual(extension, name.rsplit(".", 1)[-1].lower() if "." in name else "")
+                self.assertEqual(mime, "application/octet-stream")
+                self.assertEqual(upload.read(), b"original bytes")
+                header = resource_content_disposition(name)
+                header.encode("ascii")
+                self.assertTrue(header.startswith('attachment; filename="document'))
+                self.assertEqual(header.count('"'), 2)
+
+
     def test_pdf_and_hwpx_case_insensitive_with_generic_mime(self):
         for name, data, extension in [("보고서.PdF", pdf_bytes(), "pdf"), ("분석.HWPX", hwpx_bytes(), "hwpx")]:
             file = SimpleUploadedFile(name, data, content_type="application/octet-stream")
@@ -304,7 +366,6 @@ class ResourceFormatTests(TestCase):
             ("fake.pdf", b"%PDF-1.4 invalid %%EOF"),
             ("wrong.hwp", hwpx_bytes()),
             ("wrong.hwpx", pdf_bytes()),
-            ("bad.exe", pdf_bytes()),
             ("bad.hwpx", b"PKbroken"),
         ]:
             with self.subTest(name=name), self.assertRaises(ValidationError):

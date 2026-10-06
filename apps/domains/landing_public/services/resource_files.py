@@ -19,9 +19,7 @@ def validate_resource_file(upload):
     filename = str(upload.name or "").strip()
     if not filename or len(filename) > 200 or re.search(r"[\x00-\x1f\x7f/\\]", filename):
         raise ValidationError({"file": "파일 이름은 200자 이내이며 경로·제어 문자를 포함할 수 없습니다."})
-    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if extension not in RESOURCE_TYPES:
-        raise ValidationError({"file": "PDF, HWP, HWPX 파일만 올릴 수 있습니다."})
+    extension = filename.rsplit(".", 1)[-1].lower()[:200] if "." in filename else ""
     if upload.size <= 0 or upload.size > MAX_RESOURCE_BYTES:
         raise ValidationError({"file": "비어 있지 않은 30MB 이하 파일을 선택해주세요."})
     try:
@@ -44,7 +42,7 @@ def validate_resource_file(upload):
                     raise ValueError("invalid HWP")
                 if not any(path[0] in ("BodyText", "ViewText") for path in document.listdir()):
                     raise ValueError("missing HWP body")
-        else:
+        elif extension == "hwpx":
             with zipfile.ZipFile(upload) as document:
                 entries = document.infolist()
                 if not entries or len(entries) > 4096:
@@ -108,11 +106,11 @@ def validate_resource_file(upload):
         ) from error
     finally:
         upload.seek(0)
-    return filename, extension, RESOURCE_TYPES[extension]
+    return filename, extension, RESOURCE_TYPES.get(extension, "application/octet-stream")
 
 
 def resource_content_disposition(filename):
-    return "attachment; filename=\"document.{}\"; filename*=UTF-8''{}".format(
-        filename.rsplit(".", 1)[-1].lower(),
-        quote(filename, safe=""),
-    )
+    # Never interpolate an arbitrary Unicode/quoted suffix into an HTTP header.
+    extension = filename.rsplit(".", 1)[-1].lower()[:200] if "." in filename else ""
+    suffix = f".{extension}" if re.fullmatch(r"[a-z0-9]{1,10}", extension) else ""
+    return f"attachment; filename=\"document{suffix}\"; filename*=UTF-8''{quote(filename, safe='')}"
