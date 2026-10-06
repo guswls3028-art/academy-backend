@@ -36,6 +36,11 @@ def handle_tools_job(job: AIJob) -> AIResult:
 
         return handle_staff_excel_export(job)
 
+    if job_type == "public_resource_reader":
+        from apps.domains.landing_public.services.resource_reader import handle_public_resource_reader_job
+
+        return handle_public_resource_reader_job(job)
+
     if job_type == "wrong_note_pdf_generation":
         from apps.domains.results.services.wrong_note_pdf_worker import (
             handle_wrong_note_pdf_generation_job,

@@ -94,6 +94,10 @@ def test_development_gate_runs_synthetic_excel_ppt_and_r2_review() -> None:
     )
     assert "parse_student_excel_file" in smoke
     assert "PptComposer" in smoke
+    assert "apps.infrastructure.storage.resource_document_renderer" in smoke
+    assert "HwpxDocument.new()" in smoke
+    assert 'manifest["mode"] == "article"' in smoke
+    assert "page.get_text()" in smoke
     assert "academy-ai-development" in smoke
     assert "R2_STORAGE_BUCKET.startswith(\"academy-development-\")" in smoke
     assert "put_object" in smoke

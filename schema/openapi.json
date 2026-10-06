@@ -1196,6 +1196,14 @@
         ],
         "type": "string"
       },
+      "ClinicReminderRequestModeEnum": {
+        "description": "* `once` - once\n* `repeat` - repeat",
+        "enum": [
+          "once",
+          "repeat"
+        ],
+        "type": "string"
+      },
       "ClinicReminderRequestRequest": {
         "properties": {
           "interval_minutes": {
@@ -1205,7 +1213,7 @@
           "mode": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/ModeEnum"
+                "$ref": "#/components/schemas/ClinicReminderRequestModeEnum"
               }
             ],
             "default": "once"
@@ -6235,14 +6243,6 @@
         ],
         "type": "string"
       },
-      "ModeEnum": {
-        "description": "* `once` - once\n* `repeat` - repeat",
-        "enum": [
-          "once",
-          "repeat"
-        ],
-        "type": "string"
-      },
       "NotificationLogListResponse": {
         "properties": {
           "count": {
@@ -9624,7 +9624,7 @@
               "type": "string"
             },
             "maxItems": 5,
-            "minItems": 1,
+            "minItems": 0,
             "type": "array"
           },
           "request_id": {
@@ -13109,6 +13109,10 @@
             "readOnly": true,
             "type": "string"
           },
+          "reader_status": {
+            "readOnly": true,
+            "type": "string"
+          },
           "size": {
             "format": "int64",
             "maximum": 9223372036854775807,
@@ -13120,6 +13124,7 @@
           "extension",
           "filename",
           "id",
+          "reader_status",
           "size"
         ],
         "type": "object"
@@ -13181,6 +13186,57 @@
         ],
         "type": "string"
       },
+      "ResourceReader": {
+        "properties": {
+          "blocks": {
+            "items": {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "message": {
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ResourceReaderModeEnum"
+          },
+          "pages": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "pdf_url": {
+            "format": "uri",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ResourceReaderStatusEnum"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "ResourceReaderModeEnum": {
+        "description": "* `article` - article\n* `pages` - pages",
+        "enum": [
+          "article",
+          "pages"
+        ],
+        "type": "string"
+      },
+      "ResourceReaderStatusEnum": {
+        "description": "* `unprepared` - unprepared\n* `pending` - pending\n* `ready` - ready\n* `failed` - failed\n* `unsupported` - unsupported",
+        "enum": [
+          "unprepared",
+          "pending",
+          "ready",
+          "failed",
+          "unsupported"
+        ],
+        "type": "string"
+      },
       "ResourceUploadRequest": {
         "properties": {
           "file": {
@@ -13221,7 +13277,7 @@
               "type": "string"
             },
             "maxItems": 5,
-            "minItems": 1,
+            "minItems": 0,
             "type": "array"
           },
           "request_id": {
@@ -33487,6 +33543,74 @@
             "description": ""
           }
         },
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/resource-files/{file_id}/reader/": {
+      "get": {
+        "operationId": "landing_public_resource_files_reader_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceReader"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "landing-public"
+        ]
+      },
+      "post": {
+        "operationId": "landing_public_resource_files_reader_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceReader"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
         "tags": [
           "landing-public"
         ]

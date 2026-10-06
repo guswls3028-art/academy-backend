@@ -49,7 +49,7 @@ def hwpx_bytes(extra=None):
     return output.getvalue()
 
 
-class PublicResourceContractTests(TestCase):
+class PublicResourceTestBase(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
         self.tenant = Tenant.objects.create(name="qa-resources", code="qa-resources", is_active=True)
@@ -116,6 +116,7 @@ class PublicResourceContractTests(TestCase):
         self.assertEqual(response.status_code, 201, response.data)
         return PublicResourcePost.objects.get(pk=response.data["id"]), file
 
+class PublicResourceContractTests(PublicResourceTestBase):
     def test_both_publishers_and_anonymous_reload_in_both_categories(self):
         for user, category in ((self.one, "matchup"), (self.two, "analysis")):
             post, file = self.publish(user, category)
@@ -261,7 +262,7 @@ class PublicResourceContractTests(TestCase):
 
     def test_invalid_category_empty_attachments_and_duplicate_ids_do_not_publish(self):
         file = self.file()
-        for changes in ({"category": "other"}, {"file_ids": []}, {"file_ids": [str(file.id), str(file.id)]}):
+        for changes in ({"category": "other"}, {"file_ids": [], "content": ""}, {"file_ids": [str(file.id), str(file.id)]}):
             self.assertEqual(self.call("post", "create", self.body(file, **changes), user=self.one).status_code, 400)
         self.assertFalse(PublicResourcePost.objects.exists())
 

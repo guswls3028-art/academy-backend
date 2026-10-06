@@ -1442,11 +1442,12 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    needs: [detect-changes, build-and-push, verify-api-preprod, run-migrations]
+    needs: [detect-changes, build-and-push, verify-api-preprod, run-migrations, deploy-tools]
     if: |
       always() &&
       needs.build-and-push.result == 'success' &&
       needs.verify-api-preprod.result == 'success' &&
+      (needs.deploy-tools.result == 'success' || needs.deploy-tools.result == 'skipped') &&
       (needs.run-migrations.result == 'success' || needs.run-migrations.result == 'skipped') &&
       (needs.detect-changes.outputs.build_api == 'true' || needs.detect-changes.outputs.force_full == 'true')
     env:

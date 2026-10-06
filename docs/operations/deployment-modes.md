@@ -162,7 +162,7 @@ main에 push하면 아래 후보 검증 절차를 시작한다. 모든 필수 ga
 3. `verify-api-development` job → API/Tools 변경 여부와 무관하게 모든 release candidate에서 같은 manifest의 API/Tools digest를 상시 격리 development에 blue/green 방식으로 배포한다. 전용 DB migration, 운영 DB·R2 접근 거부, 개발 큐/R2/Redis, `/healthz`, `/health`, 이미지 identity와 합성 XLSX/PPT/R2 실사용 smoke가 모두 통과해야 candidate를 active로 승격한다.
 4. `verify-api-preprod` job → development를 통과한 API digest로 릴리스 고정 env 버전을 만들고 임시 격리 EC2 1대를 기동해 별도 DB에 migration을 적용한다. prod settings, DB 이름·전용 역할, 운영 DB CONNECT 거부, env version·release ID, `/healthz`, DB 포함 `/health`, 실제 CDN chain을 모두 확인한 뒤 종료한다.
 5. preprod 성공 후에만 `run-migrations`가 운영 DB migration을 실행한다.
-6. 모든 `deploy-api`, `deploy-messaging`, `deploy-ai`, `deploy-tools`, `deploy-video` job은 같은 development·preprod 성공 결과를 공통 선행조건으로 사용한다.
+6. 모든 `deploy-api`, `deploy-messaging`, `deploy-ai`, `deploy-tools`, `deploy-video` job은 같은 development·preprod 성공 결과를 공통 선행조건으로 사용한다. API는 추가로 Tools refresh와 immutable runtime 확인의 성공을 기다린다. Tools 변경이 없어 해당 job이 생략된 경우에만 그대로 진행하며, 실패·취소된 경우 API 교체도 중단한다. 새 Tools 작업 종류를 구버전 작업자가 소비하는 전환 구간을 방지하기 위한 소비자 선행 배포이다.
 7. API Launch Template pin과 ASG rolling refresh를 실행한다. API refresh는
    `MinHealthyPercentage=100`, `MaxHealthyPercentage=200`으로 후보를 먼저
    기동하며 `min`/`desired`를 선증설하지 않는다. `desired == max`일 때만 max

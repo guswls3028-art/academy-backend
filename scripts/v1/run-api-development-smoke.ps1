@@ -67,10 +67,15 @@ if (
 $toolsSmoke = @'
 import io
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
 
+import fitz
+from hwpx import HwpxDocument
 from openpyxl import Workbook
 from PIL import Image
 from pptx import Presentation
@@ -107,6 +112,40 @@ with tempfile.TemporaryDirectory(prefix="academy-development-smoke-") as temp_di
     assert pptx_bytes.startswith(b"PK")
     assert len(pptx_bytes) > 1_000
 
+    # Exercise both pinned native renderers in the exact candidate image before
+    # development promotion, with the same credential-free child environment.
+    hangul_path = Path(temp_dir) / "report.hwpx"
+    with HwpxDocument.new() as report:
+        report.paragraphs[0].text = "공개 분석 보고서"
+        report.add_paragraph("합성 검증 자료이며 실제 사용자 정보를 포함하지 않습니다.")
+        hangul_path.write_bytes(report.to_bytes())
+    reader_environment = {
+        "PATH": os.defpath, "LANG": "C.UTF-8", "HOME": temp_dir,
+        "PYTHONPATH": os.pathsep.join(dict.fromkeys(
+            [str(Path.cwd()), *[entry for entry in sys.path if entry and Path(entry).is_absolute()]]
+        )),
+    }
+    reader_started = time.perf_counter()
+    for source, extension, expected in (
+        (hangul_path, "hwpx", "공개 분석 보고서"),
+        (excel_path, "xlsx", "개발검증학생"),
+    ):
+        output = Path(temp_dir) / f"reader-{extension}"
+        subprocess.run([
+            sys.executable, "-m", "apps.infrastructure.storage.resource_document_renderer",
+            str(source), str(output), extension,
+        ], env=reader_environment, cwd=temp_dir, check=True, timeout=150,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        manifest = json.loads((output / "manifest.json").read_text())
+        assert manifest["pages"] == 1
+        assert manifest["pdf"] == "pages.pdf"
+        with fitz.open(output / "pages.pdf") as rendered:
+            assert expected in "".join(page.get_text() for page in rendered)
+        if extension == "hwpx":
+            assert manifest["mode"] == "article"
+            assert any(expected in block.get("text", "") for block in manifest["blocks"])
+    reader_seconds = time.perf_counter() - reader_started
+
 total_seconds = time.perf_counter() - started
 assert excel_seconds < 30
 assert ppt_seconds < 30
@@ -115,6 +154,7 @@ print(json.dumps({
     "status": "TOOLS_SMOKE_PASS",
     "excel_seconds": round(excel_seconds, 3),
     "ppt_seconds": round(ppt_seconds, 3),
+    "reader_seconds": round(reader_seconds, 3),
     "total_seconds": round(total_seconds, 3),
     "pptx_bytes": len(pptx_bytes),
 }, sort_keys=True))
