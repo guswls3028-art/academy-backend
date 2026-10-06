@@ -181,9 +181,18 @@ class PublicResourceContractTests(TestCase):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(first.data["id"], second.data["id"])
         response = self.call("post", "create", {**body, "title": "changed"}, user=self.one)
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["published_title"], body["title"])
+        self.assertEqual(int(response.data["post_id"]), first.data["id"])
+        self.assertEqual(list(response.data["file_ids"]), [str(file.id)])
         self.assertEqual(PublicResourcePost.objects.count(), 1)
         self.assertEqual(PublicResourcePost.objects.first().title, body["title"])
+        recovered = self.call("patch", "partial_update", {
+            **body, "title": "changed", "expected_updated_at": str(response.data["updated_at"]),
+        }, user=self.one, pk=first.data["id"])
+        self.assertEqual(recovered.status_code, 200, recovered.data)
+        self.assertEqual(recovered.data["title"], "changed")
+        self.assertEqual(PublicResourcePost.objects.count(), 1)
 
     @patch(
         "apps.domains.landing_public.api.views.resource_views.generate_presigned_get_url_admin",

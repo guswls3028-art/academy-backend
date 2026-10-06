@@ -91,6 +91,11 @@ class ResourceEditConflict(APIException):
     default_code = "resource_edit_conflict"
 
 
+class ResourcePublishConflict(APIException):
+    status_code = 409
+    default_code = "resource_already_published"
+
+
 class ResourceWriteSerializer(serializers.Serializer):
     request_id = serializers.UUIDField(required=False)
     expected_updated_at = serializers.DateTimeField(required=False)
@@ -174,6 +179,16 @@ class PublicResourcePostViewSet(viewsets.GenericViewSet):
                         and current_ids == set(file_ids)
                     ):
                         return existing, False
+                    if existing.author_id == request.user.pk and existing.status == "published":
+                        raise ResourcePublishConflict({
+                            "detail": "앞선 요청으로 이미 게시된 자료입니다. 입력한 변경 내용은 유지됩니다. 수정 내용 게시를 눌러 반영해주세요.",
+                            "post_id": existing.pk,
+                            "updated_at": existing.updated_at.isoformat(),
+                            "file_ids": [str(value) for value in existing.files.values_list("id", flat=True)],
+                            "published_title": existing.title,
+                            "published_content": existing.content,
+                            "published_filenames": list(existing.files.filter(is_removed=False, is_ready=True).values_list("filename", flat=True)),
+                        })
                     raise ValidationError({"request_id": "이미 처리된 게시 요청입니다. 게시판을 확인해주세요."})
             if post is not None and data.get("expected_updated_at") not in (None, post.updated_at):
                 current_ids = set(post.files.filter(is_removed=False, is_ready=True).values_list("id", flat=True))

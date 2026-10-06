@@ -88,3 +88,12 @@ download bytes/PDF canvas, both categories, retained attachments, errors and ret
 desktop and 390px. Production verification is observational and uses no synthetic
 student or customer fixture. Frontend interaction owner: academy-frontend
 `docs/PUBLIC-RESOURCE-BOARD.md`.
+
+If a create response is lost and the author retries the same request UUID with
+changed input, HTTP 409 identifies only that author's already-published post,
+current revision and attached IDs. The editor retains the current input, stops
+treating published originals as pending cleanup, and continues as a versioned
+edit of that post. It never creates a duplicate or discards the authored changes.
+The recovery response also shows the currently published title, body and filenames
+for explicit comparison before applying the retained draft. A concurrent edit after
+that snapshot still receives the ordinary revision conflict.
