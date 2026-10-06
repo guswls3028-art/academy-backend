@@ -160,13 +160,38 @@ DB 실패·검증 거절·transaction rollback은 receipt/outbox와 커밋 후 �
 호출 0와 `ambiguous` 보존을 포함한다. 프런트엔드 동선은
 [메시징 운영 흐름](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/MESSAGING-OPERATIONS.md)을 따른다.
 
+## 업무별 미리보기와 확인 재시도
+
+출결·범용 수동 알림의 `preview → confirm`은 같은 tenant와 화면 종류의 토큰만
+받는다. 승인 봉투와 권한 검사는 기존대로 적용한다. `sent_count`는 레거시 **SQS
+접수** 건수이며 실제 수신 완료가 아니다. `accepted_count`는 영속 outbox 접수,
+`pending_count`는 큐 처리 대기를 뜻한다. 확정 실패·차단 건수도 함께 반환한다.
+
+첫 confirm에서 원본 outbox와 토큰 소비를 원자 저장한다. 사용된 토큰에는 본문·번호
+대신 outbox ID와 차단 건수만 24시간 보관하며, 같은 토큰 재확인은 원래 batch와
+현재 처리 상태를 반환한다. 새 outbox·SQS·공급사 호출을 만들지 않는다. 이전 버전의
+접수 증거가 없는 소비 토큰은 재발송하지 않고 기록 확인을 안내한다. 미사용 토큰은
+기존 5분 만료를 유지하고 만료/업무 상태 변경은 각각 `preview_expired`와
+`preview_changed`로 재미리보기 경로를 제공한다. 기존 개인정보 삭제와 만료 정리,
+공급사 `ambiguous` 자동 재발송 금지는 유지한다.
+
+퇴원 처리 직후의 `withdrawal_complete` 미리보기만 같은 학원의 삭제된 학생을
+조회하며 재원생은 제외한다. 일반 성적·과제·출결 발송은 기존 활성 학생 범위를
+유지한다. 퇴원 시점을 토큰에 함께 저장하고 confirm에서 다시 비교하므로
+복원·재퇴원된 학생에게 오래된 퇴원 안내를 새로 접수하지 않는다. 승인된 퇴원
+고정 봉투는 변경하지 않으며 설정/미리보기 자체로 발송하지 않는다.
+
+검증: 실제 삭제 상태 → 미리보기 → confirm → 원본 outbox → 같은 토큰 재조회,
+응답 유실 후 새 큐 호출 0, rollback 토큰 미소비, 다른 화면/tenant 거절,
+복원·재퇴원 거절, 번호/본문 제거와 TTL을 회귀 테스트한다.
+
 ## 안전장치 체계
 1. **Tenant.messaging_is_active** — 대표·관리자가 화면에서 직접 제어하는 학원 전체 on/off. 신규·기존 사용 중 학원은 기본 on이며 개인 고객의 선호를 코드나 운영 환경변수에 넣지 않는다.
 2. **AutoSendConfig.enabled** — 트리거별 DB on/off (설정 콘솔에서 제어)
 3. **TRIGGER_POLICY** — 코드 레벨 정책 분류 (SYSTEM_AUTO는 토글 비활성화)
 4. **is_event_dry_run()** — `MESSAGING_DRY_RUN_TRIGGERS` 환경변수로 이벤트 생산 자체를 dry-run한다. 상시 persistent development는 제품의 저장→outbox 생명주기를 실사용 형태로 검증해야 하므로 이 값을 비워 두고, API와 전용 Messaging worker의 `SOLAPI_MOCK=true`가 공급자 호출·비용을 차단한다. preprod와 운영자가 명시한 dry-run의 기존 동작은 바꾸지 않는다.
 5. **check_recipient_allowed()** — `MESSAGING_RECIPIENT_DENYLIST`의 운영 차단번호를 우선 거부하고, 테스트 환경에서는 `MESSAGING_TEST_WHITELIST`로 추가 제한한다. API enqueue와 워커 소비 입구에서 검사하며 공용 Solapi 호출 직전에도 다시 검사한다.
-6. **NotificationPreviewToken** — preview→confirm 핸드셰이크 (1회용, 5분 TTL). confirm 성공 즉시 수신자/본문을 비우며, 1분 주기 `process_scheduled_notifications`가 만료 행을 회당 500건 정리한다. 수동 대량 정리는 `python manage.py purge_expired_notification_preview_tokens [--dry-run]`을 사용한다.
+6. **NotificationPreviewToken** — preview→confirm 핸드셰이크 (최초 접수 1회, 미사용 5분 TTL·소비 후 비개인 접수 증거 24시간). confirm 성공 즉시 수신자/본문을 비우며, 1분 주기 `process_scheduled_notifications`가 만료 행을 회당 500건 정리한다. 수동 대량 정리는 `python manage.py purge_expired_notification_preview_tokens [--dry-run]`을 사용한다.
 7. **멱등성 키** — business_idempotency_key (trigger + student_id + 날짜)
 8. **일반 강의 출결 수동 발송 경계** — 출결 상태 PATCH·일괄 출석·차시 명단 생성은 자동 outbox를 만들지 않는다. 입실·결석 안내는 `NotificationPreviewToken`을 사용하는 출결 알림 preview→confirm 경로만 허용한다.
 9. **계정 알림 event metadata** — `registration_approved_*`, `password_*` 발송은 큐 payload에 원 trigger를 `event_type`으로 싣는다. `NotificationLog.message_body` 보안 마스킹과 운영 추적은 이 값에 의존한다.

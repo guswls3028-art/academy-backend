@@ -116,6 +116,34 @@ class NotificationLogSerializer(serializers.Serializer):
 
 
 class MessageTemplateSerializer(serializers.ModelSerializer):
+    def create(self, validated_data):
+        from django.db import transaction
+
+        with transaction.atomic():
+            Tenant.objects.select_for_update().get(pk=validated_data["tenant"].pk)
+            if validated_data.get("is_user_default", False):
+                MessageTemplate.objects.filter(
+                    tenant=validated_data["tenant"],
+                    category=validated_data.get("category", MessageTemplate.Category.DEFAULT),
+                    is_user_default=True,
+                ).update(is_user_default=False)
+            return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        from django.db import transaction
+
+        with transaction.atomic():
+            Tenant.objects.select_for_update().get(pk=instance.tenant_id)
+            # Re-read after the shared tenant lock; another editor may have
+            # changed the default or category while this request was validating.
+            instance = MessageTemplate.objects.get(pk=instance.pk, tenant_id=instance.tenant_id)
+            if validated_data.get("is_user_default", instance.is_user_default):
+                MessageTemplate.objects.filter(
+                    tenant=instance.tenant,
+                    category=validated_data.get("category", instance.category), is_user_default=True,
+                ).exclude(pk=instance.pk).update(is_user_default=False)
+            return super().update(instance, validated_data)
+
     body = serializers.CharField(max_length=MAX_MESSAGE_TEMPLATE_BODY_LENGTH)
     category = serializers.ChoiceField(
         choices=[*MessageTemplate.Category.choices, ("student", "학생")],
