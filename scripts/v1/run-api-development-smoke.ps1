@@ -90,6 +90,9 @@ with tempfile.TemporaryDirectory(prefix="academy-development-smoke-") as temp_di
     sheet = workbook.active
     sheet.append(["이름", "학부모전화", "학교", "학년"])
     sheet.append(["개발검증학생", "010-1234-5678", "검증고", "2"])
+    # Preserve a readable source layout; the renderer must not reshape user sheets.
+    for column, width in (("A", 20), ("B", 20), ("C", 20), ("D", 8)):
+        sheet.column_dimensions[column].width = width
     workbook.save(excel_path)
 
     excel_started = time.perf_counter()
@@ -140,7 +143,11 @@ with tempfile.TemporaryDirectory(prefix="academy-development-smoke-") as temp_di
         assert manifest["pages"] == 1
         assert manifest["pdf"] == "pages.pdf"
         with fitz.open(output / "pages.pdf") as rendered:
-            assert expected in "".join(page.get_text() for page in rendered)
+            # PDF text extraction may omit visually preserved inter-word spaces.
+            extracted = "".join(page.get_text() for page in rendered)
+            assert "".join(expected.split()) in "".join(extracted.split()), (
+                f"{extension} rendered PDF is missing expected glyphs"
+            )
         assert manifest["mode"] == "pages"
     reader_seconds = time.perf_counter() - reader_started
 
