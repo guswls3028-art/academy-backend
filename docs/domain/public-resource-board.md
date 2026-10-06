@@ -73,9 +73,8 @@ Reader formats and results:
 - PDF opens immediately through the established PDFJS canvas reader, with
   accessible extracted text, lazy visible-page rendering and zoom.
 - HWP/HWPX are converted by the checksum-pinned official rhwp 0.8.7 executable.
-  Plain text, table cells, formulas and raster images form the responsive article.
-  An original-page PDF remains available. Unknown/complex DocLang structures
-  select complete page mode; partial extraction is never called a complete report.
+  The whole document becomes an inline PDF preserving its pages, tables, images
+  and formulas. Teachers upload the original file without splitting or retyping it.
 - DOCX/XLSX/PPTX use the pinned official LibreOffice 26.8.1 Writer/Calc/Impress
   components to preserve report pages. Macro providers, desktop integration and
   updater packages are not installed. The vendor packages preserve the existing
@@ -157,3 +156,14 @@ Runtime owners: [deployment modes](../operations/deployment-modes.md),
 Frontend interactions: academy-frontend `docs/PUBLIC-RESOURCE-BOARD.md`.
 
 The release installs and verifies the Tools consumer before refreshing API producers; API and Tools must not roll out this new queue job type in parallel. The additive reader fields retain database defaults for old API instances during migration. See [deployment order](../operations/deployment-modes.md).
+
+## Whole-file publishing scope
+
+Teachers upload complete locally authored reports as ordinary board attachments;
+there is no requirement to split documents, retype content or supply viewer links.
+The optional post body supplements the attachment. HWP/HWPX use only the pinned
+page renderer, preserving the whole document in PDF form. The earlier unreleased
+DocLang paragraph/table/formula reconstruction has been removed because the board
+is a cafe replacement, not a report-authoring system. Existing originals and the
+reader status/generation/cleanup contracts remain unchanged; no production reader
+data existed at this simplification and no customer documents were migrated.

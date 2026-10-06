@@ -514,4 +514,4 @@ definition, 운영 worker env, 운영 R2를 대체재로 사용하지 않는다.
 개발 검토 중 실패는 운영 배포 차단 사유다. 개발 게이트를 skipped/success 이외의 상태로
 우회하거나 후보를 운영 인스턴스에서 먼저 시험하지 않는다.
 
-The synthetic Tools smoke also invokes the public-resource subprocess entrypoint on generated HWPX and XLSX documents in the exact candidate image, retaining its credential-free environment, network denial and resource limits. It requires readable Korean PDF text and HWPX article blocks before development promotion; all files live in a temporary directory and create no tenant rows.
+The synthetic Tools smoke also invokes the public-resource subprocess entrypoint on generated HWPX and XLSX documents in the exact candidate image, retaining its credential-free environment, network denial and resource limits. It requires readable Korean PDF text and preserved document pages before development promotion; all files live in a temporary directory and create no tenant rows.

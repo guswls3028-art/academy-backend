@@ -141,9 +141,7 @@ with tempfile.TemporaryDirectory(prefix="academy-development-smoke-") as temp_di
         assert manifest["pdf"] == "pages.pdf"
         with fitz.open(output / "pages.pdf") as rendered:
             assert expected in "".join(page.get_text() for page in rendered)
-        if extension == "hwpx":
-            assert manifest["mode"] == "article"
-            assert any(expected in block.get("text", "") for block in manifest["blocks"])
+        assert manifest["mode"] == "pages"
     reader_seconds = time.perf_counter() - reader_started
 
 total_seconds = time.perf_counter() - started

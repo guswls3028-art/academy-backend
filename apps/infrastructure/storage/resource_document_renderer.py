@@ -1,13 +1,12 @@
 """Bounded, credential-free document conversion subprocess for the public reader.
 
 Only this Tools-worker entry point invokes the pinned native Hangul renderer.
-Output contains plain text, table cells, formulas and re-encoded raster images;
+Documents retain their original pages; standalone text and images display inline;
 document HTML, scripts, links and remote assets are never passed to the browser.
 """
 
 from __future__ import annotations
 
-import base64
 import ctypes
 import errno
 import io
@@ -24,8 +23,6 @@ from xml.etree import ElementTree as ET
 
 MAX_PAGES = 100
 MAX_OUTPUT = 60 * 1024 * 1024
-MAX_XML = 20 * 1024 * 1024
-MAX_BLOCKS = 10000
 MAX_IMAGE_PIXELS = 24_000_000
 
 
@@ -193,82 +190,6 @@ def _image(raw, output, assets):
         return {"kind": "image", "asset": name, "width": image.width, "height": image.height}
 
 
-def _doclang(path, output, assets):
-    raw = path.read_bytes()
-    if len(raw) > MAX_XML or b"<!DOCTYPE" in raw.upper() or b"<!ENTITY" in raw.upper():
-        raise ValueError("Document structure limit")
-    root = ET.fromstring(raw)
-    if root.tag != "doclang" or root.get("version") != "0.6":
-        raise ValueError("Document structure version")
-    count = 0
-    complete = True
-
-    def blocks(nodes, depth=0):
-        nonlocal count, complete
-        if depth > 10:
-            raise ValueError("Document nesting limit")
-        result = []
-        for node in nodes:
-            count += 1
-            if count > MAX_BLOCKS:
-                raise ValueError("Document size limit")
-            text = "".join(node.itertext())
-            if node.tag == "text":
-                if text.strip():
-                    result.append({"kind": "paragraph", "text": text})
-            elif node.tag == "formula":
-                result.append({"kind": "formula", "text": text})
-            elif node.tag == "picture":
-                src = node.find("src")
-                uri = src.get("uri", "") if src is not None else ""
-                if not uri.startswith("data:image/") or ";base64," not in uri:
-                    complete = False
-                    continue
-                try:
-                    result.append(_image(base64.b64decode(uri.split(";base64,", 1)[1], validate=True), output, assets))
-                    if text.strip():
-                        result.append({"kind": "paragraph", "text": text})
-                except (ValueError, OSError):
-                    complete = False
-            elif node.tag == "table":
-                rows, row, cell = [], [], None
-                for item in node:
-                    if item.tag == "fcel":
-                        if cell is not None:
-                            row.append(blocks(cell, depth + 1))
-                        cell = []
-                        # Complicated merged grids use the preserved page view.
-                        if item.attrib:
-                            complete = False
-                    elif item.tag == "nl":
-                        if cell is not None:
-                            row.append(blocks(cell, depth + 1))
-                        cell = None
-                        if row:
-                            rows.append(row); row = []
-                    else:
-                        if item.tag in ("ecel", "mcel", "cel"):
-                            complete = False
-                        if cell is None:
-                            cell = []
-                        cell.append(item)
-                if cell is not None:
-                    row.append(blocks(cell, depth + 1))
-                if row:
-                    rows.append(row)
-                if rows:
-                    result.append({"kind": "table", "rows": rows})
-            elif node.tag in ("section", "body", "list", "item", "quote"):
-                result.extend(blocks(node, depth + 1))
-            else:
-                # Never call partial extraction a complete report.
-                complete = False
-        return result
-
-    body = blocks(root)
-    return body, complete and bool(body)
-
-
 def render(source: Path, output: Path, extension: str, binary="/usr/local/bin/rhwp", font_path="/usr/share/fonts/truetype/nanum"):
     import fitz
 
@@ -280,21 +201,12 @@ def render(source: Path, output: Path, extension: str, binary="/usr/local/bin/rh
         _native(binary, "export-pdf", source, "-o", pdf, "--font-path", font_path,
                 "--fallback-serif", "NanumGothic", "--fallback-sans", "NanumGothic",
                 "--fallback-mono", "NanumGothic")
-        xml = output / "body.xml"
-        _native(binary, "export-doclang", source, "-o", xml)
-        data["blocks"], complete = _doclang(xml, output, assets)
         with fitz.open(pdf) as document:
             if not 0 < len(document) <= MAX_PAGES:
                 raise ValueError("Page limit")
             data["pages"] = len(document)
-            # Missing Hangul fonts previously produced blank successful PDFs.
-            if any(b.get("text") for b in data["blocks"]) and not any(page.get_text().strip() for page in document):
-                raise ValueError("Blank rendered document")
         assets.append("pages.pdf")
-        data["pdf"] = "pages.pdf"
-        if not complete:
-            data["mode"] = "pages"
-            data["blocks"] = []
+        data.update({"pdf": "pages.pdf", "mode": "pages"})
     elif extension in ("docx", "xlsx", "pptx"):
         _office_pdf(source, output, extension)
         with fitz.open(output / "pages.pdf") as document:

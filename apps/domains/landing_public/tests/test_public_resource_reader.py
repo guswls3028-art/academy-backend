@@ -1,7 +1,6 @@
 import json
 from datetime import timedelta
 from pathlib import Path
-import tempfile
 import subprocess
 import uuid
 from unittest.mock import patch
@@ -11,7 +10,6 @@ from rest_framework.test import force_authenticate
 
 from apps.domains.landing_public.api.views.resource_views import PublicResourceReaderView
 from apps.domains.landing_public.models.resource import PublicResourceFile, PublicResourcePost
-from apps.infrastructure.storage.resource_document_renderer import _doclang
 from apps.domains.landing_public.services.resource_reader import (
     _run_renderer, handle_public_resource_reader_job, prepare_reader, reader_payload, reader_state,
 )
@@ -199,18 +197,6 @@ class PublicResourceReaderTests(PublicResourceTestBase):
             with self.assertRaises(ValueError):
                 reader_payload(file)
             sign.assert_not_called()
-
-    def test_doclang_keeps_empty_cells_and_does_not_fetch_remote_images(self):
-        with tempfile.TemporaryDirectory() as temp:
-            path = Path(temp) / "body.xml"
-            path.write_text('<doclang version="0.6"><text>&lt;script&gt;plain text&lt;/script&gt;</text>'
-                            '<table><fcel/><text>A</text><fcel/><fcel/><text>C</text><nl/></table>'
-                            '<picture><src uri="https://foreign.invalid/secret"/></picture></doclang>')
-            blocks, complete = _doclang(path, Path(temp), [])
-            self.assertFalse(complete)
-            self.assertEqual(blocks[0]["text"], "<script>plain text</script>")
-            self.assertEqual(len(blocks[1]["rows"][0]), 3)
-            self.assertEqual(blocks[1]["rows"][0][1], [])
 
 
     def test_order_changed_after_lost_create_returns_conflict_without_reordering(self):
