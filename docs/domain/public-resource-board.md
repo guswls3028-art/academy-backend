@@ -132,6 +132,20 @@ a missing object. Detached manual files and deleted posts remain private and are
 not swept automatically. There is no background deletion of customer documents.
 QA explicitly purges only its disposable rows and complete generation prefixes.
 
+## Browser storage boundary
+
+Inline PDFs use short-lived signed GET URLs from `R2_ADMIN_BUCKET` (normally
+`academy-admin`). Every homepage origin, including its `www` form, must therefore
+have GET/HEAD CORS access to that bucket in addition to API CORS. Range loading
+requires the `Range` request header and exposed `Accept-Ranges`, `Content-Length`,
+`Content-Range`, `Content-Type` and `Content-Encoding` response headers. Preserve
+existing bucket rules and exact tenant origins; a video-bucket policy alone does
+not establish report readability. Missing CORS can leave publication successful
+while a visitor's reader fails. Inspect the bucket policy and browser response
+headers through the [custom-domain onboarding procedure](../operations/tenants/custom-domain.md)
+when adding a homepage domain or diagnosing that failure. Do not persist signed
+URLs or credentials in verification evidence.
+
 ## Verification and operational ownership
 
 Focused tests cover publishers, anonymous reading, private previews, revocation,
