@@ -9614,6 +9614,10 @@
             "maxLength": 20000,
             "type": "string"
           },
+          "expected_updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
           "file_ids": {
             "items": {
               "format": "uuid",
@@ -13093,7 +13097,7 @@
       "ResourceFile": {
         "properties": {
           "extension": {
-            "maxLength": 5,
+            "readOnly": true,
             "type": "string"
           },
           "filename": {
@@ -13205,6 +13209,10 @@
           "content": {
             "default": "",
             "maxLength": 20000,
+            "type": "string"
+          },
+          "expected_updated_at": {
+            "format": "date-time",
             "type": "string"
           },
           "file_ids": {
