@@ -53,8 +53,10 @@ are bounded and path/control characters are rejected; download disposition uses
 RFC 5987 encoding and a safe ASCII fallback. All files use attachment disposition,
 including HTML/SVG and unknown suffixes. New private object keys contain only the
 tenant and UUID; original names remain metadata. Existing keys/data stay intact.
-Migration 0010 widens the extension metadata field and permits no extension; this
-is compatible with the previous reader and does not rewrite any customer data.
+No schema change is required: the API derives the full extension from the
+preserved original filename. The legacy five-character column retains known
+PDF/HWP/HWPX markers; new other-format files leave it empty. Existing rows are
+not rewritten, and the previous reader remains compatible.
 
 Public download links are generated after a fresh published-post and file check,
 expire in 300 seconds, and use `Cache-Control: no-store`. No signed URL is stored

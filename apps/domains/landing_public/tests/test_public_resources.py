@@ -288,6 +288,8 @@ class PublicResourceContractTests(TestCase):
         self.assertEqual(response.status_code, 201, response.data)
         file = PublicResourceFile.objects.get(pk=response.data["id"])
         self.assertEqual(file.content_type, "application/octet-stream")
+        self.assertEqual(response.data["extension"], "긴확장자입니다")
+        self.assertEqual(file.extension, "")
         self.assertTrue(file.storage_key.endswith(str(file.id)))
         self.assertEqual(upload.call_args.kwargs["content_type"], "application/octet-stream")
         created = self.call("post", "create", self.body(file), user=self.one)

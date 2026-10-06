@@ -59,6 +59,13 @@ def require_publisher(request, *, lock=False):
 
 
 class ResourceFileSerializer(serializers.ModelSerializer):
+    extension = serializers.SerializerMethodField()
+
+    @extend_schema_field(serializers.CharField())
+    def get_extension(self, obj):
+        # The original name is authoritative; the legacy column only fits known document types.
+        return obj.filename.rsplit(".", 1)[-1].lower()[:200] if "." in obj.filename else ""
+
     class Meta:
         model = PublicResourceFile
         fields = ("id", "filename", "extension", "size")
@@ -247,7 +254,7 @@ class PublicResourceUploadView(APIView):
             uploaded_by=request.user,
             storage_key=key,
             filename=filename,
-            extension=extension,
+            extension=extension if extension in ("pdf", "hwp", "hwpx") else "",
             content_type=content_type,
             size=upload.size,
         )
