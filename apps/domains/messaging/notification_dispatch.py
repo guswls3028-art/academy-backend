@@ -289,6 +289,7 @@ def build_student_list_preview(
         tenant,
         student_ids,
         send_to=send_to,
+        withdrawn_only=trigger == "withdrawal_complete",
     )
 
     academy_name = (tenant.name or "").strip()
@@ -349,6 +350,7 @@ def build_student_list_preview(
 
         recipients.append({
             "student_id": resolved.student_id,
+            "withdrawn_at": resolved.withdrawn_at,
             "student_name": name,
             "phone": phone[:3] + "****" + phone[-4:] if len(phone) >= 7 else phone,
             "phone_raw": phone,
@@ -522,6 +524,23 @@ def execute_notification_batch(
             "error": "발송 가능한 채널이 없습니다.",
         }
 
+    if notification_type == "withdrawal_complete":
+        from apps.support.messaging.student_dependencies import students_for_tenant
+
+        # A restored student, or a later withdrawal occurrence, needs a new preview.
+        withdrawn = {
+            student.id: student.deleted_at.isoformat()
+            for student in students_for_tenant(tenant, deleted="deleted").filter(
+                id__in=[recipient.get("student_id") for recipient in recipients],
+            ).only("id", "deleted_at")
+        }
+        if any(
+            not recipient.get("withdrawn_at")
+            or withdrawn.get(recipient.get("student_id")) != recipient["withdrawn_at"]
+            for recipient in recipients if not recipient.get("excluded")
+        ):
+            return {"error": "학생의 퇴원 상태가 변경되었습니다. 미리보기를 다시 확인해 주세요.", "code": "preview_changed"}
+
     failed = 0
     blocked = 0
     outbox_specs = []
@@ -617,7 +636,26 @@ def execute_notification_batch(
     return result
 
 
-def consume_preview_token_and_execute(token_str: str, tenant) -> dict:
+def _preview_batch_result(tenant, batch_id, receipt):
+    from apps.domains.messaging.models import ScheduledNotification
+
+    statuses = list(ScheduledNotification.objects.filter(
+        tenant=tenant, id__in=receipt["outbox_ids"],
+    ).values_list("status", flat=True))
+    return {
+        "batch_id": str(batch_id),
+        # Legacy sent_count means SQS admission, never provider delivery.
+        "sent_count": statuses.count(ScheduledNotification.Status.SENT),
+        "pending_count": sum(value in {
+            ScheduledNotification.Status.PENDING, ScheduledNotification.Status.DISPATCHING,
+        } for value in statuses),
+        "accepted_count": len(receipt["outbox_ids"]),
+        "failed_count": statuses.count(ScheduledNotification.Status.FAILED),
+        "blocked_count": receipt["blocked_count"],
+    }
+
+
+def consume_preview_token_and_execute(token_str: str, tenant, *, session_type=None) -> dict:
     """Consume a preview token only after its durable outbox batch exists."""
     from apps.domains.messaging.models import NotificationPreviewToken
     from apps.domains.messaging.security import redact_consumed_preview_payload
@@ -636,15 +674,21 @@ def consume_preview_token_and_execute(token_str: str, tenant) -> dict:
         )
         if token is None:
             return {"error": "토큰을 찾을 수 없습니다.", "status": 400}
+        if session_type is not None and token.session_type != session_type:
+            return {"error": "이 발송 화면의 미리보기가 아닙니다.", "status": 400}
         if token.used_at is not None:
+            receipt = token.payload.get("confirmation")
+            if isinstance(receipt, dict) and token.batch_id is not None:
+                return {"batch_result": _preview_batch_result(tenant, token.batch_id, receipt)}
             return {
-                "error": "이미 사용된 토큰입니다. 중복 발송이 방지되었습니다.",
+                "error": "이미 접수된 요청입니다. 발송 기록을 확인해 주세요.",
                 "status": 400,
             }
         if timezone.now() > token.expires_at:
             return {
                 "error": "토큰이 만료되었습니다. 미리보기를 다시 실행해주세요.",
                 "status": 400,
+                "code": "preview_expired",
             }
 
         batch_id = uuid.uuid4()
@@ -657,11 +701,19 @@ def consume_preview_token_and_execute(token_str: str, tenant) -> dict:
             process=False,
         )
         if "error" in batch_result:
-            return {"error": batch_result["error"], "status": 400}
+            return {"error": batch_result["error"], "code": batch_result.get("code", ""), "status": 400}
         token.used_at = timezone.now()
         token.batch_id = batch_id
         token.payload = redact_consumed_preview_payload(delivery_payload)
-        token.save(update_fields=["used_at", "batch_id", "payload"])
+        # Retain only a non-PII receipt, so lost acknowledgements can be recovered
+        # without a new batch, new outbox or another provider request.
+        receipt = {
+            "outbox_ids": batch_result["_outbox_ids"],
+            "blocked_count": batch_result["blocked_count"],
+        }
+        token.payload["confirmation"] = receipt
+        token.expires_at = token.used_at + timedelta(days=1)
+        token.save(update_fields=["used_at", "batch_id", "payload", "expires_at"])
 
     outbox_ids = batch_result.pop("_outbox_ids", [])
     if outbox_ids:
@@ -672,27 +724,5 @@ def consume_preview_token_and_execute(token_str: str, tenant) -> dict:
             batch_size=len(outbox_ids),
             notification_ids=outbox_ids,
         )
-        statuses = list(
-            ScheduledNotification.objects.filter(id__in=outbox_ids).values_list(
-                "status",
-                flat=True,
-            )
-        )
-        batch_result["failed_count"] = sum(
-            1 for value in statuses if value == ScheduledNotification.Status.FAILED
-        )
-        batch_result["sent_count"] = sum(
-            1 for value in statuses if value == ScheduledNotification.Status.SENT
-        )
-        batch_result["pending_count"] = sum(
-            1
-            for value in statuses
-            if value in {
-                ScheduledNotification.Status.PENDING,
-                ScheduledNotification.Status.DISPATCHING,
-            }
-        )
-        batch_result["accepted_count"] = (
-            batch_result["sent_count"] + batch_result["pending_count"]
-        )
+    batch_result = _preview_batch_result(tenant, batch_id, receipt)
     return {"batch_result": batch_result}

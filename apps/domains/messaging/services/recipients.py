@@ -22,6 +22,7 @@ class StudentMessageRecipient:
     student_name: str
     phone: str
     target: RecipientTarget
+    withdrawn_at: str = ""
 
 
 def normalize_phone(value: str | None) -> str:
@@ -33,13 +34,15 @@ def resolve_student_message_recipients(
     student_ids: list[int],
     *,
     send_to: RecipientTarget,
+    withdrawn_only: bool = False,
 ) -> list[StudentMessageRecipient]:
     """
     Resolve active tenant students into recipient candidates.
 
     Missing/cross-tenant/deleted students are intentionally omitted, matching
     the legacy manual send/preview behavior while making the active-student
-    boundary explicit.
+    boundary explicit. Only the withdrawal-complete preview opts into withdrawn
+    students; active students are then excluded instead.
     """
     if send_to not in ("student", "parent"):
         raise ValueError(f"unsupported recipient target: {send_to!r}")
@@ -49,9 +52,9 @@ def resolve_student_message_recipients(
     unique_ids = list(dict.fromkeys(int(student_id) for student_id in student_ids))
     students_by_id = {
         student.id: student
-        for student in students_for_tenant(tenant, deleted="active")
+        for student in students_for_tenant(tenant, deleted="deleted" if withdrawn_only else "active")
         .filter(id__in=unique_ids)
-        .only("id", "name", "phone", "parent_phone")
+        .only("id", "name", "phone", "parent_phone", "deleted_at")
     }
 
     recipients: list[StudentMessageRecipient] = []
@@ -66,6 +69,7 @@ def resolve_student_message_recipients(
                 student_name=(student.name or "").strip(),
                 phone=phone,
                 target=send_to,
+                withdrawn_at=student.deleted_at.isoformat() if student.deleted_at else "",
             )
         )
     return recipients

@@ -92,7 +92,7 @@ class MessageTemplateDetailView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         data = serializer.data
-        used_variables = set(re.findall(r"#\{([^}]+)\}", template.body or ""))
+        used_variables = set(re.findall(r"#\{([^}]+)\}", serializer.instance.body or ""))
         known_variables = {
             "학원이름", "학원명", "학생이름", "학생이름2", "학생이름3",
             "사이트링크", "강의명", "차시명", "날짜", "시간", "장소",
@@ -150,7 +150,9 @@ class MessageTemplateSetDefaultView(APIView):
 
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @transaction.atomic
     def post(self, request, pk):
+        Tenant.objects.select_for_update().get(pk=request.tenant.pk)
         template = MessageTemplate.objects.filter(tenant=request.tenant, pk=pk).first()
         if not template:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)

@@ -635,7 +635,10 @@ class NotificationPreviewConfirmDurabilityTests(TestCase):
         mock_enqueue.assert_called_once()
 
         duplicate = self._confirm(token)
-        self.assertEqual(duplicate.status_code, 400)
+        self.assertEqual(duplicate.status_code, 200)
+        self.assertEqual(duplicate.data["batch_id"], response.data["batch_id"])
+        self.assertEqual(duplicate.data["accepted_count"], 1)
+        mock_enqueue.assert_called_once()
         self.assertEqual(ScheduledNotification.objects.count(), 1)
 
     @patch(

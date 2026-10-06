@@ -302,14 +302,14 @@ class AttendanceNotificationConfirmView(APIView):
             )
 
         try:
-            result = consume_preview_token_and_execute(preview_token, tenant)
+            result = consume_preview_token_and_execute(preview_token, tenant, session_type="attendance")
         except MessagingHourlyQuotaExceeded as exc:
             return Response(
                 {"detail": str(exc)},
                 status=http_status.HTTP_429_TOO_MANY_REQUESTS,
             )
         if "error" in result:
-            return Response({"detail": result["error"]}, status=result["status"])
+            return Response({"detail": result["error"], "code": result.get("code", "")}, status=result["status"])
 
         batch_result = result["batch_result"]
 
@@ -545,14 +545,14 @@ class ManualNotificationConfirmView(APIView):
             )
 
         try:
-            result = consume_preview_token_and_execute(preview_token, tenant)
+            result = consume_preview_token_and_execute(preview_token, tenant, session_type="manual")
         except MessagingHourlyQuotaExceeded as exc:
             return Response(
                 {"detail": str(exc)},
                 status=http_status.HTTP_429_TOO_MANY_REQUESTS,
             )
         if "error" in result:
-            return Response({"detail": result["error"]}, status=result["status"])
+            return Response({"detail": result["error"], "code": result.get("code", "")}, status=result["status"])
 
         batch_result = result["batch_result"]
 
