@@ -16,6 +16,7 @@ AIJobType = Literal[
     "staff_excel_export",
     "ppt_generation",
     "wrong_note_pdf_generation",
+    "public_resource_reader",
     "problem_studio_package",
     "problem_studio_transfer",
     "problem_studio_transcription",

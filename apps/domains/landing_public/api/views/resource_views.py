@@ -1,7 +1,9 @@
+from django.http import Http404
 import uuid
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_field, inline_serializer
 
@@ -26,6 +28,10 @@ from apps.infrastructure.storage.r2 import (
     delete_object_r2_admin,
     generate_presigned_get_url_admin,
     upload_fileobj_to_r2_admin,
+)
+
+from apps.domains.landing_public.services.resource_reader import (
+    delete_reader_objects, prepare_reader, reader_payload, reader_state,
 )
 
 PUBLISHER_ROLES = ("owner", "admin", "teacher")
@@ -60,6 +66,11 @@ def require_publisher(request, *, lock=False):
 
 class ResourceFileSerializer(serializers.ModelSerializer):
     extension = serializers.SerializerMethodField()
+    reader_status = serializers.SerializerMethodField()
+
+    @extend_schema_field(serializers.CharField())
+    def get_reader_status(self, obj):
+        return reader_state(obj)
 
     @extend_schema_field(serializers.CharField())
     def get_extension(self, obj):
@@ -68,7 +79,7 @@ class ResourceFileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PublicResourceFile
-        fields = ("id", "filename", "extension", "size")
+        fields = ("id", "filename", "extension", "size", "reader_status")
 
 
 class ResourcePostSerializer(serializers.ModelSerializer):
@@ -77,7 +88,8 @@ class ResourcePostSerializer(serializers.ModelSerializer):
     @extend_schema_field(ResourceFileSerializer(many=True))
     def get_files(self, obj):
         return ResourceFileSerializer(
-            [file for file in obj.files.all() if not file.is_removed and file.is_ready], many=True
+            sorted([file for file in obj.files.all() if not file.is_removed and file.is_ready],
+                   key=lambda file: (file.position, file.created_at, str(file.pk))), many=True
         ).data
 
     class Meta:
@@ -102,7 +114,7 @@ class ResourceWriteSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=200, trim_whitespace=True)
     category = serializers.ChoiceField(choices=("matchup", "analysis"))
     content = serializers.CharField(max_length=20000, allow_blank=True, default="")
-    file_ids = serializers.ListField(child=serializers.UUIDField(), min_length=1, max_length=5)
+    file_ids = serializers.ListField(child=serializers.UUIDField(), min_length=0, max_length=5)
 
     def validate_file_ids(self, value):
         if len(value) != len(set(value)):
@@ -124,7 +136,7 @@ class PublicResourcePostViewSet(viewsets.GenericViewSet):
         if getattr(self, "swagger_fake_view", False):
             return PublicResourcePost.objects.none()
         return PublicResourcePost.objects.filter(tenant=self.request.tenant, status="published").prefetch_related(
-            "files"
+            Prefetch("files", queryset=PublicResourceFile.objects.defer("reader_data", "reader_object_keys"))
         )
 
     @extend_schema(auth=[], parameters=[OpenApiParameter("category", enum=["matchup", "analysis"])])
@@ -169,14 +181,14 @@ class PublicResourcePostViewSet(viewsets.GenericViewSet):
             if not pk:
                 existing = PublicResourcePost.objects.filter(tenant=request.tenant, request_id=request_id).first()
                 if existing:
-                    current_ids = set(existing.files.filter(is_removed=False).values_list("id", flat=True))
+                    current_ids = list(existing.files.filter(is_removed=False).order_by("position", "created_at", "id").values_list("id", flat=True))
                     if (
                         existing.author_id == request.user.pk
                         and existing.status == "published"
                         and existing.title == data["title"]
                         and existing.content == data["content"]
                         and existing.category == data["category"]
-                        and current_ids == set(file_ids)
+                        and current_ids == file_ids
                     ):
                         return existing, False
                     if existing.author_id == request.user.pk and existing.status == "published":
@@ -191,9 +203,9 @@ class PublicResourcePostViewSet(viewsets.GenericViewSet):
                         })
                     raise ValidationError({"request_id": "이미 처리된 게시 요청입니다. 게시판을 확인해주세요."})
             if post is not None and data.get("expected_updated_at") not in (None, post.updated_at):
-                current_ids = set(post.files.filter(is_removed=False, is_ready=True).values_list("id", flat=True))
+                current_ids = list(post.files.filter(is_removed=False, is_ready=True).order_by("position", "created_at", "id").values_list("id", flat=True))
                 if (post.title == data["title"] and post.content == data["content"]
-                        and post.category == data["category"] and current_ids == set(file_ids)):
+                        and post.category == data["category"] and current_ids == file_ids):
                     # A successful PATCH may lose its response; replay must remain safe.
                     return post, False
                 raise ResourceEditConflict()
@@ -207,6 +219,10 @@ class PublicResourcePostViewSet(viewsets.GenericViewSet):
                         raise ValidationError({"file_ids": "직접 올린 파일만 새로 첨부할 수 있습니다."})
                 elif post is None or file.post_id != post.pk:
                     raise ValidationError({"file_ids": "다른 게시물의 파일은 옮길 수 없습니다."})
+            if any(reader_state(file) not in ("ready", "unsupported") for file in files):
+                raise ValidationError({"file_ids": "문서 본문 준비가 끝난 뒤 게시해주세요. 실패한 문서는 다시 준비하거나 교체할 수 있습니다."})
+            if not data["content"].strip() and not any(reader_state(file) == "ready" for file in files):
+                raise ValidationError({"content": "방문자가 바로 읽을 본문을 작성하거나 PDF·한글·이미지·텍스트 문서를 올려주세요."})
             if post is None:
                 post = PublicResourcePost.objects.create(
                     tenant=request.tenant,
@@ -224,6 +240,10 @@ class PublicResourcePostViewSet(viewsets.GenericViewSet):
                 post.files.exclude(pk__in=file_ids).update(is_removed=True)
                 created = False
             PublicResourceFile.objects.filter(pk__in=file_ids).update(post=post, is_removed=False)
+            positions = {file_id: index for index, file_id in enumerate(file_ids)}
+            for file in files:
+                file.position = positions[file.pk]
+            PublicResourceFile.objects.bulk_update(files, ["position"])
         post._prefetched_objects_cache = {}
         return post, created
 
@@ -292,6 +312,12 @@ class PublicResourceUploadView(APIView):
             except Exception:
                 pass
             return Response({"detail": "파일을 올리지 못했습니다. 연결을 확인하고 다시 시도해주세요."}, status=503)
+        # Conversion failures retain the original and expose a retryable state.
+        try:
+            file = prepare_reader(file)
+        except Exception:
+            PublicResourceFile.objects.filter(pk=file.pk).update(reader_status="failed")
+            file.reader_status = "failed"
         return Response(ResourceFileSerializer(file).data, status=201)
 
 
@@ -336,6 +362,7 @@ class PublicResourceFileView(APIView):
             file.is_ready = False
             file.save(update_fields=["is_ready"])
         try:
+            delete_reader_objects(file)
             delete_object_r2_admin(key=file.storage_key)
             PublicResourceFile.objects.filter(
                 pk=file_id,
@@ -347,3 +374,53 @@ class PublicResourceFileView(APIView):
         except Exception:
             return Response({"detail": "첨부 파일을 정리하지 못했습니다. 다시 시도해주세요."}, status=503)
         return Response(status=204)
+
+
+class ResourceReaderSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=("unprepared", "pending", "ready", "failed", "unsupported"))
+    mode = serializers.ChoiceField(choices=("article", "pages"), required=False)
+    blocks = serializers.ListField(child=serializers.DictField(), required=False)
+    pdf_url = serializers.URLField(required=False)
+    pages = serializers.IntegerField(required=False, allow_null=True)
+    message = serializers.CharField(required=False)
+
+
+class PublicResourceReaderView(APIView):
+    permission_classes = [TenantResolved]
+
+    def _file(self, request, file_id):
+        file = get_object_or_404(PublicResourceFile.objects.select_related("post"),
+                               tenant=request.tenant, pk=file_id, is_ready=True, is_removed=False)
+        if file.post_id:
+            if file.post.tenant_id != request.tenant.id or file.post.status != "published":
+                raise Http404
+        elif not can_publish(request) or file.uploaded_by_id != request.user.pk:
+            raise Http404
+        return file
+
+    @extend_schema(auth=[], responses=ResourceReaderSerializer)
+    def get(self, request, file_id):
+        file = self._file(request, file_id)
+        try:
+            data = reader_payload(file)
+        except Exception:
+            return Response({"detail": "본문을 불러오지 못했습니다. 다시 시도해주세요."}, status=503,
+                            headers={"Cache-Control": "no-store"})
+        return Response(data, headers={"Cache-Control": "no-store"})
+
+    @extend_schema(request=None, responses=ResourceReaderSerializer)
+    def post(self, request, file_id):
+        require_publisher(request)
+        try:
+            with transaction.atomic():
+                require_publisher(request, lock=True)
+                file = prepare_reader(self._file(request, file_id))
+            data = reader_payload(file)
+        except APIException:
+            raise
+        except Http404:
+            raise
+        except Exception:
+            return Response({"detail": "본문 준비를 시작하지 못했습니다. 원본은 보존됩니다. 다시 시도해주세요."},
+                            status=503, headers={"Cache-Control": "no-store"})
+        return Response(data, headers={"Cache-Control": "no-store"})

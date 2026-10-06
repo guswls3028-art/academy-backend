@@ -127,6 +127,16 @@ PBDS binary heap의 `erase_if` 재할당 뒤 entry pointer를 갱신하는 헤�
   갱신하고, 개발 의존성 및 GitHub Actions minor/patch는 각각 묶어 중복 CI를
   줄인다. 모든 묶음은 개별 업데이트와 같은 전체 품질·이미지 scan 게이트를
   통과해야 한다.
+- 공개 보고서 읽기의 Tools 전용 변환기는 공식 rhwp 0.8.7과 LibreOffice
+  26.8.1 배포물을 아키텍처별 SHA-256으로 고정한다. 설치 정본은
+  `scripts/install-resource-reader.py`, `scripts/install-resource-office.py`다.
+  LibreOffice는 공식 vendor DEB의 Writer/Calc/Impress·그림/수식·필수 core만
+  설치하며 Java/Python/JavaScript macro provider, updater, desktop integration을
+  설치하지 않는다. Debian libreoffice-common의 ucf/Perl 의존성을 들이지 않으며
+  아래 Perl 제거·dpkg 무결성·완료 ECR scan 게이트를 그대로 통과해야 한다.
+  native child는 자격 증명 없는 임시 HOME, CPU/메모리/출력 제한과 seccomp
+  네트워크 차단에서 실행된다. 자세한 사용자/변환/복구 계약은
+  [공개 보고서 게시판](../domain/public-resource-board.md)을 따른다.
 - 런타임에는 앱이 실제 사용하는 패키지만 둔다. DB migration과 점검은 Django와
   AWS/RDS readback을 사용하므로 `postgresql-client` CLI는 제거했고, Python
   PostgreSQL 연결에 필요한 `libpq5`는 유지한다.

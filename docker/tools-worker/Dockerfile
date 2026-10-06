@@ -27,6 +27,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcurl4t64="${LIBCURL_VERSION}" \
     tesseract-ocr \
     tesseract-ocr-kor \
+    libseccomp2 \
+    libx11-6 libx11-xcb1 libxinerama1 libsm6 libice6 \
+    libfontconfig1 libfreetype6 libcairo2 libglib2.0-0t64 \
+    libdbus-1-3 libcups2t64 libnss3 \
     && dpkg --configure -a \
     && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libglib2.0-0t64)" ge "2.84.4-3~deb13u4" \
     && libcurl_version="$(dpkg-query -W -f='${Version}' libcurl4t64)" \
@@ -50,6 +54,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ! command -v perl >/dev/null 2>&1 \
     && python /usr/local/bin/verify-expat.py --library libexpat.so.1 --python --package \
     && python /usr/local/bin/verify-aligned-new.py
+
+# Official, checksum-pinned MIT-licensed native HWP/HWPX renderer. No Python
+# binding, browser service or external document upload is involved.
+COPY scripts/install-resource-reader.py /tmp/install-resource-reader.py
+RUN python /tmp/install-resource-reader.py && rm /tmp/install-resource-reader.py
+COPY scripts/install-resource-office.py /tmp/install-resource-office.py
+RUN python /tmp/install-resource-office.py && rm /tmp/install-resource-office.py \
+    && test -z "$(dpkg --audit)" && apt-get check \
+    && ! command -v perl >/dev/null 2>&1
 
 USER appuser
 

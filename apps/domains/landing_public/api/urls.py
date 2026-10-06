@@ -15,7 +15,7 @@ from .views import (
 )
 
 
-from .views.resource_views import PublicResourcePostViewSet, PublicResourceUploadView, PublicResourceFileView
+from .views.resource_views import PublicResourcePostViewSet, PublicResourceUploadView, PublicResourceFileView, PublicResourceReaderView
 
 router = DefaultRouter()
 router.register("resources", PublicResourcePostViewSet, basename="landing-public-resource")
@@ -33,6 +33,7 @@ router.register(
 
 urlpatterns = [
     path("uploads/resource/", PublicResourceUploadView.as_view(), name="landing-public-resource-upload"),
+    path("resource-files/<uuid:file_id>/reader/", PublicResourceReaderView.as_view(), name="landing-public-resource-reader"),
     path("resource-files/<uuid:file_id>/", PublicResourceFileView.as_view(), name="landing-public-resource-file"),
     path("", include(router.urls)),
     path("stats/", PublicCommunityStatsView.as_view(), name="landing-public-stats"),

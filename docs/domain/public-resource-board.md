@@ -1,12 +1,12 @@
-# Public teaching resource board
+# Public report board and inline reader
 
 Godmin and the shared homepage menu link to `/landing/resources`. Each resolved
-tenant has an isolated resource-sharing board with matchup and analysis categories
-for teacher-prepared originals of any file format (including PDF, Hangul, Office,
-images, archives, custom extensions and extensionless files). Anonymous students, parents and outsiders can list, read, preview PDF
-and download original documents. It does not replace the existing landing config
-or publish a homepage draft. The older family community and generated report
-boards retain their existing policies.
+tenant has an isolated, public-facing publication board for matchup and analysis
+reports. Anonymous students, parents and outsiders open an article and read its
+body immediately. Original downloads remain a secondary, collapsed option. This
+replaces the download-first board because its purpose is also public explanation
+and promotion. It does not replace landing configuration, publish a homepage draft
+or change the older family community and generated-report boards.
 
 ## Publishing and isolation
 
@@ -18,82 +18,140 @@ Configuration is an operator-only management command, with a read-only default:
 `configure_public_resource_publishers --tenant-code godmin --publisher-ids 6249 3935`
 and explicit `--apply` for the validated production configuration. These are the
 confirmed godmin owner/admin accounts; similarly named student accounts are not
-publishers. Configuration must be read back after applying.
+publishers. Read back configuration after applying. Other tenants require their
+own exact publisher configuration; there is no godmin fallback.
+
+The writer supplies a title, category, optional authored body and 0–5 originals.
+A text-only article requires a nonempty body. An article with only auxiliary
+formats also requires a body; a ZIP or unknown file must not masquerade as a
+readable report. Every supported report attachment must finish preparation before
+publication. The writer sees the same reader privately before publishing and can
+reorder reports. File order persists through save, reload and either publisher's
+subsequent edit.
 
 API boundary: `/landing-public/resources/` list/create, `/:id/` detail/patch/delete,
-`/capabilities/` current writer capability; `/uploads/resource/` authenticated
-multipart upload; `/resource-files/:uuid/` public short download link or publisher
-cleanup of their own pending upload. Resolved tenant is required everywhere.
-Public metadata excludes storage keys, login identifiers, drafts and deleted posts.
+`/capabilities/` writer capability; `/uploads/resource/` authenticated multipart
+upload; `/resource-files/:uuid/` public short download link or uploader cleanup;
+`/resource-files/:uuid/reader/` GET reader data and POST prepare/retry. Resolved
+tenant is required everywhere. Public metadata excludes storage keys, login
+identifiers, drafts and deleted posts. Reader GET never mutates or starts work.
+Published readers are public; a pending original's preview is visible only to
+its active designated uploader. POST rechecks publisher authorization under the
+same user → membership → board locks used by publication/revocation.
 
-Files remain private while pending. Only successfully uploaded ready files can
-attach. Cleanup marks a pending file unready in a committed transaction before
-R2 deletion; storage or DB cleanup failure cannot publish a missing object, and
-the uploader can retry cleanup. Creating a post with the explicit publish
-action attaches 1–5 validated files atomically. New attachments must belong to
-the current uploader; either publisher can edit a post retaining the other's
-existing attachments. A file cannot move to another post. Duplicate create
-retries reuse a request UUID only when the author, content and file set match.
-The current editor sends `expected_updated_at` on PATCH. Under the existing
-publisher/post locks, a changed revision returns HTTP 409 without changing the
-post or reattaching files removed by another publisher. An identical successful
-PATCH replay returns the current post without touching its revision. The field
-remains optional for already-open older clients during rolling release; those
-legacy clients retain their existing last-write behavior until refreshed.
+Only ready, nonremoved files attach. New attachments must belong to the current
+uploader; either publisher can edit a post retaining the other's attachments.
+Files cannot move to another post. Duplicate creates reuse a request UUID only
+when author, category, title, body and **ordered** file IDs match. PATCH uses
+`expected_updated_at` under publisher/post locks. A changed revision returns 409
+without changing the post or restoring files removed by another publisher. An
+identical successful replay returns the current post without touching its
+revision. The revision field remains optional for already-open older clients
+during rolling release; those retain last-write behavior until refreshed.
 
-## Files, failure and recovery
+If a create response is lost and the same request UUID is retried with changed
+input, 409 identifies only that author's already-published post, revision and
+attached IDs. The editor retains input, stops treating published originals as
+pending cleanup, and continues as a versioned edit. The response also supplies
+the published title, body and filenames for comparison. A subsequent concurrent
+edit still receives the ordinary revision conflict.
 
-Each nonempty file is limited to 30 MiB, with no extension allowlist. Known
-PDF/HWP/HWPX suffixes retain their bounded document integrity checks; all other
-originals are stored without executing, extracting or previewing their contents,
-with `application/octet-stream` regardless of the client MIME. HWP uses
-the HWP5 FileHeader/DocInfo/body container. HWPX requires bounded safe ZIP entries,
-the Hancom mimetype and document/header/section members. Original Unicode names
-are bounded and path/control characters are rejected; download disposition uses
-RFC 5987 encoding and a safe ASCII fallback. All files use attachment disposition,
-including HTML/SVG and unknown suffixes. New private object keys contain only the
-tenant and UUID; original names remain metadata. Existing keys/data stay intact.
-No schema change is required: the API derives the full extension from the
-preserved original filename. The legacy five-character column retains known
-PDF/HWP/HWPX markers; new other-format files leave it empty. Existing rows are
-not rewritten, and the previous reader remains compatible.
+## Originals and readable reports
 
-Public download links are generated after a fresh published-post and file check,
-expire in 300 seconds, and use `Cache-Control: no-store`. No signed URL is stored
-on a post. A removed attachment or deleted post yields no new links; a URL already
-issued can remain usable until its five-minute expiry. GET requests never mutate
-or perform cleanup. PDF previews use the established PDFJS renderer; other originals
-are downloaded for opening with compatible software.
+Each nonempty original is limited to 30 MiB, without an extension allowlist.
+PDF/HWP/HWPX retain bounded integrity checks; resource PDFs must be unencrypted
+and at most 100 pages. HWP uses the HWP5 FileHeader/DocInfo/body container; HWPX
+requires safe bounded ZIP entries, the Hancom mimetype and header/section members.
+Original Unicode names are bounded; path/control characters are rejected.
+Download disposition uses RFC 5987 and a safe ASCII fallback. All originals use
+attachment disposition, including HTML/SVG and unknown formats. Other originals
+use `application/octet-stream`, independent of client MIME. Storage keys contain
+only the tenant and UUID; original names remain metadata and bytes never change.
 
-Upload failure attempts exact-key cleanup; if storage cleanup fails, a private
-pending row retains the recovery key. Cancelled pending files have an authorized
-uploader-only cleanup endpoint. Deleted posts and detached manual documents are
-retained, remain private and are not swept automatically. QA must explicitly purge
-its own disposable rows and storage keys and prove zero residue without touching
-manual/customer content. Ordinary publisher accounts cannot change the allowlist.
+Reader formats and results:
 
-## Verification
+- PDF opens immediately through the established PDFJS canvas reader, with
+  accessible extracted text, lazy visible-page rendering and zoom.
+- HWP/HWPX are converted by the checksum-pinned official rhwp 0.8.7 executable.
+  Plain text, table cells, formulas and raster images form the responsive article.
+  An original-page PDF remains available. Unknown/complex DocLang structures
+  select complete page mode; partial extraction is never called a complete report.
+- DOCX/XLSX/PPTX use the pinned official LibreOffice 26.8.1 Writer/Calc/Impress
+  components to preserve report pages. Macro providers, desktop integration and
+  updater packages are not installed. The vendor packages preserve the existing
+  final-runtime Perl removal boundary; Debian's ucf-dependent variant is not used.
+- PNG/JPEG/WebP/GIF are shown inline. Still images apply EXIF orientation, retain
+  transparency and are bounded/reencoded; bounded raster animations retain frames.
+  UTF-8 TXT/Markdown are readable plain text. Document HTML is never executed.
+- Other formats remain auxiliary originals alongside an authored readable body.
 
-Focused contract tests cover both publishers' success, anonymous reads/links,
-membership revocation, nonpublisher and superuser denial, tenant isolation,
-pending and attached-file ownership, idempotent retry, deletion, invalid category,
-format/size/name validation and storage failure recovery. Required backend gates
-and exact-artifact isolated persistent development and preproduction gates apply.
-The isolated non-login-UAT QA scenario configures its own admin and dedicated
-`ymath-qa-resource-publisher` teacher as publishers. These accounts and allowlist
-never touch godmin or another customer tenant. QA cleanup includes the exact
-`landing-public/resources/{tenant_id}/` prefix and proves tenant/user/storage zero.
-Browser real-use verification covers publication → anonymous reload → actual
-download bytes/PDF canvas, both categories, retained attachments, errors and retry,
-desktop and 390px. Production verification is observational and uses no synthetic
-student or customer fixture. Frontend interaction owner: academy-frontend
-`docs/PUBLIC-RESOURCE-BOARD.md`.
+## Conversion, failure and recovery
 
-If a create response is lost and the author retries the same request UUID with
-changed input, HTTP 409 identifies only that author's already-published post,
-current revision and attached IDs. The editor retains the current input, stops
-treating published originals as pending cleanup, and continues as a versioned
-edit of that post. It never creates a duplicate or discards the authored changes.
-The recovery response also shows the currently published title, body and filenames
-for explicit comparison before applying the retained draft. A concurrent edit after
-that snapshot still receives the ordinary revision conflict.
+Conversion belongs to the deterministic Tools worker and its existing queue,
+using job type `public_resource_reader`. No AI generation or external document
+service is involved. Upload stores the private original first, then enqueues work
+after commit. A queue failure marks the reader and pending job failed. API work
+does not run native conversion or hold an upload request open for it.
+
+Migration `0010_publicresourcefile_position_and_more` adds ordering and reader
+state/token/timestamp/data/object-key fields; it does not rewrite original bytes
+or delete existing posts. Old clients ignore the additive metadata. Existing
+PDFs remain immediately readable; old convertible originals without preparation
+show an explicit preparation state and can be prepared by their publisher. Before
+rollout completion, inspect existing published originals and prepare any affected
+documents through their authorized publisher flow; do not claim an empty board
+as evidence that existing documents converted.
+
+The worker claims pending work once and validates tenant, source UUID, job ID,
+generation token and canonical original key. Retry tokens fence stale deliveries;
+duplicates cannot overwrite or delete a successful sibling's output. The child
+receives a private temporary HOME and no application/cloud credentials. Linux
+resource limits bound memory/CPU/output; the parent kills the whole process group
+after 150 seconds. Seccomp blocks IPv4/IPv6 sockets and io_uring in native children.
+Office packages reject macros, active objects, linked external inputs, file fields,
+unsafe ZIP/XML and excessive expansion before rendering. No document text/native
+stderr enters logs.
+
+Preparation permits at most 100 pages, 10,000 blocks, 2 MiB reader JSON and 60 MiB
+derived output. Images and nested structures have separate bounds. Failure keeps
+the original and supplies a visible retry/PDF-export recovery message. Pending
+work older than 10 minutes becomes retryable; publishing never silently drops
+an unreadable supported report.
+
+Derived objects use the exact prefix
+`landing-public/resources/{tenant_id}/{file_uuid}/reader/{generation_uuid}/`.
+Record cleanup targets before writing; row locks serialize bounded writes with
+retry/deletion. Reader responses contain plain structured data and freshly signed
+five-minute image/PDF URLs, never document HTML, scripts or remote assets. Reader
+and download links use `Cache-Control: no-store`. Deleted posts/removed files issue
+no new links; an issued URL remains usable until its five-minute expiry. Public
+lists defer heavy reader JSON and never embed signed URLs.
+
+Pending-file cleanup commits an unready tombstone before deleting the exact
+recorded derivatives and original. Failure remains retryable and cannot attach
+a missing object. Detached manual files and deleted posts remain private and are
+not swept automatically. There is no background deletion of customer documents.
+QA explicitly purges only its disposable rows and complete generation prefixes.
+
+## Verification and operational ownership
+
+Focused tests cover publishers, anonymous reading, private previews, revocation,
+tenant separation, text-only publication, unsupported-only body requirements,
+pending/failed preparation, ordered replay, token fencing, duplicate delivery,
+cleanup, malformed packages, network denial and image fidelity. Native smoke uses
+synthetic Korean HWP/HWPX/DOCX/XLSX/PPTX with paragraphs, tables, image and formula;
+no customer documents enter fixtures. Browser evidence covers write → private
+preview → publish → anonymous reload/read → second-publisher edit → delete and
+cleanup at desktop and 390px, plus visible failure/retry and original-byte download.
+
+The isolated non-login-UAT scenario uses its own admin and dedicated
+`ymath-qa-resource-publisher` teacher. Its accounts/allowlist never touch godmin or
+customer tenants. Cleanup includes original and derivative objects under the
+exact QA tenant prefix and proves tenant/user/storage zero. Production inspection
+is observational. Existing backend immutable-image/development/preproduction/
+rolling-release gates and frontend same-artifact canary remain mandatory.
+
+Runtime owners: [deployment modes](../operations/deployment-modes.md),
+[persistent development](../operations/persistent-development-runtime.md),
+[container security](../operations/container-image-security.md).
+Frontend interactions: academy-frontend `docs/PUBLIC-RESOURCE-BOARD.md`.

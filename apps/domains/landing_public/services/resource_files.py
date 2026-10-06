@@ -30,7 +30,7 @@ def validate_resource_file(upload):
             if not re.fullmatch(rb"%PDF-(?:1\.[0-9]|2\.0)", head) or b"%%EOF" not in upload.read(2048):
                 raise ValueError("invalid PDF")
             upload.seek(0)
-            validate_pdf_document(upload.read(MAX_RESOURCE_BYTES + 1))
+            validate_pdf_document(upload.read(MAX_RESOURCE_BYTES + 1), max_pages=100)
         elif extension == "hwp":
             with olefile.OleFileIO(upload) as document:
                 header = document.openstream("FileHeader").read(256)
