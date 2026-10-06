@@ -166,6 +166,18 @@ exact object delete를 실행한다. 같은 실행에서 별도 multipart upload
 종료 시 두 exact key와 미완성 multipart upload가 모두 0인지 확인한다. presigned URL,
 서명 query, R2 credential은 출력하거나 증거 파일에 저장하지 않는다.
 
+공개 게시판의 PDF·변환 문서는 `R2_ADMIN_BUCKET`(운영 기본값 `academy-admin`)의
+서명된 GET URL을 사용한다. 홈페이지 테넌트를 추가할 때는 이 버킷의 기존 CORS도
+읽고, 신규 apex/`www`의 GET·HEAD와 `Range` 요청 헤더가 허용되는지 확인한다.
+부분 읽기를 위해 `Accept-Ranges`, `Content-Length`, `Content-Range`, `Content-Type`,
+`Content-Encoding` 응답 헤더를 노출한다. 기존 origin·메서드·규칙을 보존한 상태로
+정확한 신규 origin의 읽기 규칙을 수렴하며, 영상 업로드용 정책으로 전체 admin
+버킷 규칙을 덮어쓰지 않는다. 권한 설정과 API 정상 응답만으로 문서 열람 성공을
+판정하지 않는다. 기존 공개 문서가 있으면 해당 홈페이지에서 실제 본문 읽기를
+확인하고, 합성 문서 업로드·게시·새로고침 검증은 같은 산출물의 격리 개발 환경에서
+수행한다. 게시판 권한·원본 보존·실패 복구는
+[공개 게시판 소유 문서](../../domain/public-resource-board.md)를 따른다.
+
 DB 프로비저닝 코드는 고객별 목록에 추가하지 않는다. 배포 후 범용 명령
 `provision_tenant`를 사용한다.
 
