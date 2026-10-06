@@ -61,7 +61,7 @@ class PublicResourceFile(models.Model):
     is_ready = models.BooleanField(default=False)
     storage_key = models.CharField(max_length=500, unique=True)
     filename = models.CharField(max_length=200)
-    extension = models.CharField(max_length=5)
+    extension = models.CharField(max_length=200, blank=True)
     content_type = models.CharField(max_length=100)
     size = models.PositiveIntegerField()
     created_at = models.DateTimeField(auto_now_add=True)

@@ -7,6 +7,7 @@ from decimal import Decimal
 from io import StringIO
 from unittest.mock import Mock, patch
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.management.base import CommandError
@@ -325,6 +326,17 @@ class SetupYmathRealuseScenarioTests(TestCase):
                 "violated_events": 0,
             },
         )
+
+    def test_resource_board_has_two_owned_publishers_and_exact_storage_cleanup_prefix(self):
+        self._call_command()
+        tenant = Tenant.objects.get(code="qa-ymath-realuse-20260805")
+        ResourceAccess = apps.get_model("landing_public", "PublicResourceBoardAccess")
+        access = ResourceAccess.objects.get(tenant=tenant)
+        self.assertNotEqual(access.publisher_one_id, access.publisher_two_id)
+        self.assertEqual(access.publisher_one.tenant_id, tenant.id)
+        self.assertEqual(access.publisher_two.tenant_id, tenant.id)
+        self.assertEqual(TenantMembership.objects.get(tenant=tenant, user=access.publisher_two).role, "teacher")
+        self.assertIn(f"landing-public/resources/{tenant.id}/", Command._qa_r2_prefixes(tenant.id))
 
     def test_long_video_fixture_requires_exactly_two_students_before_mutation(self):
         with self.assertRaisesMessage(
@@ -1023,6 +1035,7 @@ class SetupYmathRealuseScenarioTests(TestCase):
             f"excel/{tenant_id}/",
             f"tenant-logos/{tenant_id}/",
             f"landing-public/reviews/{tenant_id}/",
+            f"landing-public/resources/{tenant_id}/",
             f"matchup-showcase-snapshots/tenant_{tenant_id}/",
         )
         requests = []

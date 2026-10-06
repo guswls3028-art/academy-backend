@@ -1,8 +1,9 @@
 # Public teaching resource board
 
-The existing godmin public homepage links to `/landing/resources`. The board has
-two categories, matchup and analysis, for teacher-prepared PDF, HWP and HWPX
-documents. Anonymous students, parents and outsiders can list, read, preview PDF
+Godmin and the shared homepage menu link to `/landing/resources`. Each resolved
+tenant has an isolated resource-sharing board with matchup and analysis categories
+for teacher-prepared originals of any file format (including PDF, Hangul, Office,
+images, archives, custom extensions and extensionless files). Anonymous students, parents and outsiders can list, read, preview PDF
 and download original documents. It does not replace the existing landing config
 or publish a homepage draft. The older family community and generated report
 boards retain their existing policies.
@@ -33,21 +34,33 @@ action attaches 1–5 validated files atomically. New attachments must belong to
 the current uploader; either publisher can edit a post retaining the other's
 existing attachments. A file cannot move to another post. Duplicate create
 retries reuse a request UUID only when the author, content and file set match.
+The current editor sends `expected_updated_at` on PATCH. Under the existing
+publisher/post locks, a changed revision returns HTTP 409 without changing the
+post or reattaching files removed by another publisher. An identical successful
+PATCH replay returns the current post without touching its revision. The field
+remains optional for already-open older clients during rolling release; those
+legacy clients retain their existing last-write behavior until refreshed.
 
 ## Files, failure and recovery
 
-Each nonempty file is limited to 30 MiB. Case-insensitive PDF/HWP/HWPX extensions
-and content validation are mandatory; MIME alone grants no acceptance. HWP uses
+Each nonempty file is limited to 30 MiB, with no extension allowlist. Known
+PDF/HWP/HWPX suffixes retain their bounded document integrity checks; all other
+originals are stored without executing, extracting or previewing their contents,
+with `application/octet-stream` regardless of the client MIME. HWP uses
 the HWP5 FileHeader/DocInfo/body container. HWPX requires bounded safe ZIP entries,
 the Hancom mimetype and document/header/section members. Original Unicode names
 are bounded and path/control characters are rejected; download disposition uses
-RFC 5987 encoding. Private object keys are generated from tenant and UUID.
+RFC 5987 encoding and a safe ASCII fallback. All files use attachment disposition,
+including HTML/SVG and unknown suffixes. New private object keys contain only the
+tenant and UUID; original names remain metadata. Existing keys/data stay intact.
+Migration 0010 widens the extension metadata field and permits no extension; this
+is compatible with the previous reader and does not rewrite any customer data.
 
 Public download links are generated after a fresh published-post and file check,
 expire in 300 seconds, and use `Cache-Control: no-store`. No signed URL is stored
 on a post. A removed attachment or deleted post yields no new links; a URL already
 issued can remain usable until its five-minute expiry. GET requests never mutate
-or perform cleanup. PDF previews use the established PDFJS renderer; Hangul files
+or perform cleanup. PDF previews use the established PDFJS renderer; other originals
 are downloaded for opening with compatible software.
 
 Upload failure attempts exact-key cleanup; if storage cleanup fails, a private
@@ -64,6 +77,10 @@ membership revocation, nonpublisher and superuser denial, tenant isolation,
 pending and attached-file ownership, idempotent retry, deletion, invalid category,
 format/size/name validation and storage failure recovery. Required backend gates
 and exact-artifact isolated persistent development and preproduction gates apply.
+The isolated non-login-UAT QA scenario configures its own admin and dedicated
+`ymath-qa-resource-publisher` teacher as publishers. These accounts and allowlist
+never touch godmin or another customer tenant. QA cleanup includes the exact
+`landing-public/resources/{tenant_id}/` prefix and proves tenant/user/storage zero.
 Browser real-use verification covers publication → anonymous reload → actual
 download bytes/PDF canvas, both categories, retained attachments, errors and retry,
 desktop and 390px. Production verification is observational and uses no synthetic

@@ -7,7 +7,7 @@ from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema
 
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import APIException, PermissionDenied, ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
@@ -69,15 +69,24 @@ class ResourcePostSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(ResourceFileSerializer(many=True))
     def get_files(self, obj):
-        return ResourceFileSerializer([file for file in obj.files.all() if not file.is_removed], many=True).data
+        return ResourceFileSerializer(
+            [file for file in obj.files.all() if not file.is_removed and file.is_ready], many=True
+        ).data
 
     class Meta:
         model = PublicResourcePost
         fields = ("id", "category", "title", "content", "author_display_name", "created_at", "updated_at", "files")
 
 
+class ResourceEditConflict(APIException):
+    status_code = 409
+    default_detail = "다른 게시자가 이 자료를 수정했습니다. 입력한 내용은 유지됩니다. 최신 게시물을 확인해주세요."
+    default_code = "resource_edit_conflict"
+
+
 class ResourceWriteSerializer(serializers.Serializer):
     request_id = serializers.UUIDField(required=False)
+    expected_updated_at = serializers.DateTimeField(required=False)
     title = serializers.CharField(max_length=200, trim_whitespace=True)
     category = serializers.ChoiceField(choices=("matchup", "analysis"))
     content = serializers.CharField(max_length=20000, allow_blank=True, default="")
@@ -159,6 +168,13 @@ class PublicResourcePostViewSet(viewsets.GenericViewSet):
                     ):
                         return existing, False
                     raise ValidationError({"request_id": "이미 처리된 게시 요청입니다. 게시판을 확인해주세요."})
+            if post is not None and data.get("expected_updated_at") not in (None, post.updated_at):
+                current_ids = set(post.files.filter(is_removed=False, is_ready=True).values_list("id", flat=True))
+                if (post.title == data["title"] and post.content == data["content"]
+                        and post.category == data["category"] and current_ids == set(file_ids)):
+                    # A successful PATCH may lose its response; replay must remain safe.
+                    return post, False
+                raise ResourceEditConflict()
             for file in files:
                 if not file.is_ready:
                     raise ValidationError(
@@ -224,7 +240,7 @@ class PublicResourceUploadView(APIView):
             raise ValidationError({"file": "첨부 파일을 선택해주세요."})
         filename, extension, content_type = validate_resource_file(upload)
         file_id = uuid.uuid4()
-        key = f"landing-public/resources/{request.tenant.id}/{file_id}.{extension}"
+        key = f"landing-public/resources/{request.tenant.id}/{file_id}"
         file = PublicResourceFile.objects.create(
             id=file_id,
             tenant=request.tenant,

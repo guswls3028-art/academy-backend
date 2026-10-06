@@ -378,7 +378,8 @@ class Command(BaseCommand):
         normalized_teacher_username = teacher_username.lower()
         if not teacher_username:
             raise CommandError("teacher-username must not be empty.")
-        if normalized_teacher_username.startswith(LOGIN_UAT_RESERVED_USERNAME_PREFIXES):
+        if (normalized_teacher_username == "ymath-qa-resource-publisher"
+                or normalized_teacher_username.startswith(LOGIN_UAT_RESERVED_USERNAME_PREFIXES)):
             raise CommandError("teacher-username conflicts with a reserved login UAT username.")
 
         assert_isolated_runtime()
@@ -526,6 +527,22 @@ class Command(BaseCommand):
                 user=teacher,
                 role="admin",
             )
+
+            if not login_uat:
+                # Disposable resource-sharing fixture; never configures a customer board.
+                resource_publisher = self._ensure_user(
+                    tenant=tenant,
+                    login_username="ymath-qa-resource-publisher",
+                    password=password,
+                    name="자료게시판 QA 선생님",
+                    is_staff=True,
+                )
+                TenantMembership.ensure_active(tenant=tenant, user=resource_publisher, role="teacher")
+                ResourceAccess = apps.get_model("landing_public", "PublicResourceBoardAccess")
+                ResourceAccess.objects.update_or_create(
+                    tenant=tenant,
+                    defaults={"publisher_one": teacher, "publisher_two": resource_publisher},
+                )
 
             Lecture = apps.get_model("lectures", "Lecture")
             Session = apps.get_model("lectures", "Session")
@@ -1031,6 +1048,7 @@ class Command(BaseCommand):
             f"excel/{tenant_id}/",
             f"tenant-logos/{tenant_id}/",
             f"landing-public/reviews/{tenant_id}/",
+            f"landing-public/resources/{tenant_id}/",
             f"matchup-showcase-snapshots/tenant_{tenant_id}/",
         )
 
