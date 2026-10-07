@@ -41,7 +41,7 @@ class ResourceDocumentRendererTests(TestCase):
     def test_pdf_encryption_page_and_total_output_limits_fail_visibly(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp); source = root / 'source.pdf'
+            root = Path(temp)
             for name, encryption in [('source.pdf', None), ('locked.pdf', StandardEncryption('qa', ownerPassword='qa-owner', strength=128))]:
                 pdf = canvas.Canvas(str(root / name), encrypt=encryption)
                 pdf.drawString(50, 760, 'QA PAGE'); pdf.showPage(); pdf.save()
