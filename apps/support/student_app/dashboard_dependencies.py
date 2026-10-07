@@ -46,6 +46,7 @@ def today_lecture_sessions_for_dashboard(*, tenant: Any, student: Any, today):
     return (
         LectureSession.objects.filter(
             ongoing_lecture_filter(today=today),
+            Q(lecture__start_date__isnull=True) | Q(lecture__start_date__lte=today),
             session_enrollments__tenant=tenant,
             session_enrollments__enrollment__student=student,
             session_enrollments__enrollment__tenant=tenant,

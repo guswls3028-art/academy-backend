@@ -14,6 +14,7 @@ from apps.domains.student_app.tests.test_session_tenant_isolation import (
 from apps.support.student_app.dashboard_dependencies import (
     today_lecture_sessions_for_dashboard, upcoming_clinic_count_for_dashboard,
 )
+from apps.support.student_app.session_dependencies import get_student_lecture_sessions
 
 
 class DashboardLearningTodoTests(TestCase):
@@ -93,3 +94,24 @@ class DashboardLearningTodoTests(TestCase):
         enrollment.save(update_fields=["lecture", "updated_at"])
         roster.refresh_from_db()
         self.assertFalse(today_lecture_sessions_for_dashboard(tenant=self.tenant, student=self.student, today=self.now.date()).exists())
+
+    def test_upcoming_schedule_respects_course_dates_while_retaining_past_lessons(self):
+        today = timezone.localdate()
+        lecture = _create_lecture(self.tenant, "Vacation schedule")
+        lecture.start_date = today - timedelta(days=7)
+        lecture.end_date = today - timedelta(days=1)
+        lecture.save(update_fields=["start_date", "end_date", "updated_at"])
+        past = _create_session(lecture, order=1, session_date=today - timedelta(days=2))
+        invalid_future = _create_session(lecture, order=2, session_date=today + timedelta(days=1))
+        rows = get_student_lecture_sessions(
+            session_ids=[past.id, invalid_future.id], tenant=self.tenant,
+            hidden_before=None, hidden_session_ids=set(),
+        )
+        self.assertEqual([row.id for row in rows], [past.id])
+        lecture.end_date = invalid_future.date
+        lecture.save(update_fields=["end_date", "updated_at"])
+        rows = get_student_lecture_sessions(
+            session_ids=[past.id, invalid_future.id], tenant=self.tenant,
+            hidden_before=None, hidden_session_ids=set(),
+        )
+        self.assertEqual([row.id for row in rows], [past.id, invalid_future.id])

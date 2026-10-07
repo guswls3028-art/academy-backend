@@ -99,8 +99,10 @@ Ymath는 `Program.feature_flags.assessment_status_display=wrong_completion`을
 7일 이내 시작할 시험을 반환한다. 시작 전 문제·제출 권한은 기존 시간 검증을 유지한다.
 공유 시험의 `session_id`는 선택 학생에게 그 시험이 배정된 강의 차시만 사용한다.
 홈 클리닉 배지는 취소·거절·출석 완료를 제외한 신청/예약 중 실제 예약 종료가 남고
-시작이 7일 이내인 건수다. 개인 예약 시각과 자정 넘김을 반영한다. 성적 이력 보존,
-종강일 경계, 결석, 선택 자녀/강의 격리는 `test_grades_summary_homework.py`,
+시작이 7일 이내인 건수다. 개인 예약 시각과 자정 넘김을 반영한다.
+오늘/미래 일정은 강의 시작·종료일 범위 안에서만 안내해 종강 차시가 다음 일정으로
+되살아나지 않게 한다. 과거 차시는 기존 일정 이력에 보존한다.
+성적 이력 보존, 종강일 경계, 결석, 선택 자녀/강의 격리는 `test_grades_summary_homework.py`,
 `test_parent_exam_child_selection.py`, `test_dashboard_learning_todos.py`가 검증한다.
 
 과제의 1차 성적·성취 이력과 파일 변경 가능성은 서로 다른 계약이다. 응답의
