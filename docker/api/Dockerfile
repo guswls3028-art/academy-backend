@@ -50,7 +50,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && for package in perl 'perl-modules-*' 'libperl*' libdpkg-perl liberror-perl; do ! dpkg-query -W "$package" >/dev/null 2>&1; done \
     && ! command -v perl >/dev/null 2>&1 \
     && python /usr/local/bin/verify-expat.py --library libexpat.so.1 --python --package \
-    && python /usr/local/bin/verify-aligned-new.py
+    && python /usr/local/bin/verify-aligned-new.py \
+    && python /usr/local/bin/verify-tiff.py
 USER appuser
 
 FROM curl-fixed-system AS base

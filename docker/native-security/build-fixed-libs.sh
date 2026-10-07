@@ -43,6 +43,50 @@ Description: ${description}
 EOF
 }
 
+# CVE-2026-52490 is fixed by the upstream 4.7.2 release. Debian trixie
+# has no fixed package/backport yet. Keep tiff source identity, both .so.6
+# ABIs and all Debian compression backends; do not package command-line tools.
+tiff_version='4.7.2-1+academy1'
+tiff_archive="${work_root}/tiff.tar.bz2"
+download \
+    'https://deb.debian.org/debian/pool/main/t/tiff/tiff_4.7.2.orig.tar.bz2' \
+    "${tiff_archive}" \
+    'c5086d8f7c5ba51ca98241f24a8bd1cb66218c399077aeccbf6a236cf3152acc'
+tar -xjf "${tiff_archive}" -C "${work_root}"
+tiff_source="${work_root}/libtiff-v4.7.2"
+(
+    cd "${tiff_source}"
+    # Use installed autotools; upstream autogen.sh downloads unpinned helpers.
+    autoreconf --install --force
+    ./configure \
+        --prefix=/usr \
+        --libdir="/usr/lib/${multiarch}" \
+        --disable-static \
+        --disable-docs \
+        --disable-contrib \
+        --disable-opengl
+    make -j "${jobs}"
+    make check
+)
+for tiff_name in tiff tiffxx; do
+    tiff_package="${work_root}/${tiff_name}-package"
+    tiff_library="$(find "${tiff_source}/libtiff/.libs" -maxdepth 1 -type f -name "lib${tiff_name}.so.6.*" | head -n 1)"
+    test -n "${tiff_library}"
+    install -D -m 0644 "${tiff_library}" \
+        "${tiff_package}/usr/lib/${multiarch}/$(basename "${tiff_library}")"
+    ln -s "$(basename "${tiff_library}")" "${tiff_package}/usr/lib/${multiarch}/lib${tiff_name}.so.6"
+    install -D -m 0644 "${tiff_source}/LICENSE.md" \
+        "${tiff_package}/usr/share/doc/lib${tiff_name}6/copyright"
+    if [ "${tiff_name}" = tiff ]; then
+        tiff_dependencies='Depends: libc6 (>= 2.33), libdeflate0 (>= 1.0), libjbig0 (>= 2.0), libjpeg62-turbo (>= 1.3.1), liblerc4 (>= 3.0), liblzma5 (>= 5.1.1alpha+20120614), libwebp7 (>= 1.5.0), libzstd1 (>= 1.5.5), zlib1g (>= 1:1.1.4)'
+    else
+        tiff_dependencies="Depends: libc6 (>= 2.33), libstdc++6, libtiff6 (= ${tiff_version})"
+    fi
+    write_control "${tiff_package}" "lib${tiff_name}6" 'tiff' "${tiff_version}" \
+        'optional' "${tiff_dependencies}" 'TIFF runtime with upstream 4.7.2 security fixes'
+    dpkg-deb --build --root-owner-group "${tiff_package}" "${output_root}/lib${tiff_name}6-fixed.deb"
+done
+
 # CVE-2026-85091: the upstream post-1.3.2 commit fixes gz_vacate bounds
 # handling. The source declares 1.3.2.1-motley. Preserve Debian's existing
 # 1.3.dfsg+really version shape so the scanner applies Debian source-package
@@ -303,4 +347,4 @@ download \
 tar -xJf "${python_archive}" -C "${work_root}"
 python /usr/local/bin/build-python-xml.py "${work_root}/Python-3.11.15" \
     "${expat_source}" "${work_root}/expat-green-normal" "${output_root}/python-xml"
-test "$(find "${output_root}" -maxdepth 1 -type f -name '*.deb' | wc -l)" -eq 4
+test "$(find "${output_root}" -maxdepth 1 -type f -name '*.deb' | wc -l)" -eq 6

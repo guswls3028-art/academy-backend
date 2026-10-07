@@ -5,6 +5,29 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-10-07 TIFF 후보 차단과 수정 릴리스
+
+직원 급여 후보 [37584132062](https://github.com/guswls3028-art/academy-backend/actions/runs/37584132062)는
+`CVE-2026-52490` / `tiff` / `4.7.0-3+deb13u3` Critical로 development 진입 전에
+차단됐다. 운영 교체는 실행되지 않았고 기존 성공 manifest를 유지한다.
+[Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-52490)는 trixie
+수정 패키지를 제공하지 않지만 upstream 4.7.2 및 Debian `4.7.2-1`의 수정을 기록한다.
+
+공통 base는 Debian 공식 원본 소스를 DSC의 SHA-256
+`c5086d8f7c5ba51ca98241f24a8bd1cb66218c399077aeccbf6a236cf3152acc`로 확인하고
+4.7.2를 빌드한다. 기존 `tiff` source identity와 `libtiff6` / `libtiffxx6` package,
+두 `.so.6` ABI, JPEG·JBIG·LERC·LZMA·WebP·Zstd·Deflate 압축 의존성을 유지한다.
+실제 수정 버전 `4.7.2-1+academy1`을 패키징하며 CLI 도구나 개발 헤더는 runtime에
+추가하지 않는다. upstream `make check`와 arm64 native 이미지 검사를 통과해야 한다.
+
+`docker/native-security/verify-tiff.py`는 설치된 package/source identity와 실제 로드한
+4.7.2, C/C++ ABI 및 기존 codec 14종을 확인한다. Pillow로 만든 16×16 RGB 합성 TIFF 7종을 `tiff-fixtures/`에 고정하고
+system `libtiff.so.6`로 직접 열어 RGBA 픽셀을 대조한다. base와 API·AI·Tools·Video의
+마지막 APT 설치 뒤 검사하며 Messaging은 검증된 base를 상속한다. 누락 codec,
+ABI 실패, 잘못된 픽셀 또는 package downgrade는 빌드를 차단한다.
+Critical acceptance·High 한도는 변경하지 않는다. 새 후보의 신선한 scan, 격리 개발,
+preprod 및 운영 검증이 완료되기 전에는 이 수정을 운영 반영으로 기록하지 않는다.
+
 ## 2026-10-03 GCC 한시 위험 수용과 배포 재개 조건
 
 배포 복구와 부적절한 차단 규칙 교정 요청에 따라 release owner는 기존 운영에도
