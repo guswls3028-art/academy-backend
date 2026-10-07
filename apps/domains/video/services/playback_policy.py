@@ -39,9 +39,6 @@ def build_effective_playback_policy(
         if permission.block_seek:
             allow_seek = False
             seek_policy = {"mode": "blocked"}
-        if permission.block_speed_control:
-            ui_speed_control = False
-            max_rate = 1.0
 
     if mode == AccessMode.BLOCKED:
         allow_seek = False
@@ -80,6 +77,11 @@ def build_effective_playback_policy(
                 "forward_limit": None,
                 "grace_seconds": 3,
             }
+
+    # Explicit restrictions take precedence over mode defaults and overrides.
+    if permission and permission.block_speed_control:
+        ui_speed_control = False
+        max_rate = 1.0
 
     return {
         "access_mode": mode.value,

@@ -40,3 +40,36 @@ DB migration이나 API 응답 형식 변경은 없다. 구 frontend도 서버에
 `tests/test_video_access_security.py`, `tests/test_direct_video_entitlement.py`와
 inactive entitlement 회귀를 함께 실행한다. 운영 모양의 로그인·브라우저/CDN 검증은
 격리 개발 tenant에서 수행하고 tenant/user residue zero를 확인한다.
+
+
+## 학생 재생 정책·진도·댓글 일관성
+
+- 활성 수강의 목록/재생 권한은 명시 차단을 먼저 적용하고, 교사 지정
+  `is_override`를 출결 기본값보다 우선한다. 지정된 감독 시청도 완료 기준을
+  만족하면 복습으로 전환한다. 목록은 미리 조회한 권한·진도·출결을 사용하며
+  영상별 추가 조회를 만들지 않는다. 세션 소속·테넌트 검증, 비활성 수강의
+  정확한 entitlement와 직접 접근의 별도 읽기 전용 경계는 유지한다.
+- `block_speed_control`은 감독/복습 모드 기본값과 배속 override보다
+  우선한다. 서버 정책은 최대 1배속과 배속 UI 비활성을 함께 반환한다.
+  건너뛰기 차단·예산과 워터마크 제한을 완화하지 않는다.
+- 학생 및 선택 자녀의 진도 저장은 `services/student_progress.py`에서
+  영상/수강별 행 잠금과 유일 키를 이용해 병합한다. 지연·중복·재시청 요청은
+  저장된 진도 최댓값과 완료 플래그를 내릴 수 없으며 `last_position`은
+  뒤로 이동할 수 있다. 완료 임계값과 raw `completed=False` 표현은 유지한다.
+  건너뛰기 사용량은 변경하지 않는다. 비활성 entitlement는 기존 잠금과
+  재검증을 통과한 뒤 같은 병합을 사용하며 직접 접근은 DB 진도를 쓰지 않는다.
+- 교사의 명시 진도 수정/초기화는 기존 staff 전용 경로를 사용한다.
+  학생 병합을 모델 전체에 적용하거나 완료 마커를 새로 생성하지 않는다.
+  다음 학생 저장은 초기화 후의 DB 상태를 기준으로 한다. 기존
+  `proctored_completed_at`의 교사 관리 규칙은 변경하지 않는다.
+- 댓글 GET은 삭제된 원문을 빈 내용의 placeholder로 반환하면서 그 아래의
+  기존 살아 있는 답글을 보존한다. 학생 탈퇴 제외, 동일 테넌트/영상 범위,
+  최상위 100개·답글 20개 제한은 유지한다. 삭제된 답글은 노출하지 않는다.
+  삭제된 원문에 대한 신규 답글 POST는 400으로 거절하고 행/카운터를 쓰지 않는다.
+  원문 행 잠금으로 삭제와 답글 생성을 직렬화하고 댓글 쓰기와 카운터 변경은
+  같은 트랜잭션에서 처리한다. 작성된 내용의 물리 삭제나 하위 답글 연쇄 삭제는 없다.
+- [학생 시청 UI 계약](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/STUDENT-VIDEO-WATCH.md)은 삭제 placeholder 아래 답글 표시와 POST 실패 후 재조회/재시도를
+  담당한다. backend 응답 필드와 기존 soft-delete 저장 구조는 유지한다.
+- 회귀 검증: `tests/test_student_video_contract_regressions.py`와 기존
+  student progress/session/direct/inactive entitlement 및 video access/security
+  테스트. 실제 행 잠금의 동시성 검증은 PostgreSQL 환경에서 수행한다.

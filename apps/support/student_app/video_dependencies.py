@@ -77,6 +77,14 @@ def update_inactive_entitled_video_progress(**kwargs):
     return update(**kwargs)
 
 
+def update_student_video_progress(**kwargs):
+    from apps.domains.video.services.student_progress import (
+        update_student_video_progress as update,
+    )
+
+    return update(**kwargs)
+
+
 def get_video_like_models():
     from apps.domains.video.models import Video, VideoLike
 
