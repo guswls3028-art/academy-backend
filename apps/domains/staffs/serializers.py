@@ -2,6 +2,7 @@
 # 원칙: 테넌트별 완전 격리. 직원/User는 해당 테넌트 컨텍스트 내에서만 사용.
 import logging
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
@@ -15,6 +16,8 @@ from .models import (
     ExpenseRecord,
     WorkMonthLock,
     PayrollSnapshot,
+    PayrollAmountPolicy,
+    WageResolutionPolicy,
 )
 from academy.adapters.db.django import repositories_staffs as staff_repo
 from academy.adapters.db.django import repositories_teachers as teacher_repo
@@ -927,6 +930,7 @@ class WorkRecordSerializer(serializers.ModelSerializer):
             "date",
             "start_time",
             "end_time",
+            "end_date",
             "break_minutes",
             "meal_minutes",
             "work_hours",
@@ -963,6 +967,7 @@ class WorkRecordSerializer(serializers.ModelSerializer):
             getattr(self.instance, "end_time", None),
         )
         date = attrs.get("date", getattr(self.instance, "date", None))
+        end_date = attrs.get("end_date", getattr(self.instance, "end_date", None))
         break_minutes = attrs.get(
             "break_minutes",
             getattr(self.instance, "break_minutes", 0),
@@ -981,14 +986,14 @@ class WorkRecordSerializer(serializers.ModelSerializer):
 
         if start_time and end_time and date:
             start_dt = datetime.combine(date, start_time)
-            end_dt = datetime.combine(date, end_time)
-            if end_dt == start_dt:
-                raise serializers.ValidationError(
-                    {"end_time": "종료 시간은 시작 시간과 같을 수 없습니다."}
-                )
-            if end_dt < start_dt:
+            end_dt = datetime.combine(end_date or date, end_time)
+            if end_date is None and end_dt < start_dt:
                 end_dt += timedelta(days=1)
-            worked_minutes = int((end_dt - start_dt).total_seconds() // 60)
+            if end_dt <= start_dt:
+                raise serializers.ValidationError(
+                    {"end_time": "종료 일시는 시작 일시보다 늦어야 합니다."}
+                )
+            worked_minutes = Decimal(str((end_dt - start_dt).total_seconds())) / Decimal(60)
             if break_minutes + meal_minutes >= worked_minutes:
                 raise serializers.ValidationError(
                     {
@@ -997,6 +1002,28 @@ class WorkRecordSerializer(serializers.ModelSerializer):
                         )
                     }
                 )
+            paid_hours = (worked_minutes - break_minutes - meal_minutes) / Decimal(60)
+            if paid_hours.quantize(Decimal("0.01")) > Decimal("999.99"):
+                raise serializers.ValidationError({"end_date": "근무시간은 999.99시간 이하여야 합니다. 출퇴근 일시를 확인해 주세요."})
+            staff = attrs.get("staff", getattr(self.instance, "staff", None))
+            work_type = attrs.get("work_type", getattr(self.instance, "work_type", None))
+            if staff is not None and work_type is not None and not {"work_hours", "amount"}.issubset(attrs):
+                wage = getattr(self.instance, "resolved_hourly_wage", None)
+                if wage is None:
+                    wage = WageResolutionPolicy.resolve(tenant=staff.tenant, staff=staff, work_type=work_type)
+                amount = PayrollAmountPolicy.calculate_from_paid_minutes(
+                    worked_minutes - break_minutes - meal_minutes, wage,
+                    attrs.get("adjustment_amount", getattr(self.instance, "adjustment_amount", 0)),
+                )
+                if amount > 2_147_483_647:
+                    raise serializers.ValidationError({"amount": "계산 금액이 저장 가능한 범위를 초과했습니다. 근무 일시와 시급을 확인해 주세요."})
+            if self.instance is None or "end_date" in attrs:
+                attrs["end_date"] = end_dt.date()
+        elif end_date is not None:
+            if "end_date" in attrs:
+                raise serializers.ValidationError({"end_date": "종료 날짜와 종료 시간을 함께 입력해 주세요."})
+            if "end_time" in attrs:
+                attrs["end_date"] = None
 
         initial_keys = set(getattr(self, "initial_data", {}).keys())
         override_keys = {"work_hours", "amount"} & initial_keys

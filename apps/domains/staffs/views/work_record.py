@@ -54,6 +54,7 @@ def _work_record_audit_payload(record) -> dict:
         "date": str(record.date),
         "start_time": serialize_time(record.start_time),
         "end_time": serialize_time(record.end_time),
+        "end_date": serialize_time(record.end_date),
         "break_minutes": record.break_minutes,
         "break_total_seconds": record.break_total_seconds,
         "current_break_started_at": serialize_time(record.current_break_started_at),
@@ -180,11 +181,10 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
         override_fields = {"work_hours", "amount"}
         # Input fields: calculation inputs that should trigger auto-recalculation
         input_fields = {"meal_minutes", "adjustment_amount", "break_minutes",
-                        "start_time", "end_time"}
+                        "date", "start_time", "end_time", "end_date"}
 
         changed_keys = set(serializer.validated_data.keys())
         has_override = bool(override_fields & changed_keys)
-        has_input_change = bool(input_fields & changed_keys)
 
         try:
             with transaction.atomic():
@@ -194,6 +194,10 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
                     stale_instance.id,
                 )
                 serializer.instance = instance
+                has_input_change = any(
+                    getattr(instance, field) != serializer.validated_data[field]
+                    for field in input_fields & changed_keys
+                )
                 resulting_staff = serializer.validated_data.get(
                     "staff",
                     instance.staff,
@@ -210,6 +214,7 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
                         "date",
                         "start_time",
                         "end_time",
+                        "end_date",
                         "break_minutes",
                         "meal_minutes",
                         "work_hours",

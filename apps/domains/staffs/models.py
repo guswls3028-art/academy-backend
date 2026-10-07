@@ -23,10 +23,11 @@ class WorkHourCalculationPolicy:
     """
 
     @staticmethod
-    def paid_minutes(date, start_time, end_time, break_minutes, meal_minutes=0) -> Decimal:
+    def paid_minutes(date, start_time, end_time, break_minutes, meal_minutes=0, *, end_date=None) -> Decimal:
         start_dt = datetime.combine(date, start_time)
-        end_dt = datetime.combine(date, end_time)
-        if end_dt < start_dt:
+        end_dt = datetime.combine(end_date or date, end_time)
+        # Legacy records have no end date and retain their original overnight rule.
+        if end_date is None and end_dt < start_dt:
             end_dt += timedelta(days=1)
 
         elapsed_seconds = Decimal(str((end_dt - start_dt).total_seconds()))
@@ -302,6 +303,10 @@ class WorkRecord(TimestampModel):
     date = models.DateField()
     start_time = models.TimeField()
     end_time = models.TimeField(null=True, blank=True)
+    end_date = models.DateField(
+        null=True, blank=True,
+        help_text="실제 퇴근 날짜. 기존 미기록 자료는 익일 퇴근 추론을 유지합니다.",
+    )
     break_minutes = models.PositiveIntegerField(default=0)
     """휴식 누적 초 단위 (실시간 시계·일시정지용). 급여는 break_minutes 사용."""
     break_total_seconds = models.PositiveIntegerField(default=0)
@@ -362,6 +367,7 @@ class WorkRecord(TimestampModel):
             self.end_time,
             self.break_minutes,
             self.meal_minutes,
+            end_date=self.end_date,
         )
         hours = (paid_minutes / Decimal(60)).quantize(Decimal("0.01"))
 

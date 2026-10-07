@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
+from decimal import Decimal
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 from rest_framework.exceptions import APIException
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.exceptions import ValidationError
@@ -159,6 +161,8 @@ def end_work_record(
     """Close one work session and persist its server-owned payroll result."""
     with transaction.atomic():
         locked_record = _locked_open_record(record)
+        if timezone.is_aware(ended_at):
+            ended_at = timezone.localtime(ended_at)
         _finish_active_break(locked_record, ended_at=ended_at)
 
         if meal_minutes is not None:
@@ -172,17 +176,18 @@ def end_work_record(
             locked_record.adjustment_amount = adjustment_amount
 
         locked_record.end_time = ended_at.time()
+        locked_record.end_date = ended_at.date()
         start_dt = datetime.combine(
             locked_record.date,
             locked_record.start_time,
         )
         end_dt = datetime.combine(
-            locked_record.date,
+            locked_record.end_date,
             locked_record.end_time,
         )
         if end_dt <= start_dt:
-            end_dt += timedelta(days=1)
-        elapsed_minutes = int((end_dt - start_dt).total_seconds() // 60)
+            raise ValidationError("퇴근 일시는 출근 일시보다 늦어야 합니다.")
+        elapsed_minutes = Decimal(str((end_dt - start_dt).total_seconds())) / Decimal(60)
         if locked_record.break_minutes + locked_record.meal_minutes >= elapsed_minutes:
             raise ValidationError(
                 {
@@ -194,5 +199,8 @@ def end_work_record(
 
         # WorkRecord.save() freezes the resolved wage and calculates the
         # canonical work_hours/amount when end_time is present.
+        hours, amount, _ = locked_record.calculate_payroll()
+        if hours > Decimal("999.99") or amount > 2_147_483_647:
+            raise ValidationError("기록 가능한 근무시간·금액 범위를 초과했습니다. 관리자에게 실제 출근 일시 정정을 요청해 주세요.")
         locked_record.save(recalculate_payroll=True)
         return locked_record

@@ -5,6 +5,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets
 from rest_framework.filters import OrderingFilter
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError
 
 from ..serializers import StaffWorkTypeSerializer
 from academy.adapters.db.django import repositories_staffs as staff_repo
@@ -33,6 +34,10 @@ class StaffWorkTypeViewSet(viewsets.ModelViewSet):
                 self.request.tenant.id,
                 staff.id,
             )
+            if staff_repo.staff_work_type_assignment_exists(
+                locked_staff, serializer.validated_data["work_type"].id,
+            ):
+                raise ValidationError({"work_type_id": "이미 배정된 시급 태그입니다. 기존 직원별 시급은 유지됩니다."})
             assignment = serializer.save(
                 tenant=self.request.tenant,
                 staff=locked_staff,
