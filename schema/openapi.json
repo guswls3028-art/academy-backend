@@ -9894,6 +9894,12 @@
             "format": "date",
             "type": "string"
           },
+          "end_date": {
+            "description": "실제 퇴근 날짜. 기존 미기록 자료는 익일 퇴근 추론을 유지합니다.",
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
           "end_time": {
             "format": "time",
             "nullable": true,
@@ -15322,6 +15328,12 @@
             "format": "date",
             "type": "string"
           },
+          "end_date": {
+            "description": "실제 퇴근 날짜. 기존 미기록 자료는 익일 퇴근 추론을 유지합니다.",
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
           "end_time": {
             "format": "time",
             "nullable": true,
@@ -15421,6 +15433,12 @@
           },
           "date": {
             "format": "date",
+            "type": "string"
+          },
+          "end_date": {
+            "description": "실제 퇴근 날짜. 기존 미기록 자료는 익일 퇴근 추론을 유지합니다.",
+            "format": "date",
+            "nullable": true,
             "type": "string"
           },
           "end_time": {

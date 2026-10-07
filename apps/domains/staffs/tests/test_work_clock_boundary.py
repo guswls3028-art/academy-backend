@@ -85,6 +85,61 @@ class WorkClockBoundaryTests(TestCase):
         self.assertEqual(closed.resolved_hourly_wage, 10_000)
         self.assertEqual(closed.amount, 7_500)
 
+    def test_clock_close_preserves_elapsed_days_and_payroll_after_reload(self):
+        for days, hours in ((1, 24), (2, 48)):
+            with self.subTest(days=days):
+                record = self._start()
+                closed = end_work_record(
+                    record=record,
+                    ended_at=timezone.make_aware(datetime(2026, 8, 20 + days, 9)),
+                )
+                closed.refresh_from_db()
+                self.assertEqual(closed.work_hours, hours)
+                self.assertEqual(closed.amount, hours * 10_000)
+                self.assertEqual(closed.calculate_payroll()[:2], (hours, hours * 10_000))
+
+    def test_clock_close_uses_actual_overnight_date_when_end_time_is_later(self):
+        record = self._start()
+        closed = end_work_record(
+            record=record,
+            ended_at=timezone.make_aware(datetime(2026, 8, 21, 10)),
+            meal_minutes=60,
+        )
+        closed.refresh_from_db()
+        self.assertEqual(closed.work_hours, 24)
+        self.assertEqual(closed.amount, 240_000)
+
+    def test_clock_rejects_end_before_start_without_fabricating_overnight_work(self):
+        record = self._start()
+        with self.assertRaises(ValidationError):
+            end_work_record(record=record, ended_at=self._at(8, 0))
+        record.refresh_from_db()
+        self.assertIsNone(record.end_time)
+        self.assertIsNone(record.amount)
+
+    def test_clock_normalizes_utc_end_to_local_payroll_date(self):
+        from datetime import timezone as datetime_timezone
+
+        record = self._start()
+        closed = end_work_record(
+            record=record,
+            ended_at=datetime(2026, 8, 21, 1, tzinfo=datetime_timezone.utc),
+        )
+        self.assertEqual(closed.end_date, date(2026, 8, 21))
+        self.assertEqual(closed.end_time, time(10))
+        self.assertEqual(closed.amount, 250_000)
+
+    def test_excessive_clock_duration_has_recoverable_error_and_remains_open(self):
+        record = self._start()
+        with self.assertRaises(ValidationError):
+            end_work_record(
+                record=record,
+                ended_at=timezone.make_aware(datetime(2026, 10, 1, 10)),
+            )
+        record.refresh_from_db()
+        self.assertIsNone(record.end_time)
+        self.assertIsNone(record.end_date)
+
     def test_explicit_zero_assignment_wage_does_not_fall_back_to_base_wage(self):
         assignment = StaffWorkType.objects.get(
             tenant=self.tenant,

@@ -32,6 +32,7 @@ from apps.domains.staffs.views import (
     WorkMonthLockViewSet,
     WorkRecordViewSet,
 )
+from apps.domains.staffs.views.staff_work_type import StaffWorkTypeViewSet
 from apps.domains.staffs.views.helpers import can_access_staff_management
 from apps.core.permissions import TenantResolvedAndPayrollManager
 
@@ -1165,10 +1166,10 @@ class StaffOperationsContractTests(TestCase):
             staff=ready,
             year=2026,
             month=8,
-            work_hours=1,
-            work_amount=12_000,
+            work_hours=15,
+            work_amount=180_000,
             approved_expense_amount=3_000,
-            total_amount=15_000,
+            total_amount=183_000,
         )
         StaffWorkType.objects.filter(staff=ready).delete()
 
@@ -1203,6 +1204,125 @@ class StaffOperationsContractTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
+
+    def test_payroll_overview_preserves_frozen_amounts_and_flags_source_drift(self):
+        staff = self._staff("마감 정본 직원")
+        WorkRecord.objects.create(
+            tenant=self.tenant, staff=staff, work_type=self.work_type,
+            date=date(2026, 8, 1), start_time=time(9), end_time=time(11),
+        )
+        snapshot = PayrollSnapshot.objects.create(
+            tenant=self.tenant, staff=staff, year=2026, month=8,
+            work_hours=1, work_amount=12_000, approved_expense_amount=3_000,
+            total_amount=15_000,
+        )
+        WorkMonthLock.objects.create(tenant=self.tenant, staff=staff, year=2026, month=8)
+        response = StaffViewSet.as_view({"get": "payroll_overview"})(
+            self._request("get", "/staffs/payroll-overview/?year=2026&month=8")
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        row = response.data["rows"][0]
+        self.assertEqual(row["work_hours"], 1)
+        self.assertEqual(row["work_amount"], 12_000)
+        self.assertEqual(row["approved_expense_amount"], 3_000)
+        self.assertEqual(row["total_amount"], 15_000)
+        self.assertEqual(row["reference_transfer_amount"], 14_604)
+        self.assertEqual(row["settlement_status"], "RECONCILIATION_REQUIRED")
+        self.assertFalse(row["can_close"])
+        self.assertEqual(response.data["totals"]["closed_count"], 0)
+        snapshot.refresh_from_db()
+        self.assertEqual(snapshot.total_amount, 15_000)
+
+    def test_payroll_overview_includes_departed_staff_with_only_an_orphan_lock(self):
+        staff = self._staff("퇴사 마감 확인")
+        staff.is_active = False
+        staff.save(update_fields=["is_active"])
+        WorkMonthLock.objects.create(tenant=self.tenant, staff=staff, year=2026, month=8)
+        response = StaffViewSet.as_view({"get": "payroll_overview"})(
+            self._request("get", "/staffs/payroll-overview/?year=2026&month=8")
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(response.data["rows"]), 1)
+        self.assertEqual(response.data["rows"][0]["staff_id"], staff.id)
+        self.assertEqual(response.data["rows"][0]["settlement_status"], "RECONCILIATION_REQUIRED")
+
+    def test_duplicate_work_type_assignment_returns_validation_without_changing_wage(self):
+        staff = self._staff("배정 직원")
+        assignment = StaffWorkType.objects.create(
+            tenant=self.tenant, staff=staff, work_type=self.work_type, hourly_wage=12_345,
+        )
+        response = StaffWorkTypeViewSet.as_view({"post": "create"})(
+            self._request("post", "/staffs/staff-work-types/", {
+                "staff": staff.id, "work_type_id": self.work_type.id,
+            })
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.hourly_wage, 12_345)
+        self.assertEqual(StaffWorkType.objects.filter(staff=staff).count(), 1)
+
+    def test_manager_can_correct_end_date_and_recalculate_without_changing_frozen_wage(self):
+        staff = self._staff("퇴근 날짜 정정")
+        record = WorkRecord.objects.create(
+            tenant=self.tenant, staff=staff, work_type=self.work_type,
+            date=date(2026, 8, 31), start_time=time(9), end_time=time(10),
+        )
+        response = WorkRecordViewSet.as_view({"patch": "partial_update"})(
+            self._request("patch", f"/staffs/work-records/{record.pk}/", {
+                "end_date": "2026-09-01",
+            }), pk=record.pk,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        record.refresh_from_db()
+        self.assertEqual(record.end_date, date(2026, 9, 1))
+        self.assertEqual(record.work_hours, 25)
+        self.assertEqual(record.amount, 300_000)
+        self.assertEqual(record.resolved_hourly_wage, 12_000)
+        invalid = WorkRecordViewSet.as_view({"patch": "partial_update"})(
+            self._request("patch", f"/staffs/work-records/{record.pk}/", {
+                "end_date": "2026-08-30",
+            }), pk=record.pk,
+        )
+        self.assertEqual(invalid.status_code, 400)
+        record.refresh_from_db()
+        self.assertEqual(record.amount, 300_000)
+
+    def test_manual_record_rejects_integer_overflow_before_persistence(self):
+        staff = self._staff("금액 경계")
+        self.work_type.base_hourly_wage = 2_147_483_647
+        self.work_type.save(update_fields=["base_hourly_wage"])
+        response = WorkRecordViewSet.as_view({"post": "create"})(
+            self._request("post", "/staffs/work-records/", {
+                "staff": staff.pk, "work_type": self.work_type.pk,
+                "date": "2026-08-01", "start_time": "09:00", "end_time": "11:00",
+            })
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(WorkRecord.objects.filter(staff=staff).exists())
+
+    def test_form_resubmitting_unchanged_clock_inputs_preserves_manual_payroll(self):
+        from decimal import Decimal
+
+        staff = self._staff("수동 확정 직원")
+        record = WorkRecord.objects.create(
+            tenant=self.tenant, staff=staff, work_type=self.work_type,
+            date=date(2026, 8, 1), start_time=time(9), end_time=time(11),
+            end_date=date(2026, 8, 1), is_manually_edited=True,
+            work_hours=Decimal("1.25"), amount=19_777,
+        )
+        response = WorkRecordViewSet.as_view({"patch": "partial_update"})(
+            self._request("patch", f"/staffs/work-records/{record.pk}/", {
+                "work_type": self.work_type.pk, "date": "2026-08-01",
+                "start_time": "09:00", "end_time": "11:00", "end_date": "2026-08-01",
+                "break_minutes": 0, "memo": "메모만 수정",
+            }), pk=record.pk,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        record.refresh_from_db()
+        self.assertEqual(record.work_hours, Decimal("1.25"))
+        self.assertEqual(record.amount, 19_777)
+        self.assertTrue(record.is_manually_edited)
+        self.assertEqual(record.memo, "메모만 수정")
 
     def test_payroll_overview_openapi_contract_declares_query_and_response(self):
         schema_path = Path(__file__).resolve().parents[4] / "schema" / "openapi.json"

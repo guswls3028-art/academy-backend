@@ -185,6 +185,7 @@ class StaffViewSet(viewsets.ModelViewSet):
                 | Q(work_records__date__range=(date_from, date_to))
                 | Q(expense_records__date__range=(date_from, date_to))
                 | Q(payroll_snapshots__year=year, payroll_snapshots__month=month)
+                | Q(work_month_locks__year=year, work_month_locks__month=month, work_month_locks__is_locked=True)
             )
             .select_related("user")
             .distinct()
@@ -277,7 +278,7 @@ class StaffViewSet(viewsets.ModelViewSet):
                 staff_id__in=staff_ids,
                 date__range=(date_from, date_to),
             )
-            .values("staff_id", "date", "start_time", "end_time", "work_type_id")
+            .values("staff_id", "date", "start_time", "end_date", "end_time", "work_type_id")
             .annotate(row_count=Count("id"))
             .filter(row_count__gt=1)
         ):
@@ -352,14 +353,15 @@ class StaffViewSet(viewsets.ModelViewSet):
                 is_locked=True,
             ).values_list("staff_id", flat=True)
         )
-        snapshot_staff_ids = set(
-            PayrollSnapshot.objects.filter(
+        snapshots_by_staff = {
+            snapshot.staff_id: snapshot
+            for snapshot in PayrollSnapshot.objects.filter(
                 tenant=tenant,
                 staff_id__in=staff_ids,
                 year=year,
                 month=month,
-            ).values_list("staff_id", flat=True)
-        )
+            )
+        }
 
         account_role_codes = {
             "owner": "OWNER",
@@ -408,8 +410,23 @@ class StaffViewSet(viewsets.ModelViewSet):
                 assigned_work_type_counts.get(staff.id, 0)
             )
             locked = staff.id in locked_staff_ids
-            snapshot_exists = staff.id in snapshot_staff_ids
-            reconciliation_required = locked != snapshot_exists
+            snapshot = snapshots_by_staff.get(staff.id)
+            snapshot_exists = snapshot is not None
+            source_drift = bool(snapshot is not None and (
+                snapshot.work_hours != (work.get("work_hours_total") or 0)
+                or snapshot.work_amount != work_amount
+                or snapshot.approved_expense_amount != approved_expense_amount
+                or snapshot.total_amount != snapshot.work_amount + snapshot.approved_expense_amount
+                or open_work_record_count
+                or incomplete_work_record_count
+                or pending_expense_count
+            ))
+            reconciliation_required = locked != snapshot_exists or source_drift
+            if snapshot is not None:
+                # Never replace approved historical money with a live recalculation.
+                work_hours = float(snapshot.work_hours)
+                work_amount = snapshot.work_amount
+                approved_expense_amount = snapshot.approved_expense_amount
             if reconciliation_required:
                 needs_review = True
                 settlement_status = "RECONCILIATION_REQUIRED"
@@ -431,7 +448,7 @@ class StaffViewSet(viewsets.ModelViewSet):
 
             membership_role = membership_roles.get(staff.user_id)
             account_role = account_role_codes.get(membership_role, "NONE")
-            total_amount = work_amount + approved_expense_amount
+            total_amount = snapshot.total_amount if snapshot is not None else work_amount + approved_expense_amount
             reference = PayrollReferenceDeductionPolicy.calculate(work_amount)
             reference_transfer_amount = (
                 reference["net_work_amount"] + approved_expense_amount
@@ -503,7 +520,7 @@ class StaffViewSet(viewsets.ModelViewSet):
             totals["reference_transfer_amount"] += reference_transfer_amount
             totals["advisory_issue_count"] += advisory_issue_count
             totals["needs_review_count"] += int(needs_review)
-            totals["closed_count"] += int(locked and snapshot_exists)
+            totals["closed_count"] += int(settlement_status == "CLOSED")
 
         position_order = {
             "DIRECTOR": 0,
