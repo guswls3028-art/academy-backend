@@ -6,9 +6,10 @@ from math import isfinite
 from typing import Any
 
 from django.db.models import F, Max
+from django.utils import timezone
 
 from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
-from apps.domains.attendance.models import Attendance
+from apps.domains.exams.models import Exam
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import HomeworkScore
 from apps.domains.submissions.models import Submission
@@ -28,6 +29,11 @@ from apps.support.results.student_grade_history import (
     empty_exam_summary,
 )
 from apps.support.submissions.dependencies import homework_submission_revisions
+from apps.support.attendance.learning_todo_eligibility import actual_absent_learning_todo_pairs
+from apps.support.student_app.learning_todo_policy import (
+    lecture_has_current_learning_todos,
+    lecture_is_ongoing,
+)
 
 
 def get_student_exam_result_data(request: Any, exam_id: int, *, tenant: Any):
@@ -198,6 +204,7 @@ def _safe_homework_number(value: Any, *, positive: bool = False) -> float | None
 
 
 def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]:
+    today = timezone.localdate()
     report_layout = get_student_grade_report_layout(tenant=tenant)
     history_enrollments = list(
         learning_history_enrollments_for_student(
@@ -207,7 +214,11 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
     )
     enrollment_ids = [int(enrollment.id) for enrollment in history_enrollments]
     lecture_active_by_enrollment = {
-        int(enrollment.id): bool(enrollment.lecture.is_active)
+        int(enrollment.id): lecture_is_ongoing(enrollment.lecture, today=today)
+        for enrollment in history_enrollments
+    }
+    current_todos_by_enrollment = {
+        int(enrollment.id): lecture_has_current_learning_todos(enrollment.lecture, today=today)
         for enrollment in history_enrollments
     }
     lecture_options = [
@@ -216,7 +227,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "title": enrollment.lecture.title,
             "color": enrollment.lecture.color,
             "chip_label": enrollment.lecture.chip_label,
-            "is_active": bool(enrollment.lecture.is_active),
+            "is_active": lecture_active_by_enrollment[int(enrollment.id)],
         }
         for enrollment in history_enrollments
     ]
@@ -406,23 +417,19 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         .select_related("homework", "session", "session__lecture")
         .order_by("-homework__updated_at", "-homework_id")
     )
-    assigned_pairs = {
+    learning_pairs = {
         (int(assignment.enrollment_id), int(assignment.session_id))
         for assignment in assigned_homeworks
+    } | {
+        (int(score.enrollment_id), int(score.session_id))
+        for score in homework_scores
+    } | {
+        (int(exam["enrollment_id"]), int(exam["session_id"]))
+        for exam in exam_list if exam.get("session_id") is not None
     }
-    absent_assignment_pairs = {
-        (int(enrollment_id), int(session_id))
-        for enrollment_id, session_id in Attendance.objects.filter(
-            tenant=tenant,
-            enrollment_id__in={pair[0] for pair in assigned_pairs},
-            session_id__in={pair[1] for pair in assigned_pairs},
-            enrollment__tenant=tenant,
-            session__lecture__tenant=tenant,
-            enrollment__lecture_id=F("session__lecture_id"),
-            status="ABSENT",
-        ).values_list("enrollment_id", "session_id")
-        if (int(enrollment_id), int(session_id)) in assigned_pairs
-    }
+    absent_learning_pairs = actual_absent_learning_todo_pairs(
+        tenant=tenant, enrollment_session_pairs=learning_pairs,
+    )
     assigned_homework_ids = {assignment.homework_id for assignment in assigned_homeworks}
     homework_ids = list(
         {score.homework_id for score in homework_scores} | assigned_homework_ids
@@ -538,7 +545,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "session_title": session_title,
             "lecture_title": lecture_title,
             "recorded_at": score.updated_at.isoformat(),
-            "lecture_active": bool(score.session.lecture.is_active),
+            "lecture_active": lecture_active_by_enrollment.get(score.enrollment_id, False),
             **session_metadata,
         })
 
@@ -566,7 +573,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         ))
         teacher_resolved = resolution == "MANUAL_OVERRIDE"
         if (
-            (int(assignment.enrollment_id), int(assignment.session_id)) in absent_assignment_pairs
+            (int(assignment.enrollment_id), int(assignment.session_id)) in absent_learning_pairs
             and (assignment.enrollment_id, assignment.homework_id) not in submitted_revisions
             and (assignment.enrollment_id, assignment.homework_id) not in submission_media_lock_keys
             and (assignment.enrollment_id, assignment.homework_id) not in homework_retake_counts
@@ -603,11 +610,24 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "session_title": assignment_session_title,
             "lecture_title": assignment_lecture_title,
             "recorded_at": assignment.created_at.isoformat(),
-            "lecture_active": bool(session.lecture.is_active),
+            "lecture_active": lecture_active_by_enrollment.get(assignment.enrollment_id, False),
             **session_metadata,
         })
 
     homework_list.sort(key=_homework_history_sort_key)
+
+    active_exam_ids = set(Exam.objects.filter(
+        tenant=tenant, id__in=[exam["exam_id"] for exam in exam_list],
+        is_active=True, exam_type=Exam.ExamType.REGULAR,
+    ).values_list("id", flat=True)) if exam_list else set()
+    for row in exam_list + homework_list:
+        pair = (int(row["enrollment_id"]), row.get("session_id"))
+        row["learning_todo_eligible"] = bool(
+            current_todos_by_enrollment.get(pair[0], False)
+            and pair in learning_pairs
+            and pair not in absent_learning_pairs
+            and ("exam_id" not in row or row["exam_id"] in active_exam_ids)
+        )
 
     return {
         "exams": exam_list,

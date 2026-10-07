@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Iterable
 
-from django.db.models import Count, Q
+from django.db.models import Count, F, Q
+from django.utils import timezone
 
 
 def get_active_student_session_ids(*, student: Any, tenant: Any) -> list[int]:
@@ -13,11 +14,14 @@ def get_active_student_session_ids(*, student: Any, tenant: Any) -> list[int]:
 
     return list(
         SessionEnrollment.objects.filter(
+            tenant=tenant,
             enrollment__student=student,
             enrollment__tenant=tenant,
             enrollment__status="ACTIVE",
             enrollment__lecture__is_active=True,
             session__lecture__is_active=True,
+            session__lecture__tenant=tenant,
+            enrollment__lecture_id=F("session__lecture_id"),
         )
         .values_list("session_id", flat=True)
         .distinct()
@@ -38,6 +42,14 @@ def get_student_lecture_sessions(
             id__in=list(session_ids),
             lecture__tenant=tenant,
             lecture__is_active=True,
+        )
+        .filter(
+            Q(date__lt=timezone.localdate())
+            | Q(date__isnull=True)
+            | (
+                (Q(lecture__end_date__isnull=True) | Q(date__lte=F("lecture__end_date")))
+                & (Q(lecture__start_date__isnull=True) | Q(date__gte=F("lecture__start_date")))
+            )
         )
         .select_related("lecture")
         .order_by("date", "order", "id")
