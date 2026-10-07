@@ -35,7 +35,8 @@ def extension(file):
 
 
 def reader_state(file):
-    if extension(file) == "pdf":
+    # Preserve existing published originals until their derived pages are warmed.
+    if extension(file) == "pdf" and file.reader_status in ("", "unprepared"):
         return "ready"
     if extension(file) not in READER_TYPES:
         return "unsupported"
@@ -46,13 +47,18 @@ def reader_state(file):
     return file.reader_status or "unprepared"
 
 
+def needs_page_images(file):
+    return extension(file) in ("pdf", "hwp", "hwpx", "docx", "xlsx", "pptx") and not file.reader_data.get("page_images")
+
+
 def prepare_reader(file):
     """Caller owns publisher authorization; immutable file/job IDs fence retries."""
     with transaction.atomic():
         current = PublicResourceFile.objects.select_for_update().get(pk=file.pk, tenant_id=file.tenant_id)
         if not current.is_ready or current.is_removed:
             return current
-        if reader_state(current) in ("ready", "pending", "unsupported"):
+        state = reader_state(current)
+        if state in ("pending", "unsupported") or (state == "ready" and not needs_page_images(current)):
             return current
         token = uuid.uuid4()
         job = create_reader_job(file_id=str(current.pk), tenant_id=current.tenant_id, token=str(token))
@@ -93,7 +99,7 @@ def reader_payload(file):
         if state == "failed":
             result["message"] = READER_ERROR
         return result
-    if extension(file) == "pdf":
+    if extension(file) == "pdf" and needs_page_images(file):
         return {"status": "ready", "mode": "pages", "blocks": [],
                 "pdf_url": generate_presigned_get_url_admin(key=file.storage_key, expires_in=300)}
     data = deepcopy(file.reader_data)

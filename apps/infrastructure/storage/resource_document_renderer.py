@@ -190,29 +190,48 @@ def _image(raw, output, assets):
         return {"kind": "image", "asset": name, "width": image.width, "height": image.height}
 
 
-def render(source: Path, output: Path, extension: str, binary="/usr/local/bin/rhwp", font_path="/usr/share/fonts/truetype/nanum"):
+def _pdf_page_images(pdf, output, assets):
     import fitz
+    import math
+
+    blocks = []
+    with fitz.open(pdf) as document:
+        if document.is_encrypted or not 0 < len(document) <= MAX_PAGES:
+            raise ValueError("Unreadable PDF or page limit")
+        for number, page in enumerate(document, 1):
+            width, height = page.rect.width, page.rect.height
+            if not all(math.isfinite(value) and value > 0 for value in (width, height)):
+                raise ValueError("Invalid page dimensions")
+            scale = min(1920 / width, 3840 / height, math.sqrt(6_000_000 / (width * height)))
+            pixels = page.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace=fitz.csRGB, alpha=False)
+            name = f"image-{number}.png"
+            pixels.save(output / name)
+            assets.append(name)
+            if sum((output / asset).stat().st_size for asset in assets) > MAX_OUTPUT:
+                raise ValueError("Reader output limit")
+            blocks.append({"kind": "image", "asset": name, "width": pixels.width,
+                           "height": pixels.height, "text": page.get_text("text")})
+    return blocks
+
+
+def render(source: Path, output: Path, extension: str, binary="/usr/local/bin/rhwp", font_path="/usr/share/fonts/truetype/nanum"):
 
     output.mkdir(exist_ok=True)
     assets = []
     data = {"version": 1, "blocks": [], "assets": assets, "mode": "article"}
-    if extension in ("hwp", "hwpx"):
+    if extension == "pdf":
+        (output / "pages.pdf").write_bytes(source.read_bytes())
+        assets.append("pages.pdf")
+        data.update({"pdf": "pages.pdf", "mode": "pages"})
+    elif extension in ("hwp", "hwpx"):
         pdf = output / "pages.pdf"
         _native(binary, "export-pdf", source, "-o", pdf, "--font-path", font_path,
                 "--fallback-serif", "NanumGothic", "--fallback-sans", "NanumGothic",
                 "--fallback-mono", "NanumGothic")
-        with fitz.open(pdf) as document:
-            if not 0 < len(document) <= MAX_PAGES:
-                raise ValueError("Page limit")
-            data["pages"] = len(document)
         assets.append("pages.pdf")
         data.update({"pdf": "pages.pdf", "mode": "pages"})
     elif extension in ("docx", "xlsx", "pptx"):
         _office_pdf(source, output, extension)
-        with fitz.open(output / "pages.pdf") as document:
-            if not 0 < len(document) <= MAX_PAGES:
-                raise ValueError("Page limit")
-            data["pages"] = len(document)
         assets.append("pages.pdf")
         data.update({"pdf": "pages.pdf", "mode": "pages"})
     elif extension in ("png", "jpg", "jpeg", "webp", "gif"):
@@ -227,6 +246,9 @@ def render(source: Path, output: Path, extension: str, binary="/usr/local/bin/rh
         data["blocks"] = [{"kind": "paragraph", "text": text}]
     else:
         raise ValueError("Unsupported reader format")
+    if data.get("pdf"):
+        data["blocks"] = _pdf_page_images(output / data["pdf"], output, assets)
+        data.update({"pages": len(data["blocks"]), "page_images": True})
     serialized = json.dumps(data, ensure_ascii=False).encode()
     if len(serialized) > 2 * 1024 * 1024 or sum((output / name).stat().st_size for name in assets) > MAX_OUTPUT:
         raise ValueError("Reader output limit")

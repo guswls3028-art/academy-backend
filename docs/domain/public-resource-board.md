@@ -117,6 +117,26 @@ the original and supplies a visible retry/PDF-export recovery message. Pending
 work older than 10 minutes becomes retryable; publishing never silently drops
 an unreadable supported report.
 
+PDF uploads now use the same Tools preparation as converted HWP/Office reports.
+Each PDF page becomes an RGB PNG plus plain extracted accessibility text, bounded
+to a 1920-pixel width, 3840-pixel height and approximately six million pixels.
+This removes the visitor's PDF worker/font/new-browser-API requirements while
+preserving whole-page tables, formulas and original source bytes. PNG is chosen
+for older iOS/Android native decoding. Encrypted, invalid, excessive-page/output
+documents fail preparation; original downloads and publisher retry remain intact.
+
+Existing unprepared PDFs retain the old read-only PDF payload during rollout;
+prepared responses add native image blocks without removing `pdf_url`, preserving
+old clients. GET still never enqueues work. An authorized publisher can reprepare
+an older PDF/converted report via POST. For existing published posts, run
+`manage.py prepare_public_resource_pages --tenant-code EXACT --post-ids EXACT_IDS`
+to inspect the exact scope, then repeat with `--apply` to enqueue bounded derived
+preparation after Tools/API rollout. This command rejects foreign/deleted/missing
+posts, never rewrites titles/body/order/originals, and is idempotent while pending
+or native-ready. Verify every selected file is native-ready and original size/key
+unchanged before releasing the new frontend. No anonymous lazy conversion or
+automatic customer-document sweep is permitted.
+
 Derived objects use the exact prefix
 `landing-public/resources/{tenant_id}/{file_uuid}/reader/{generation_uuid}/`.
 Record cleanup targets before writing; row locks serialize bounded writes with

@@ -8,10 +8,50 @@ from unittest import TestCase, skipUnless
 import zipfile
 
 from PIL import Image
-from apps.infrastructure.storage.resource_document_renderer import _image, _validate_office_package
+from reportlab.pdfgen import canvas
+from reportlab.lib.pdfencrypt import StandardEncryption
+from apps.infrastructure.storage.resource_document_renderer import _image, _validate_office_package, render
 
 
 class ResourceDocumentRendererTests(TestCase):
+    def test_pdf_pages_are_native_pngs_with_text_and_unchanged_original(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); source = root / 'source.pdf'
+            pdf = canvas.Canvas(str(source), pagesize=(595, 842))
+            for number in range(3):
+                pdf.drawString(50, 760, f'QA PAGE {number + 1}')
+                pdf.showPage()
+            pdf.save()
+            original = source.read_bytes()
+            data = render(source, root / 'output', 'pdf')
+            self.assertEqual(data['pages'], 3)
+            self.assertTrue(data['page_images'])
+            self.assertEqual((root / 'output/pages.pdf').read_bytes(), original)
+            self.assertEqual(source.read_bytes(), original)
+            for number, block in enumerate(data['blocks'], 1):
+                self.assertIn(f'QA PAGE {number}', block['text'])
+                with Image.open(root / 'output' / block['asset']) as image:
+                    self.assertEqual(image.format, 'PNG')
+                    self.assertEqual(image.size, (block['width'], block['height']))
+                    self.assertLessEqual(image.width * image.height, 6_010_000)
+                    self.assertLessEqual(image.width, 1921)
+                    self.assertLessEqual(image.height, 3841)
+                    self.assertLess(image.convert('L').getextrema()[0], 100)
+
+    def test_pdf_encryption_page_and_total_output_limits_fail_visibly(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name, encryption in [('source.pdf', None), ('locked.pdf', StandardEncryption('qa', ownerPassword='qa-owner', strength=128))]:
+                pdf = canvas.Canvas(str(root / name), encrypt=encryption)
+                pdf.drawString(50, 760, 'QA PAGE'); pdf.showPage(); pdf.save()
+            with self.assertRaises(ValueError):
+                render(root / 'locked.pdf', root / 'locked-output', 'pdf')
+            for filename, limit in [('source.pdf', 'MAX_PAGES'), ('source.pdf', 'MAX_OUTPUT')]:
+                with self.subTest(filename=filename, limit=limit), patch(f'apps.infrastructure.storage.resource_document_renderer.{limit}', 0):
+                    with self.assertRaises(ValueError):
+                        render(root / filename, root / ('out-' + filename + limit), 'pdf')
+
     def office(self, additions=None):
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, 'w') as package:

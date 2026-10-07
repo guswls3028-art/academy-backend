@@ -1,9 +1,13 @@
 import json
+import io
 from datetime import timedelta
 from pathlib import Path
 import subprocess
 import uuid
 from unittest.mock import patch
+
+from django.core.management import call_command
+from django.core.management.base import CommandError
 
 from django.utils import timezone
 from rest_framework.test import force_authenticate
@@ -20,6 +24,53 @@ SERVICE = "apps.domains.landing_public.services.resource_reader."
 
 
 class PublicResourceReaderTests(PublicResourceTestBase):
+    def test_legacy_pdf_get_is_readonly_and_private_preparation_is_idempotent(self):
+        file = self.document(published=True, status="")
+        file.filename = "qa.pdf"; file.reader_data = {}; file.save()
+        with patch(SERVICE + "generate_presigned_get_url_admin", return_value="https://qa.invalid/original.pdf"), patch(SERVICE + "publish_reader_job", return_value=True), self.captureOnCommitCallbacks(execute=True):
+            self.assertEqual(self.reader(file).data['status'], 'ready')
+            file.refresh_from_db(); self.assertEqual(file.reader_status, '')
+            prepared = prepare_reader(file)
+            self.assertEqual(prepared.reader_status, 'pending')
+            self.assertEqual(self.reader(prepared).data, {'status': 'pending'})
+            self.assertEqual(prepare_reader(prepared).reader_token, prepared.reader_token)
+        file.refresh_from_db()
+        self.assertTrue(file.is_ready)
+
+    def test_native_pages_have_fresh_tenant_scoped_urls_and_accessible_text(self):
+        file = self.document(published=True)
+        file.filename = 'qa.pdf'
+        file.reader_data = {'mode': 'pages', 'page_images': True, 'pages': 1, 'pdf': 'pages.pdf',
+                            'assets': ['pages.pdf', 'image-1.png'], 'blocks': [
+                                {'kind': 'image', 'asset': 'image-1.png', 'width': 600, 'height': 800, 'text': 'QA PAGE ONE'}]}
+        file.save()
+        with patch(SERVICE + 'generate_presigned_get_url_admin', side_effect=lambda **kwargs: 'https://qa.invalid/' + kwargs['key'].rsplit('/', 1)[-1]) as sign:
+            response = self.reader(file)
+            self.assertEqual(response.data['blocks'][0]['url'], 'https://qa.invalid/image-1.png')
+            self.assertEqual(response.data['blocks'][0]['text'], 'QA PAGE ONE')
+            self.assertEqual(response.data['pages'], 1)
+            for call in sign.call_args_list:
+                self.assertTrue(call.kwargs['key'].startswith(f'{file.storage_key}/reader/{file.reader_token}/'))
+                self.assertEqual(call.kwargs['expires_in'], 300)
+            self.assertEqual(self.reader(file, tenant=self.other).status_code, 404)
+        self.assertIn('asset', file.reader_data['blocks'][0])
+        with patch(SERVICE + 'create_reader_job') as create:
+            prepare_reader(file); create.assert_not_called()
+
+    def test_page_warmup_requires_exact_published_tenant_scope_and_explicit_apply(self):
+        file = self.document(published=True, status='')
+        file.filename = 'qa.pdf'; file.reader_data = {}; file.save()
+        output = io.StringIO()
+        call_command('prepare_public_resource_pages', tenant_code=self.tenant.code, post_ids=[file.post_id], stdout=output)
+        file.refresh_from_db(); self.assertEqual(file.reader_status, '')
+        self.assertIn('applied=False', output.getvalue())
+        with self.assertRaises(CommandError):
+            call_command('prepare_public_resource_pages', tenant_code=self.other.code, post_ids=[file.post_id], stdout=io.StringIO())
+        with patch(SERVICE + 'publish_reader_job', return_value=True), self.captureOnCommitCallbacks(execute=True):
+            call_command('prepare_public_resource_pages', tenant_code=self.tenant.code, post_ids=[file.post_id], apply=True, stdout=io.StringIO())
+        file.refresh_from_db(); self.assertEqual(file.reader_status, 'pending')
+        self.assertEqual(file.post.title, 'qa report')
+
     def document(self, *, status="ready", published=False):
         file = self.file()
         file.filename = "qa-report.hwpx"
