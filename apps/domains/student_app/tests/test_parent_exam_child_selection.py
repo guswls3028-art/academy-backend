@@ -372,6 +372,54 @@ class ParentExamChildSelectionTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertNotIn(self.exam_a.id, [row["id"] for row in response.data["items"]])
 
+    def test_upcoming_list_uses_inclusive_course_end_without_revoking_history(self):
+        lecture = self.enrollment_a.lecture
+        view = StudentExamListView.as_view()
+        for offset, visible in ((-1, False), (0, True), (1, True)):
+            with self.subTest(offset=offset):
+                lecture.end_date = timezone.localdate() + timedelta(days=offset)
+                lecture.save(update_fields=["end_date", "updated_at"])
+                response = view(self._request("/student/exams/?include_upcoming=true", student=self.student_a))
+                self.assertEqual(self.exam_a.id in [row["id"] for row in response.data["items"]], visible)
+                historical = MyExamResultView.as_view()(
+                    self._request(f"/student/results/me/exams/{self.exam_a.id}/", student=self.student_a),
+                    exam_id=self.exam_a.id,
+                )
+                self.assertEqual(historical.status_code, 200, historical.data)
+                self.assertEqual(historical.data["total_score"], 10)
+
+    def test_shared_exam_returns_only_selected_child_target_session(self):
+        # The earlier session belongs to a sibling, then to an enrolled but untargeted course.
+        shared_session = self.exam_a.sessions.get()
+        own_session = self.exam_b.sessions.get()
+        self.exam_b.sessions.add(shared_session)
+        for enroll_in_other_lecture in (False, True):
+            with self.subTest(enrolled= enroll_in_other_lecture):
+                if enroll_in_other_lecture:
+                    Enrollment.objects.create(
+                        tenant=self.tenant, student=self.student_b,
+                        lecture=shared_session.lecture, status="ACTIVE",
+                    )
+                response = StudentExamListView.as_view()(
+                    self._request("/student/exams/?include_upcoming=true", student=self.student_b)
+                )
+                row = next(row for row in response.data["items"] if row["id"] == self.exam_b.id)
+                self.assertEqual(row["session_id"], own_session.id)
+
+    def test_planned_exam_does_not_expose_questions_before_opening(self):
+        self.exam_b.open_at = timezone.now() + timedelta(days=1)
+        self.exam_b.save(update_fields=["open_at", "updated_at"])
+        listed = StudentExamListView.as_view()(
+            self._request("/student/exams/?include_upcoming=true", student=self.student_b)
+        )
+        self.assertEqual([row["id"] for row in listed.data["items"]], [self.exam_b.id])
+        self.assertTrue(listed.data["items"][0]["learning_todo_eligible"])
+        for view in (StudentExamDetailView, StudentExamQuestionsView):
+            response = view.as_view()(
+                self._request(f"/student/exams/{self.exam_b.id}/", student=self.student_b), pk=self.exam_b.id,
+            )
+            self.assertEqual(response.status_code, 404)
+
     def test_parent_exam_result_uses_selected_child(self):
         view = MyExamResultView.as_view()
 

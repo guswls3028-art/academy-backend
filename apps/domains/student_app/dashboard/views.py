@@ -11,6 +11,7 @@ from apps.support.student_app.dashboard_dependencies import (
     notice_posts_for_dashboard,
     today_clinic_participants_for_dashboard,
     today_lecture_sessions_for_dashboard,
+    upcoming_clinic_count_for_dashboard,
 )
 from .serializers import StudentDashboardSerializer
 
@@ -89,6 +90,11 @@ class StudentDashboardView(APIView):
                 student = get_request_student(request)
             if student:
                 today = timezone.localdate()
+                clinic_count = upcoming_clinic_count_for_dashboard(
+                    tenant=tenant, student=student, now=timezone.now(),
+                )
+                data["badges"]["clinic_upcoming"] = clinic_count > 0
+                data["badges"]["clinic_upcoming_count"] = clinic_count
                 sessions = today_lecture_sessions_for_dashboard(
                     tenant=tenant,
                     student=student,

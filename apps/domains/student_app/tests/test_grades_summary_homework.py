@@ -386,6 +386,60 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertEqual(result_response.status_code, 200, result_response.data)
         self.assertFalse(result_response.data["can_retake"])
 
+    def test_current_learning_todos_respect_course_dates_without_erasing_history(self):
+        today = timezone.localdate()
+        self._score_exam(title="방학특강 미통과 시험", order=1, score=20, max_score=100)
+        homework = Homework.objects.create(
+            tenant=self.tenant, session=self.session, title="방학특강 미제출 과제",
+        )
+        HomeworkAssignment.objects.create(
+            tenant=self.tenant, session=self.session,
+            homework=homework, enrollment=self.enrollment,
+        )
+        for start, end, ongoing, actionable in [
+            (None, today - timedelta(days=1), False, False),
+            (None, today, True, True),
+            (today + timedelta(days=1), None, True, False),
+            (today, today, True, True),
+            (None, None, True, True),
+        ]:
+            with self.subTest(start=start, end=end):
+                self.lecture.start_date = start
+                self.lecture.end_date = end
+                self.lecture.save(update_fields=["start_date", "end_date", "updated_at"])
+                response = self._call()
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(len(response.data["exams"]), 1)
+                self.assertEqual(len(response.data["homeworks"]), 1)
+                for row in response.data["exams"] + response.data["homeworks"]:
+                    self.assertEqual(row["lecture_active"], ongoing)
+                    self.assertEqual(row["learning_todo_eligible"], actionable)
+                self.assertEqual(response.data["lecture_options"][0]["is_active"], ongoing)
+
+    def test_current_learning_todos_keep_passed_homework_reviewed(self):
+        homework = Homework.objects.create(
+            tenant=self.tenant, session=self.session, title="이미 통과한 과제",
+        )
+        HomeworkScore.objects.create(
+            homework=homework, session=self.session, enrollment=self.enrollment,
+            score=100, max_score=100, passed=True,
+        )
+        response = self._call()
+        row = response.data["homeworks"][0]
+        self.assertTrue(row["passed"])
+        self.assertEqual(row["submission_state"], "reviewed")
+
+    def test_current_learning_todos_exclude_absence_but_keep_scored_history(self):
+        result = self._score_exam(title="결석 차시 시험", order=1, score=20, max_score=100)
+        exam = self.Exam.objects.get(pk=result.target_id)
+        session = exam.sessions.get()
+        django_apps.get_model("attendance", "Attendance").objects.create(
+            tenant=self.tenant, session=session, enrollment=self.enrollment, status="ABSENT",
+        )
+        response = self._call()
+        self.assertEqual(len(response.data["exams"]), 1)
+        self.assertFalse(response.data["exams"][0]["learning_todo_eligible"])
+
     def test_student_summary_returns_tenant_layout_and_current_teacher_correction_status(self):
         program = self.tenant.program
         program.ui_config = {

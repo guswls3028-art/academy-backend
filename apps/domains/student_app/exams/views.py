@@ -48,11 +48,7 @@ def _exam_queryset_for_student(student, tenant, *, include_upcoming_days: int = 
 
 def _serialize_exam(exam, *, submission_status_map=None):
     """Exam → StudentExamSerializer 호환 dict."""
-    session_id = None
-    if hasattr(exam, "sessions") and exam.sessions.exists():
-        first = exam.sessions.first()
-        if first:
-            session_id = first.id
+    session_id = getattr(exam, "student_session_id", None)
 
     sub_info = (submission_status_map or {}).get(exam.id, {})
 
@@ -71,6 +67,10 @@ def _serialize_exam(exam, *, submission_status_map=None):
         "session_id": session_id,
         "has_result": sub_info.get("has_result", False),
         "submission_pending": sub_info.get("submission_pending", False),
+        "learning_todo_eligible": bool(
+            getattr(exam, "learning_todo_eligible", False)
+            or not getattr(exam, "has_absent_linked_attendance", False)
+        ),
         "attempt_count": sub_info.get("attempt_count", 0),
         "student_results_published": bool(
             getattr(exam, "student_results_published", True)

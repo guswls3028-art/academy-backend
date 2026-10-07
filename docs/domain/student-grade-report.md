@@ -85,6 +85,24 @@ Ymath는 `Program.feature_flags.assessment_status_display=wrong_completion`을
 다시 제출 필요로 돌아온다. 학생·학부모는 본인/선택 자녀의 tenant 범위에서 같은
 응답을 읽고, 업로드 성공 후 새로고침해도 같은 상태를 확인한다.
 
+현재 할 일의 강의 수명은 `apps/support/student_app/learning_todo_policy.py`가 소유한다.
+활성 수강의 비시스템 강의 중 `is_active=true`이고 한국 날짜 기준 `end_date`가
+없거나 오늘 이상이면 진행 중이다(종강일 당일 포함). `start_date` 전에는 성적의
+보충·과제 제출 할 일을 만들지 않는다. 종료일 없는 강의를 제목이나 마지막 차시의
+경과일로 자동 종강시키지 않는다. 성적 행의 `lecture_active`와 강의 선택지의
+`is_active`는 이 조회 기준을 반영하며 DB 강의·등록 상태와 원점수는 변경하지 않는다.
+`learning_todo_eligible=false`는 종강·개강 전·실제 ABSENT·비활성 시험 등의 기록을
+현재 할 일로 집계하지 말라는 뜻이다. 역사 조회 권한은 기존 tenant/본인/선택 자녀/
+수강 범위를 유지하며, 영상·자료 접근이나 교사의 원자료를 삭제·변경하지 않는다.
+
+예정 포함 시험 목록(`include_upcoming=true`)은 종강 강의를 제외하고 열린 시험과
+7일 이내 시작할 시험을 반환한다. 시작 전 문제·제출 권한은 기존 시간 검증을 유지한다.
+공유 시험의 `session_id`는 선택 학생에게 그 시험이 배정된 강의 차시만 사용한다.
+홈 클리닉 배지는 취소·거절·출석 완료를 제외한 신청/예약 중 실제 예약 종료가 남고
+시작이 7일 이내인 건수다. 개인 예약 시각과 자정 넘김을 반영한다. 성적 이력 보존,
+종강일 경계, 결석, 선택 자녀/강의 격리는 `test_grades_summary_homework.py`,
+`test_parent_exam_child_selection.py`, `test_dashboard_learning_todos.py`가 검증한다.
+
 과제의 1차 성적·성취 이력과 파일 변경 가능성은 서로 다른 계약이다. 응답의
 `submission_media_locked=true`는 최신 재시도 통과 또는 점수 행 없는 교사 완료로
 과제 파일 POST/DELETE가 잠겼음을 뜻한다. 제출 화면은 이 값을 사용해 대상을 제외하며,
