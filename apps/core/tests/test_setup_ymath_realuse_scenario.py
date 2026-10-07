@@ -1037,6 +1037,7 @@ class SetupYmathRealuseScenarioTests(TestCase):
             f"landing-public/reviews/{tenant_id}/",
             f"landing-public/resources/{tenant_id}/",
             f"matchup-showcase-snapshots/tenant_{tenant_id}/",
+            f"exports/{tenant_id}/",
         )
         requests = []
         client = Mock()
@@ -1102,9 +1103,11 @@ class SetupYmathRealuseScenarioTests(TestCase):
     def test_cleanup_qa_r2_objects_deletes_only_exact_tenant_prefixes_and_reads_back_zero(self):
         tenant_id = 712
         exact_prefixes = Command._qa_r2_prefixes(tenant_id)
+        self.assertIn(f"exports/{tenant_id}/", exact_prefixes)
         objects = {
             exact_prefixes[0]: [f"{exact_prefixes[0]}one", f"{exact_prefixes[0]}two"],
             exact_prefixes[1]: [f"{exact_prefixes[1]}three"],
+            f"exports/{tenant_id}/": [f"exports/{tenant_id}/payroll.xlsx"],
         }
         client = Mock()
 
@@ -1125,10 +1128,13 @@ class SetupYmathRealuseScenarioTests(TestCase):
         with patch("boto3.client", return_value=client):
             result = Command._cleanup_qa_r2_objects(tenant_id=tenant_id)
 
-        self.assertEqual(result, {"deleted": 3, "remaining": 0})
+        self.assertEqual(result, {"deleted": 4, "remaining": 0})
         self.assertEqual(
             [call.kwargs["Prefix"] for call in client.list_objects_v2.call_args_list],
-            [exact_prefixes[0], exact_prefixes[0], exact_prefixes[1], exact_prefixes[1], *exact_prefixes[2:]],
+            [
+                item for prefix in exact_prefixes
+                for item in [prefix] * (2 if prefix in {exact_prefixes[0], exact_prefixes[1], f"exports/{tenant_id}/"} else 1)
+            ],
         )
         deleted_keys = [
             item["Key"]
@@ -1141,6 +1147,7 @@ class SetupYmathRealuseScenarioTests(TestCase):
                 f"{exact_prefixes[0]}one",
                 f"{exact_prefixes[0]}two",
                 f"{exact_prefixes[1]}three",
+                f"exports/{tenant_id}/payroll.xlsx",
             ]),
         )
         self.assertTrue(all(call.kwargs["Bucket"] == "test-storage" for call in client.delete_objects.call_args_list))

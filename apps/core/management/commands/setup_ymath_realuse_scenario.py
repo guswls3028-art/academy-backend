@@ -1050,6 +1050,7 @@ class Command(BaseCommand):
             f"landing-public/reviews/{tenant_id}/",
             f"landing-public/resources/{tenant_id}/",
             f"matchup-showcase-snapshots/tenant_{tenant_id}/",
+            f"exports/{tenant_id}/",
         )
 
     @staticmethod

@@ -941,6 +941,8 @@ class StaffOperationsContractTests(TestCase):
         payload = dispatch_mock.call_args.kwargs["payload"]
         self.assertEqual(payload["snapshot_ids"], [snapshot.id])
         self.assertTrue(payload["revision"])
+        self.assertEqual(payload["format_version"], 2)
+        self.assertIn("staff_export:deduction-v2:", dispatch_mock.call_args.kwargs["idempotency_key"])
         self.assertNotEqual(worked_staff.id, later_hire.id)
 
     def test_position_is_independent_from_account_role_and_management_access(self):

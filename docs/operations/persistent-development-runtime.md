@@ -236,7 +236,7 @@ Inspect/Setup/Cleanup 출력은 tenant/user 수와 별도로 `outstanding_tokens
 0을 확인한다. R2 실패 시 DB tenant와 소유권 seal은 보존되어 같은 exact target으로
 안전하게 재시도할 수 있다. R2는 `tenants/<id>/`, `excel/<id>/`,
 `tenant-logos/<id>/`, `landing-public/reviews/<id>/`,
-`matchup-showcase-snapshots/tenant_<id>/`만 열거·삭제하며 broad prefix나 다른 tenant
+`matchup-showcase-snapshots/tenant_<id>/`, 급여·출결 엑셀의 `exports/<id>/`만 열거·삭제하며 broad prefix나 다른 tenant
 object는 건드리지 않는다. process/listener 수는 원격 development API container 경계다. runner 로컬
 tunnel/process와 AWS Session tuple은 frontend 계약이 별도로 종료·증명한다. 이 변경은
 스키마나 기존 데이터 migration을 만들지 않는다.

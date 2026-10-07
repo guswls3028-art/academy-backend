@@ -119,6 +119,12 @@ def handle_staff_excel_export(job: AIJob) -> AIResult:
 
         normalized_ids = sorted({int(snapshot_id) for snapshot_id in snapshot_ids})
         revision_source = ",".join(str(snapshot_id) for snapshot_id in normalized_ids)
+        format_version = payload.get("format_version", 1)
+        if format_version not in (1, 2):
+            return AIResult.failed(job.id, "unsupported payroll export format")
+        if format_version == 2:
+            # 구형 워커는 새 revision을 거부하므로 순차 교체 중 구형 파일을 v2 캐시에 넣지 않는다.
+            revision_source = "deduction-v2:" + revision_source
         actual_revision = hashlib.sha256(
             revision_source.encode("utf-8")
         ).hexdigest()[:16]
@@ -149,7 +155,8 @@ def handle_staff_excel_export(job: AIJob) -> AIResult:
 
         headers = [
             "직원명", "연도", "월", "근무시간",
-            "근무기록 금액", "승인 선결제 환급", "정산 합계(공제 전)", "확정자", "확정일시",
+            "공제 전 급여", "기본 공제 3.3%", "공제 후 급여", "승인 선결제 환급",
+            "이체 예정액", "정산 합계(공제 전)", "확정자", "확정일시",
         ]
         ws.append(headers)
 
@@ -158,17 +165,33 @@ def handle_staff_excel_export(job: AIJob) -> AIResult:
             c.alignment = Alignment(horizontal="center")
 
         for s in qs:
+            deduction = s.default_deduction
             ws.append([
                 s.staff_name or s.staff.name,
                 s.year,
                 s.month,
                 float(s.work_hours),
                 s.work_amount,
+                deduction["deduction_total"],
+                deduction["net_work_amount"],
                 s.approved_expense_amount,
+                deduction["transfer_amount"],
                 s.total_amount,
                 getattr(s.generated_by, "username", "") if s.generated_by else "",
                 s.created_at.strftime("%Y-%m-%d %H:%M:%S"),
             ])
+
+        ws.freeze_panes = "E2"
+        ws.auto_filter.ref = ws.dimensions
+        for column in "ABCDEFGHIJKL":
+            ws.column_dimensions[column].width = 22 if column in "AL" else 18
+        for row in ws.iter_rows(min_row=2):
+            # 사용자 입력 이름/계정이 '='로 시작해도 수식으로 실행하지 않는다.
+            row[0].data_type = "s"
+            row[10].data_type = "s"
+            row[3].number_format = "0.00"
+            for cell in row[4:10]:
+                cell.number_format = '#,##0"원"'
 
         filename = f"payroll_{year}_{month}.xlsx"
         buffer = BytesIO()

@@ -10493,6 +10493,13 @@
             "readOnly": true,
             "type": "string"
           },
+          "default_deduction": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "readOnly": true,
+            "type": "object"
+          },
           "generated_by": {
             "nullable": true,
             "readOnly": true,
@@ -10540,6 +10547,7 @@
         "required": [
           "approved_expense_amount",
           "created_at",
+          "default_deduction",
           "generated_by",
           "generated_by_name",
           "id",

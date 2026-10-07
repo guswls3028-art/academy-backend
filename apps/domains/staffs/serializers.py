@@ -1127,6 +1127,7 @@ class WorkMonthLockSerializer(serializers.ModelSerializer):
 class PayrollSnapshotSerializer(serializers.ModelSerializer):
     generated_by_name = serializers.CharField(source="generated_by.username", read_only=True)
     staff_name = serializers.SerializerMethodField()
+    default_deduction = serializers.DictField(child=serializers.IntegerField(), read_only=True)
 
     def get_staff_name(self, obj):
         # Additive migration keeps legacy rows untouched; old rows safely fall
@@ -1145,6 +1146,7 @@ class PayrollSnapshotSerializer(serializers.ModelSerializer):
             "work_amount",
             "approved_expense_amount",
             "total_amount",
+            "default_deduction",
             "generated_by",
             "generated_by_name",
             "created_at",
