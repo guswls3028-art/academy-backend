@@ -442,7 +442,12 @@ def test_base_image_backports_new_native_library_fixes_without_acceptance() -> N
     assert "60d74a257d1ccec0475e749cba2f21559e48139efba6ff28224357c7c798dfee" in build_script
     assert "autoreconf --force --install" in build_script
     assert build_script.count("sha256sum --check") == 3
-    assert build_script.count("download \\") == 7
+    assert build_script.count("download \\") == 8
+    assert "CVE-2026-52490" in build_script
+    assert "tiff_version='4.7.2-1+academy1'" in build_script
+    assert "c5086d8f7c5ba51ca98241f24a8bd1cb66218c399077aeccbf6a236cf3152acc" in build_script
+    assert "python /usr/local/bin/verify-tiff.py" in dockerfile
+    assert "python /usr/local/bin/verify-tiff.py" in verifier
     assert "COPY docker/native-security/patches/" in dockerfile
     for commit, checksum in (
         (

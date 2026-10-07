@@ -24,3 +24,5 @@ test "$(dpkg-query -W -f='${Version}' libxml2)" = \
     '2.15.4+really2.9.14-2.1+deb13u3+academy1'
 python -c 'import ctypes, zlib; libz = ctypes.CDLL("libz.so.1"); assert not hasattr(libz, "zipOpenNewFileInZip4_64"); assert zlib.decompress(zlib.compress(b"academy")) == b"academy"; ctypes.CDLL("libxml2.so.2")'
 printf 'academy\n' | grep -P '^academy$'
+
+python /usr/local/bin/verify-tiff.py
