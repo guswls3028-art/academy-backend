@@ -420,6 +420,53 @@ class ParentExamChildSelectionTests(TestCase):
             )
             self.assertEqual(response.status_code, 404)
 
+    def test_manually_recorded_result_is_not_presented_as_unattempted(self):
+        self.assertFalse(Submission.objects.filter(target_id=self.exam_a.id).exists())
+        response = StudentExamListView.as_view()(
+            self._request("/student/exams/?include_upcoming=true", student=self.student_a)
+        )
+        self.assertTrue(response.data["items"][0]["has_result"])
+        self.assertEqual(response.data["items"][0]["attempt_count"], 1)
+        attempt = ExamAttempt.objects.create(
+            exam=self.exam_a, enrollment=self.enrollment_a, attempt_index=1,
+            status="done", meta={"status": "NOT_SUBMITTED"},
+        )
+        self.result_a.attempt = attempt
+        self.result_a.save(update_fields=["attempt", "updated_at"])
+        unsubmitted = StudentExamListView.as_view()(
+            self._request("/student/exams/?include_upcoming=true", student=self.student_a)
+        )
+        self.assertFalse(unsubmitted.data["items"][0]["has_result"])
+        self.assertEqual(unsubmitted.data["items"][0]["attempt_count"], 0)
+        attempt.meta = {"total_score": 0, "max_score": 10}
+        attempt.save(update_fields=["meta", "updated_at"])
+        self.result_a.total_score = 0
+        self.result_a.save(update_fields=["total_score", "updated_at"])
+        graded_zero = StudentExamListView.as_view()(
+            self._request("/student/exams/?include_upcoming=true", student=self.student_a)
+        )
+        self.assertTrue(graded_zero.data["items"][0]["has_result"])
+
+    def test_ended_course_submission_does_not_complete_shared_exam_in_new_course(self):
+        self.enrollment_a.lecture.end_date = timezone.localdate() - timedelta(days=1)
+        self.enrollment_a.lecture.save(update_fields=["end_date", "updated_at"])
+        Submission.objects.create(
+            tenant=self.tenant, user=self.student_a.user, enrollment=self.enrollment_a,
+            target_type="exam", target_id=self.exam_a.id, source="online", status="DONE", payload={},
+        )
+        lecture = Lecture.objects.create(tenant=self.tenant, title="New course", name="New course", subject="MATH")
+        session = Session.objects.create(lecture=lecture, order=1, title="New session")
+        enrollment = Enrollment.objects.create(tenant=self.tenant, student=self.student_a, lecture=lecture, status="ACTIVE")
+        self.exam_a.sessions.add(session)
+        ExamEnrollment.objects.create(exam=self.exam_a, enrollment=enrollment)
+        response = StudentExamListView.as_view()(
+            self._request("/student/exams/?include_upcoming=true", student=self.student_a)
+        )
+        row = next(row for row in response.data["items"] if row["id"] == self.exam_a.id)
+        self.assertFalse(row["has_result"])
+        self.assertEqual(row["attempt_count"], 0)
+        self.assertEqual(row["session_id"], session.id)
+
     def test_parent_exam_result_uses_selected_child(self):
         view = MyExamResultView.as_view()
 
@@ -522,6 +569,8 @@ class ParentExamChildSelectionTests(TestCase):
         self,
         mock_dispatch,
     ):
+        # This flow starts before the first graded result exists.
+        self.result_a.delete()
         sheet = self.question_a.sheet
         sheet.choice_count = 0
         sheet.essay_count = 1

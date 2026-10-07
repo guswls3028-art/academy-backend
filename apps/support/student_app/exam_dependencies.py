@@ -9,7 +9,8 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
-from django.db.models import F, Q, Subquery
+from django.db.models import F, Q, Subquery, Value
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.support.student_app.learning_todo_policy import ongoing_lecture_filter
@@ -82,6 +83,11 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0):
         enrollment_id__in=enrollment_ids,
         enrollment__tenant=tenant,
     )
+    recorded_result = historical_result.filter(
+        Q(attempt__isnull=True)
+        | Q(attempt__meta__status__isnull=True)
+        | ~Q(attempt__meta__status="NOT_SUBMITTED")
+    )
     historical_submission = Submission.objects.filter(
         tenant=tenant,
         target_type=Submission.TargetType.EXAM,
@@ -122,6 +128,9 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0):
             ).order_by("date", "order", "id").values("id")[:1]),
             learning_todo_eligible=Exists(eligible_session),
             has_historical_result=Exists(historical_result),
+            recorded_result_attempt_count=Subquery(recorded_result.annotate(
+                recorded_attempt=Coalesce("attempt__attempt_index", Value(1)),
+            ).order_by("-recorded_attempt").values("recorded_attempt")[:1]),
             has_historical_attempt=Exists(historical_attempt),
             has_historical_submission=Exists(historical_submission),
             has_absent_linked_attendance=Exists(absent_linked_attendance),
@@ -138,15 +147,18 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0):
     )
 
 
-def submission_status_map_for_student_exams(*, tenant, student, exams) -> dict[int, dict[str, int | bool]]:
+def submission_status_map_for_student_exams(*, tenant, student, exams, current_courses_only=False) -> dict[int, dict[str, int | bool]]:
     exam_ids = [int(exam.id) for exam in exams]
     if not exam_ids:
         return {}
 
-    from apps.domains.enrollment.selectors import active_enrollment_ids_for_student
+    from apps.domains.enrollment.selectors import active_enrollments_for_student
     from apps.domains.submissions.models.submission import Submission
 
-    enrollment_ids = active_enrollment_ids_for_student(tenant=tenant, student=student)
+    enrollments = active_enrollments_for_student(tenant=tenant, student=student)
+    if current_courses_only:
+        enrollments = enrollments.filter(ongoing_lecture_filter(today=timezone.localdate()))
+    enrollment_ids = list(enrollments.values_list("id", flat=True))
     if not enrollment_ids:
         return {}
 

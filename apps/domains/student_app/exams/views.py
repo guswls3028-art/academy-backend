@@ -51,6 +51,7 @@ def _serialize_exam(exam, *, submission_status_map=None):
     session_id = getattr(exam, "student_session_id", None)
 
     sub_info = (submission_status_map or {}).get(exam.id, {})
+    recorded_attempt_count = getattr(exam, "recorded_result_attempt_count", None) or 0
 
     return StudentExamSerializer({
         "id": exam.id,
@@ -65,13 +66,13 @@ def _serialize_exam(exam, *, submission_status_map=None):
         "max_attempts": int(getattr(exam, "max_attempts", 1) or 1),
         "pass_score": int(getattr(exam, "pass_score", 0) or 0),
         "session_id": session_id,
-        "has_result": sub_info.get("has_result", False),
+        "has_result": bool(sub_info.get("has_result", False) or recorded_attempt_count),
         "submission_pending": sub_info.get("submission_pending", False),
         "learning_todo_eligible": bool(
             getattr(exam, "learning_todo_eligible", False)
             or not getattr(exam, "has_absent_linked_attendance", False)
         ),
-        "attempt_count": sub_info.get("attempt_count", 0),
+        "attempt_count": max(sub_info.get("attempt_count", 0), recorded_attempt_count),
         "student_results_published": bool(
             getattr(exam, "student_results_published", True)
         ),
@@ -103,6 +104,7 @@ class StudentExamListView(APIView):
             tenant=tenant,
             student=request_student,
             exams=exams,
+            current_courses_only=include_upcoming,
         )
 
         items = [_serialize_exam(exam, submission_status_map=submission_status_map) for exam in exams]
