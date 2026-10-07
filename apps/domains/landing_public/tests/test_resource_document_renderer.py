@@ -8,10 +8,48 @@ from unittest import TestCase, skipUnless
 import zipfile
 
 from PIL import Image
-from apps.infrastructure.storage.resource_document_renderer import _image, _validate_office_package
+from apps.infrastructure.storage.resource_document_renderer import _image, _validate_office_package, render
 
 
 class ResourceDocumentRendererTests(TestCase):
+    def test_pdf_pages_are_native_pngs_with_text_and_unchanged_original(self):
+        import fitz
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); source = root / 'source.pdf'
+            with fitz.open() as pdf:
+                for number in range(3):
+                    page = pdf.new_page(width=595, height=842)
+                    page.insert_text((50, 80), f'QA PAGE {number + 1}', fontsize=20)
+                pdf.save(source)
+            original = source.read_bytes()
+            data = render(source, root / 'output', 'pdf')
+            self.assertEqual(data['pages'], 3)
+            self.assertTrue(data['page_images'])
+            self.assertEqual((root / 'output/pages.pdf').read_bytes(), original)
+            self.assertEqual(source.read_bytes(), original)
+            for number, block in enumerate(data['blocks'], 1):
+                self.assertIn(f'QA PAGE {number}', block['text'])
+                with Image.open(root / 'output' / block['asset']) as image:
+                    self.assertEqual(image.format, 'PNG')
+                    self.assertEqual(image.size, (block['width'], block['height']))
+                    self.assertLessEqual(image.width * image.height, 6_010_000)
+                    self.assertLessEqual(image.width, 1921)
+                    self.assertLessEqual(image.height, 3841)
+                    self.assertLess(image.convert('L').getextrema()[0], 100)
+
+    def test_pdf_encryption_page_and_total_output_limits_fail_visibly(self):
+        import fitz
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); source = root / 'source.pdf'
+            with fitz.open() as pdf:
+                pdf.new_page(); pdf.save(source)
+                pdf.save(root / 'locked.pdf', encryption=fitz.PDF_ENCRYPT_AES_256, owner_pw='qa', user_pw='qa')
+            for filename, limit in [('locked.pdf', 'MAX_PAGES'), ('source.pdf', 'MAX_PAGES'), ('source.pdf', 'MAX_OUTPUT')]:
+                with self.subTest(filename=filename, limit=limit), patch(f'apps.infrastructure.storage.resource_document_renderer.{limit}', 0):
+                    with self.assertRaises(ValueError):
+                        render(root / filename, root / ('out-' + filename + limit), 'pdf')
+
     def office(self, additions=None):
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, 'w') as package:
