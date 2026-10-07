@@ -14,8 +14,8 @@ from apps.domains.video.models import (
     InactiveVideoEntitlement,
     Video,
     VideoAccess,
-    VideoProgress,
 )
+from apps.domains.video.services.student_progress import update_student_video_progress
 from apps.support.video.inactive_entitlement_dependencies import (
     get_inactive_entitlement_scope_models,
 )
@@ -308,7 +308,7 @@ def update_inactive_entitled_video_progress(
         video_id=video_id,
         expected_policy_version=expected_policy_version,
     )
-    return VideoProgress.objects.update_or_create(
+    return update_student_video_progress(
         video=locked.video,
         enrollment=locked.enrollment,
         defaults=defaults,

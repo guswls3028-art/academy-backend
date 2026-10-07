@@ -1,6 +1,7 @@
 import logging
 from typing import Any, Dict, Optional
 
+from django.db import transaction
 from django.db.models import Prefetch, Q
 from django.http import Http404
 from django.utils import timezone
@@ -26,6 +27,7 @@ from apps.support.student_app.video_dependencies import (
     resolve_active_inactive_video_entitlement,
     resolve_access_modes_for_videos_prefetched,
     update_inactive_entitled_video_progress,
+    update_student_video_progress,
 )
 from apps.support.student_app.video_media import (
     bounded_direct_media_expiry,
@@ -1497,7 +1499,7 @@ class StudentVideoProgressView(APIView):
                     status=status.HTTP_403_FORBIDDEN,
                 )
         else:
-            progress_obj, created = VideoProgress.objects.update_or_create(
+            progress_obj, created = update_student_video_progress(
                 video=video,
                 enrollment=enrollment,
                 defaults=defaults,
@@ -1611,7 +1613,9 @@ class StudentVideoCommentListView(APIView):
             .prefetch_related(
                 Prefetch(
                     "replies",
-                    queryset=VideoComment.objects.filter(_active_reply_author).select_related("author_student", "author_staff"),
+                    queryset=VideoComment.objects.filter(
+                        _active_reply_author, video=video, tenant_id=tenant.id,
+                    ).select_related("author_student", "author_staff"),
                 )
             )
             .order_by("-created_at")[:100]
@@ -1634,6 +1638,10 @@ class StudentVideoCommentListView(APIView):
             return None
 
         def _serialize_comment(c):
+            active_replies = (
+                [reply for reply in c.replies.all() if not reply.is_deleted]
+                if c.parent_id is None else []
+            )
             photo_url = _get_comment_photo_url(c.author_student) if c.author_student else None
             if not photo_url and c.author_staff and hasattr(c.author_staff, "profile_photo") and c.author_staff.profile_photo:
                 try:
@@ -1655,9 +1663,9 @@ class StudentVideoCommentListView(APIView):
                 "is_deleted": c.is_deleted,
                 "is_mine": is_mine,
                 "created_at": c.created_at.isoformat(),
-                "reply_count": len(active_replies := [r for r in c.replies.all() if not r.is_deleted]) if not c.is_deleted else 0,
+                "reply_count": len(active_replies),
                 "replies": [_serialize_comment(r) for r in sorted(
-                    active_replies if not c.is_deleted else [],
+                    active_replies,
                     key=lambda r: r.created_at
                 )[:20]],
             }
@@ -1690,21 +1698,27 @@ class StudentVideoCommentListView(APIView):
             return Response({"detail": "댓글은 2000자까지 입력할 수 있습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
         parent_id = request.data.get("parent_id")
-        parent = None
-        if parent_id:
-            parent = VideoComment.objects.filter(id=parent_id, video=video, tenant_id=tenant.id, parent__isnull=True).first()
-            if not parent:
-                return Response({"detail": "대댓글 대상을 찾을 수 없습니다."}, status=status.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            parent = None
+            if parent_id:
+                # Serialize against root deletion; a deleted root cannot accept replies.
+                parent = VideoComment.objects.select_for_update().filter(
+                    id=parent_id, video=video, tenant_id=tenant.id,
+                    parent__isnull=True, is_deleted=False,
+                ).first()
+                if not parent:
+                    return Response({"detail": "대댓글 대상을 찾을 수 없습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
-        comment = VideoComment.objects.create(
-            video=video,
-            tenant_id=tenant.id,
-            author_student=student,
-            parent=parent,
-            content=content,
-        )
-
-        Video.objects.filter(id=video_id).update(comment_count=F("comment_count") + 1)
+            comment = VideoComment.objects.create(
+                video=video,
+                tenant_id=tenant.id,
+                author_student=student,
+                parent=parent,
+                content=content,
+            )
+            Video.objects.filter(id=video_id, tenant_id=tenant.id).update(
+                comment_count=F("comment_count") + 1,
+            )
 
         # R2 presigned URL for profile photo (same logic as comment list)
         photo_url = None
@@ -1787,13 +1801,14 @@ class StudentVideoCommentDetailView(APIView):
 
         # 멱등 가드: 이미 삭제된 댓글에 대한 재호출은 카운터를 추가 감소시키지 않음.
         # update(is_deleted=False) 절에서만 1회 감소 → 동시 DELETE 호출도 안전.
-        updated = VideoComment.objects.filter(id=comment.id, is_deleted=False).update(
-            is_deleted=True
-        )
-        if updated:
-            from django.db.models.functions import Greatest
-            Video.objects.filter(id=comment.video_id).update(
-                comment_count=Greatest(F("comment_count") - 1, 0)
-            )
+        with transaction.atomic():
+            updated = VideoComment.objects.filter(
+                id=comment.id, tenant_id=tenant.id, is_deleted=False,
+            ).update(is_deleted=True)
+            if updated:
+                from django.db.models.functions import Greatest
+                Video.objects.filter(id=comment.video_id, tenant_id=tenant.id).update(
+                    comment_count=Greatest(F("comment_count") - 1, 0),
+                )
 
         return Response({"deleted": True})

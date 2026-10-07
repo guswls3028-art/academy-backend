@@ -50,7 +50,10 @@ def _resolve_access_mode_loaded(
     ):
         return AccessMode.BLOCKED
 
-    if attendance_status != "ONLINE":
+    if perm and getattr(perm, "is_override", False):
+        if perm.access_mode != AccessMode.PROCTORED_CLASS:
+            return AccessMode(perm.access_mode)
+    elif attendance_status != "ONLINE":
         return AccessMode.FREE_REVIEW
 
     # 완료 기준 이상 시청 = 의무 완수. FREE_REVIEW로 자동 전환.
@@ -76,9 +79,9 @@ def resolve_access_mode(
 
     Given: video, enrollment (session from video.session)
     1) BLOCKED if explicit VideoAccess override says so
-    2) Attendance.status == "ONLINE" => candidate for PROCTORED_CLASS
-    3) Else => FREE_REVIEW
-    4) If ONLINE: check completion (VideoProgress.completed OR VideoAccess.proctored_completed_at)
+    2) Explicit overrides take precedence over attendance defaults
+    3) Otherwise ONLINE => PROCTORED_CLASS; other attendance => FREE_REVIEW
+    4) For supervised candidates, check progress or proctored_completed_at
        - Completed => FREE_REVIEW
        - Not completed => PROCTORED_CLASS
     """
@@ -95,7 +98,9 @@ def resolve_access_mode(
     attendance_status = attendance.status if attendance else None
 
     progress = None
-    if attendance_status == "ONLINE":
+    if attendance_status == "ONLINE" or (
+        perm and perm.is_override and perm.access_mode == AccessMode.PROCTORED_CLASS
+    ):
         progress = video_repo.video_progress_get(video, enrollment)
 
     return _resolve_access_mode_loaded(
