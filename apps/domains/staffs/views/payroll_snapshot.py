@@ -159,7 +159,7 @@ class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
             raise ValidationError("내보낼 정산 스냅샷이 없습니다.")
 
         snapshot_ids = sorted(snapshot_ids_by_staff.values())
-        revision_source = ",".join(str(snapshot_id) for snapshot_id in snapshot_ids)
+        revision_source = "deduction-v2:" + ",".join(str(snapshot_id) for snapshot_id in snapshot_ids)
         revision = hashlib.sha256(
             revision_source.encode("utf-8")
         ).hexdigest()[:16]
@@ -174,6 +174,7 @@ class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
                 "year": year,
                 "month": month,
                 "snapshot_ids": snapshot_ids,
+                "format_version": 2,
                 "revision": revision,
             },
             tenant_id=str(tenant.id),
@@ -181,7 +182,7 @@ class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
             source_id=f"{year}-{month}",
             tier="basic",
             idempotency_key=(
-                f"staff_export:{tenant.id}:{year}:{month}:{revision}"
+                f"staff_export:deduction-v2:{tenant.id}:{year}:{month}:{revision}"
             ),
             force_rerun=force_rerun,
             rerun_reason="사용자 재시도" if force_rerun else "",
@@ -229,7 +230,7 @@ class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
         styles["Normal"].fontName = regular_font
         story = []
 
-        story.append(Paragraph("근태·경비 정산 참고서", styles["Title"]))
+        story.append(Paragraph("급여·환급 정산서", styles["Title"]))
         story.append(Spacer(1, 12))
 
         meta = [
@@ -249,10 +250,14 @@ class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
         story.append(meta_table)
         story.append(Spacer(1, 16))
 
+        deduction = snap.default_deduction
         rows = [
             ["근무시간", f"{snap.work_hours} h"],
-            ["근무기록 금액", f"{snap.work_amount:,} 원"],
+            ["공제 전 급여", f"{snap.work_amount:,} 원"],
+            ["기본 공제 3.3%", f"-{deduction['deduction_total']:,} 원"],
+            ["공제 후 급여", f"{deduction['net_work_amount']:,} 원"],
             ["승인 선결제 환급", f"{snap.approved_expense_amount:,} 원"],
+            ["이체 예정액", f"{deduction['transfer_amount']:,} 원"],
             ["정산 합계(공제 전)", f"{snap.total_amount:,} 원"],
         ]
         rows_table = Table(rows, colWidths=[120, 360])
@@ -268,9 +273,9 @@ class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
         story.append(Spacer(1, 12))
         story.append(
             Paragraph(
-                "이 문서는 근태 기록과 직원 선결제 환급을 합산한 내부 참고자료입니다. "
-                "법정 임금명세서가 아니며 세금·4대보험·연장·야간·휴일수당 등은 "
-                "별도 확인이 필요합니다.",
+                "마감된 급여에 기본 공제 3.3%를 원 단위 반올림하고, 승인 환급은 공제 없이 더합니다. "
+                "이체 예정액은 송금 완료를 뜻하지 않습니다. 이 문서는 내부 정산서이며 "
+                "법정 임금명세서가 아닙니다. 4대보험·연장·야간·휴일수당 등은 별도 확인이 필요합니다.",
                 styles["Normal"],
             )
         )

@@ -92,9 +92,9 @@ class PayrollAmountPolicy:
 
 
 class PayrollReferenceDeductionPolicy:
-    """저장하지 않는 3.3% 비교 참고값.
+    """시급제 직원의 기본 공제 3.3%를 산출한다.
 
-    기존 정산표와 동일하게 총 공제 참고액을 3.3%에서 원 단위
+    기존 정산표와 동일하게 총 공제액을 3.3%에서 원 단위
     반올림한다. 3% 항목도 원 단위 반올림하고 0.3% 항목은 총액과의
     차이로 맞춰 워터폴 합계가 1원도 어긋나지 않게 한다.
     """
@@ -554,6 +554,15 @@ class PayrollSnapshot(TimestampModel):
         if not self.staff_name:
             self.staff_name = self.staff.name
         super().save(*args, **kwargs)
+
+    @property
+    def default_deduction(self):
+        # 마감 당시 금액만 사용한다. 현재 시급/직원 상태를 과거 정산에 소급하지 않는다.
+        amounts = PayrollReferenceDeductionPolicy.calculate(self.work_amount)
+        return {
+            **amounts,
+            "transfer_amount": amounts["net_work_amount"] + self.approved_expense_amount,
+        }
 
     def __str__(self):
         return f"{self.staff.name} {self.year}-{self.month:02d}"
