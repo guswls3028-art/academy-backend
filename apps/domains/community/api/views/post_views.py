@@ -286,6 +286,16 @@ class PostViewSet(viewsets.ModelViewSet):
             if is_limited_reader:
                 qs = qs.filter(self._own_student_post_filter(self.request))
 
+        # The student detail overlay must never turn an invalid author filter
+        # into an unfiltered tenant-wide history. Intersect with the caller's
+        # existing visibility scope, including student/parent restrictions.
+        if "author_student" in self.request.query_params:
+            author_student_id = parse_query_int(
+                self.request.query_params, "author_student",
+                default=0, min_value=1, max_value=9223372036854775807,
+            )
+            qs = qs.filter(created_by_id=author_student_id, created_by__tenant=tenant).order_by("-created_at", "-id")
+
         # F4: post_type server-side filter
         from apps.domains.community.models.post import VALID_POST_TYPES
         post_type_param = (self.request.query_params.get("post_type") or "").strip().lower()
