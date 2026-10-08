@@ -41,8 +41,11 @@ export default {
     if (!secret) {
       return new Response("worker misconfigured: secret missing", { status: 500 });
     }
+    // Reuse one request-scoped key for verification and every playlist URL.
+    // A long playlist previously imported the same key once per segment.
+    const signingKey = await importSigningKey(secret);
     const message = `${path}|${expNum}|${kid}|${uid}`;
-    const expected = await hmacSha256B64url(secret, message);
+    const expected = await hmacSha256B64url(signingKey, message);
 
     // 4) Timing-safe compare
     if (!timingSafeEqual(sig, expected)) {
@@ -71,7 +74,7 @@ export default {
     let m3u8Body = null;
     if (isM3u8) {
       const text = await new Response(obj.body).text();
-      m3u8Body = await rewriteM3u8(text, path, expNum, kid, uid, secret);
+      m3u8Body = await rewriteM3u8(text, path, expNum, kid, uid, signingKey);
     }
 
     // 6) Response with cache headers
@@ -143,7 +146,7 @@ function parseRangeHeader(value) {
 // query (exp/sig/kid/uid) so HLS clients can fetch variants/segments without
 // losing the signature across `urljoin`. Absolute URLs (http*) and comments
 // (`#…`) pass through unchanged.
-async function rewriteM3u8(text, currentPath, exp, kid, uid, secret) {
+async function rewriteM3u8(text, currentPath, exp, kid, uid, signingKey) {
   // base dir = currentPath up to and including final "/"
   const slash = currentPath.lastIndexOf("/");
   const baseDir = slash >= 0 ? currentPath.substring(0, slash + 1) : "/";
@@ -166,7 +169,7 @@ async function rewriteM3u8(text, currentPath, exp, kid, uid, secret) {
     else resolved = baseDir + trimmed;
     // normalize ".." / "."
     resolved = normalizeUrlPath(resolved);
-    const sigNew = await hmacSha256B64url(secret, `${resolved}|${exp}|${kid}|${uid}`);
+    const sigNew = await hmacSha256B64url(signingKey, `${resolved}|${exp}|${kid}|${uid}`);
     const qs = `exp=${exp}&sig=${encodeURIComponent(sigNew)}&kid=${encodeURIComponent(kid)}` +
       (uid ? `&uid=${encodeURIComponent(uid)}` : "");
     out.push(trimmed + "?" + qs);
@@ -195,16 +198,18 @@ function normalizeUrlPath(p) {
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
-async function hmacSha256B64url(secret, message) {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
+async function importSigningKey(secret) {
+  return crypto.subtle.importKey(
     "raw",
-    enc.encode(secret),
+    new TextEncoder().encode(secret),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
   );
-  const macBuf = await crypto.subtle.sign("HMAC", key, enc.encode(message));
+}
+
+async function hmacSha256B64url(key, message) {
+  const macBuf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
   return b64urlNoPad(macBuf);
 }
 

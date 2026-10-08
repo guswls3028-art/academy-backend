@@ -1,136 +1,68 @@
-# Academy CDN Video Worker — Deployment Runbook
+# Academy signed video CDN
 
-> **Status**: 코드 + 정합성 검증 완료. 라이브 배포 대기 (CF Dashboard 또는 wrangler login 필요).
->
-> **목적**: R2 public bucket 노출 차단. 백엔드(`cloudflare_signing.py`)가 생성한 HMAC 서명을 본 Worker 가 검증한 뒤 R2 private bucket 에서 fetch 해 응답.
+## Current ownership
 
-## 정합성 검증 (이미 PASS)
-- `node infra/cdn_worker/test/verify-parity.mjs` → 4/4 PASS
-- Python backend `cloudflare_signing.py` ↔ JS test ↔ Worker WebCrypto API 3-way byte-perfect 일치 확인
+`academy-cdn-video` serves `cdn.hakwonplus.com/tenants/*` from the private
+`academy-video` R2 binding. Cloudflare readback on 2026-10-09 confirmed the Worker,
+route and binding. `src/index.js` owns request behavior; `wrangler.toml` owns the
+source configuration. The backend issues HMAC URLs through
+`apps/domains/video/cdn/cloudflare_signing.py` after its existing access checks.
 
-## 배포 절차 (예상 30분, 모두 reversible)
+The Worker checks expiry and the signature over `path|exp|kid|uid` before every
+R2 read. It rewrites relative HLS playlist URLs with independently signed child
+paths, retaining the same expiry and user. A changed tenant/video path cannot
+reuse a signature. Binary ranges retain 206/Content-Range; playlists are fetched
+in full before rewriting. Missing/expired signatures return 401, invalid
+signatures 403, missing storage objects 404 and missing signing configuration 500.
 
-### 0. 사전 확인
-```bash
-wrangler --version  # 4.70+ 권장 (이미 설치됨)
-node --version       # 20+ (이미 설치됨)
-```
+The signing key is imported once per request and reused for the incoming URL
+and every child URL. This removes repeated WebCrypto setup for long playlists
+without storing keys across requests or changing issued URLs, existing objects,
+cache policy or backend authorization. The next request uses the current secret.
 
-### 1. Cloudflare 로그인 (one-time)
-**옵션 A**: 브라우저 OAuth
-```bash
-cd infra/cdn_worker
-wrangler login
-# 브라우저 열림 → Cloudflare 계정 (hakwonplus.com 관리 계정) 로그인 → Authorize
-```
+## Cost and performance
 
-**옵션 B**: API Token (CI/CD 용)
-- Cloudflare Dashboard → My Profile → API Tokens → Create Token
-- Template: "Edit Cloudflare Workers" + R2 read/write 권한 추가
-- Token 을 `c:/academy/.secrets/cf-api-token.txt` 에 저장 (gitignored)
-- 환경변수: `$env:CLOUDFLARE_API_TOKEN = Get-Content c:/academy/.secrets/cf-api-token.txt`
+The Worker reads R2 directly. Response Cache-Control is not evidence of a
+Worker Cache API hit; this implementation has no shared edge object cache.
+Adding one requires a separate deletion/overwrite/access-expiry design.
 
-### 2. Secret 등록 (현재 dev 값 그대로 사용. 진짜 회전은 단계 5)
-```bash
-cd infra/cdn_worker
-# 백엔드 SSM /academy/api/env 의 CDN_HLS_SIGNING_SECRET 과 동일하게 (현재 'dev-signing-secret')
-wrangler secret put CDN_HLS_SIGNING_SECRET
-# prompt → dev-signing-secret 붙여넣기
-```
+On 2026-10-09, the preceding 30-day analytics contained 371,546 Worker requests
+and 3 `exceededResources` events. This is a baseline, not proof that repeated key
+imports caused all three events or that the optimization removes all limits.
+Use exact-version long-playlist validation and subsequent analytics to evaluate
+the change. R2 operation savings below the free allowance do not imply an
+immediate invoice reduction. Current prices and limits belong to
+[Cloudflare Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/)
+and [R2 pricing](https://developers.cloudflare.com/r2/pricing/).
 
-### 3. Worker 첫 배포 (Route 없이 stage 만)
-```bash
-wrangler deploy
-# 결과: academy-cdn-video.<account>.workers.dev 에 배포됨
-# 이 URL 로 직접 테스트 (DNS 미사용)
-```
+## Verification and release
 
-### 4. Worker 단독 테스트 (DNS 미연결, R2 미private)
-```bash
-# 서명된 URL 생성 (백엔드 PROD 에서 실제 시청 시 받는 URL 형식)
-# 임시로 Worker 단독 URL 에 같은 path + query 로 시도
-SIGNED_URL='https://academy-cdn-video.<account>.workers.dev/tenants/1/video/hls/284/master.m3u8?exp=...&sig=...&kid=v1&uid=12'
-curl -I "$SIGNED_URL"  # 기대: 200
-curl -I "${SIGNED_URL/sig=*/sig=tamper}"  # 기대: 403
-curl -I "https://academy-cdn-video.<account>.workers.dev/tenants/1/video/hls/284/master.m3u8"  # 기대: 401 (no sig)
-```
+`node --test infra/cdn_worker/test/worker.test.mjs` executes the actual Worker
+module and covers master→variant→segment playback, byte ranges, 2,500 independently
+signed child URLs with one key import, cross-tenant tampering, expiration, missing
+objects and signing-key rotation. Backend Quality Gate runs this contract.
+`test/verify-parity.mjs` retains the older algorithm vectors; it does not replace
+the actual-module contract.
 
-### 5. Route + DNS 연결 (cdn.hakwonplus.com)
-**Cloudflare Dashboard**:
-1. Workers & Pages → academy-cdn-video → Settings → Triggers → Add Route
-2. Pattern: `cdn.hakwonplus.com/tenants/*` (또는 `cdn.hakwonplus.com/*`)
-3. Zone: `hakwonplus.com`
+Before promotion, verify the exact candidate against synthetic `qa-*` objects
+in the isolated development R2 bucket and a temporary Worker with a separate
+synthetic signing key and no production route. Check complete playback,
+long-playlist output, invalid signatures and cleanup zero. Production promotion
+uses the current clean main source, successful backend manifest ancestry and
+shared production mutation lock described in
+`docs/operations/deployment-modes.md`. Read back the existing Worker version,
+bindings, routes and compatibility settings first; preserve the existing secret
+binding and the production R2 binding. Never print or export the signing secret.
 
-DNS 가 이미 Cloudflare 통과 중이므로 (`104.21.x.x` 확인됨) 별도 CNAME 불필요. Route 추가만으로 발효.
+Record the candidate/source hash and returned Cloudflare version/deployment ID,
+then verify the production signed playback path and negative authorization cases.
+For regression recovery, redeploy the previously recorded Worker version with
+unchanged routes, bindings and secret. Do not delete the production Worker,
+enable public R2 access, or rotate the backend secret as a rollback shortcut.
+Remove only the task's temporary Worker and exact synthetic object prefix and
+read back their absence. Backend image changes follow their full isolated
+development→preprod→rolling release sequence independently.
 
-### 6. SECRET_KEY 회전
-
-이 문서의 과거 복붙 절차는 API SSM, Cloudflare Worker secret, API runtime 사이에
-불일치 창을 만들 수 있어 지원하지 않는다. 회전은 별도 변경 task에서 shared
-production mutation lock을 잡고 API SSM→Worker secret→API guarded refresh→양쪽
-서명/재생 readback을 한 owner가 끝까지 수행해야 한다. 전용 entrypoint와 회귀
-계약 없이 `ssm-safe-update.ps1` 또는 `wrangler secret put`만 단독 실행하지 않는다.
-
-### 7. 백엔드 CDN_HLS_BASE_URL 전환 (단계적)
-**현재**: `pub-54ae...r2.dev` (public R2)
-**목표**: `https://cdn.hakwonplus.com` (signed Worker)
-
-현재 base URL은 deploy SSOT와 candidate/preprod/playback gate가 소유한다. SSM을
-단독 수정하거나 컨테이너를 수동 reload하지 않는다. 변경 시에는 정식 backend
-release가 candidate env, preprod CDN playback, API rolling refresh와 production
-playback readback을 통과해야 한다.
-
-### 8. R2 bucket public 차단 (마지막 단계 — 비가역 아님, 즉시 복구 가능)
-**Cloudflare Dashboard**:
-- R2 → academy-video → Settings → Public access → **Disable**
-- (또는 Custom Domain `pub-54ae...r2.dev` 해제)
-
-**검증**:
-```bash
-# 1) Worker 통한 signed URL — 정상 재생
-# 2) public R2 직접 URL — 403/404
-curl -I "https://pub-54ae4dcb984d4491b08f6c57023a1621.r2.dev/tenants/1/video/hls/284/master.m3u8"
-```
-
-## 롤백 절차
-
-| 단계 | 롤백 방법 | 소요 |
-|---|---|---|
-| Step 8 (R2 public) | Dashboard → Public access → Enable | 30초 |
-| Step 7 (CDN base URL) | SSM helper 로 `pub-54ae...r2.dev` 복원 + API reload | 2분 |
-| Step 6 (SECRET 회전) | SSM helper 로 이전 값 + Worker secret 다시 등록 | 3분 |
-| Step 5 (Route) | Dashboard → Triggers → Route Delete | 30초 |
-| Step 3 (배포) | `wrangler delete` | 30초 |
-
-전 단계 비가역적인 작업 **없음**.
-
-## 검증 시나리오
-
-### 정상 케이스
-- 학생 로그인 → 영상 재생 → HLS master.m3u8 / variant index.m3u8 / segment .ts 모두 200
-- 학원장 비공개 영상 → 다른 학원 학생이 접근 시 401 (백엔드가 signed URL 발급 안 함)
-
-### 공격 케이스
-- 직접 URL 입력 (no sig) → 401
-- 다른 학원장 secret 으로 위조 → 403
-- 만료된 exp → 401
-- 다른 비디오 path 로 sig 재사용 (sig 변경 없이 path 만 교체) → 403
-
-### Edge
-- 동시 시청 100명 → CF Worker free tier 일 한도 100k req, 영상 한 편 60min = ~600 segments × 100 = 60k req. 안전 마진 충분.
-
-## 비용
-- CF Workers: 무료 (100k req/day)
-- R2: 변동 없음 (R2↔CF egress 무료)
-- 추가 비용 0
-
-## 알려진 제약
-- 백엔드 PROD `CDN_HLS_BASE_URL` 현재 `https://pub-54ae...r2.dev` 고정. Step 7 에서 일괄 전환 시 진행 중 시청자 다음 segment 요청부터 affected — m3u8 reload 시 자동 회복. 단기 ~10초 끊김 가능.
-- 캐시 stampede: 첫 segment 요청 시 R2 fetch latency (~50ms). CF edge 캐시 hit 이후 5ms 수준.
-
-## 관련 파일
-- `infra/cdn_worker/src/index.js` — Worker code
-- `infra/cdn_worker/wrangler.toml` — config
-- `infra/cdn_worker/test/verify-parity.mjs` — 백엔드 서명 ↔ Worker parity test
-- `apps/domains/video/cdn/cloudflare_signing.py` — 백엔드 서명 (변경 없음)
-- `apps/domains/video/views/playback_mixin.py:206` — 서명 URL 생성 호출 (변경 없음)
+Secret rotation is a separate coordinated change: API SSM, Worker secret and
+API runtime must retain consistent signing and playback under the same release
+owner. Do not apply standalone SSM edits or copy secrets into a terminal.

@@ -123,6 +123,8 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
+      - name: CDN signed playback and long-playlist cost contract
+        run: node --test infra/cdn_worker/test/worker.test.mjs
       - name: Install static tooling
         run: python -m pip install --disable-pip-version-check --quiet ruff
       - name: Ruff and architecture boundaries
