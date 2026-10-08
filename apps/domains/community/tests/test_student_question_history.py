@@ -108,4 +108,3 @@ class StudentQuestionHistoryTests(TestCase):
     def test_inconsistent_cross_tenant_author_relation_is_not_exposed(self):
         self.post(self.foreign, tenant=self.tenant)
         self.assertEqual(self.ids(self.get(self.foreign.pk)), [])
-
