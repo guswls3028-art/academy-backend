@@ -38,6 +38,22 @@ AWS Batch 컨테이너
 
 ## 검증
 
+R2 게시 후 검증은 master/variant 재생목록을 직접 읽고, 해당 영상의 정확한
+final prefix를 `ListObjectsV2`로 끝까지 순회해 모든 참조 segment와
+`thumbnail.jpg`의 존재를 확인한다. R2의 strong-consistent LIST를 사용하므로
+파일마다 순차 HEAD를 보내던 비용과 Batch 대기를 없애며 표본 검사로 축소하지
+않는다. 2,500개 segment는 2,501회 HEAD 대신 3페이지 LIST로 검증한다.
+목록 조회/페이지 오류, 재생목록·segment·썸네일 누락, variant별 최소 segment
+미달은 계속 `UploadIntegrityError`로 게시 완료를 막고 기존 재시도 경로로 간다.
+다른 tenant/영상 prefix의 동명 파일은 검증을 통과시키지 않는다. 기존 R2 객체,
+DB 경로, tmp→final 게시 순서와 사용자 승인 데이터는 바꾸지 않는다.
+병렬 tmp→final 복사도 쓰레드를 시작하기 전에 만든 단일 boto3 low-level client와
+워커 수에 맞춘 연결 풀을 재사용한다. 객체마다 client/TLS 연결을 재생성하지
+않으며, 복사 실패 때 tmp를 보존하는 기존 재시도 순서는 유지한다.
+
+- 집중 회귀: `python -m unittest apps.domains.video.tests.test_video_hls_integrity_policy`
+- R2 LIST 일관성: <https://developers.cloudflare.com/r2/reference/consistency/>
+
 - 로컬 import: `python -c "import apps.worker.video_worker.batch_main as m; assert hasattr(m, 'main')"`
 - 스크립트: `python scripts/check_workers.py` (Video = batch_main), `python scripts/check_workers.py --docker`
 - 실제 실행: AWS Batch job 제출 후 CloudWatch Logs `/aws/batch/academy-video-worker` 확인

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import boto3
 from boto3.s3.transfer import TransferConfig
+from botocore.config import Config
 
 from academy.adapters.video.validate import effective_min_segments
 from academy.adapters.video.utils import guess_content_type, cache_control_for_object, trim_tail, backoff_sleep
@@ -129,13 +130,14 @@ def upload_directory(
     logger.info("[R2_UPLOAD] Upload complete: %d files", total)
 
 
-def _s3_client(endpoint_url: str, access_key: str, secret_key: str, region: str):
+def _s3_client(endpoint_url: str, access_key: str, secret_key: str, region: str, *, max_pool_connections: int = 10):
     return boto3.client(
         "s3",
         endpoint_url=endpoint_url,
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
         region_name=region,
+        config=Config(max_pool_connections=max_pool_connections),
     )
 
 
@@ -202,12 +204,18 @@ def publish_tmp_to_final(
     if total == 0:
         return
 
+    # Construct the thread-safe client before starting threads, retaining its
+    # connection pool across copies instead of rebuilding it for every object.
+    client = _s3_client(
+        endpoint_url, access_key, secret_key, region,
+        max_pool_connections=max_workers,
+    )
+
     def _copy_one(key: str) -> str:
         if not key.startswith(tmp_prefix):
             return key
         rel = key[len(tmp_prefix):]
         dest_key = final_prefix + rel
-        client = _s3_client(endpoint_url, access_key, secret_key, region)
         client.copy_object(
             CopySource={"Bucket": bucket, "Key": key},
             Bucket=bucket,
@@ -264,6 +272,18 @@ def verify_hls_integrity_r2(
         body = resp["Body"].read().decode("utf-8", errors="replace")
     except Exception:
         raise UploadIntegrityError("master.m3u8 missing")
+    # R2 LIST is strongly consistent. Verify every referenced object against a
+    # complete, prefix-scoped inventory instead of thousands of serial HEADs.
+    # Pagination/access failures must abort publication, never look like success.
+    try:
+        paginator = client.get_paginator("list_objects_v2")
+        present_keys = {
+            obj["Key"]
+            for page in paginator.paginate(Bucket=bucket, Prefix=prefix)
+            for obj in page.get("Contents") or []
+        }
+    except Exception as exc:
+        raise UploadIntegrityError("HLS object inventory unavailable") from exc
     lines = [l.strip() for l in body.splitlines() if l.strip() and not l.strip().startswith("#")]
     segment_count = 0
     for line in lines:
@@ -280,9 +300,7 @@ def verify_hls_integrity_r2(
                 if vline and not vline.startswith("#") and vline.endswith(".ts"):
                     variant_segment_count += 1
                     seg_key = variant_key.rsplit("/", 1)[0] + "/" + vline
-                    try:
-                        client.head_object(Bucket=bucket, Key=seg_key)
-                    except Exception:
+                    if seg_key not in present_keys:
                         raise UploadIntegrityError(f"segment missing: {seg_key}")
             segment_count += variant_segment_count
             if variant_segment_count < required_segments:
@@ -294,7 +312,5 @@ def verify_hls_integrity_r2(
     # 썸네일 invariant: 모바일 카드 UI가 thumbnail 비어있는 영상을 "처리안됨"으로
     # 인식하므로 hls 와 동급으로 final prefix 에 thumbnail.jpg 가 반드시 존재해야 한다.
     thumb_key = prefix + "thumbnail.jpg"
-    try:
-        client.head_object(Bucket=bucket, Key=thumb_key)
-    except Exception:
+    if thumb_key not in present_keys:
         raise UploadIntegrityError(f"thumbnail.jpg missing: {thumb_key}")

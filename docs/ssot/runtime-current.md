@@ -102,6 +102,23 @@ instance. Batch-managed ASGs should have desired 0 when no Batch job is active.
 
 ## Cost Guardrails
 
+The 2026-10-09 [cost audit](../reports/cost-waste-audit.latest.md) rechecked
+30/90-day usage and current inventory. No detached EBS, unassociated EIP, orphan
+EC2 or reclaimable ECR image was found. API CPU peaked at 99.85%; RDS free memory
+fell to 0.14 GiB over 90 days. Keep the existing compute/warm baselines. The
+account-wide September unblended bill was USD 345.99 including tax; this is not
+Academy-only attribution. At the audit, AWS Budget forecast October at USD 285.56;
+that forecast predates this optimization and is not its realized saving.
+
+Cost/performance work instead removes repeated video publication HEAD requests
+using complete strongly-consistent R2 listings, and repeated CDN HMAC key imports.
+See the [video worker owner](../../apps/worker/video_worker/README.md) and
+[signed CDN owner](../../infra/cdn_worker/README.md). Current R2 data and signed URL
+formats remain intact. Cloudflare R2 account storage was about 755.28 decimal GB,
+with Academy video/storage holding most bytes; no user objects are deleted or
+automatically moved to a retrieval-charged class. Short-lived cleanup candidates
+and committed release state are assessed separately from monthly savings.
+
 | Guardrail | Current decision |
 |-----------|------------------|
 | API | Keep 1 warm `t4g.medium`; do not scale to zero. |
