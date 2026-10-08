@@ -12,6 +12,10 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Native image verification keeps its job log; no consumer uses .dockerbuild uploads.
+  DOCKER_BUILD_RECORD_UPLOAD: false
+
 jobs:
   change-scope:
     name: Classify exact backend change scope
@@ -49,7 +53,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Verify session preservation and cleanup
         shell: pwsh
-        run: ./scripts/codex/test-session-worktree.ps1
+        run: |
+          ./scripts/codex/test-session-worktree.ps1
+          python -B -m unittest discover -s scripts/codex -p test_pr_cache_cleanup.py -v
 
   native-security-diff:
     name: Detect native security image changes

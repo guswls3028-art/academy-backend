@@ -336,12 +336,14 @@ check to the recorded main and HEAD SHAs, then rechecks the registered path,
 branch, HEAD, clean status and ignored data immediately before removal. Branch
 deletion compares the recorded SHA atomically; a concurrent advance is preserved
 and reported for recovery. Keep exclusive ownership until cleanup finishes.
-`Close` clears only
-ignored backend Python caches (`.pytest_cache/`, `.ruff_cache/`, and
-`__pycache__/`) after verifying every ignored path. It refuses other ignored
-local files and directories before Git can unregister a worktree and leave an
-incomplete directory. Clear only confirmed regenerable outputs in the exact
-session, then close a merged session promptly:
+`Close` clears ignored backend Python caches (`.pytest_cache/`, `.ruff_cache/`,
+and `__pycache__/`) and frontend dependency/build outputs (`node_modules/`,
+`dist/`, `.vite/`) after verifying every ignored path. Git unlinks dependency
+junctions without deleting their shared targets. Other ignored data, including
+`.env` files and test evidence, still blocks closure before either paired
+worktree is removed. Move needed test evidence into the session's durable
+artifact directory before closing; never discard a failing gate's evidence.
+Then close a merged session promptly:
 
 ```powershell
 pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 `
@@ -370,9 +372,47 @@ possibly stale canonical checkout. After that fail-closed preflight succeeds it
 removes the exact session branch even when concurrent work intentionally keeps
 the canonical `main` behind the remote.
 
+## Session output lifecycle
+
+`Start` prints `SESSION_ARTIFACTS` and creates
+`_artifacts/sessions/<session>/scratch/` with an ownership marker. Use the parent
+session artifact directory for durable summaries, exact SHAs, release/QA evidence
+and needed screenshots. Use `scratch/` only for regenerable build intermediates,
+conversion scratch files and one-off download staging. Source code, user materials,
+credentials, WIP recovery commits and required evidence never belong in scratch.
+Shared SDKs, package stores and browser installations remain shared; do not copy
+or reinstall them for every task.
+
+After the final registered repository in a clean merged session closes, `Close`
+removes that session's marked scratch directory. It preserves durable siblings,
+foreign/unknown scratch, linked roots, unmerged work and dirty worktrees.
+`-WhatIf` changes neither worktrees nor scratch. Cleanup errors are visible;
+if a file lock leaves scratch after closure, release the owning process, verify
+the marker and absence of registered worktrees, then remove only that exact
+scratch path. Never kill another task's process or delete an unknown directory.
+Existing unmarked artifact folders are not adopted or expired automatically.
+
+Each repository's `pr-cache-cleanup.yml` removes caches only for numeric
+`refs/pull/<number>/merge` references whose PR is currently closed. Main, tags,
+other branch refs and open PR caches remain reusable. The closed-PR event handles
+normal completion; a daily sweep handles late cache uploads. The write-scoped
+workflow never checks out or executes PR code. Listing, state lookup or deletion
+errors fail the job. Actions artifacts and required release evidence are not
+cache-cleanup targets. Existing artifact retention and release gates still apply.
+The backend native-image check also disables unused `.dockerbuild` record uploads
+while retaining its build and verification job logs.
+
 ## Local disk capacity
 
-Check free space before large dependency installs or worktree batches:
+Keep the local machine for editing, review and lightweight checks. Reuse the
+existing Codespace for dependency-heavy installs, builds and browser suites;
+this is the default before the local disk becomes full. Keep one primary remote
+development environment and create another only for an isolation requirement.
+Do not lower production warm capacity or skip tests to save development costs.
+
+Check physical free space before starting local work. `Start` warns below 20 GB
+and refuses below 10 GB unless explicitly limited to lightweight recovery.
+Directory totals can include many hardlinks and are not a savings estimate:
 
 ```powershell
 Get-PSDrive C | Select-Object @{Name='FreeGB';Expression={[math]::Round($_.Free/1GB,1)}}
@@ -401,12 +441,16 @@ locally before extending it to existing dependency trees.
 
 ## Remote development when local space is low
 
-When C: has under 10 GB free, run new dependency-heavy development in a GitHub
-Codespace created from `academy-backend/main`. This moves its working files,
+Run dependency-heavy development in a GitHub Codespace created from
+`academy-backend/main`; this is mandatory when C: has under 10 GB free. This moves
+its working files,
 package installs, builds, and owned worktrees to remote storage; Git alone is
 source control and does not execute builds. Use the existing Codespace if it is
-available. Keep its idle timeout short and stop it after work; review its
-compute and storage usage in GitHub. A stopped Codespace retains files until its
+available. Use a 15–20 minute idle timeout and stop it after work; review its
+compute and storage usage in GitHub. A 7-day retention period is suitable only
+after completed work is pushed and recoverable; never shorten an existing
+environment's retention without checking its uncommitted and unpushed work.
+A stopped Codespace retains files until its
 retention deadline, so push completed branches and PRs before that deadline.
 
 In the Codespace, keep `/workspaces/academy-backend` and, for frontend work,
