@@ -187,19 +187,28 @@ try {
     Assert-True (Test-Path -LiteralPath $backendWorktree) "Ignored-data preflight must preserve paired worktrees."
     Assert-True (Test-Path -LiteralPath $privateFile) "Close must preserve ignored local data."
     Remove-Item -LiteralPath $privateFile
-    $generatedRefused = $false
+    $sessionArtifacts = Join-Path $fixtureRoot "_artifacts\sessions\contract-test"
+    $scratchRoot = Join-Path $sessionArtifacts "scratch"
+    Assert-True (Test-Path -LiteralPath $scratchRoot) "Start must provision disposable session scratch."
+    $scratchMarker = Join-Path $scratchRoot ".academy-scratch.json"
+    $savedMarker = Get-Content -LiteralPath $scratchMarker -Raw
+    Remove-Item -LiteralPath $scratchMarker
+    $unmanagedRefused = $false
     try {
-        & $scriptUnderTest `
-            -Action Close `
-            -Session contract-test `
-            -Repository both `
-            -WorkspaceRoot $fixtureRoot *> $null
-    } catch {
-        $generatedRefused = $_.Exception.Message.Contains("ignored local data")
+        & $scriptUnderTest -Action Close -Session contract-test -Repository both -WorkspaceRoot $fixtureRoot *> $null
+    } catch { $unmanagedRefused = $_.Exception.Message.Contains("ownership marker") }
+    Assert-True $unmanagedRefused "Unmarked scratch must never be adopted for deletion."
+    Assert-True (Test-Path -LiteralPath $backendWorktree) "Unmarked scratch preflight must preserve source worktrees."
+    Set-Content -LiteralPath $scratchMarker -Value $savedMarker -Encoding utf8
+    Set-Content -LiteralPath (Join-Path $scratchRoot "build-cache.txt") -Value "regenerable"
+    Set-Content -LiteralPath (Join-Path $sessionArtifacts "verification.json") -Value '{"passed":true}'
+    $sharedPackage = Join-Path $fixtureRoot "shared-package"
+    [void](New-Item -ItemType Directory -Path $sharedPackage)
+    Set-Content -LiteralPath (Join-Path $sharedPackage "keep.txt") -Value "shared package"
+    if ($IsWindows) {
+        [void](New-Item -ItemType Junction -Path (Join-Path $generatedDir "linked-package") -Target $sharedPackage)
+        [void](New-Item -ItemType Junction -Path (Join-Path $scratchRoot "linked-cache") -Target $sharedPackage)
     }
-    Assert-True $generatedRefused "Close must refuse generated ignored data before Git can leave an orphan."
-    Assert-True (Test-Path -LiteralPath $backendWorktree) "Generated-data preflight must preserve paired worktrees."
-    Remove-Item -LiteralPath $generatedDir -Recurse
 
     $backendExclude = Join-Path $fixtureRoot "backend\.git\info\exclude"
     Add-Content -LiteralPath $backendExclude -Value ".ruff_cache/" -Encoding UTF8
@@ -212,6 +221,8 @@ try {
     Assert-True (Test-Path -LiteralPath $backendWorktree) "Close -WhatIf removed the backend worktree."
     Assert-True (Test-Path -LiteralPath $frontendWorktree) "Close -WhatIf removed the frontend worktree."
     Assert-True (Test-Path -LiteralPath (Join-Path $backendCache "cache.txt")) "Close -WhatIf removed ignored caches."
+    Assert-True (Test-Path -LiteralPath $generatedDir) "Close -WhatIf removed frontend dependencies."
+    Assert-True (Test-Path -LiteralPath $scratchRoot) "Close -WhatIf removed disposable scratch."
     Assert-True (
         @((Invoke-Git -Root $backendRoot -Arguments @("branch", "--list", $backendBranch))).Count -eq 1
     ) "Close -WhatIf removed the session branch."
@@ -224,6 +235,24 @@ try {
     Assert-True (@($closeOutput -match "SESSION_WORKTREE_CLOSED").Count -gt 0) "Close did not remove merged worktrees."
     Assert-True (-not (Test-Path -LiteralPath $backendWorktree)) "Backend worktree remains after close."
     Assert-True (-not (Test-Path -LiteralPath $frontendWorktree)) "Frontend worktree remains after close."
+    Assert-True (-not (Test-Path -LiteralPath $scratchRoot)) "Closed session scratch must be removed."
+    Assert-True (Test-Path -LiteralPath (Join-Path $sessionArtifacts "verification.json")) "Durable evidence must be preserved."
+    Assert-True ((Get-Content -LiteralPath (Join-Path $sharedPackage "keep.txt")) -eq "shared package") "Dependency and scratch junction targets must be preserved."
+    Write-Output "SESSION_WORKTREE_CASE_PASS frontend-cache-and-owned-scratch"
+    if ($IsWindows) {
+        $linkedRoot = Join-Path $fixtureRoot "_artifacts\sessions\linked-scratch-test"
+        [void](New-Item -ItemType Directory -Path $linkedRoot -Force)
+        [void](New-Item -ItemType Junction -Path (Join-Path $linkedRoot "scratch") -Target $sharedPackage)
+        $linkedRefused = $false
+        try {
+            & $scriptUnderTest -Action Start -Session linked-scratch-test -Repository backend -WorkspaceRoot $fixtureRoot -AllowLowDisk *> $null
+        } catch { $linkedRefused = $_.Exception.Message.Contains("contains a link") }
+        Assert-True $linkedRefused "Start must reject a linked scratch root before creating a worktree."
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $fixtureRoot "_worktrees\sessions\linked-scratch-test"))) "Linked scratch refusal left a worktree."
+        Assert-True (Test-Path -LiteralPath (Join-Path $sharedPackage "keep.txt")) "Linked scratch refusal changed its target."
+        Remove-Item -LiteralPath (Join-Path $linkedRoot "scratch") -Force
+    }
+
 
     [void](& $scriptUnderTest `
         -Action Start `

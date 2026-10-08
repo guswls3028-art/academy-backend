@@ -13,6 +13,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    throw "PowerShell 7 is required for safe directory-link cleanup."
+}
 
 if ($ExpectedBranch -and ($Action -ne "Close" -or $Repository -eq "both")) {
     throw "ExpectedBranch requires Close and one exact repository."
@@ -209,10 +212,18 @@ function Invoke-Start {
         $message = 'Academy workspace disk has {0:N1} GB free; new local sessions require 10 GB. Use a Codespace or close completed sessions.' -f ($volume.AvailableFreeSpace / 1GB)
         if (-not $AllowLowDisk) { throw $message }
         Write-Warning "$message AllowLowDisk permits only lightweight recovery work; keep installs and builds remote."
+    } elseif ($volume.AvailableFreeSpace -lt 20GB) {
+        Write-Warning "Academy workspace has less than 20 GB free. Use the existing Codespace for dependency installs, browser tests and builds; close completed sessions before starting more local work."
     }
     $names = @(Get-RepositoryNames)
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $sessionRoot = Join-Path $WorkspaceRoot "_worktrees\sessions\$Session"
+    $artifactRoot = Join-Path $WorkspaceRoot "_artifacts\sessions\$Session"
+    $scratchRoot = Join-Path $artifactRoot "scratch"
+    Assert-StoragePath -Path $scratchRoot -Parent $WorkspaceRoot
+    if (Test-Path -LiteralPath $scratchRoot) {
+        Assert-ScratchOwner -Path $scratchRoot
+    }
     $plans = [System.Collections.Generic.List[object]]::new()
 
     foreach ($name in $names) {
@@ -251,7 +262,46 @@ function Invoke-Start {
                 $plan.Branch,
                 (@(Invoke-GitChecked -Root $plan.Path -Arguments @("rev-parse", "HEAD"))[0])
             )
+            Assert-StoragePath -Path $scratchRoot -Parent $WorkspaceRoot
+            [void](New-Item -ItemType Directory -Path $scratchRoot -Force)
+            if (-not (Test-Path -LiteralPath (Join-Path $scratchRoot ".academy-scratch.json"))) {
+                @{ version = 1; session = $Session; workspace = [IO.Path]::GetFullPath($WorkspaceRoot) } |
+                    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $scratchRoot ".academy-scratch.json") -Encoding utf8
+            }
+            Write-Output ('SESSION_ARTIFACTS durable="{0}" scratch="{1}" scratchRetention=until-session-close' -f $artifactRoot, $scratchRoot)
         }
+    }
+}
+
+function Assert-StoragePath {
+    param([string]$Path, [string]$Parent)
+    $full = [IO.Path]::GetFullPath($Path)
+    $parentFull = [IO.Path]::GetFullPath($Parent).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    if (-not $full.StartsWith($parentFull, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Storage path escapes the intended workspace: $Path"
+    }
+    $check = $full
+    while ($check -and $check.Length -ge $parentFull.TrimEnd('\', '/').Length) {
+        if (Test-Path -LiteralPath $check) {
+            if ((Get-Item -LiteralPath $check -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw "Storage path contains a link; preserving it: $Path"
+            }
+        }
+        $check = Split-Path -Parent $check
+    }
+}
+
+function Assert-ScratchOwner {
+    param([string]$Path)
+    $marker = Join-Path $Path ".academy-scratch.json"
+    if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+        throw "Unmanaged scratch data is preserved; missing ownership marker: $Path"
+    }
+    Assert-StoragePath -Path $marker -Parent $WorkspaceRoot
+    $owner = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
+    if ($owner.version -ne 1 -or $owner.session -cne $Session -or
+        $owner.workspace -cne [IO.Path]::GetFullPath($WorkspaceRoot)) {
+        throw "Scratch ownership mismatch; preserving data: $Path"
     }
 }
 
@@ -325,6 +375,9 @@ function Assert-ClosePlanUnchanged($Plan, [switch]$CachesRemoved) {
 function Invoke-Close {
     Assert-SessionName
     $sessionRoot = Join-Path $WorkspaceRoot "_worktrees\sessions\$Session"
+    $scratchRoot = Join-Path $WorkspaceRoot "_artifacts\sessions\$Session\scratch"
+    Assert-StoragePath -Path $scratchRoot -Parent $WorkspaceRoot
+    if (Test-Path -LiteralPath $scratchRoot) { Assert-ScratchOwner -Path $scratchRoot }
     $plans = [System.Collections.Generic.List[object]]::new()
 
     foreach ($name in Get-RepositoryNames) {
@@ -373,10 +426,12 @@ function Invoke-Close {
         ) | Where-Object { [string]$_ -like "!! *" })
         $ignoredPaths = @($ignored | ForEach-Object { ([string]$_).Substring(3) })
         $unexpected = @($ignoredPaths | Where-Object {
-            $name -ne "backend" -or (
+            if ($name -eq "frontend") {
+                $_ -notin @("node_modules/", "dist/", ".vite/")
+            } else {
                 $_ -notin @(".pytest_cache/", ".ruff_cache/") -and
                 $_ -notmatch '(^|/)__pycache__/$'
-            )
+            }
         })
         if ($unexpected.Count -gt 0) {
             throw "Session has ignored local data and will be preserved: $path ($($unexpected -join ', '))"
@@ -420,6 +475,18 @@ function Invoke-Close {
         @(Get-ChildItem -LiteralPath $sessionRoot -Force).Count -eq 0
     ) {
         Remove-Item -LiteralPath $sessionRoot
+        Assert-StoragePath -Path $scratchRoot -Parent $WorkspaceRoot
+        if (Test-Path -LiteralPath $scratchRoot -PathType Container) {
+            Assert-ScratchOwner -Path $scratchRoot
+            if ($PSCmdlet.ShouldProcess($scratchRoot, "remove this closed session's disposable scratch outputs")) {
+                # PowerShell 7 unlinks child reparse points without traversing their targets.
+                Remove-Item -LiteralPath $scratchRoot -Recurse -Force -ErrorAction Stop
+                if (Test-Path -LiteralPath $scratchRoot) {
+                    throw "Closed-session scratch cleanup is incomplete: $scratchRoot"
+                }
+                Write-Output ('SESSION_SCRATCH_REMOVED path="{0}"' -f $scratchRoot)
+            }
+        }
     }
 }
 

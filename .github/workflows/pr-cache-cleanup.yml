@@ -1,0 +1,49 @@
+name: Closed PR Cache Cleanup
+
+on:
+  pull_request_target:
+    types: [closed]
+  schedule:
+    - cron: '17 19 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: closed-pr-cache-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # Never check out or execute PR code with this write-scoped token.
+      # Use only validated numeric refs returned by the repository's cache API.
+      - name: Remove caches belonging to closed pull requests
+        shell: bash
+        run: |
+          set -euo pipefail
+          refs_file="$(mktemp)"
+          trap 'rm -f "$refs_file"' EXIT
+          gh api --paginate "repos/$GH_REPO/actions/caches?per_page=100" \
+            --jq '.actions_caches[].ref' > "$refs_file"
+          sort -u "$refs_file" | while IFS= read -r ref; do
+            if [[ ! "$ref" =~ ^refs/pull/([1-9][0-9]*)/merge$ ]]; then
+              continue
+            fi
+            pr="${BASH_REMATCH[1]}"
+            state="$(gh api "repos/$GH_REPO/pulls/$pr" --jq '.state')"
+            if [[ "$state" == "closed" ]]; then
+              gh cache delete --all --ref "$ref" --succeed-on-no-caches
+            elif [[ "$state" != "open" ]]; then
+              echo "::error::Cannot establish PR $pr state; preserving caches"
+              exit 1
+            fi
+          done
