@@ -953,6 +953,26 @@ Current real-use work is tracked in [hardening-plan.md](../refactor/hardening-pl
 and follows the [release contract](../operations/change-risk-and-release-bundle.md).
 `../refactor/student-domain-launch-readiness.md` is the historical 2026-06-07 decision.
 
+## Staff student-detail question history (2026-10-09)
+
+`GET /api/v1/community/posts/` accepts optional `author_student` as a positive
+student ID. When present, it intersects the existing tenant, publication,
+student/selected-parent-child visibility with `created_by_id` and the author's
+tenant. Missing/foreign authors return an empty authorized result; empty,
+malformed, non-positive and out-of-range filter values return 400 instead of
+silently broadening the list. The student-detail UI combines this with
+`post_type=qna`, so notices, counsel and other students' questions do not appear
+as this student's questions. Counts and every page use the same filter, with
+stable newest-first created-at/ID ordering. Calls without the filter retain
+their existing behavior; no data is moved or rewritten and no migration is needed.
+
+The frontend interaction owner is `academy-frontend/docs/ADMIN-STUDENT-DETAIL.md`.
+Verification: `apps/domains/community/tests/test_student_question_history.py`
+covers staff/parent/student visibility, malformed/foreign authors, inconsistent
+cross-tenant references and the 50-row page boundary. Existing community
+visibility tests remain required; frontend isolated real-use additionally proves
+staff detail attribution after a parent creates a question for a selected child.
+
 ## 8. Do Not
 
 - do not add a second student identity helper in serializers/views/frontend only;
