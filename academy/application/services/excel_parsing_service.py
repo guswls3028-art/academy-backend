@@ -50,6 +50,7 @@ HEADER_ALIASES: dict[str, tuple[str, ...]] = {
         "학생핸드", "학생전화",
         "student phone", "student mobile",
     ),
+    "school_type": ("학교유형", "학교 유형", "school type"),
     "school": ("학교", "학교(학년)", "학교명", "출신학교", "school", "school / grade"),
     "grade": ("학년", "학년도", "grade"),
     "gender": ("성별", "남자", "여자", "남성", "여성", "남", "여", "녀"),
@@ -410,7 +411,15 @@ def _is_known_template_example_row(
 
 
 def _to_raw_phone(v: str) -> str:
-    return re.sub(r"\D", "", v)
+    value = str(v or "").strip()
+    # Excel numeric cells lose the leading zero. Match the upload preview,
+    # but never turn arbitrary text into somebody else's valid login number.
+    if value and not re.fullmatch(r"[0-9\s.()-]+", value):
+        return value
+    digits = re.sub(r"\D", "", value)
+    if len(digits) == 10 and digits.startswith("10"):
+        digits = "0" + digits
+    return digits
 
 
 def _mask_phone_for_ai(v: str) -> str:
@@ -433,7 +442,7 @@ def _validate_parent_phone(raw: str) -> bool:
     p = _to_raw_phone(raw)
     if not p or not p.startswith("010"):
         return False
-    return len(p) == 11
+    return bool(re.fullmatch(r"010[0-9]{8}", p))
 
 
 def _parse_school_grade(value: str) -> tuple[str, str]:
@@ -675,6 +684,14 @@ def parse_student_excel_file(
             continue
 
 
+        if student_phone_raw and not re.fullmatch(r"(?:010)?[0-9]{8}", student_phone_raw):
+            validation_errors.append({
+                "row": r + 1,
+                "name": name or "(이름 없음)",
+                "reason": "학생 전화번호는 비우거나 010 포함 11자리로 입력해 주세요.",
+            })
+            continue
+
         if len(student_phone_raw) == 8 and student_phone_raw.isdigit():
             student_phone = "010" + student_phone_raw
             uses_identifier = True
@@ -695,7 +712,15 @@ def parse_student_excel_file(
         school_parsed, grade_parsed = _parse_school_grade(school_cell)
         school = school_parsed or school_cell
         grade = grade_parsed or grade_cell
-        school_type = _infer_school_type(school)
+        school_type_cell = _cell_str(row, col.get("school_type")).upper()
+        if school_type_cell and school_type_cell not in {"ELEMENTARY", "MIDDLE", "HIGH"}:
+            validation_errors.append({
+                "row": r + 1,
+                "name": name or "(이름 없음)",
+                "reason": "학교유형은 ELEMENTARY, MIDDLE, HIGH 중 하나로 입력해 주세요.",
+            })
+            continue
+        school_type = school_type_cell or _infer_school_type(school)
 
         extra_columns: dict[str, str] = {}
         for index, header in extra_headers:
@@ -726,8 +751,8 @@ def parse_student_excel_file(
             validation_errors_out.extend(validation_errors)
         else:
             err_msg = (
-                f"학부모 전화번호 검증 실패: {len(validation_errors)}건. "
-                "010 포함 11자리 형식이어야 합니다."
+                f"학생 명단 검증 실패: {len(validation_errors)}건. "
+                "표시된 행의 입력값을 확인해 주세요."
             )
             raise ExcelValidationError(err_msg, errors=validation_errors)
 

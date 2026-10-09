@@ -121,9 +121,13 @@ def _grade_value(value: Any, school_type: str) -> int | None:
     if value is None or value == "":
         return None
     try:
+        if isinstance(value, bool):
+            raise ValueError
         grade = int(value)
-    except (TypeError, ValueError) as exc:
-        raise StudentImportRowError("학년은 숫자여야 합니다.") from exc
+        if isinstance(value, float) and value != grade:
+            raise ValueError
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise StudentImportRowError("학년은 정수여야 합니다.") from exc
     if not is_valid_grade(school_type, grade):
         raise StudentImportRowError(f"{school_type} 학생의 학년이 허용 범위를 벗어났습니다.")
     return grade

@@ -103,6 +103,26 @@ with tempfile.TemporaryDirectory(prefix="academy-development-smoke-") as temp_di
     assert rows[0]["parent_phone"] == "01012345678"
     assert rows[0]["school"] == "검증고"
 
+    # The exact deployed worker must preserve numeric contacts and report a
+    # malformed student number instead of creating a different login identity.
+    import_path = Path(temp_dir) / "student-import-validation.xlsx"
+    import_workbook = Workbook()
+    import_sheet = import_workbook.active
+    import_sheet.append(["이름", "학부모전화번호", "학생전화번호", "학교유형", "학년"])
+    import_sheet.append(["숫자연락처학생", 1077778888, 1099990000, "MIDDLE", 2])
+    import_sheet.append(["번호오타학생", 1077778888, "0101234567", "MIDDLE", 2])
+    import_sheet.append(["번호없는학생", 1077778888, "", "ELEMENTARY", 6])
+    import_workbook.save(import_path)
+    import_errors = []
+    import_rows, _ = parse_student_excel_file(str(import_path), validation_errors_out=import_errors)
+    assert len(import_rows) == 2
+    assert import_rows[0]["phone"] == "01099990000"
+    assert import_rows[0]["parent_phone"] == "01077778888"
+    assert import_rows[0]["school_type"] == "MIDDLE"
+    assert import_rows[1]["phone"] is None
+    assert import_rows[1]["school_type"] == "ELEMENTARY"
+    assert [error["row"] for error in import_errors] == [3]
+
     image_buffer = io.BytesIO()
     Image.new("RGB", (160, 90), "white").save(image_buffer, format="PNG")
     ppt_started = time.perf_counter()

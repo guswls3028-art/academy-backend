@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from rest_framework.test import APIRequestFactory, force_authenticate
+from openpyxl import Workbook
+
+from academy.application.services.excel_parsing_service import parse_student_excel_file
 
 from apps.core.models import Tenant
 from apps.core.models.tenant_membership import TenantMembership
@@ -64,6 +69,72 @@ def _student(
 class StudentImportResultContractTests(TestCase):
     def setUp(self):
         self.tenant = _tenant(name="Import Result Academy", code="import-result")
+
+    def test_fractional_boolean_and_infinite_grades_fail_without_account_creation(self):
+        for grade in (1.5, True, float("inf"), float("nan")):
+            with self.subTest(grade=grade):
+                result = import_students_from_rows(
+                    tenant_id=self.tenant.id,
+                    students_data=[{
+                        "name": "학년오류학생", "parent_phone": "01070000001",
+                        "phone": "01080000001", "grade": grade,
+                    }],
+                    initial_password="test-password",
+                )
+                self.assertEqual(result["created"], 0)
+                self.assertEqual(result["failed"][0]["reason_code"], "invalid_row")
+                self.assertIn("정수", result["failed"][0]["error"])
+                self.assertFalse(Student.objects.filter(tenant=self.tenant).exists())
+                self.assertFalse(User.objects.filter(tenant=self.tenant).exists())
+
+    def test_real_workbook_import_retry_preserves_sibling_accounts_and_tenant_isolation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "siblings.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["이름", "학부모전화번호", "학생전화번호", "학교유형", "학년"])
+            sheet.append(["첫째학생", 1070000001, 1080000001, "MIDDLE", 2])
+            sheet.append(["둘째학생", 1070000001, "", "MIDDLE", 1])
+            sheet.append(["오류학생", 1070000001, "0101234567", "MIDDLE", 1])
+            workbook.save(path)
+            errors = []
+            rows, _ = parse_student_excel_file(str(path), validation_errors_out=errors)
+
+        result = import_students_from_rows(
+            tenant_id=self.tenant.id, students_data=rows, initial_password="chosen-student",
+        )
+        self.assertEqual(result["created"], 2)
+        self.assertEqual(result["failed"], [])
+        self.assertEqual([error["row"] for error in errors], [4])
+        students = list(Student.objects.filter(tenant=self.tenant).select_related("parent__user", "user").order_by("id"))
+        self.assertEqual(students[0].school_type, "MIDDLE")
+        self.assertEqual(students[0].phone, "01080000001")
+        self.assertFalse(students[1].phone)
+        self.assertEqual(students[0].parent_id, students[1].parent_id)
+        self.assertNotEqual(students[0].user_id, students[1].user_id)
+        parent_user = students[0].parent.user
+        parent_user.set_password("existing-parent-password")
+        parent_user.save(update_fields=["password"])
+        parent_hash = parent_user.password
+
+        retried = import_students_from_rows(
+            tenant_id=self.tenant.id, students_data=rows, initial_password="different-password",
+        )
+        self.assertEqual(retried["created"], 0)
+        self.assertEqual(len(retried["duplicates"]), 2)
+        parent_user.refresh_from_db()
+        self.assertEqual(parent_user.password, parent_hash)
+        for student in students:
+            student.user.refresh_from_db()
+            self.assertTrue(student.user.check_password("chosen-student"))
+            self.assertTrue(TenantMembership.objects.filter(tenant=self.tenant, user=student.user, is_active=True).exists())
+
+        other = _tenant(name="Separate Import", code="separate-import")
+        other_result = import_students_from_rows(
+            tenant_id=other.id, students_data=rows, initial_password="other-password",
+        )
+        self.assertEqual(other_result["created"], 2)
+        self.assertNotEqual(Student.objects.filter(tenant=other).first().parent_id, students[0].parent_id)
 
     def test_created_rows_preserve_excel_row_name_and_created_student_id(self):
         result = import_students_from_rows(
