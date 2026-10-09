@@ -5,6 +5,38 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-10-10 Kerberos 후보 차단과 수정 후보
+
+학생 일괄 삭제·복원 입력 검증의 [run37946734823](https://github.com/guswls3028-art/academy-backend/actions/runs/37946734823)는
+`CVE-2026-107778` / `krb5` / `1.21.3-5+deb13u1` High로 development 전에
+차단됐다. AI 후보 `sha256:41b24f588d9a50c7ac43d26fabe19ce8e7698fa3744042c22f6446e4f9c23d36`의
+COMPLETE scan에서 Cyrus와 함께 High 2건을 확인했다. 운영 교체는 실행되지
+않았고 공유 잠금은 해제됐다. 기존 성공 backend `0e4f6a21e`를 유지한다.
+
+[공식 CVE 기록](https://github.com/CVEProject/cvelistV5/blob/main/cves/2026/107xxx/CVE-2026-107778.json)은
+1.22.2까지의 `krb5_rd_cred` 배열 길이 불일치에 의한 NULL 참조를 설명한다.
+공식 Debian trixie 수정 패키지와 새 upstream 정식 릴리스는 확인되지 않았다.
+`build-krb5.sh` 후보는 기존 1.21.3과 Debian deb13u1 패치 전부를 유지하고,
+[배열 경계 수정](https://github.com/krb5/krb5/commit/48afa9abb89ab2176bb20624d87d010b9984fc08)과
+[누락 principal 후속 수정](https://github.com/krb5/krb5/commit/5031b854ad8ba6cce20cdd8c991f81dbc3f924bd)을
+SHA-256으로 고정해 적용한다. 실제 source identity `krb5`와
+`1.21.3-5+deb13u1+academy1` 버전을 보존하며 미래 릴리스로 표시하지 않는다.
+Debian `libkrb5-3`의 라이브러리 하나만 교체하고 공개 심볼 집합, 의존성,
+SPAKE 플러그인, 부속 파일과 관리 스크립트는 보존한다.
+
+격리 arm64 빌드는 upstream 검사와 실제 라이브러리의 정상 credential 읽기를
+통과해야 한다. 합성된 배열 불일치·누락 client·누락 server 세 입력은 원본에서
+SIGSEGV로 재현되고 수정본에서 정확한 `KRB5KRB_AP_ERR_MODIFIED`로 거부돼야
+한다. 설정/ABI/fixture 오류나 다른 비정상 종료를 취약점 재현으로 인정하지 않는다.
+실제 계정·KDC·네트워크를 사용하지 않으며 마지막 APT 이후 각 이미지에서
+정상/오류 입력과 패키지 identity를 다시 확인한다. Messaging은 base를 상속한다.
+Python wheel에 별도로 포함된 Kerberos 구현은 이 검사의 보증 범위가 아니다.
+
+이는 **검증 중인 후보**다. High 예외·상한·만료를 변경하지 않는다. 원본 버전을
+유지한 backport가 스캐너에서 인정될지는 별도 사실이며, 신선한 immutable scan과
+모든 기존 development/preprod/운영 게이트가 통과하기 전에는 보안 해결 또는
+학생 후속 수정의 운영 완료를 선언하지 않는다.
+
 ## 2026-10-09 GCC 예외 종료
 
 release owner가 [run37908819030의 실제 스캔](https://github.com/guswls3028-art/academy-backend/actions/runs/37908819030/job/113751609811)을

@@ -27,3 +27,5 @@ printf 'academy\n' | grep -P '^academy$'
 
 python /usr/local/bin/verify-tiff.py
 python /usr/local/bin/verify-sasl.py
+
+python /usr/local/bin/verify-krb5.py --package
