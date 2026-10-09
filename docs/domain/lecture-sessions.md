@@ -16,6 +16,23 @@
 [frontend/docs/LECTURE-SESSION-SCOPES.md](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/LECTURE-SESSION-SCOPES.md)가
 소유한다.
 
+## 학생 일정의 입력 경계
+
+`GET /student/sessions/me/`는 강의의 자유 입력 `lecture_time`에서 유효한 24시간제
+시작 시각을 찾으면 `start_time`으로 반환한다. `25:00`, `12:99`, 자릿수가 잘못된
+시간처럼 해석할 수 없는 값은 `null`로 반환하며 해당 차시와 다른 일정을 계속
+표시한다. 저장된 강의 시간 문자열은 자동으로 고치거나 삭제하지 않는다. 화면은
+시각이 없을 때 잘못된 시각을 추정하지 않고 기존 날짜·수업 제목을 표시한다.
+
+`/student/sessions/hide/`와 `/unhide/`의 `id`는 0이 아닌 정수 또는 해당 십진수
+문자열만 허용한다. 양수는 차시, 음수는 클리닉 예약을 나타내며 절댓값은 DB ID의
+최댓값 `2^63-1` 이하다. 소수·불리언·범위 초과·잘못된 입력은 400과 무변경을
+반환하며 인접한 일정 ID로 잘라서 처리하지 않는다. 정상 숨김·되돌리기·반복 요청,
+학생/자녀 및 학원 권한 경계와 실제 수업·예약 데이터 보존은 유지한다.
+
+검증: `apps/domains/student_app/tests/test_schedule_input_boundaries.py`의 정상·잘못된
+강의 시간, 숨김·되돌리기 입력 경계, 문자열 ID·음수 ID·반복과 저장 데이터 보존.
+
 ## 데이터 소유권
 
 `Lecture.display_order`는 tenant 안의 강의가 공유하는 유일한 영구 수동 순서다.
