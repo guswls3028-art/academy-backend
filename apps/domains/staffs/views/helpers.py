@@ -4,7 +4,7 @@
 from django.db import transaction
 from django.db.models import Sum
 
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.pagination import PageNumberPagination
 
 from academy.adapters.db.django import repositories_staffs as staff_repo
@@ -14,6 +14,24 @@ from apps.core.permissions import (
     TenantResolvedAndPayrollManager,
     can_manage_staff_payroll,
 )
+
+
+class WageAuditUnavailable(APIException):
+    status_code = 503
+    default_detail = "시급 변경 이력을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."
+    default_code = "wage_audit_unavailable"
+
+
+def record_required_wage_audit(request, *, action, summary, payload):
+    from apps.core.services.ops_audit import record_audit
+
+    audit = record_audit(
+        request, action=action, summary=summary,
+        target_tenant=request.tenant, payload=payload,
+    )
+    if audit is None:
+        raise WageAuditUnavailable()
+    return audit
 
 
 def _owner_display_for_tenant(tenant, request=None):

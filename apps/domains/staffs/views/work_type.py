@@ -10,7 +10,7 @@ from rest_framework.exceptions import ValidationError
 
 from ..serializers import WorkTypeSerializer
 from academy.adapters.db.django import repositories_staffs as staff_repo
-from .helpers import IsPayrollManager, StaffDomainPagination
+from .helpers import IsPayrollManager, StaffDomainPagination, record_required_wage_audit
 
 # ===========================
 # WorkType
@@ -29,14 +29,13 @@ class WorkTypeViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return staff_repo.work_type_queryset_tenant(self.request.tenant)
 
+    @transaction.atomic
     def perform_create(self, serializer):
         work_type = serializer.save(tenant=self.request.tenant)
-        from apps.core.services.ops_audit import record_audit
 
-        record_audit(
+        record_required_wage_audit(
             self.request,
             action="staff.work_type_created",
-            target_tenant=self.request.tenant,
             summary=f"work_type_id={work_type.id}",
             payload={
                 "work_type_id": work_type.id,
@@ -57,21 +56,18 @@ class WorkTypeViewSet(viewsets.ModelViewSet):
             old_wage = work_type.base_hourly_wage
             old_active = work_type.is_active
             work_type = serializer.save()
-        from apps.core.services.ops_audit import record_audit
-
-        record_audit(
-            self.request,
-            action="staff.work_type_updated",
-            target_tenant=self.request.tenant,
-            summary=f"work_type_id={work_type.id}",
-            payload={
-                "work_type_id": work_type.id,
-                "old_base_hourly_wage": old_wage,
-                "new_base_hourly_wage": work_type.base_hourly_wage,
-                "old_is_active": old_active,
-                "new_is_active": work_type.is_active,
-            },
-        )
+            record_required_wage_audit(
+                self.request,
+                action="staff.work_type_updated",
+                summary=f"work_type_id={work_type.id}",
+                payload={
+                    "work_type_id": work_type.id,
+                    "old_base_hourly_wage": old_wage,
+                    "new_base_hourly_wage": work_type.base_hourly_wage,
+                    "old_is_active": old_active,
+                    "new_is_active": work_type.is_active,
+                },
+            )
 
     def perform_destroy(self, instance):
         try:
@@ -85,19 +81,16 @@ class WorkTypeViewSet(viewsets.ModelViewSet):
                 work_type_id = instance.id
                 work_type_name = instance.name
                 instance.delete()
+                record_required_wage_audit(
+                    self.request,
+                    action="staff.work_type_deleted",
+                    summary=f"work_type_id={work_type_id}",
+                    payload={
+                        "work_type_id": work_type_id,
+                        "name": work_type_name,
+                    },
+                )
         except ProtectedError:
             raise ValidationError(
                 {"detail": f'"{instance.name}" 시급태그를 사용하는 근무기록이 있어 삭제할 수 없습니다. 비활성으로 변경해 주세요.'}
             )
-        from apps.core.services.ops_audit import record_audit
-
-        record_audit(
-            self.request,
-            action="staff.work_type_deleted",
-            target_tenant=self.request.tenant,
-            summary=f"work_type_id={work_type_id}",
-            payload={
-                "work_type_id": work_type_id,
-                "name": work_type_name,
-            },
-        )
