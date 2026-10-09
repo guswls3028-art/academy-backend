@@ -190,6 +190,13 @@ APPROVED mock 템플릿을 보장한다. 이미 유효한 개발 템플릿은 �
 PostgreSQL tenant PK sequence를 전진시킨다. 그 ID나 code가 다른 tenant에 이미
 사용됐거나 기존 owner identity가 다르면 데이터를 덮어쓰지 않고 fail-closed한다.
 
+일반 실사용 scenario는 기존 admin 교직원과 별도로 같은 일회용 tenant에
+`ymath-qa-organization-owner` owner 계정을 생성한다. 기존 admin을 승격하지 않고
+전역 superuser도 부여하지 않는다. 원장 전용 학원 정보 저장→reload→학생 화면 반영을
+실제 역할로 검증하기 위한 fixture이며 일반 scenario 비밀번호의 기존 비밀 전달 경계를
+사용한다. login UAT의 10/10/10 manifest에는 추가하지 않는다. 이 사용자와 token은
+동일 exact tenant destroy/cleanup-zero 대상이며 운영 tenant에는 생성하지 않는다.
+
 Setup 성공 응답의 positive `tenant_id`는 frontend runner가 메모리에만 보관하고,
 Cleanup 및 그 직후 Inspect에 고정 문서의 `TenantId`로 그대로 전달한다. 최초 Inspect와
 Setup은 기본값 `0`을 사용한다. 고정 Setup은 DB 생성 직후 확정된 positive tenant PK를

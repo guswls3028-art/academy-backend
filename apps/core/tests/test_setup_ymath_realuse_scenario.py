@@ -101,6 +101,14 @@ class SetupYmathRealuseScenarioTests(TestCase):
         User = get_user_model()
         teacher = User.objects.get(username=f"t{tenant.id}_ymath-qa-teacher")
         self.assertTrue(teacher.check_password("scenario-test-password"))
+        organization_owner = User.objects.get(username=f"t{tenant.id}_ymath-qa-organization-owner")
+        self.assertTrue(organization_owner.check_password("scenario-test-password"))
+        self.assertFalse(organization_owner.is_superuser)
+        self.assertEqual(
+            TenantMembership.objects.get(tenant=tenant, user=organization_owner).role,
+            "owner",
+        )
+        self.assertEqual(TenantMembership.objects.get(tenant=tenant, user=teacher).role, "admin")
         student = User.objects.get(username=f"t{tenant.id}_ymath-qa-student-01")
         self.assertTrue(student.check_password("scenario-test-password"))
         self.assertFalse(Video.objects.filter(tenant=tenant).exists())
@@ -663,7 +671,7 @@ class SetupYmathRealuseScenarioTests(TestCase):
         self.assertFalse(Tenant.objects.filter(code=lower_code).exists())
 
     def test_rejects_empty_or_reserved_teacher_username_before_mutation(self):
-        for username in ("", "   ", "ymath-qa-student-01", "YMATH-QA-STAFF-10"):
+        for username in ("", "   ", "ymath-qa-student-01", "YMATH-QA-STAFF-10", "YMATH-QA-ORGANIZATION-OWNER"):
             tenant_code = "qa-ymath-realuse-invalid-" + str(len(username))
             with self.subTest(username=username):
                 with self.assertRaises(CommandError):

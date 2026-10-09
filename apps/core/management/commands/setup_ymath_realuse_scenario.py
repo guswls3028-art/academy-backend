@@ -378,7 +378,7 @@ class Command(BaseCommand):
         normalized_teacher_username = teacher_username.lower()
         if not teacher_username:
             raise CommandError("teacher-username must not be empty.")
-        if (normalized_teacher_username == "ymath-qa-resource-publisher"
+        if (normalized_teacher_username in {"ymath-qa-resource-publisher", "ymath-qa-organization-owner"}
                 or normalized_teacher_username.startswith(LOGIN_UAT_RESERVED_USERNAME_PREFIXES)):
             raise CommandError("teacher-username conflicts with a reserved login UAT username.")
 
@@ -529,6 +529,15 @@ class Command(BaseCommand):
             )
 
             if not login_uat:
+                # Separate disposable owner; keep the existing admin fixture's role.
+                organization_owner = self._ensure_user(
+                    tenant=tenant,
+                    login_username="ymath-qa-organization-owner",
+                    password=password,
+                    name="학원 설정 QA 대표",
+                    is_staff=True,
+                )
+                TenantMembership.ensure_active(tenant=tenant, user=organization_owner, role="owner")
                 # Disposable resource-sharing fixture; never configures a customer board.
                 resource_publisher = self._ensure_user(
                     tenant=tenant,
