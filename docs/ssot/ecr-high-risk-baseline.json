@@ -1,12 +1,12 @@
 {
   "schemaVersion": 3,
   "maximumHighFindings": {
-    "academy-base": 3,
-    "academy-api": 3,
-    "academy-video-worker": 3,
-    "academy-messaging-worker": 3,
-    "academy-ai-worker-cpu": 3,
-    "academy-tools-worker": 3
+    "academy-base": 1,
+    "academy-api": 1,
+    "academy-video-worker": 1,
+    "academy-messaging-worker": 1,
+    "academy-ai-worker-cpu": 1,
+    "academy-tools-worker": 1
   },
   "acceptedHighFindings": [
     {
@@ -24,38 +24,6 @@
       "expiresOn": "2026-10-10",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-107161",
       "rationale": "Release-owner review on 2026-10-09 for the scoped tenant/staff rollout. NVD and Debian locate this flaw in the separately packaged DIGEST-MD5 plugin; Debian has no fixed package and upstream PR892 is not merged. Digest-verified failed-candidate layers contain only libsasl2-2 and libsasl2-modules-db. Native arm64 CI run37879336666/job113655196989 at source118980b07dd990b18bd428f059061c2e01f8c2c9 confirms core initialization, only EXTERNAL, and DIGEST-MD5 client start returning SASL_NOMECH(-4). Every final system package boundary now runs verify-sasl.py; unexpected Cyrus plugin packages, plugin files, an available DIGEST mechanism, or any other start result fail the build. Keep required libpq/curl/LDAP/SASL ABI and package identity. This narrowly reviewed temporary acceptance is not an upstream remediation or universal reachability claim; wheel-vendored implementations are outside this oracle. Accept only the listed exact identity through 2026-10-10 UTC with no automatic extension; existing GCC expiry is unchanged. Critical and every other unreviewed High remain blocked. Six fresh complete candidate scans, isolated development/preprod, temporary-instance cleanup, compatible migration, healthy rollout and affected-flow verification remain required. Owner, evidence and release condition: docs/operations/container-image-security.md."
-    },
-    {
-      "cve": "CVE-2026-102010",
-      "packageName": "gcc-14",
-      "packageVersion": "14.2.0-19",
-      "repositories": [
-        "academy-base",
-        "academy-api",
-        "academy-video-worker",
-        "academy-messaging-worker",
-        "academy-ai-worker-cpu",
-        "academy-tools-worker"
-      ],
-      "expiresOn": "2026-10-09",
-      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-102010",
-      "rationale": "Temporary release-owner risk acceptance for the existing production exposure while restoring delivery of independently verified fixes. On 2026-10-03 KST, all six last-successful production image digests still report this exact High identity and Debian has no fixed gcc-14 package. The upstream fix changes the PBDS binary_heap erase_if header; absence of headers or direct calls does not prove prebuilt dependencies unreachable. Academy exploitability remains unknown, including crash or memory-corruption risk. This is not a false-positive or remediation claim. Accept only this exact identity until 2026-10-09 UTC, with no automatic renewal, no Critical acceptance and no unreviewed High identity. Every candidate still requires six fresh completed scans, isolated development/preprod, compatible migration, health-gated replacement and runtime/affected-flow verification. Owner and source evidence: docs/operations/container-image-security.md."
-    },
-    {
-      "cve": "CVE-2026-95619",
-      "packageName": "gcc-14",
-      "packageVersion": "14.2.0-19",
-      "repositories": [
-        "academy-base",
-        "academy-api",
-        "academy-video-worker",
-        "academy-messaging-worker",
-        "academy-ai-worker-cpu",
-        "academy-tools-worker"
-      ],
-      "expiresOn": "2026-10-09",
-      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-95619",
-      "rationale": "Individually reviewed temporary release-owner acceptance after official candidate run37091442044 detected this additional identity. Refreshed COMPLETE scans at 2026-10-03 03:24 UTC show the identical two GCC High identities in all six last-successful production digests and all six new candidates, with no Critical finding. Debian gcc-14 remains unfixed. Upstream commit59d235ffa5a69231eb42e5290d52dc8c90d28b7a describes aligned-new integer overflow and distinguishes the POSIX allocation path. Each final image package installation now runs the system libstdc++ normal-allocation and nine overflow-rejection oracle, or explicitly reports the system package absent; any installed-library failure stops the build. This is not a package remediation or universal non-reachability claim: statically linked and wheel-vendored implementations are outside that oracle and application exploitability remains unproven. The unchanged running exposure and delayed application/security fixes justify this exact-version acceptance only through 2026-10-09 UTC, with no automatic renewal, no Critical or unreviewed High acceptance, and all scan/development/preprod/continuity gates retained. Owner and evidence: docs/operations/container-image-security.md."
     }
   ]
 }
