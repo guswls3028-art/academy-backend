@@ -134,3 +134,58 @@ def test_parse_student_excel_fails_closed_for_ambiguous_roster_sheets(tmp_path):
 
     with pytest.raises(ExcelValidationError, match="시트가 여러 개"):
         parse_student_excel_file(str(path))
+
+
+def test_numeric_contacts_and_explicit_school_type_survive_real_workbook(tmp_path):
+    path = tmp_path / "numeric-contacts.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["이름", "학부모전화번호", "학생전화번호", "학교유형", "학교", "학년"])
+    ws.append(["초등학생", 1077778888, 1099990000, "ELEMENTARY", "", 6])
+    wb.save(path)
+
+    rows, _ = parse_student_excel_file(str(path))
+
+    assert rows[0]["parent_phone"] == "01077778888"
+    assert rows[0]["phone"] == "01099990000"
+    assert rows[0]["school_type"] == "ELEMENTARY"
+    assert rows[0]["school"] == ""
+    assert rows[0]["grade"] == "6"
+
+
+@pytest.mark.parametrize("bad_phone", [0, False, "0101234567", "오타", "abc01012345678", "010123456789", "010１２３４５６７８"])
+def test_malformed_student_contact_is_reported_without_creating_phone_less_row(tmp_path, bad_phone):
+    path = tmp_path / "mixed-contacts.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["이름", "학부모전화번호", "학생전화번호"])
+    ws.append(["오류학생", "01077778888", bad_phone])
+    ws.append(["정상학생", "01077778888", ""])
+    wb.save(path)
+    errors = []
+
+    rows, _ = parse_student_excel_file(str(path), validation_errors_out=errors)
+
+    assert [(row["name"], row["_excel_row"]) for row in rows] == [("정상학생", 3)]
+    assert rows[0]["phone"] is None
+    assert len(errors) == 1
+    assert errors[0]["row"] == 2
+    assert "학생 전화번호" in errors[0]["reason"]
+    with pytest.raises(ExcelValidationError):
+        parse_student_excel_file(str(path))
+
+
+def test_explicit_invalid_school_type_is_not_silently_changed_to_high(tmp_path):
+    path = tmp_path / "invalid-school-type.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["이름", "학부모전화번호", "학교유형", "학교"])
+    ws.append(["오류학생", "01077778888", "MIDDLE-TYPO", ""])
+    wb.save(path)
+    errors = []
+
+    rows, _ = parse_student_excel_file(str(path), validation_errors_out=errors)
+
+    assert rows == []
+    assert errors[0]["row"] == 2
+    assert "학교유형" in errors[0]["reason"]
