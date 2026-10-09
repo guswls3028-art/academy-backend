@@ -70,6 +70,11 @@ persistent development → preprod → production 절차를 별도로 통과한�
 
 ## 실패와 정리
 
+- archive와 영수증은 `run_id`뿐 아니라 `run_attempt`에 묶인다. 실패 뒤에는
+  새 run 또는 전체 작업 재실행을 사용한다. GitHub의 `Re-run failed jobs`만
+  실행하면 성공했던 base/export 작업은 이전 attempt에 남아 새 attempt의 정확한
+  artifact가 없으므로 중단된다. 이전 attempt 이름으로 바꾸거나 receipt 검사를
+  생략해 복구하지 않는다.
 - PR close/head 변경, main 변경, CI 재실행·실패·base 불일치, manifest 출처 또는
   ECR digest 불일치, artifact 검증/공간 부족, scan 실패는 중단 조건이다. 새 main과
   head에 대해 새 run을 시작한다. artifact는 1일 후 만료되므로 만료 후에는
