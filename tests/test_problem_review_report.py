@@ -579,6 +579,7 @@ class ProblemReviewReportViewTests(TestCase):
             status=ProblemReviewReport.Status.DRAFT,
             title="원본 제목",
             draft=_sample_report(),
+            version=2,
         )
         other = get_user_model().objects.create_user(
             username="other_review_teacher",
@@ -597,7 +598,7 @@ class ProblemReviewReportViewTests(TestCase):
         self.assertEqual(denied_response.status_code, 404)
         stale_request = self.factory.patch(
             f"/api/v1/tools/problem-review/reports/{report.id}/",
-            {"version": 0, "draft": _sample_report()},
+            {"version": 1, "draft": _sample_report()},
             format="json",
         )
         stale_response = ProblemReviewReportDetailView.as_view()(
@@ -611,7 +612,7 @@ class ProblemReviewReportViewTests(TestCase):
         updated["questions"] = [{**updated["questions"][0], "number": 7}]
         save_request = self.factory.patch(
             f"/api/v1/tools/problem-review/reports/{report.id}/",
-            {"version": 1, "title": "검수 완료 제목", "draft": updated},
+            {"version": 2, "title": "검수 완료 제목", "draft": updated},
             format="json",
         )
         save_response = ProblemReviewReportDetailView.as_view()(
@@ -619,7 +620,7 @@ class ProblemReviewReportViewTests(TestCase):
             report_id=report.id,
         )
         self.assertEqual(save_response.status_code, 200)
-        self.assertEqual(save_response.data["version"], 2)
+        self.assertEqual(save_response.data["version"], 3)
         self.assertEqual(save_response.data["draft"]["summary"]["one_line"], updated["summary"]["one_line"])
         self.assertEqual(len(save_response.data["draft"]["questions"]), 1)
         self.assertEqual(save_response.data["draft"]["questions"][0]["number"], 7)

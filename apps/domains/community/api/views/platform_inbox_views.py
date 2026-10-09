@@ -7,11 +7,11 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import (
     Case,
-    F,
     IntegerField,
-    Max,
+    OuterRef,
     Prefetch,
     Q,
+    Subquery,
     Value,
     When,
 )
@@ -157,20 +157,14 @@ def _serialize_incident(
 
 
 def _support_open_q():
-    return Q(_latest_platform_reply__isnull=True) | Q(
-        _latest_requester_reply__gt=F("_latest_platform_reply")
-    )
+    return Q(_latest_reply_role__isnull=True) | ~Q(_latest_reply_role="platform_staff")
 
 
 def _filtered_support_queryset(inbox_type: str, inbox_status: str, query: str):
     qs = _support_queryset().annotate(
-        _latest_platform_reply=Max(
-            "replies__created_at",
-            filter=Q(replies__author_role="platform_staff"),
-        ),
-        _latest_requester_reply=Max(
-            "replies__created_at",
-            filter=~Q(replies__author_role="platform_staff"),
+        _latest_reply_role=Subquery(
+            PostReply.objects.filter(post_id=OuterRef("pk"))
+            .order_by("-created_at", "-pk").values("author_role")[:1]
         ),
     )
     if inbox_type in {"bug", "feedback"}:

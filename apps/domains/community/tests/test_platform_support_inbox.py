@@ -489,6 +489,26 @@ class PlatformSupportInboxTests(TestCase):
         )
         self.assertEqual(ticket["status"], "open")
 
+    def test_equal_timestamp_reply_order_agrees_with_filters_and_summary(self):
+        def listing(inbox_status="all"):
+            return self._platform_call(
+                PlatformInboxListView.as_view(),
+                self._request("get", "unused", user=self.platform_owner, tenant=self.platform,
+                              data={"status": inbox_status}),
+            )
+
+        baseline_open = listing().data["summary"]["open"]
+        with patch("django.utils.timezone.now", return_value=self.support.created_at):
+            for role, expected in (("platform_staff", "resolved"), ("staff", "open"), ("platform_staff", "resolved")):
+                with self.subTest(role=role, status=expected):
+                    PostReply.objects.create(tenant=self.tenant, post=self.support, content="Same-clock reply", author_role=role)
+                    response = listing()
+                    ticket = next(item for item in response.data["results"] if item["source"] == "support" and item["id"] == self.support.id)
+                    self.assertEqual(ticket["status"], expected)
+                    self.assertEqual(response.data["summary"]["open"], baseline_open - (expected == "resolved"))
+                    filtered = listing(expected)
+                    self.assertTrue(any(item["source"] == "support" and item["id"] == self.support.id for item in filtered.data["results"]))
+
     def test_legacy_prefix_only_applies_to_staff_board_posts(self):
         student_prefix = PostEntity.objects.create(
             tenant=self.tenant,

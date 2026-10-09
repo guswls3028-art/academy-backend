@@ -692,3 +692,35 @@ processor를 먼저 호출한다. `infra/terraform/purge_schedule.tf`의 EventBr
 parent-selected-child 및 support inbox 회귀도 함께 통과해야 한다. 실제 원본 부재와
 paired UI 성공/partial/reload는 승인된 isolated QA에서 별도 확인해야 하며 로컬 mock이나
 미실행 PostgreSQL 검사를 운영 성공으로 기록하지 않는다.
+
+## 23. 현재 역할과 게시 대상 변경 경계 (2026-10-09)
+
+인증된 커뮤니티 글·댓글 열람과 운영 필드 변경은 요청 학원의 활성
+`TenantMembership` 역할을 사용한다. 공통 권한 소유자는
+`apps/core/services/tenant_access.py`이며, Django `is_staff`/`is_superuser`나
+기본 학원 값은 커뮤니티 권한을 추가하지 않는다. 활성 owner/admin/staff/teacher는
+학원 글을 열람할 수 있고, 게시 대상 변경은 owner/admin/staff만 가능하다.
+teacher는 글 열람 권한만으로 `/posts/:id/nodes/`를 변경할 수 없다.
+
+학생·학부모의 다른 학생 질문·상담, 미게시 글 및 수강 대상 밖의 글은 단건·댓글·반응
+경로에서도 같은 가시성 정책으로 404를 반환한다. 본인/선택 자녀 질문·상담의 기존
+작성·수정 동선은 유지하며 학생용 수정 필드는 제목·내용·분류로 제한한다. 학부모의
+좋아요·댓글 작성 제한도 유지한다. 잘못된 요청은 기존 본문·공개 범위·반응을 변경하지 않는다.
+
+`POST /api/v1/community/posts/`에서 `node_ids` 생략 또는 명시적인 빈 배열은 전체
+공개 대상이다. 기존 글의 `PATCH /api/v1/community/posts/:id/nodes/`에서는 반드시
+`node_ids` 배열을 보내야 한다. **명시적 `[]`만** 대상 매핑을 제거한다. 누락, null,
+boolean, 빈 문자열, 객체는 400이며 기존 대상을 보존한다. 항목은 양의 signed 64-bit
+정수 또는 ASCII 정수 문자열이어야 한다. 실수의 정수 절삭이나 boolean의 ID 변환은
+허용하지 않는다. 중복 ID는 기존처럼 하나의 매핑으로 저장하고, 다른 학원 ID는 400이다.
+클라이언트는 실패 시 선택 대상을 유지한 채 올바른 배열로 재시도한다.
+
+기존 게시물·매핑·작성자 데이터의 일괄 변경이나 마이그레이션은 없다. 화면 계약은
+프런트엔드 `src/shared/api/contracts/community.ts`의 생성 및 대상 변경 요청이 소유하며
+현재 정상 요청의 숫자 배열과 호환된다. 외부 공개 자료 게시판은 별도
+[public-resource-board.md](public-resource-board.md)의 게시자·문서 읽기 정책을 따른다.
+
+검증 소유: `tests/test_community_role_scope_boundary.py`의 실제 tenant JWT 요청으로
+권한 잔존 플래그, 역할별 정상 저장→재조회, 학생/선택 자녀 수정, 비공개 글/댓글/반응,
+게시 대상 입력과 보존, 타 학원 및 권한 회수를 검사한다. 기존 community/parent/support
+회귀와 필수 CI를 함께 확인하며 운영 반영은 별도의 배포·실사용 증거로 기록한다.

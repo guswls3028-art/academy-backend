@@ -14,6 +14,7 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework.exceptions import AuthenticationFailed
 
 from apps.core.authentication import TokenVersionJWTAuthentication as JWTAuthentication
+from apps.core.services.tenant_access import get_authorized_tenant_role
 
 from .models import MatchupDocument, MatchupProblem
 from .serializers import (
@@ -108,20 +109,9 @@ def _jwt_required(view_func):
 
 
 def _is_tenant_staff(request):
-    user = getattr(request, "user", None)
-    tenant = getattr(request, "tenant", None)
-    if not user or not tenant:
-        return False
-    from apps.core.models import TenantMembership
-    if TenantMembership.objects.filter(
-        user=user, tenant=tenant, is_active=True,
-        role__in=["owner", "admin", "teacher", "assistant"],
-    ).exists():
-        return True
-    return bool(
-        (getattr(user, "is_superuser", False) or getattr(user, "is_staff", False))
-        and getattr(user, "tenant_id", None) == tenant.id
-    )
+    return get_authorized_tenant_role(
+        getattr(request, "user", None), getattr(request, "tenant", None),
+    ) in ("owner", "admin", "teacher")
 
 
 def _attach_problem_image_urls(data, problem: MatchupProblem | None = None) -> None:
@@ -147,22 +137,11 @@ def _is_tenant_admin(request) -> bool:
     """학원 owner/admin 권한자만. 다른 강사 보고서 access 권한.
 
     매치업 보고서 = 강사 1인 포트폴리오. 작성자 외에는 학원 운영진만 조회/수정 가능.
-    일반 teacher/assistant는 본인 보고서만 접근.
+    일반 teacher는 본인 보고서만 접근.
     """
-    user = getattr(request, "user", None)
-    tenant = getattr(request, "tenant", None)
-    if not user or not tenant:
-        return False
-    from apps.core.models import TenantMembership
-    if TenantMembership.objects.filter(
-        user=user, tenant=tenant, is_active=True,
-        role__in=["owner", "admin"],
-    ).exists():
-        return True
-    return bool(
-        (getattr(user, "is_superuser", False) or getattr(user, "is_staff", False))
-        and getattr(user, "tenant_id", None) == tenant.id
-    )
+    return get_authorized_tenant_role(
+        getattr(request, "user", None), getattr(request, "tenant", None),
+    ) in ("owner", "admin")
 
 
 def _hit_report_writable(request, report) -> bool:

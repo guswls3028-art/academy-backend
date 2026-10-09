@@ -328,6 +328,29 @@ class PublicResourceContractTests(PublicResourceTestBase):
         recovered = self.call("patch", "partial_update", self.body(replacement, title="reviewed", expected_updated_at=first.data["updated_at"]), user=self.one, pk=post.pk)
         self.assertEqual(recovered.status_code, 200, recovered.data)
 
+    def test_edit_version_advances_when_wall_clock_does_not(self):
+        post, file = self.publish()
+        version = post.updated_at
+        with patch("django.utils.timezone.now", return_value=version):
+            update = self.body(file, title="newer", expected_updated_at=version.isoformat())
+            first = self.call("patch", "partial_update", update, user=self.one, pk=post.pk)
+            self.assertEqual(first.status_code, 200, first.data)
+            post.refresh_from_db()
+            self.assertGreater(post.updated_at, version)
+            replay = self.call("patch", "partial_update", update, user=self.one, pk=post.pk)
+            self.assertEqual(replay.status_code, 200, replay.data)
+            self.assertEqual(replay.data["updated_at"], first.data["updated_at"])
+            stale = self.call("patch", "partial_update", self.body(file, title="stale", expected_updated_at=version.isoformat()), user=self.two, pk=post.pk)
+            self.assertEqual(stale.status_code, 409, stale.data)
+            post.refresh_from_db()
+            self.assertEqual(post.title, "newer")
+            next_edit = self.call("patch", "partial_update", self.body(file, title="reviewed", expected_updated_at=first.data["updated_at"]), user=self.two, pk=post.pk)
+            self.assertEqual(next_edit.status_code, 200, next_edit.data)
+            prior = post.updated_at
+            post.refresh_from_db()
+            self.assertGreater(post.updated_at, prior)
+            self.assertEqual(post.title, "reviewed")
+
     def test_publisher_ids_are_distinct_at_database_boundary(self):
         from django.db import IntegrityError, transaction
 

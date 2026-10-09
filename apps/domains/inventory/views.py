@@ -10,8 +10,10 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 from django.db import transaction
+from rest_framework.exceptions import AuthenticationFailed
 
 from apps.core.authentication import TokenVersionJWTAuthentication as JWTAuthentication
+from apps.core.services.tenant_access import user_has_active_staff_access
 
 from apps.core.models import Program
 from apps.support.inventory.storage_cleanup_dependencies import (
@@ -90,12 +92,17 @@ def _jwt_required(view_func):
     """JWT 인증 필수. 미인증 시 401 (저장소 API는 로그인 사용자만 허용)."""
     def wrapped(request, *args, **kwargs):
         auth = JWTAuthentication()
-        result = auth.authenticate(request)
+        try:
+            result = auth.authenticate(request)
+        except AuthenticationFailed:
+            result = None
         if result is None:
-            return JsonResponse(
+            response = JsonResponse(
                 {"detail": "Authentication required", "code": "auth_required"},
                 status=401,
             )
+            response["WWW-Authenticate"] = auth.authenticate_header(request)
+            return response
         request.user, request.auth = result[0], result[1]
         return view_func(request, *args, **kwargs)
     return wrapped
@@ -140,20 +147,9 @@ def _inventory_namespace_mutation(view_func):
 
 
 def _is_tenant_staff(request):
-    """요청 사용자가 테넌트의 스태프(owner/admin/staff/teacher/assistant)인지 확인."""
-    user = getattr(request, "user", None)
-    tenant = getattr(request, "tenant", None)
-    if not user or not tenant:
-        return False
-    from apps.core.models import TenantMembership
-    if TenantMembership.objects.filter(
-        user=user, tenant=tenant, is_active=True,
-        role__in=["owner", "admin", "staff", "teacher", "assistant"],
-    ).exists():
-        return True
-    return bool(
-        (getattr(user, "is_superuser", False) or getattr(user, "is_staff", False))
-        and getattr(user, "tenant_id", None) == tenant.id
+    """Authorize the active tenant membership, independently of global flags."""
+    return user_has_active_staff_access(
+        getattr(request, "user", None), getattr(request, "tenant", None),
     )
 
 

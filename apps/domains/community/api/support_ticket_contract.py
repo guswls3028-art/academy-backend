@@ -13,28 +13,12 @@ def _serialized_reply(reply) -> dict:
 
 
 def support_ticket_status(post) -> str:
-    replies = list(post.replies.all())
-    latest_platform = max(
-        (
-            reply.created_at
-            for reply in replies
-            if getattr(reply, "author_role", "") == "platform_staff"
-        ),
+    latest = max(
+        post.replies.all(),
+        key=lambda reply: (reply.created_at, reply.pk),
         default=None,
     )
-    latest_requester = max(
-        (
-            reply.created_at
-            for reply in replies
-            if getattr(reply, "author_role", "") != "platform_staff"
-        ),
-        default=None,
-    )
-    if latest_platform is None:
-        return "open"
-    if latest_requester is not None and latest_requester > latest_platform:
-        return "open"
-    return "resolved"
+    return "resolved" if latest is not None and latest.author_role == "platform_staff" else "open"
 
 
 def serialize_support_ticket(post) -> dict:
@@ -42,7 +26,7 @@ def serialize_support_ticket(post) -> dict:
     if kind not in {"bug", "feedback"}:
         raise ValueError("Not a support ticket.")
 
-    replies = list(post.replies.all())
+    replies = sorted(post.replies.all(), key=lambda reply: (reply.created_at, reply.pk))
     replies_data = [_serialized_reply(reply) for reply in replies]
     platform_replies = sum(
         1 for reply in replies if getattr(reply, "author_role", "") == "platform_staff"

@@ -36,9 +36,14 @@ class MatchupTenantStaffGuardTests(TestCase):
         self.assertFalse(_is_tenant_staff(self._request(self.tenant_b)))
         self.assertFalse(_is_tenant_admin(self._request(self.tenant_b)))
 
-    def test_django_staff_flag_allows_only_own_tenant(self):
-        self.assertTrue(_is_tenant_staff(self._request(self.tenant_a)))
-        self.assertTrue(_is_tenant_admin(self._request(self.tenant_a)))
+    def test_django_staff_flag_without_membership_cannot_access_own_tenant(self):
+        self.assertFalse(_is_tenant_staff(self._request(self.tenant_a)))
+        self.assertFalse(_is_tenant_admin(self._request(self.tenant_a)))
+
+    def test_inactive_owner_membership_does_not_grant_staff_or_admin(self):
+        TenantMembership.objects.create(tenant=self.tenant_a, user=self.staff, role="owner", is_active=False)
+        self.assertFalse(_is_tenant_staff(self._request(self.tenant_a)))
+        self.assertFalse(_is_tenant_admin(self._request(self.tenant_a)))
 
     def test_membership_allows_matchup_staff_and_admin_by_role(self):
         TenantMembership.ensure_active(tenant=self.tenant_b, user=self.staff, role="teacher")
