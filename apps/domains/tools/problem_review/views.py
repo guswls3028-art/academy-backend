@@ -100,7 +100,7 @@ def _job_owned_by_report(job, report: ProblemReviewReport) -> bool:
     )
 
 
-def _refresh_analysis(report: ProblemReviewReport) -> ProblemReviewReport:
+def _refresh_analysis(report: ProblemReviewReport, *, persist: bool = True) -> ProblemReviewReport:
     if report.status != ProblemReviewReport.Status.ANALYZING or not report.analysis_job_id:
         return report
     job = ai_repo.get_job_model_for_status(
@@ -110,19 +110,39 @@ def _refresh_analysis(report: ProblemReviewReport) -> ProblemReviewReport:
     )
     if not job or not _job_owned_by_report(job, report):
         return report
+    changes = {}
     if job.status == "DONE":
         result = ai_repo.DjangoAIJobRepository().get_result_payload_for_job(job) or {}
         draft = normalize_report_payload(result.get("report"))
         if draft.get("questions"):
-            report.draft = draft
-            report.source_summary = result.get("source") if isinstance(result.get("source"), dict) else {}
-            report.status = ProblemReviewReport.Status.DRAFT
-            report.last_error = ""
-            report.save(update_fields=["draft", "source_summary", "status", "last_error", "updated_at"])
+            changes = {
+                "draft": draft,
+                "source_summary": result.get("source") if isinstance(result.get("source"), dict) else {},
+                "status": ProblemReviewReport.Status.DRAFT,
+                "last_error": "",
+            }
     elif job.status in {"FAILED", "DEAD", "CANCELLED"}:
-        report.status = ProblemReviewReport.Status.FAILED
-        report.last_error = str(job.error_message or job.last_error or "분석 작업에 실패했습니다.")[:2000]
-        report.save(update_fields=["status", "last_error", "updated_at"])
+        changes = {
+            "status": ProblemReviewReport.Status.FAILED,
+            "last_error": str(job.error_message or job.last_error or "분석 작업에 실패했습니다.")[:2000],
+        }
+    if not changes:
+        return report
+    if persist:
+        # A late result must never replace a draft already saved by the teacher.
+        ProblemReviewReport.objects.filter(
+            pk=report.pk,
+            tenant_id=report.tenant_id,
+            requested_by_id=report.requested_by_id,
+            status=ProblemReviewReport.Status.ANALYZING,
+            analysis_job_id=report.analysis_job_id,
+            version=report.version,
+        ).update(**changes, updated_at=timezone.now())
+        report.refresh_from_db()
+    else:
+        # GET projects the owned job result without changing canonical rows.
+        for field, value in changes.items():
+            setattr(report, field, value)
     return report
 
 
@@ -275,7 +295,7 @@ class ProblemReviewReportCollectionView(APIView):
             ).prefetch_related("artifacts")[:20]
         )
         for report in reports:
-            _refresh_analysis(report)
+            _refresh_analysis(report, persist=False)
         response = Response({
             "reports": [_serialize_report(report, include_draft=False) for report in reports],
         })
@@ -424,7 +444,7 @@ class ProblemReviewReportDetailView(APIView):
         report = _get_owned_report(request, report_id)
         if report is None:
             return Response({"detail": "리포트를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
-        report = _refresh_analysis(report)
+        report = _refresh_analysis(report, persist=False)
         response = Response(_serialize_report(report))
         response["Cache-Control"] = "no-store"
         return response
@@ -437,10 +457,10 @@ class ProblemReviewReportDetailView(APIView):
     def patch(self, request, report_id):
         if not isinstance(request.data, dict):
             return Response({"detail": "저장할 초안이 올바르지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            expected_version = int(request.data.get("version"))
-        except (TypeError, ValueError):
+        version_input = ProblemReviewFinalizeRequestSerializer(data=request.data)
+        if not version_input.is_valid():
             return Response({"detail": "현재 리포트 버전을 확인해 주세요."}, status=status.HTTP_400_BAD_REQUEST)
+        expected_version = version_input.validated_data["version"]
         with transaction.atomic():
             report = ProblemReviewReport.objects.select_for_update().filter(
                 pk=report_id,
@@ -492,13 +512,13 @@ class ProblemReviewFinalizeView(APIView):
         responses=ProblemReviewReportSerializer,
     )
     def post(self, request, report_id):
-        try:
-            expected_version = int(request.data.get("version"))
-        except (AttributeError, TypeError, ValueError):
+        version_input = ProblemReviewFinalizeRequestSerializer(data=request.data)
+        if not version_input.is_valid():
             return Response(
                 {"detail": "현재 리포트 버전을 확인해 주세요."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        expected_version = version_input.validated_data["version"]
         with transaction.atomic():
             report = ProblemReviewReport.objects.select_for_update().filter(
                 pk=report_id,
@@ -704,13 +724,13 @@ class ProblemReviewPublishView(APIView):
         responses=ProblemReviewPublishResponseSerializer,
     )
     def post(self, request, report_id):
-        try:
-            expected_version = int(request.data.get("version"))
-        except (AttributeError, TypeError, ValueError):
+        version_input = ProblemReviewPublishRequestSerializer(data=request.data)
+        if not version_input.is_valid():
             return Response(
                 {"detail": "현재 리포트 버전을 확인해 주세요."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        expected_version = version_input.validated_data["version"]
 
         with transaction.atomic():
             report = ProblemReviewReport.objects.select_for_update().filter(
