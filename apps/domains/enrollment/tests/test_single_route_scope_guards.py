@@ -94,6 +94,64 @@ class EnrollmentAttendanceSingleRouteScopeGuardTests(APITestCase):
         )
         self.client.force_authenticate(user=self.admin)
 
+    def test_bulk_registration_rejects_fractional_identifiers_without_reactivation(self):
+        cases = [
+            ("/api/v1/enrollments/bulk_create/", {"lecture": self.lecture.id, "students": [self.student.id + 0.5]}),
+            ("/api/v1/enrollments/bulk_create/", {"lecture": self.lecture.id + 0.5, "students": [self.student.id]}),
+            ("/api/v1/enrollments/session-enrollments/bulk_create/", {"session": self.session.id, "enrollments": [self.enrollment.id + 0.5]}),
+            ("/api/v1/enrollments/session-enrollments/bulk_create/", {"session": self.session.id + 0.5, "enrollments": [self.enrollment.id]}),
+        ]
+        for url, payload in cases:
+            with self.subTest(url=url, payload=payload):
+                initial_status = "ACTIVE" if "session-enrollments" in url else "INACTIVE"
+                self.enrollment.status = initial_status
+                self.enrollment.save(update_fields=["status"])
+                before = (Enrollment.objects.count(), SessionEnrollment.objects.count(), StudentFee.objects.count())
+                response = self.client.post(url, payload, format="json", **self._headers())
+                self.assertEqual(response.status_code, 400, response.data)
+                self.enrollment.refresh_from_db()
+                self.assertEqual(self.enrollment.status, initial_status)
+                self.attendance.refresh_from_db()
+                self.assertEqual(self.attendance.status, "PRESENT")
+                self.assertEqual(before, (Enrollment.objects.count(), SessionEnrollment.objects.count(), StudentFee.objects.count()))
+
+    def test_bulk_registration_rejects_boolean_zero_overflow_and_structured_ids(self):
+        for invalid in (True, False, 0, -1, 2**63, str(2**63), "1.0", "1e0", "9" * 100, None, {"id": 1}):
+            for field in ("lecture", "students", "session", "enrollments"):
+                with self.subTest(field=field, invalid=invalid):
+                    is_session = field in {"session", "enrollments"}
+                    payload = ({"session": self.session.id, "enrollments": [self.enrollment.id]}
+                               if is_session else {"lecture": self.lecture.id, "students": [self.student.id]})
+                    payload[field] = [invalid] if field in {"students", "enrollments"} else invalid
+                    path = "/api/v1/enrollments/" + ("session-enrollments/" if is_session else "") + "bulk_create/"
+                    response = self.client.post(path, payload, format="json", **self._headers())
+                    self.assertEqual(response.status_code, 400, response.data)
+        self.attendance.refresh_from_db()
+        self.assertEqual(self.attendance.status, "PRESENT")
+        self.assertEqual(Enrollment.objects.filter(student=self.student, lecture=self.lecture).count(), 1)
+        self.assertEqual(SessionEnrollment.objects.filter(enrollment=self.enrollment, session=self.session).count(), 1)
+
+    def test_bulk_registration_keeps_integer_string_identifiers_and_real_reactivation(self):
+        self.enrollment.status = "INACTIVE"
+        self.enrollment.save(update_fields=["status"])
+        response = self.client.post(
+            "/api/v1/enrollments/bulk_create/",
+            {"lecture": str(self.lecture.id), "students": [str(self.student.id)]},
+            format="json", **self._headers(),
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.enrollment.refresh_from_db()
+        self.assertEqual(self.enrollment.status, "ACTIVE")
+        membership = self.client.post(
+            "/api/v1/enrollments/session-enrollments/bulk_create/",
+            {"session": str(self.session.id), "enrollments": [str(self.enrollment.id)]},
+            format="json", **self._headers(),
+        )
+        self.assertEqual(membership.status_code, 201, membership.data)
+        self.assertEqual(SessionEnrollment.objects.filter(enrollment=self.enrollment, session=self.session).count(), 1)
+        self.attendance.refresh_from_db()
+        self.assertEqual(self.attendance.status, "PRESENT")
+
     def _headers(self):
         return {"HTTP_HOST": "localhost", "HTTP_X_TENANT_CODE": self.tenant.code}
 

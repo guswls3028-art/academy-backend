@@ -254,6 +254,37 @@ class FeesConcurrencyPGTest(TransactionTestCase):
             2,
         )
 
+    def test_two_clerks_with_same_displayed_balance_only_one_creates_payment(self):
+        tenant, invoice = self._setup_invoice(total=100_000)
+        barrier = threading.Barrier(2)
+        results = {"success": 0, "conflicts": 0, "errors": []}
+
+        def worker(key):
+            try:
+                barrier.wait(timeout=10)
+                record_payment(
+                    tenant, invoice.id, 40_000, "CASH",
+                    idempotency_key=key, expected_paid_amount=0,
+                )
+                results["success"] += 1
+            except services.InvoiceBalanceChanged:
+                results["conflicts"] += 1
+            except Exception as exc:  # noqa: BLE001
+                results["errors"].append(repr(exc))
+            finally:
+                close_old_connections()
+
+        threads = [threading.Thread(target=worker, args=(f"clerk-{i}",)) for i in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=20)
+            self.assertFalse(thread.is_alive(), "Payment worker did not complete")
+        self.assertEqual(results, {"success": 1, "conflicts": 1, "errors": []})
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.paid_amount, 40_000)
+        self.assertEqual(FeePayment.objects.filter(invoice=invoice).count(), 1)
+
     def test_same_idempotency_key_concurrent_creates_single_payment(self):
         """B. 같은 idempotency_key로 두 thread 동시 호출 → 정확히 1개 payment만."""
         tenant, invoice = self._setup_invoice(total=100_000)

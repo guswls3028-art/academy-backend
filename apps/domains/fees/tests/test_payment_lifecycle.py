@@ -1097,6 +1097,37 @@ class FeesInvoiceApiHardeningTest(FeesTestMixin, APITestCase):
         self.assertEqual(self.invoice.paid_amount, 40_000)
         self.assertEqual(self.invoice.status, "PARTIAL")
 
+    def test_payment_rejects_stale_balance_but_replays_successful_attempt(self):
+        payload = {
+            "invoice_id": self.invoice.id,
+            "amount": 40_000,
+            "payment_method": "CASH",
+            "expected_paid_amount": 0,
+            "idempotency_key": "first-cash-entry",
+        }
+        first = self.client.post("/api/v1/fees/payments/", payload, format="json", **self.headers)
+        self.assertEqual(first.status_code, 201, first.content)
+
+        # A second clerk still has the unpaid invoice open. A different key must
+        # not turn that stale form into another partial payment.
+        stale = {**payload, "idempotency_key": "second-clerk-entry"}
+        conflict = self.client.post("/api/v1/fees/payments/", stale, format="json", **self.headers)
+        self.assertEqual(conflict.status_code, 409, conflict.content)
+        self.assertEqual(conflict.data["code"], "invoice_balance_changed")
+        self.assertEqual(FeePayment.objects.filter(invoice=self.invoice).count(), 1)
+
+        replay = self.client.post("/api/v1/fees/payments/", payload, format="json", **self.headers)
+        self.assertEqual(replay.status_code, 201, replay.content)
+        self.assertEqual(replay.data["id"], first.data["id"])
+
+        # Reviewing the latest balance permits an intentional second payment.
+        fresh = {**stale, "expected_paid_amount": 40_000}
+        second = self.client.post("/api/v1/fees/payments/", fresh, format="json", **self.headers)
+        self.assertEqual(second.status_code, 201, second.content)
+        self.invoice.refresh_from_db()
+        self.assertEqual(self.invoice.paid_amount, 80_000)
+        self.assertEqual(FeePayment.objects.filter(invoice=self.invoice).count(), 2)
+
     def test_payment_receipt_note_honors_database_length(self):
         response = self.client.post(
             "/api/v1/fees/payments/",

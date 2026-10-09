@@ -222,6 +222,7 @@ class FeePaymentSerializer(serializers.ModelSerializer):
 class RecordPaymentSerializer(serializers.Serializer):
     invoice_id = serializers.IntegerField()
     amount = serializers.IntegerField(min_value=1)
+    expected_paid_amount = serializers.IntegerField(required=False, min_value=0)
     payment_method = serializers.ChoiceField(choices=["CARD", "BANK_TRANSFER", "CASH", "OTHER"])
     paid_at = serializers.DateTimeField(required=False)
     receipt_note = serializers.CharField(required=False, allow_blank=True, default="", max_length=300)

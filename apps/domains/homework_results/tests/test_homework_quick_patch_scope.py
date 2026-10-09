@@ -141,6 +141,62 @@ class HomeworkQuickPatchScopeTests(TestCase):
             ).exists()
         )
 
+    def test_score_inputs_reject_nonfinite_boolean_and_negative_without_changes(self):
+        score = HomeworkScore.objects.create(
+            homework=self.homework, session=self.session,
+            enrollment=self.assigned_enrollment, attempt_index=1,
+            score=80, max_score=100, passed=True, clinic_required=False,
+        )
+        before = HomeworkScore.objects.filter(pk=score.pk).values().get()
+        target = {
+            "session_id": self.session.id, "homework_id": self.homework.id,
+            "enrollment_id": self.assigned_enrollment.id,
+        }
+        for action in ("quick", "detail"):
+            for field in ("score", "max_score"):
+                for invalid in ("NaN", "Infinity", "-Infinity", "1e999", -1, True, False):
+                    with self.subTest(action=action, field=field, invalid=invalid):
+                        payload = {"score": 80, field: invalid}
+                        if action == "quick":
+                            response = self._quick_patch({**target, **payload}, expected_status=400)
+                        else:
+                            response = self._partial_update(score, payload, expected_status=400)
+                        self.assertIn(field, response.data)
+                        self.assertEqual(HomeworkScore.objects.filter(pk=score.pk).values().get(), before)
+
+    def test_invalid_new_score_creates_no_row_then_corrected_input_succeeds(self):
+        target = {
+            "session_id": self.session.id, "homework_id": self.homework.id,
+            "enrollment_id": self.assigned_enrollment.id,
+        }
+        self._quick_patch({**target, "score": "NaN"}, expected_status=400)
+        self.assertFalse(HomeworkScore.objects.exists())
+        response = self._quick_patch({**target, "score": "87.5"})
+        score = HomeworkScore.objects.get(pk=response.data["id"])
+        self.assertEqual((score.score, score.max_score), (87.5, 100))
+        self.assertEqual(HomeworkScore.objects.count(), 1)
+
+    def test_both_score_inputs_preserve_zero_decimal_and_ungraded(self):
+        target = {
+            "session_id": self.session.id, "homework_id": self.homework.id,
+            "enrollment_id": self.assigned_enrollment.id,
+        }
+        for value in (0, "87.5", 100, None):
+            with self.subTest(action="quick", value=value):
+                response = self._quick_patch({**target, "score": value})
+                score = HomeworkScore.objects.get(pk=response.data["id"])
+                expected = float(value) if value is not None else None
+                self.assertEqual(score.score, expected)
+                self.assertEqual(response.data["score"], expected)
+        for value in (0, "87.5", 100, None):
+            with self.subTest(action="detail", value=value):
+                response = self._partial_update(score, {"score": value})
+                score.refresh_from_db()
+                expected = float(value) if value is not None else None
+                self.assertEqual(score.score, expected)
+                self.assertEqual(response.data["score"], expected)
+        self.assertEqual(HomeworkScore.objects.count(), 1)
+
     def test_updates_existing_legacy_score_without_assignment(self):
         legacy_score = HomeworkScore.objects.create(
             homework=self.homework,

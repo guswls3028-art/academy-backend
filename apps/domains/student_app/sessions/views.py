@@ -27,10 +27,24 @@ def _parse_lecture_start_time(lecture_time_str: str) -> dt_time | None:
     """lecture_time CharField (예: '토 12:00 ~ 13:00')에서 시작 시각 추출."""
     if not lecture_time_str:
         return None
-    m = re.search(r"(\d{1,2}):(\d{2})", lecture_time_str)
+    m = re.search(r"(?<!\d)(\d{1,2}):(\d{2})(?!\d)", lecture_time_str)
     if m:
-        return dt_time(int(m.group(1)), int(m.group(2)))
+        try:
+            return dt_time(int(m.group(1)), int(m.group(2)))
+        except ValueError:
+            return None
     return None
+
+
+def _parse_schedule_item_id(value) -> int | None:
+    if isinstance(value, str):
+        value = value.strip()
+        if not re.fullmatch(r"-?[0-9]{1,19}", value):
+            return None
+        value = int(value)
+    if type(value) is not int or value == 0 or abs(value) > 2**63 - 1:
+        return None
+    return value
 
 
 class StudentSessionListView(APIView):
@@ -189,13 +203,9 @@ class StudentSessionHideView(APIView):
         if not tenant or student.tenant_id != getattr(tenant, "id", None):
             return Response({"detail": "Not found."}, status=404)
 
-        raw = request.data.get("id")
-        try:
-            target_id = int(raw)
-        except (TypeError, ValueError):
-            return Response({"detail": "id must be an integer."}, status=400)
-        if target_id == 0:
-            return Response({"detail": "id must be non-zero."}, status=400)
+        target_id = _parse_schedule_item_id(request.data.get("id"))
+        if target_id is None:
+            return Response({"detail": "id must be a non-zero integer."}, status=400)
 
         # 본인 소유 일정만 숨길 수 있도록 검증
         if target_id > 0:
@@ -237,11 +247,9 @@ class StudentSessionUnhideView(APIView):
         if not tenant or student.tenant_id != getattr(tenant, "id", None):
             return Response({"detail": "Not found."}, status=404)
 
-        raw = request.data.get("id")
-        try:
-            target_id = int(raw)
-        except (TypeError, ValueError):
-            return Response({"detail": "id must be an integer."}, status=400)
+        target_id = _parse_schedule_item_id(request.data.get("id"))
+        if target_id is None:
+            return Response({"detail": "id must be a non-zero integer."}, status=400)
 
         current = list(getattr(student, "schedule_hidden_ids", None) or [])
         if target_id in current:
