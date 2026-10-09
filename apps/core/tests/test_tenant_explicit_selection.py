@@ -112,11 +112,16 @@ class ExplicitTenantSelectionTests(TestCase):
         self.assertEqual(json.loads(response.content)["tenant"], self.selected.pk)
 
     def test_ambiguous_code_never_selects_an_arbitrary_tenant(self):
-        Tenant.objects.create(name="QA case collision", code=self.selected.code.upper())
-        self.assert_rejected(self.request(header=self.selected.code))
-        self.assert_rejected(self.request(path=f"/api/v1/landing-public/resources/?tenant={self.selected.code}"))
+        collision = Tenant.objects.create(name="QA case collision", code=self.selected.code.upper())
+        for active in (True, False):
+            collision.is_active = active
+            collision.save(update_fields=["is_active"])
+            for code in (self.selected.code, collision.code):
+                with self.subTest(active=active, code=code):
+                    self.assert_rejected(self.request(header=code))
+                    self.assert_rejected(self.request(path=f"/api/v1/landing-public/resources/?tenant={code}"))
 
-    def test_login_rejects_ambiguous_code_and_recovers_after_collision_is_inactive(self):
+    def test_login_rejects_ambiguous_code_and_recovers_after_collision_is_renamed(self):
         user = get_user_model().objects.create_user(
             username=user_internal_username(self.selected, "qa-admin"),
             password="qa-test-password",
@@ -137,6 +142,9 @@ class ExplicitTenantSelectionTests(TestCase):
         self.assertNotIn("access", rejected.data)
         collision.is_active = False
         collision.save(update_fields=["is_active"])
+        self.assertEqual(login().status_code, 400)
+        collision.code = "qa-distinct-code"
+        collision.save(update_fields=["code"])
         recovered = login()
         self.assertEqual(recovered.status_code, 200)
         self.assertIn("access", recovered.data)
