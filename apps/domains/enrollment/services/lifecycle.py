@@ -121,15 +121,23 @@ def delete_disposable_enrollment(*, tenant, enrollment_id: int, student_id: int)
     return impact
 
 
+def _validate_object_id(value, *, field_name: str) -> int:
+    if isinstance(value, str):
+        value = value.strip()
+        if not (value.isascii() and value.isdecimal() and len(value) <= 19):
+            raise ValidationError({"detail": f"{field_name} 값이 잘못되었습니다."})
+        value = int(value)
+    if type(value) is not int or not 1 <= value <= 2**63 - 1:
+        raise ValidationError({"detail": f"{field_name} 값이 잘못되었습니다."})
+    return value
+
+
 def _validate_id_list(value, *, field_name: str, allow_empty: bool = False) -> list[int]:
     if not isinstance(value, list) or (not allow_empty and not value):
         raise ValidationError({"detail": f"{field_name}(list)는 필수입니다"})
     if len(value) > 200:
         raise ValidationError({"detail": "최대 200건까지 일괄 처리할 수 있습니다."})
-    try:
-        return [int(v) for v in value]
-    except (TypeError, ValueError) as exc:
-        raise ValidationError({"detail": f"{field_name} 값이 잘못되었습니다."}) from exc
+    return [_validate_object_id(item, field_name=field_name) for item in value]
 
 
 def sync_enrollment_status_side_effects(
@@ -230,6 +238,7 @@ def bulk_create_enrollments(*, tenant, lecture_id, student_ids) -> list[Enrollme
     tenant = require_tenant(tenant)
     if not lecture_id:
         raise ValidationError({"detail": "lecture, students(list)는 필수입니다"})
+    lecture_id = _validate_object_id(lecture_id, field_name="lecture")
     student_ids = _validate_id_list(student_ids, field_name="students")
 
     lecture = enroll_repo.get_lecture_by_id_tenant(lecture_id, tenant)
@@ -274,6 +283,7 @@ def bulk_create_session_enrollments(*, tenant, session_id, enrollment_ids) -> li
     tenant = require_tenant(tenant)
     if not session_id:
         raise ValidationError({"detail": "session, enrollments(list)는 필수입니다"})
+    session_id = _validate_object_id(session_id, field_name="session")
     enrollment_ids = _validate_id_list(enrollment_ids, field_name="enrollments", allow_empty=True)
 
     session = enroll_repo.get_session_by_id_with_lecture(session_id)
