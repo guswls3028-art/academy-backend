@@ -46,6 +46,24 @@ def submission_filter_tenant(tenant):
     return Submission.objects.filter(tenant=tenant)
 
 
+def annotate_submission_discarded(queryset):
+    """Match the inbox's isinstance(meta['discarded'], dict) in the database."""
+    from django.db.models import BooleanField, F, Func, Value
+    from django.db.models.functions import Coalesce
+
+    class DiscardedObject(Func):
+        output_field = BooleanField()
+        arity = 1
+        template = "(jsonb_typeof(%(expressions)s -> 'discarded') = 'object')"
+
+        def as_sqlite(self, compiler, connection, **extra_context):
+            return self.as_sql(compiler, connection,
+                               template="(json_type(%(expressions)s, '$.discarded') = 'object')",
+                               **extra_context)
+
+    return queryset.annotate(_inbox_discarded=Coalesce(DiscardedObject(F("meta")), Value(False)))
+
+
 def get_submission_tenant_id(submission_id: int) -> int | None:
     from apps.domains.submissions.models import Submission
 

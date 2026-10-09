@@ -6,6 +6,8 @@ from typing import Any, Dict, Optional
 
 from datetime import timedelta
 
+from django.core.paginator import Paginator
+from django.db.models import Count, Q
 from django.utils import timezone
 
 from drf_spectacular.utils import extend_schema
@@ -19,6 +21,7 @@ from academy.adapters.db.django import repositories_exams as exams_repo
 from academy.adapters.db.django import repositories_homework as homework_repo
 from academy.adapters.db.django import repositories_submissions as submissions_repo
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.api.common.query_params import parse_query_int
 from apps.infrastructure.storage.r2 import generate_presigned_get_url
 
 
@@ -56,6 +59,19 @@ class PendingSubmissionPreviewResponseSerializer(serializers.Serializer):
     url = serializers.URLField()
 
 
+class PendingInboxQuerySerializer(serializers.Serializer):
+    page = serializers.IntegerField(min_value=1, max_value=1_000_000, default=1)
+    page_size = serializers.IntegerField(min_value=1, max_value=200, default=50)
+    filter = serializers.ChoiceField(choices=("all", "pending", "done", "failed"), default="all")
+    failed_type = serializers.ChoiceField(choices=("all", "real_failed", "discarded"), default="all")
+
+    def to_internal_value(self, data):
+        values = data.copy()
+        values["page"] = parse_query_int(data, "page", default=1, min_value=1, max_value=1_000_000)
+        values["page_size"] = parse_query_int(data, "page_size", default=50, min_value=1, max_value=200)
+        return super().to_internal_value(values)
+
+
 class PendingSubmissionsView(APIView):
     """
     GET /api/v1/submissions/submissions/pending/
@@ -71,34 +87,50 @@ class PendingSubmissionsView(APIView):
 
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(parameters=[PendingInboxQuerySerializer])
     def get(self, request):
         tenant = getattr(request, "tenant", None)
         if not tenant:
-            return Response([], status=200)
+            return Response({"detail": "tenant required"}, status=403)
 
-        filter_mode = request.query_params.get("filter", "all")
+        query = PendingInboxQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        params = query.validated_data
+        filter_mode = params["filter"]
+        paginated = "page" in request.query_params or "page_size" in request.query_params
         now = timezone.now()
 
-        # ── Build queryset ──────────────────────────────────────
-        if filter_mode == "pending":
-            qs = submissions_repo.submission_filter_tenant(tenant).filter(status__in=PENDING_STATUSES)
-        else:
-            # 'all' (default): pending + terminal from last 24h
-            from django.db.models import Q
-
-            cutoff = now - timedelta(hours=24)
-            qs = submissions_repo.submission_filter_tenant(tenant).filter(
-                Q(status__in=PENDING_STATUSES)
-                | Q(status__in=TERMINAL_STATUSES, created_at__gte=cutoff)
+        # The inbox keeps active work regardless of age, and recent terminal work.
+        # Filter before slicing so an old pending item or sparse done/failed tab
+        # cannot disappear behind the latest 200 unrelated submissions.
+        cutoff = now - timedelta(hours=24)
+        qs = submissions_repo.submission_filter_tenant(tenant).filter(
+            Q(status__in=PENDING_STATUSES)
+            | Q(status__in=TERMINAL_STATUSES, created_at__gte=cutoff)
+        ).exclude(target_type=SUBMISSION_TARGET_HOMEWORK)
+        qs = submissions_repo.annotate_submission_discarded(qs)
+        summary = None
+        if paginated:
+            summary = qs.filter(status=SUBMISSION_STATUS_FAILED).aggregate(
+                failed=Count("pk"), discarded=Count("pk", filter=Q(_inbox_discarded=True)),
+                real_failed=Count("pk", filter=Q(_inbox_discarded=False)),
             )
-
-        # Homework photos and videos are teacher-reviewed in the homework detail.
-        # Do not expose the unfinished automatic checker as a processing queue.
-        qs = qs.exclude(target_type=SUBMISSION_TARGET_HOMEWORK)
-
-        submissions = list(qs.order_by("-created_at")[:200])
-        if not submissions:
-            return Response([], status=200)
+        if filter_mode == "pending":
+            qs = qs.filter(status__in=PENDING_STATUSES)
+        elif filter_mode == "done":
+            qs = qs.filter(status=SUBMISSION_STATUS_DONE)
+        elif filter_mode == "failed":
+            qs = qs.filter(status=SUBMISSION_STATUS_FAILED)
+            if params["failed_type"] != "all":
+                qs = qs.filter(_inbox_discarded=params["failed_type"] == "discarded")
+        qs = qs.order_by("-created_at", "-id")
+        page = None
+        if paginated:
+            paginator = Paginator(qs, params["page_size"])
+            page = paginator.page(min(params["page"], paginator.num_pages))
+            submissions = list(page.object_list)
+        else:
+            submissions = list(qs[:200])
 
         # ── Batch-collect IDs for efficient lookups ─────────────
         enrollment_ids: set[int] = set()
@@ -221,6 +253,12 @@ class PendingSubmissionsView(APIView):
                 }
             )
 
+        if page is not None:
+            return Response({
+                "results": items, "count": page.paginator.count, "page": page.number,
+                "page_size": page.paginator.per_page, "pages": page.paginator.num_pages,
+                "has_next": page.has_next(), "has_previous": page.has_previous(), "summary": summary,
+            })
         return Response(items, status=200)
 
 

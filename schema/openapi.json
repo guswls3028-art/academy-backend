@@ -50963,6 +50963,59 @@
       "get": {
         "description": "GET /api/v1/submissions/submissions/pending/\n\nAdmin submissions inbox — lists pending/recent submissions with resolved\ncontext (student name, target title, lecture/session info).\n\nQuery params:\n  ?filter=pending  — only actively-processing submissions\n  ?filter=all      — pending + terminal (done/failed) from last 24h\n  (default)        — same as 'all'",
         "operationId": "submissions_submissions_pending_retrieve",
+        "parameters": [
+          {
+            "description": "* `all` - all\n* `real_failed` - real_failed\n* `discarded` - discarded",
+            "in": "query",
+            "name": "failed_type",
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "real_failed",
+                "discarded"
+              ],
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "* `all` - all\n* `pending` - pending\n* `done` - done\n* `failed` - failed",
+            "in": "query",
+            "name": "filter",
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "pending",
+                "done",
+                "failed"
+              ],
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "default": 1,
+              "maximum": 1000000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "No response body"
