@@ -32,9 +32,25 @@ API·AI·Video APT, Tools의 문서 변환기 설치 뒤 실행하며 Messaging�
 arm64 native CI에서도 실행한다. wheel에 포함된 다른 구현의 안전성은 이 검사의
 범위가 아니며 기존 DB·문서·영상 실사용과 모든 출시 게이트가 별도로 필요하다.
 
-**이 변경은 새 High 예외를 추가하지 않는다.** 현재 후보 승격 보류는 이 검사
-추가만으로 해제되지 않는다. 최신 전체 후보 scan과 실제 런타임 증거를 검토하기
-전에는 학원 선택/직원 후속 변경을 운영 반영으로 기록하지 않는다.
+### 실제 arm64 확인과 정확한 identity의 한시 검토
+
+`student-domain-20261009-01a10bcb` release owner는 사용자의 Academy 운영 위임 범위에서
+2026-10-09에 이 identity를 개별 검토했다. [arm64 CI job113655196989](https://github.com/guswls3028-art/academy-backend/actions/runs/37879336666/job/113655196989)는
+소스 `118980b07dd990b18bd428f059061c2e01f8c2c9`의 실제 빌드와 최종 실행에서
+core/DB 패키지 두 개, mechanism `EXTERNAL` 하나, DIGEST-MD5 시작 결과 `-4`를
+각각 확인했다. 모의 객체 테스트나 파일명 검사만으로 내린 판단이 아니다.
+
+이 증거와 모든 최종 이미지의 같은 빌드 검사를 조건으로 위의 exact
+`CVE/package/version` 하나를 여섯 governed repository에서 **2026-10-10 UTC 종료**까지
+한시적으로 수용한다. `ecr-high-risk-baseline.json`은 이 정확한 identity와 기존 GCC
+두 identity만 허용하며, 기존 GCC의 2026-10-09 만료는 연장하지 않는다. 같은 source의
+다른 버전·새 CVE·Critical·새 플러그인 구성은 계속 차단한다. 앱이나 vendor package가
+전반적으로 안전하거나 취약점이 수정됐다는 주장은 하지 않는다.
+
+운영 승격은 새 소스의 여섯 신선한 COMPLETE scan, 해당 이미지 빌드 검증,
+격리 development·preprod·임시 인스턴스 종료 및 기존 continuity 게이트를 모두
+통과해야 한다. 이전 실패 후보를 예외 적용만으로 재승격하지 않으며, 정확한 새
+소스/manifest/runtime 확인 전에는 학원 선택·직원 수정의 운영 완료로 집계하지 않는다.
 
 ## 2026-10-07 TIFF 후보 차단과 수정 릴리스
 
