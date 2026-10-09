@@ -1,6 +1,7 @@
 # PATH: apps/domains/students/views/password_views.py
 
 import logging
+from collections.abc import Mapping
 
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
@@ -93,6 +94,15 @@ class StudentPasswordResetSendView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "Tenant를 확인할 수 없습니다."}, status=400)
+
+        if not isinstance(request.data, Mapping) or any(
+            request.data.get(field) is not None and not isinstance(request.data[field], str)
+            for field in (
+                "target", "student_name", "student_ps_number",
+                "student_phone", "parent_phone", "temp_password",
+            )
+        ):
+            return Response({"detail": "대상과 계정 복구 정보를 문자열로 입력해 주세요."}, status=400)
 
         target = (request.data.get("target") or "").strip().lower()
         student_name = (request.data.get("student_name") or "").strip()

@@ -1,6 +1,7 @@
 # PATH: apps/domains/students/views/credential_views.py
 
 import logging
+from collections.abc import Mapping
 
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
@@ -30,6 +31,12 @@ class SendExistingCredentialsView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "Tenant를 확인할 수 없습니다."}, status=400)
+
+        if not isinstance(request.data, Mapping) or any(
+            request.data.get(field) is not None and not isinstance(request.data[field], str)
+            for field in ("phone", "name")
+        ):
+            return Response({"detail": "이름과 전화번호를 문자열로 입력해 주세요."}, status=400)
 
         phone = _normalize_phone_for_reset(request.data.get("phone") or "")
         name = (request.data.get("name") or "").strip()

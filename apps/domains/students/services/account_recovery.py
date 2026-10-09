@@ -62,6 +62,8 @@ def normalize_recovery_phone(value: object) -> str:
 
 
 def validate_recovery_payload(*, mode: str, target: str, name: str, phone: str) -> tuple[str, str, str, str]:
+    if any(value is not None and not isinstance(value, str) for value in (mode, target, name, phone)):
+        raise AccountRecoveryValidationError("복구 유형, 대상, 이름과 전화번호는 문자열로 입력해 주세요.")
     mode = str(mode or "").strip().lower()
     target = str(target or "").strip().lower()
     name = str(name or "").strip()
