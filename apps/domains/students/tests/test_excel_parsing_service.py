@@ -153,7 +153,7 @@ def test_numeric_contacts_and_explicit_school_type_survive_real_workbook(tmp_pat
     assert rows[0]["grade"] == "6"
 
 
-@pytest.mark.parametrize("bad_phone", ["0101234567", "오타", "abc01012345678", "010123456789", "010１２３４５６７８"])
+@pytest.mark.parametrize("bad_phone", [0, False, "0101234567", "오타", "abc01012345678", "010123456789", "010１２３４５６７８"])
 def test_malformed_student_contact_is_reported_without_creating_phone_less_row(tmp_path, bad_phone):
     path = tmp_path / "mixed-contacts.xlsx"
     wb = Workbook()

@@ -12,6 +12,7 @@ row-level student decision.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
@@ -87,11 +88,14 @@ def _digits(value: Any) -> str:
 
 
 def _valid_student_phone(value: Any) -> str | None:
-    if not str(value or "").strip():
+    text = "" if value is None else str(value).strip()
+    if not text:
         return None
+    if not re.fullmatch(r"[0-9\s.()-]+", text):
+        raise StudentImportRowError("학생 전화번호는 비우거나 010 포함 11자리로 입력해 주세요.")
     try:
         return normalize_student_phone(
-            value,
+            text,
             required=False,
             field_name="phone",
             field_label="학생 전화번호",
@@ -102,9 +106,12 @@ def _valid_student_phone(value: Any) -> str | None:
 
 
 def _valid_parent_phone(value: Any) -> str:
+    text = "" if value is None else str(value).strip()
+    if text and not re.fullmatch(r"[0-9\s.()-]+", text):
+        raise StudentImportRowError("학부모 전화번호는 010XXXXXXXX 11자리여야 합니다.")
     try:
         phone = normalize_student_phone(
-            value,
+            text,
             required=True,
             field_name="parent_phone",
             field_label="학부모 전화번호",
@@ -168,8 +175,10 @@ def _normalize_import_row(
     if not name:
         raise StudentImportRowError("학생 이름은 필수입니다.")
 
-    parent_phone = _valid_parent_phone(raw.get("parent_phone") or raw.get("parentPhone"))
-    phone = _valid_student_phone(raw.get("phone") or raw.get("studentPhone"))
+    parent_value = raw.get("parent_phone")
+    student_value = raw.get("phone")
+    parent_phone = _valid_parent_phone(raw.get("parentPhone") if parent_value in (None, "") else parent_value)
+    phone = _valid_student_phone(raw.get("studentPhone") if student_value in (None, "") else student_value)
     phone = canonical_student_phone(phone=phone, parent_phone=parent_phone)
 
     school_val = str(raw.get("school") or "").strip() or None

@@ -390,7 +390,8 @@ def _select_worksheet_rows(workbook) -> tuple[list[list[Any]], str]:
 def _cell_str(row: list[Any], col_index: int | None) -> str:
     if col_index is None or col_index >= len(row):
         return ""
-    return str(row[col_index] or "").strip()
+    value = row[col_index]
+    return "" if value is None else str(value).strip()
 
 
 def _is_known_template_example_row(
