@@ -72,7 +72,14 @@ Tools는 headless 파일 변환을 위해 CUPS 클라이언트 라이브러리�
 검증 조건은 upstream library unit tests, 기존 ELF symbol 보존, OpenSSL 실제 연결,
 옵션 API 정상/없는 값 처리, GnuTLS 패키지 의존·물리 라이브러리 부재, 한글 DOCX→PDF의
 실제 텍스트 보존이다. 기존 개발 Excel/PPT/R2·preprod·여섯 이미지 scan·운영 게이트도
-유지한다. 이 후속은 아직 이미지 검증 전이며 운영 완료로 집계하지 않는다.
+유지한다. `aa5f3eccc` 전체 필수 CI와 실제 ARM base 검사는 통과했다. 후보
+[run37969236636](https://github.com/guswls3028-art/academy-backend/actions/runs/37969236636)의
+Tools 빌드에서 upstream library tests·원래 ELF symbol·실제 OpenSSL 연결·옵션 API·
+GnuTLS 물리 부재가 통과했다. 그러나 실제 DOCX→PDF 내용 비교가 실패해 전체 후보는
+중단됐다. 글자 누락과 추출 형식 차이는 아직 구별되지 않았으므로 비교 조건은
+그대로 유지한다. 실패 때 고정 합성 문서의 페이지 수·추출 텍스트·PDF를 빌드 로그에
+보존하여 원인을 확인한다. 사용자 문서를 받는 검증기가 아니며, 이 실패를 운영
+수정 완료나 새 스캔 성공으로 집계하지 않는다.
 
 ## 2026-10-09 GCC 예외 종료
 

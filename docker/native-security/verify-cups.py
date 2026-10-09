@@ -1,6 +1,7 @@
 """Verify the installed CUPS TLS implementation and real headless conversion."""
 
 import argparse
+import base64
 import ctypes
 from pathlib import Path
 import subprocess
@@ -72,9 +73,18 @@ def verify_office():
             timeout=90,
             capture_output=True,
         )
-        with fitz.open(root / "sample.pdf") as document:
+        pdf_path = root / "sample.pdf"
+        with fitz.open(pdf_path) as document:
             text = "".join(page.get_text() for page in document)
             if document.page_count != 1 or "Academy document conversion" not in text or "수업 분석 자료" not in text:
+                # This document is generated above from fixed synthetic text.
+                # Keep the actual output available when an image build fails,
+                # so rendering and extraction defects can be distinguished.
+                print(f"CUPS_OFFICE_CONTENT: pages={document.page_count} text={text!r}", flush=True)
+                if pdf_path.is_file():
+                    print(
+                        "CUPS_OFFICE_PDF_BASE64=" + base64.b64encode(pdf_path.read_bytes()).decode("ascii"), flush=True
+                    )
                 raise RuntimeError("Office conversion lost the document content")
     print("CUPS_OPENSSL_OFFICE_PDF_PASS")
 
