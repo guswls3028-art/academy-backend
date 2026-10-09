@@ -244,6 +244,114 @@ class StudentSessionTenantIsolationTests(TestCase):
         self.assertIn(active_session.id, recent_session_ids)
         self.assertNotIn(inactive_session.id, recent_session_ids)
 
+    def test_attendance_summary_rejects_inconsistent_tenant_and_lecture_links(self):
+        Attendance = django_apps.get_model("attendance", "Attendance")
+        own_enrollment = self._enroll_student_a()
+        own_session = _create_session(self.lecture_a, title="Valid attendance")
+        SessionEnrollment.objects.create(
+            tenant=self.tenant_a, enrollment=own_enrollment, session=own_session,
+        )
+        Attendance.objects.create(
+            tenant=self.tenant_a, enrollment=own_enrollment,
+            session=own_session, status="PRESENT",
+        )
+        foreign_enrollment = Enrollment.objects.create(
+            tenant=self.tenant_b, student=self.student_a,
+            lecture=self.lecture_a, status="ACTIVE",
+        )
+        other_lecture = _create_lecture(self.tenant_a, "Unrelated own lecture")
+        cases = (
+            ("foreign session lecture", own_enrollment, _create_session(self.lecture_b)),
+            ("foreign enrollment tenant", foreign_enrollment, own_session),
+            ("different own lecture", own_enrollment, _create_session(other_lecture)),
+        )
+        for name, enrollment, session in cases:
+            with self.subTest(name=name):
+                invalid = Attendance.objects.create(
+                    tenant=self.tenant_a, enrollment=enrollment,
+                    session=session, status="ABSENT",
+                )
+                try:
+                    response = StudentAttendanceSummaryView().get(_request(self.user_a, self.tenant_a))
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.data["summary"]["total"], 1)
+                    self.assertEqual(response.data["summary"]["present"], 1)
+                    self.assertEqual(response.data["summary"]["absent"], 0)
+                    self.assertEqual([row["session_id"] for row in response.data["recent"]], [own_session.id])
+                    self.assertTrue(response.data["recent"][0]["can_view_session"])
+                    self.assertEqual(Attendance.objects.count(), 2)
+                finally:
+                    invalid.delete()
+
+    def test_session_detail_and_hide_require_matching_membership_tenant_and_lecture(self):
+        enrollment = self._enroll_student_a()
+        own_session = _create_session(self.lecture_a, title="Own session")
+        other_lecture = _create_lecture(self.tenant_a, "Unregistered own lecture")
+        other_session = _create_session(other_lecture)
+        for name, tenant, session in (
+            ("foreign membership tenant", self.tenant_b, own_session),
+            ("unregistered lecture", self.tenant_a, other_session),
+        ):
+            with self.subTest(name=name):
+                membership = SessionEnrollment.objects.create(
+                    tenant=tenant, enrollment=enrollment, session=session,
+                )
+                try:
+                    detail_response = StudentSessionDetailView().get(
+                        _request(self.user_a, self.tenant_a), session.id,
+                    )
+                    hide_response = StudentSessionHideView().post(
+                        _request(self.user_a, self.tenant_a, {"id": session.id}),
+                    )
+                    self.assertEqual(detail_response.status_code, 404)
+                    self.assertEqual(hide_response.status_code, 404)
+                    self.student_a.refresh_from_db()
+                    self.assertEqual(self.student_a.schedule_hidden_ids, [])
+                finally:
+                    membership.delete()
+
+        SessionEnrollment.objects.create(
+            tenant=self.tenant_a, enrollment=enrollment, session=own_session,
+        )
+        self.assertEqual(StudentSessionDetailView().get(
+            _request(self.user_a, self.tenant_a), own_session.id,
+        ).status_code, 200)
+        self.assertEqual(StudentSessionHideView().post(
+            _request(self.user_a, self.tenant_a, {"id": own_session.id}),
+        ).status_code, 200)
+        self.student_a.refresh_from_db()
+        self.assertEqual(self.student_a.schedule_hidden_ids, [own_session.id])
+
+    def test_attendance_summary_preserves_valid_ended_lecture_history(self):
+        Attendance = django_apps.get_model("attendance", "Attendance")
+        enrollment = self._enroll_student_a()
+        session = _create_session(self.lecture_a, title="Past attendance")
+        SessionEnrollment.objects.create(
+            tenant=self.tenant_a, enrollment=enrollment, session=session,
+        )
+        Attendance.objects.create(
+            tenant=self.tenant_a, enrollment=enrollment, session=session, status="LATE",
+        )
+        self.lecture_a.is_active = False
+        self.lecture_a.save(update_fields=["is_active", "updated_at"])
+        response = StudentAttendanceSummaryView().get(_request(self.user_a, self.tenant_a))
+        self.assertEqual(response.data["summary"]["total"], 1)
+        self.assertEqual(response.data["summary"]["late"], 1)
+        self.assertEqual([row["session_id"] for row in response.data["recent"]], [session.id])
+        self.assertFalse(response.data["recent"][0]["can_view_session"])
+
+    def test_withdrawn_session_attendance_remains_readable_without_detail_access(self):
+        Attendance = django_apps.get_model("attendance", "Attendance")
+        enrollment = self._enroll_student_a()
+        session = _create_session(self.lecture_a)
+        Attendance.objects.create(
+            tenant=self.tenant_a, enrollment=enrollment, session=session, status="SECESSION",
+        )
+        response = StudentAttendanceSummaryView().get(_request(self.user_a, self.tenant_a))
+        self.assertEqual(response.data["summary"]["total"], 1)
+        self.assertEqual(response.data["recent"][0]["status"], "SECESSION")
+        self.assertFalse(response.data["recent"][0]["can_view_session"])
+
     def test_clear_past_does_not_keep_cross_tenant_future_hidden_session_ids(self):
         tomorrow = timezone.localdate() + timedelta(days=1)
         own_session = _create_session(

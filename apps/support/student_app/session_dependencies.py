@@ -128,6 +128,7 @@ def student_owns_session(*, student: Any, tenant: Any, session_id: Any) -> bool:
     from apps.domains.enrollment.models import SessionEnrollment
 
     return SessionEnrollment.objects.filter(
+        tenant=tenant,
         enrollment__student=student,
         enrollment__tenant=tenant,
         enrollment__status="ACTIVE",
@@ -135,6 +136,7 @@ def student_owns_session(*, student: Any, tenant: Any, session_id: Any) -> bool:
         session__lecture__tenant=tenant,
         session__lecture__is_active=True,
         session_id=session_id,
+        enrollment__lecture_id=F("session__lecture_id"),
     ).exists()
 
 
@@ -159,8 +161,12 @@ def get_student_attendance_payload(*, student: Any, tenant: Any) -> tuple[dict, 
     attendances = Attendance.objects.filter(
         tenant=tenant,
         enrollment__student=student,
+        enrollment__tenant=tenant,
+        enrollment__lecture__tenant=tenant,
         enrollment__status="ACTIVE",
         enrollment__student__deleted_at__isnull=True,
+        session__lecture__tenant=tenant,
+        enrollment__lecture_id=F("session__lecture_id"),
     )
     aggregate = attendances.aggregate(
         total=Count("id"),
@@ -171,6 +177,7 @@ def get_student_attendance_payload(*, student: Any, tenant: Any) -> tuple[dict, 
         runaway=Count("id", filter=Q(status="RUNAWAY")),
     )
 
+    accessible_session_ids = set(get_active_student_session_ids(student=student, tenant=tenant))
     recent = []
     for attendance in (
         attendances
@@ -186,6 +193,7 @@ def get_student_attendance_payload(*, student: Any, tenant: Any) -> tuple[dict, 
             "session_title": session.title or session.display_label,
             "date": session.date.isoformat() if session.date else None,
             "status": attendance.status,
+            "can_view_session": session.id in accessible_session_ids,
         })
 
     return {
