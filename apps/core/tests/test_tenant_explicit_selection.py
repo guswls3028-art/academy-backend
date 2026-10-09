@@ -1,11 +1,13 @@
 import json
 
+from django.contrib.auth import get_user_model
 from django.http import JsonResponse
 from django.test import RequestFactory, TestCase, override_settings
 from rest_framework.test import APIClient
 
 from apps.core.middleware.tenant import TenantMiddleware
-from apps.core.models import Tenant, TenantDomain
+from apps.core.models import Tenant, TenantDomain, TenantMembership
+from apps.core.models.user import user_internal_username
 from apps.core.tenant.context import get_current_tenant
 
 
@@ -108,6 +110,36 @@ class ExplicitTenantSelectionTests(TestCase):
         response = self.request(host="qa.elb.amazonaws.com", header=self.selected.code)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content)["tenant"], self.selected.pk)
+
+    def test_ambiguous_code_never_selects_an_arbitrary_tenant(self):
+        Tenant.objects.create(name="QA case collision", code=self.selected.code.upper())
+        self.assert_rejected(self.request(header=self.selected.code))
+        self.assert_rejected(self.request(path=f"/api/v1/landing-public/resources/?tenant={self.selected.code}"))
+
+    def test_login_rejects_ambiguous_code_and_recovers_after_collision_is_inactive(self):
+        user = get_user_model().objects.create_user(
+            username=user_internal_username(self.selected, "qa-admin"),
+            password="qa-test-password",
+            tenant=self.selected,
+            must_change_password=False,
+        )
+        TenantMembership.ensure_active(tenant=self.selected, user=user, role="admin")
+        client = APIClient()
+        payload = {"username": "qa-admin", "password": "qa-test-password", "tenant_code": self.selected.code}
+
+        def login():
+            return client.post("/api/v1/token/", payload, format="json", HTTP_HOST="api.hakwonplus.com")
+
+        self.assertEqual(login().status_code, 200)
+        collision = Tenant.objects.create(name="QA case collision", code=self.selected.code.upper())
+        rejected = login()
+        self.assertEqual(rejected.status_code, 400)
+        self.assertNotIn("access", rejected.data)
+        collision.is_active = False
+        collision.save(update_fields=["is_active"])
+        recovered = login()
+        self.assertEqual(recovered.status_code, 200)
+        self.assertIn("access", recovered.data)
 
     def test_program_api_returns_selected_brand_and_rejects_invalid_selection(self):
         program = self.selected.program
