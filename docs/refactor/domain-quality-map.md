@@ -3,7 +3,8 @@
 - 요청: 2026-10-09 KST, 사용자가 모든 도메인의 숨은 버그·업무 결함을 순서대로 점검·수정하도록 위임.
 - 추가 요청: 2026-10-10 KST, 전체 진행 승인을 재확인하고 기능을 찾기 어렵다는 사용자 평가에 따라 발견성·초심자 동선을 모든 도메인의 공통 점검 항목으로 추가했다.
 - 실행 소유: `student-domain-20261009-01a10bcb`. 전체 실행 순서는 [PLAN](../PLAN.md), 현재 제품 정책은 각 도메인 정본이 소유한다.
-- 단계: **22개 도메인 구조 분류·기록된 수정 운영 확인 / PR726 기능 발견성 운영 완료 / 학생 삭제·복원 후속 보안 릴리스는 문서 변환 검증으로 차단**. Kerberos 후보의 새 스캔은 통과했으며 새로운 실패는 별도로 보존한다. 완료 판정은 증거가 있는 하위 동선에만 적용한다.
+- 단계: **22개 도메인 구조 분류·기록된 수정 운영 확인 / PR726 기능 발견성 운영 완료 / 학생 삭제·복원 후속 및 보안 수정 운영 완료**. 최종 후보는 Kerberos·CUPS 보안 검사와 실제 한글 PDF 변환을 통과했으며 이전 실패 증거는 별도로 보존한다. 완료 판정은 증거가 있는 하위 동선에만 적용한다.
+- 최신 운영 묶음: backend `3a55a3b65983a5b8831178b2e5835412e3952777`/run37979753832, frontend `81ebe997df816e951db3201cde65f54aa57929fd`/run37966598131. 두 공식 실행 전체 성공, 성공 manifest·잠금 해제·hakwonplus/godmin/tchul 버전 대조 통과.
 - 구조 기준: backend `58589aaae21b5051e5054e4a1c7a9c7234b93def`, frontend `a3290e20062a3acd5de9b3582400e7ebe82e629e`.
 
 ## 범위와 누락 확인
@@ -190,8 +191,8 @@
   전체 성공했다. 화면 운영 확인 후 같은 tree의 main `a931f3f9e`로 병합했고
   [run37946734823](https://github.com/guswls3028-art/academy-backend/actions/runs/37946734823)의
   이미지 검사에서 새 `CVE-2026-107778 / krb5 / 1.21.3-5+deb13u1` High가
-  발견돼 **개발/운영 진입 전 차단**됐다. 공유 잠금 해제를 확인했고 현재 운영 서버는
-  `0e4f6a21e`를 유지한다. 화면 canary의 고정 개발 기준선도 바꾸지 않았다.
+  발견돼 **개발/운영 진입 전 차단**됐다. 해당 실패 시점에는 공유 잠금 해제와
+  운영 `0e4f6a21e` 유지를 확인했고 화면 canary의 고정 개발 기준선도 바꾸지 않았다.
   후속 소유 `domain-krb5-security-20261010-01a10bcb`의
   [PR614](https://github.com/guswls3028-art/academy-backend/pull/614)는 기존 Debian
   소스와 실제 버전을 유지한 upstream 수정 후보다. 로컬 oracle/보안 게이트
@@ -210,9 +211,35 @@
   PostgreSQL 6,493/skip5, 실제 ARM base 포함). 후속 후보 run37969236636의 실제 ARM
   Tools에서 CUPS library tests·원래 ELF symbol·OpenSSL 연결·옵션 API·GnuTLS 물리
   부재까지 통과했지만, 한글 DOCX→PDF 내용 비교에서 실패해 전체 후보는 중단됐다.
-  `2f91a0391`은 비교 조건을 유지하고 합성 PDF·추출 결과를 보존하는 진단 후속이다.
-  원본 누락과 추출 형식 차이는 아직 미확인이다. 기존 원격 Codespace는 billing 402로
-  시작되지 않아 공식 CI에서 계속 진단한다. 새 전체 이미지 스캔/배포는 미완료다.
+  `2f91a0391` 전체 필수 CI 후 후보 run37973395491에서 실제 PDF를 확보했다.
+  Poppler 렌더링은 한글·띄어쓰기가 정상이며 PyMuPDF 1.25.3이 공백을 별도 줄로
+  추출해 검증기가 오판한 것이었다. `9d646893e`는 한글 공백 표현만 정규화하고
+  글자·순서·영문 문장·1쪽 조건을 보존한다. 같은 추출 결과를 재현한 red 1건을
+  고친 뒤 12건과 실제 ARM PDF의 내용 재검증이 통과했다. 기존 원격 Codespace는
+  billing 402로 시작되지 않았고 정지 상태를 재확인했다. `9d646893e` 전체 CI
+  run37975163370은 SQLite 6,252/skip223, PostgreSQL 6,498/skip5 및 실제 ARM
+  base가 통과했다. 최종 후보 run37977520609는 5개 이미지 빌드·새 보안 스캔과
+  실제 ARM Tools의 한글 DOCX→PDF 검증, 완전한 후보 영수증 생성까지 모두 성공했다.
+  공식 QA 최종 승인 6969082999와 complete=true 영수증을 확인했고 PR614는
+  `3a55a3b65983a5b8831178b2e5835412e3952777`로 정상 병합했다.
+  [공식 릴리스 run37979753832](https://github.com/guswls3028-art/academy-backend/actions/runs/37979753832)의
+  여섯 이미지 새 보안 검사와 격리 개발의 Excel/PPT/한글 문서/R2 실사용을 통과했다.
+  개발 active instance는 `i-0a8a7f01ec8fafd23`이며 API/Tools/AI 모두 같은 릴리스다.
+  preprod는 운영 DB 접근 거부, 120건 부하 오류 0(p95 41.2ms/p99 46.6ms),
+  CDN master/variant/segment 200/200/206과 `i-0630481663ea63680` 종료를 확인했다.
+  정확한 실행의 공식 production 승인 `6969955772` 뒤 migration, warm baseline을
+  유지한 워커 교체, API 건강 기반 교체, 실제 runtime digest/학생 영상 체인,
+  성공 manifest와 공유 잠금 해제까지 전체 성공했다. 이전 개발 인스턴스
+  `i-0683d49cde082257b`도 terminated로 재조회했다. 화면 `81ebe997d`
+  run37966598131과 hakwonplus/godmin/tchul의 공식 배포 묶음 검사도 통과했다.
+  **PR613 학생 일괄 처리와 PR614 보안 수정 운영 완료**다. 미검증 하위 동선은
+  이 결과와 구분한다.
+  앞선 run37957602402 attempt3의 소유 QA 이미지 태그 5개는 다른 참조와
+  운영 digest 불일치를 확인해 정리했고, 태그 잔여 0·운영 digest 보존을 재조회했다.
+  최종 성공 후보 run37977520609의 소유 QA 태그 5개도 운영 반영 후 정확한
+  repository/tag/digest·다른 참조 부재를 확인해 정리했다. 각 태그 잔여 0과
+  현재 운영 latest digest 보존을 각각 재조회했다. 진단용 공개 Office archive
+  208,175,884바이트도 SHA256 증거를 남기고 정리했으며 실제 PDF·로그는 보존했다.
   [보안 정본](../operations/container-image-security.md)의 통과 조건을
   유지하고 새 예외 추가·기존 상한/기한 완화로 통과시키지 않는다.
 
@@ -221,9 +248,9 @@
 코드가 안 바뀐 정상 동선도 검사 조건·버전·증거 없이 완료로 표시하지 않는다.
 재현되지 않은 의심은 후보로 남기며, 실패를 지우거나 테스트를 느슨하게 만들어 완료하지 않는다.
 
-| 항목 | 2026-10-09 현재 증거 | 다음 행동 |
+| 항목 | 2026-10-10까지 확인한 증거 | 다음 행동 |
 |---|---|---|
-| D01 학생 상세·학생별 기록 | backend [PR599](https://github.com/guswls3028-art/academy-backend/pull/599) `bf23b8f56704c56826bdfa46445ea795a45135be`, frontend [PR715](https://github.com/guswls3028-art/academy-frontend/pull/715)·[PR716](https://github.com/guswls3028-art/academy-frontend/pull/716) `a9cd3567ad0ef71facc82b9abac97993715c8ff8` 운영 반영. [frontend run37872808381](https://github.com/guswls3028-art/academy-frontend/actions/runs/37872808381) 동일 빌드 실사용 27건(생략·재시도 0), 양쪽 cleanup tenant/user 0, 운영 읽기 검증 통과. 서버·화면 배포 묶음 검사와 3개 운영 도메인 버전 일치. 배포 정적 자산+합성 API로 1366/1100/390px, 메모 저장→reload 확인, 예외/가로 넘침/예상 밖 업무 요청 0 | 해당 상세 동선 운영 확인 완료. 등록·일괄 업로드·삭제/복원 등 D01의 나머지 동선은 별도 점검 필요 |
+| D01 학생 상세·학생별 기록 | backend [PR599](https://github.com/guswls3028-art/academy-backend/pull/599) `bf23b8f56704c56826bdfa46445ea795a45135be`, frontend [PR715](https://github.com/guswls3028-art/academy-frontend/pull/715)·[PR716](https://github.com/guswls3028-art/academy-frontend/pull/716) `a9cd3567ad0ef71facc82b9abac97993715c8ff8` 운영 반영. [frontend run37872808381](https://github.com/guswls3028-art/academy-frontend/actions/runs/37872808381) 동일 빌드 실사용 27건(생략·재시도 0), 양쪽 cleanup tenant/user 0, 운영 읽기 검증 통과. 서버·화면 배포 묶음 검사와 3개 운영 도메인 버전 일치. 배포 정적 자산+합성 API로 1366/1100/390px, 메모 저장→reload 확인, 예외/가로 넘침/예상 밖 업무 요청 0 | 해당 상세 동선 운영 확인 완료. 삭제·복원 입력 후속은 위 PR613/614 운영 증거 참조. 등록·일괄 파일 업로드·형제 계정 연결 등 미검증 하위 동선은 별도 점검 |
 | D16 연속 탭 이동·학부모 질문 작성 | 느린 CPU에서 작성창 소실 재현 후 location effect 경합 수정. PR716에 포함, 최종 번들 커뮤니티 5건·필수 CI·동일 빌드 실사용과 운영 승격 통과 | 연결된 질문 작성 동선 완료. D16 전체 게시/댓글/공개 자료 점검은 순서표대로 진행 |
 | D00 명시적 학원 선택 | 잘못된/비활성 헤더의 다른 학원 대체와 대소문자 중복 코드 임의 선택 재현·수정. 새 회귀 14건+기존 23건=37건 및 PostgreSQL·SQLite 필수 CI 통과. [PR601](https://github.com/guswls3028-art/academy-backend/pull/601)·[PR603](https://github.com/guswls3028-art/academy-backend/pull/603), `cbfa0eb142e2b0a1bcae90e219c6da0275a92541`의 [run37882312061](https://github.com/guswls3028-art/academy-backend/actions/runs/37882312061) 운영 완료. 6개 이미지 보안 검사, 격리 개발 Excel/PPT/R2 실사용, preprod DB·CDN·부하, 임시 인스턴스 종료 후 건강 상태 기반 교체 통과. godmin/tchul 정상 조회·빈 값/잘못된 명시 선택 거부 9건 및 공식 서버/화면 배포 묶음·잠금 해제 확인 | 해당 선택 경계 운영 확인 완료. D00 전체 인증·역할·계정 복구 검사는 별도 유지. Cyrus High는 고정 버전·기한·실제 런타임 검증에 한정된 검토이며 영구 해결로 집계하지 않음 |
 | D02 전체 목록·시급 변경 이력 실패 | 501번째 직원 누락, 동일 정렬키 페이지 불안정, 시급 태그/개별 배정의 이력 저장 실패에도 변경 성공하는 6개 경로를 재현·수정. backend [PR602](https://github.com/guswls3028-art/academy-backend/pull/602), frontend [PR718](https://github.com/guswls3028-art/academy-frontend/pull/718). 직원 서버 117건·하위 사례 19건, 화면 36건, 최종 번들의 페이지/복구·본인 근무 8건 통과. 기본 3.3%·분 단위 급여·0원 시급·기존 마감 및 시급 고정 회귀도 서버 묶음에서 통과 | 서버 `2fe2c1ef362d2b07a8a9da918221ce3a654e3640` run37890575883, 화면 `ea8381ed8509423eebd79b3d01b26416f679ab8a` [run37893211864](https://github.com/guswls3028-art/academy-frontend/actions/runs/37893211864) 운영 완료. 동일 빌드 실사용 27건·cleanup zero·공식 승인·운영 배포 묶음 통과. **해당 수정 동선 운영 확인, D02 전체 미완료** |
