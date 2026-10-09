@@ -7,7 +7,7 @@ Academy 전체의 실행 순서는 [실행 계획](../PLAN.md)이 소유한다.
 
 | 파일 | 상태 | 내용 |
 |------|------|------|
-| [domain-quality-map.md](domain-quality-map.md) | active scope / student release in progress | 2026-10-09 사용자가 위임한 전체 도메인 순차 점검 지도·역할/연결 업무·검증 및 운영 완료 상태 |
+| [domain-quality-map.md](domain-quality-map.md) | active scope / scoped fixes released, remaining flows tracked | 22개 도메인·145개 소스 영역·49개 라우팅 파일의 점검 지도. 하위 동선별 재현·수정·실사용·운영 증거와 미검증 범위를 구별 |
 | [structure-reform/REFACTOR_ROADMAP.md](structure-reform/REFACTOR_ROADMAP.md) | design backlog / historical slices | 구조 설계 후보·과거 구현 기록; 전체 실행 순서는 `../PLAN.md` |
 | [structure-reform/STRUCTURE_AUDIT.md](structure-reform/STRUCTURE_AUDIT.md) | verified | 학생 중심 duplicate root 및 경계 감사 |
 | [structure-reform/DOMAIN_BOUNDARIES.md](structure-reform/DOMAIN_BOUNDARIES.md) | verified/proposed | 도메인별 현재 책임과 공개 인터페이스 후보 |
