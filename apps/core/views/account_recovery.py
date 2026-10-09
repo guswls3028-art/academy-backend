@@ -1,6 +1,7 @@
 # PATH: apps/core/views/account_recovery.py
 
 import logging
+from collections.abc import Mapping
 
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -48,6 +49,9 @@ class AccountRecoveryDispatchView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "Tenant를 확인할 수 없습니다."}, status=400)
+
+        if not isinstance(request.data, Mapping):
+            return Response({"detail": "복구 요청은 이름과 전화번호를 포함한 객체여야 합니다."}, status=400)
 
         try:
             mode, target, name, phone = validate_recovery_payload(

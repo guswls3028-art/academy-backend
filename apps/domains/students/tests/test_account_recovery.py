@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -133,6 +134,77 @@ class AccountRecoveryDispatchTests(TestCase):
                 self.assertFalse(self.user.must_change_password)
 
         send_mock.assert_not_called()
+
+    @override_settings(
+        ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
+        TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
+    )
+    def _raw_recovery_post(self, path, payload):
+        cache.clear()
+        return APIClient().generic(
+            "POST", path, json.dumps(payload), content_type="application/json",
+            HTTP_HOST="api.hakwonplus.com", HTTP_X_TENANT_CODE=self.tenant.code,
+        )
+
+    def _public_recovery_inputs(self):
+        return (
+            ("/api/v1/auth/account-recovery/dispatch/", {
+                "mode": "password", "target": "student",
+                "student_name": self.student.name, "phone": self.student.phone,
+            }),
+            ("/api/v1/students/send_existing_credentials/", {
+                "name": self.student.name, "phone": self.student.phone,
+            }),
+            ("/api/v1/students/password_reset_send/", {
+                "target": "student", "student_name": self.student.name,
+                "student_phone": self.student.phone, "parent_phone": self.student.parent_phone,
+                "student_ps_number": "S001", "temp_password": "",
+            }),
+        )
+
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_nonobject_recovery_payload_returns_400_without_side_effects(self, send_mock):
+        for path, _ in self._public_recovery_inputs():
+            for payload in ([], ["name"], "name", 123, True, None):
+                with self.subTest(path=path, payload_type=type(payload).__name__):
+                    response = self._raw_recovery_post(path, payload)
+                    self.assertEqual(response.status_code, 400)
+        send_mock.assert_not_called()
+        self.assertFalse(PendingPasswordReset.objects.filter(user=self.user).exists())
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("oldpw123"))
+
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_structured_recovery_fields_are_rejected_before_matching_or_delivery(self, send_mock):
+        for path, valid in self._public_recovery_inputs():
+            for field, value in valid.items():
+                for invalid in ({"value": value}, [value], True, 123):
+                    with self.subTest(path=path, field=field, value_type=type(invalid).__name__):
+                        response = self._raw_recovery_post(path, {**valid, field: invalid})
+                        self.assertEqual(response.status_code, 400)
+                        send_mock.assert_not_called()
+                        self.assertFalse(PendingPasswordReset.objects.filter(user=self.user).exists())
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("oldpw123"))
+        self.assertFalse(self.user.must_change_password)
+
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_formatted_recovery_input_keeps_success_and_generic_response(self, send_mock):
+        for path, valid in self._public_recovery_inputs():
+            with self.subTest(path=path):
+                formatted = {key: f" {value} " for key, value in valid.items()}
+                for field in ("phone", "student_phone"):
+                    if field in formatted:
+                        formatted[field] = "010-1111-2222"
+                response = self._raw_recovery_post(path, formatted)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(set(response.data), {"message"})
+                self.assertTrue(PendingPasswordReset.objects.filter(user=self.user).exists())
+                self.user.refresh_from_db()
+                self.assertTrue(self.user.check_password("oldpw123"))
+                self.assertFalse(self.user.must_change_password)
+                self.assertEqual(send_mock.call_args.kwargs["to"], self.student.phone)
+        self.assertEqual(send_mock.call_count, 3)
 
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
     def test_username_recovery_sends_id_without_resetting_password(self, send_mock):

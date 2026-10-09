@@ -1,7 +1,7 @@
 # 계정 복구 SSOT
 
 **상태:** Active
-**최종 점검:** 2026-09-10
+**최종 점검:** 2026-10-09
 **코드 기준:** `apps/core/views/account_recovery.py`, `apps/domains/students/services/account_recovery.py`, `apps/domains/students/views/account_notification_views.py`, `apps/core/services/password.py`, `apps/api/common/auth_jwt.py`, `apps/domains/students/views/password_views.py`
 
 ## 1. 정본 경로
@@ -33,12 +33,15 @@ POST /api/v1/auth/account-recovery/dispatch/
 
 - `AllowAny` 엔드포인트지만 `TenantResolved`가 필수다.
 - `AlimtalkEndpointThrottle`을 적용한다.
+- 정본 및 `send_existing_credentials/`, `password_reset_send/` 호환 경로는 객체 본문과 문자열 필드만 받는다. 배열·객체·숫자·참거짓을 이름/전화번호로 강제 변환하지 않고 계정 조회·발송·비밀번호 변경 전에 400을 반환한다. 직원 즉시 재설정의 학번/임시 비밀번호 필드도 같은 입력 경계를 따른다. 누락/NULL은 기존 필수 입력 검증을 유지한다.
 - 요청 전화번호는 숫자만 남긴 뒤 `010`으로 시작하는 11자리만 허용한다.
 - 조회 실패, 동명이인/공유번호 등 다건 매칭, 성공, 계정 확인 후 알림톡 예약 실패 모두 공개 응답은 generic 200 message로 통일한다.
 - API 응답에 아이디나 비밀번호를 직접 반환하지 않는다.
 - 안내 발송은 검증된 전화번호로만 수행한다. 이메일은 사용하지 않는다.
 - legacy 공개 호환 경로도 정본 계정복구 서비스로 위임하며, 사용자 존재 여부를 노출하지 않는다. OTP 인증번호 방식은 410으로 봉인한다.
 - 공개 요청의 알림톡 예약 실패는 전화번호/이름을 남기지 않는 서버 warning과 메시징 운영 로그로 추적한다. 공개 API에서 503이나 내부 실패 원인을 반환하지 않는다. 인증된 staff reset/계정 안내는 운영자가 재시도 판단을 해야 하므로 400/503을 유지한다.
+
+입력 경계 회귀는 `apps/domains/students/tests/test_account_recovery.py`의 실제 URL/tenant 헤더 요청으로 검증한다. 잘못된 입력의 400 및 부작용 0과 함께 공백·하이픈이 포함된 정상 입력 → 검증된 번호 안내 → pending 생성 → 기존 비밀번호 유지, 학생/학부모 임시 비밀번호 로그인·강제 변경 흐름을 유지한다. 이 변경은 기존 계정이나 pending 행을 마이그레이션하지 않는다.
 
 ## 3. 매칭 규칙
 
