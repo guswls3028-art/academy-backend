@@ -8864,6 +8864,19 @@
         },
         "type": "object"
       },
+      "PatchedConsultInboxPatchRequest": {
+        "properties": {
+          "admin_memo": {
+            "maxLength": 2000,
+            "nullable": true,
+            "type": "string"
+          },
+          "mark_read": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "PatchedEnrollmentRequest": {
         "properties": {
           "lecture": {
@@ -25083,6 +25096,50 @@
       "get": {
         "description": "GET /api/v1/core/landing/admin/consult/ — 학원장 inbox.",
         "operationId": "core_landing_admin_consult_retrieve",
+        "parameters": [
+          {
+            "description": "* `all` - all\n* `unread` - unread",
+            "in": "query",
+            "name": "filter",
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "unread"
+              ],
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "default": 1,
+              "maximum": 1000000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "schema": {
+              "default": 200,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "summary_only",
+            "schema": {
+              "default": false,
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "No response body"
@@ -25115,6 +25172,25 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedConsultInboxPatchRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedConsultInboxPatchRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedConsultInboxPatchRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "No response body"
