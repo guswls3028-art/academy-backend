@@ -41,10 +41,38 @@ Python wheel에 별도로 포함된 Kerberos 구현은 이 검사의 보증 범�
 최종 `apt-get check`가 실패했다. 설치 검사를 완화하지 않고 위 네 라이브러리를
 같은 소스로 빌드하도록 수정했다. 첫 실패를 완성된 이미지 증거로 사용하지 않는다.
 
+최종 `97bbf8548`은 전체 CI와 ARM 원본/수정/ABI/패키지 의존 검사를 통과했다.
+후보 [run37957602402 attempt3](https://github.com/guswls3028-art/academy-backend/actions/runs/37957602402)
+의 새 base/API/AI/Messaging 스캔도 통과했고 Tools scan에서도 Kerberos 항목은
+사라졌다. 그러나 Tools의 GnuTLS 항목 때문에 전체 후보는 실패했다. attempt1의
+Office download checksum 실패와 attempt2의 다른 attempt artifact 재사용 거부는
+보존한다. 공식 ARM archive 실제 SHA256은 기존 pin과 일치했고 attempt3 빌드는 성공했다.
+
 이는 **검증 중인 후보**다. High 예외·상한·만료를 변경하지 않는다. 원본 버전을
 유지한 backport가 스캐너에서 인정될지는 별도 사실이며, 신선한 immutable scan과
 모든 기존 development/preprod/운영 게이트가 통과하기 전에는 보안 해결 또는
 학생 후속 수정의 운영 완료를 선언하지 않는다.
+
+### Tools GnuTLS 후속 (2026-10-10)
+
+위 후보 Tools `sha256:b6fb07daea26813aef8cb23129e765eebd3c3bf61a4884b64810c00abb2c6431`의
+COMPLETE scan에는 `gnutls28 / 3.8.9-3+deb13u4`의 Critical `CVE-2026-95210`과
+High `CVE-2026-95209`, `CVE-2026-95184`가 남았다. Debian tracker의 지원 릴리스는
+아직 vulnerable이다. [CVE 기록](https://github.com/CVEProject/cvelistV5/blob/main/cves/2026/95xxx/CVE-2026-95210.json)과
+[Debian 상태](https://security-tracker.debian.org/tracker/source-package/gnutls28)가 외부 근거다.
+
+Tools는 headless 파일 변환을 위해 CUPS 클라이언트 라이브러리를 로드하며 인쇄
+서버를 운영하지 않는다. 후보 `build-cups-openssl.sh`는 CUPS 2.4.10과 Debian u2의
+전체 보안 패치를 유지하면서 upstream의 정식 `--with-tls=openssl` 옵션으로 빌드한다.
+별도 자격 증명 없는 stage에서 컴파일하고 최종 Tools에 라이브러리 패키지만 설치한다.
+기존 exported symbol을 모두 유지하고 package의 GnuTLS 의존을 실제 OpenSSL 의존으로
+바꾸며 실제 버전 `2.4.10-3+deb13u2+academy1`을 기록한다. SSL을 끄거나 자체 인증서
+검증을 구현하지 않는다. [upstream 빌드 안내](https://github.com/OpenPrinting/cups/blob/v2.4.10/INSTALL.md)를 따른다.
+
+검증 조건은 upstream library unit tests, 기존 ELF symbol 보존, OpenSSL 실제 연결,
+옵션 API 정상/없는 값 처리, GnuTLS 패키지 의존·물리 라이브러리 부재, 한글 DOCX→PDF의
+실제 텍스트 보존이다. 기존 개발 Excel/PPT/R2·preprod·여섯 이미지 scan·운영 게이트도
+유지한다. 이 후속은 아직 이미지 검증 전이며 운영 완료로 집계하지 않는다.
 
 ## 2026-10-09 GCC 예외 종료
 
