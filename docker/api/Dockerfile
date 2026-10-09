@@ -51,7 +51,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ! command -v perl >/dev/null 2>&1 \
     && python /usr/local/bin/verify-expat.py --library libexpat.so.1 --python --package \
     && python /usr/local/bin/verify-aligned-new.py \
-    && python /usr/local/bin/verify-tiff.py
+    && python /usr/local/bin/verify-tiff.py \
+    && python /usr/local/bin/verify-sasl.py
 USER appuser
 
 FROM curl-fixed-system AS base

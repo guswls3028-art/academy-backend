@@ -63,7 +63,8 @@ RUN python /tmp/install-resource-reader.py && rm /tmp/install-resource-reader.py
 COPY --chown=appuser:appuser scripts/install-resource-office.py /tmp/install-resource-office.py
 RUN python /tmp/install-resource-office.py && rm /tmp/install-resource-office.py \
     && test -z "$(dpkg --audit)" && apt-get check \
-    && ! command -v perl >/dev/null 2>&1
+    && ! command -v perl >/dev/null 2>&1 \
+    && python /usr/local/bin/verify-sasl.py
 
 USER appuser
 

@@ -5,6 +5,37 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-10-09 SASL 후보 차단과 런타임 검증
+
+학원 선택 경계 후보 [37877184870](https://github.com/guswls3028-art/academy-backend/actions/runs/37877184870)는
+`CVE-2026-107161` / `cyrus-sasl2` / `2.1.28+dfsg1-9` High로 development 진입 전에
+차단됐다. 운영 migration·교체는 건너뛰었고 공유 잠금은 해제됐다. 학생 상세의
+기존 성공 backend `bf23b8f5`와 frontend `a9cd3567`은 그대로 운영 중이다.
+
+[Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-107161)와
+[NVD](https://nvd.nist.gov/vuln/detail/CVE-2026-107161)는 DIGEST-MD5 플러그인의
+문자열 이스케이프 후 크기 계산 오류를 설명하며, 확인 시 Debian 수정본은 없다.
+[upstream PR892](https://github.com/cyrusimap/cyrus-sasl/pull/892)는 병합되지 않고
+닫혀 있으므로 공식 수정 릴리스로 간주하지 않는다.
+
+실패한 AI 후보의 digest로 검증한 공통/마지막 APT 레이어에는 `libsasl2-2`와
+`libsasl2-modules-db`만 설치돼 있었고 DIGEST-MD5 플러그인 패키지는 없었다.
+`libpq5`와 `libcurl4t64`가 LDAP를 통해 SASL core에 의존하므로 필요한 라이브러리나
+package metadata를 지워 진단을 숨기지 않는다. 이 정적 관찰만으로 전체 후보가
+안전하거나 upstream 취약점이 수정됐다고 선언하지 않는다.
+
+`docker/native-security/verify-sasl.py`는 허용한 core/DB 패키지와 plugin 파일,
+실제로 로드한 system SASL의 mechanism 목록을 확인한다. core의 정상 초기화와
+EXTERNAL mechanism을 확인한 뒤 DIGEST-MD5 client 시작이 정확히 `SASL_NOMECH`로
+거부돼야 한다. 초기화·callback 실패는 부재 증거로 인정하지 않는다. base와 최종
+API·AI·Video APT, Tools의 문서 변환기 설치 뒤 실행하며 Messaging은 base를 상속한다.
+arm64 native CI에서도 실행한다. wheel에 포함된 다른 구현의 안전성은 이 검사의
+범위가 아니며 기존 DB·문서·영상 실사용과 모든 출시 게이트가 별도로 필요하다.
+
+**이 변경은 새 High 예외를 추가하지 않는다.** 현재 후보 승격 보류는 이 검사
+추가만으로 해제되지 않는다. 최신 전체 후보 scan과 실제 런타임 증거를 검토하기
+전에는 학원 선택/직원 후속 변경을 운영 반영으로 기록하지 않는다.
+
 ## 2026-10-07 TIFF 후보 차단과 수정 릴리스
 
 직원 급여 후보 [37584132062](https://github.com/guswls3028-art/academy-backend/actions/runs/37584132062)는
