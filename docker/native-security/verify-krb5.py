@@ -16,6 +16,7 @@ import sys
 VERSION = "1.21.3-5+deb13u1+academy1"
 MODIFIED = -1765328343
 CASES = ("valid", "extra-ticket", "missing-client", "missing-server")
+PACKAGES = ("libkrb5-3", "libgssapi-krb5-2", "libk5crypto3", "libkrb5support0")
 
 
 def der(tag, body):
@@ -110,9 +111,11 @@ def probe(case, library):
 
 def verify(library="libkrb5.so.3", *, expect_unpatched=False, package=False):
     if package:
-        for key, expected in (("Version", VERSION), ("Source", "krb5")):
-            actual = subprocess.check_output(["dpkg-query", "-W", f"-f=${{{key}}}", "libkrb5-3"], text=True)
-            assert actual == expected, f"KRB5_PACKAGE_{key}_MISMATCH"
+        for name in PACKAGES:
+            for key, expected in (("Version", VERSION), ("Source", "krb5")):
+                actual = subprocess.check_output(["dpkg-query", "-W", f"-f=${{{key}}}", name], text=True)
+                assert actual == expected, f"KRB5_PACKAGE_{key}_MISMATCH_{name}"
+        verify_gssapi()
     for case in CASES:
         child = subprocess.run(
             [sys.executable, str(Path(__file__).resolve()), "--case", case, "--library", library],
@@ -125,6 +128,24 @@ def verify(library="libkrb5.so.3", *, expect_unpatched=False, package=False):
         if child.returncode != expected:
             raise RuntimeError(f"KRB5_{case}_PROCESS_{child.returncode}_EXPECTED_{expected}: {child.stderr[-600:]}")
     print("KRB5_UNPATCHED_NULL_REPRODUCED" if expect_unpatched else "KRB5_VALID_AND_MALFORMED_PASS")
+
+
+def verify_gssapi():
+    class OidSet(ctypes.Structure):
+        _fields_ = [("count", ctypes.c_size_t), ("elements", ctypes.c_void_p)]
+
+    lib = ctypes.CDLL("libgssapi_krb5.so.2")
+    minor = ctypes.c_uint32()
+    mechanisms = ctypes.POINTER(OidSet)()
+    args = [ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.POINTER(OidSet))]
+    for name in ("gss_indicate_mechs", "gss_release_oid_set"):
+        function = getattr(lib, name)
+        function.argtypes, function.restype = args, ctypes.c_uint32
+    assert lib.gss_indicate_mechs(ctypes.byref(minor), ctypes.byref(mechanisms)) == 0, "KRB5_GSSAPI_INIT_FAILED"
+    try:
+        assert mechanisms and mechanisms.contents.count > 0, "KRB5_GSSAPI_EMPTY"
+    finally:
+        assert lib.gss_release_oid_set(ctypes.byref(minor), ctypes.byref(mechanisms)) == 0, "KRB5_GSSAPI_RELEASE_FAILED"
 
 
 if __name__ == "__main__":

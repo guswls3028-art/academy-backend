@@ -42,8 +42,9 @@ tar -xJf "${work_root}/debian.tar.xz" -C "${source_root}"
     patch --batch --forward -p1 <"${work_root}/principal-bound.patch"
     cd src
     autoreconf --install --force
-    CFLAGS='-O2 -fstack-protector-strong -fPIC' \
-        LDFLAGS='-Wl,-z,relro -Wl,-z,now' \
+    CPPFLAGS="$(dpkg-buildflags --get CPPFLAGS)" \
+        CFLAGS="$(dpkg-buildflags --get CFLAGS) -fPIC" \
+        LDFLAGS="$(dpkg-buildflags --get LDFLAGS) -Wl,-z,now" \
         ./configure --prefix=/usr --libdir="/usr/lib/${multiarch}" \
         --sysconfdir=/etc --localstatedir=/etc --disable-rpath --enable-shared \
         --with-system-et --with-system-ss --with-system-verto --with-lmdb \
@@ -52,31 +53,39 @@ tar -xJf "${work_root}/debian.tar.xz" -C "${source_root}"
     make check
 )
 
-# Repack only libkrb5-3. Keep Debian's dependencies, SPAKE plugin, maintainer
-# scripts and ancillary files; unrelated Kerberos packages remain unchanged.
+# Debian pins GSSAPI to the exact libkrb5 version. Rebuild its four client ABI
+# libraries together while preserving plugins, scripts and ancillary files.
 apt-get update
 (
     cd "${work_root}"
-    apt-get download 'libkrb5-3=1.21.3-5+deb13u1'
+    apt-get download 'libkrb5-3=1.21.3-5+deb13u1' \
+        'libgssapi-krb5-2=1.21.3-5+deb13u1' \
+        'libk5crypto3=1.21.3-5+deb13u1' 'libkrb5support0=1.21.3-5+deb13u1'
 )
-package_root="${work_root}/package"
-dpkg-deb --raw-extract "${work_root}"/libkrb5-3_*.deb "${package_root}"
-original_library="${package_root}/usr/lib/${multiarch}/libkrb5.so.3.3"
-fixed_library="${source_root}/src/lib/libkrb5.so.3.3"
-test -f "${original_library}" && test -f "${fixed_library}"
-
-# Require a working valid fixture and real crashes for all vulnerable cases.
 ulimit -c 0
-python /usr/local/bin/verify-krb5.py --library "${original_library}" --expect-unpatched
-python /usr/local/bin/verify-krb5.py --library "${fixed_library}"
-nm -D --defined-only "${original_library}" | awk '{print $3}' | sort >"${work_root}/old-symbols"
-nm -D --defined-only "${fixed_library}" | awk '{print $3}' | sort >"${work_root}/new-symbols"
-diff -u "${work_root}/old-symbols" "${work_root}/new-symbols"
-install -m 0644 "${fixed_library}" "${original_library}"
-sed -i "s/^Version: .*/Version: ${version}/; s/^Source: .*/Source: krb5/" "${package_root}/DEBIAN/control"
-grep -Fx 'Source: krb5' "${package_root}/DEBIAN/control"
-(
-    cd "${package_root}"
-    find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums
-)
-dpkg-deb --build --root-owner-group "${package_root}" "${output_root}/libkrb5-3-fixed.deb"
+for entry in 'libkrb5-3:libkrb5.so.3.3' 'libgssapi-krb5-2:libgssapi_krb5.so.2.2' \
+    'libk5crypto3:libk5crypto.so.3.1' 'libkrb5support0:libkrb5support.so.0.1'; do
+    package="${entry%%:*}"
+    library="${entry#*:}"
+    package_root="${work_root}/${package}-package"
+    dpkg-deb --raw-extract "${work_root}/${package}"_*.deb "${package_root}"
+    original_library="${package_root}/usr/lib/${multiarch}/${library}"
+    fixed_library="${source_root}/src/lib/${library}"
+    test -f "${original_library}" && test -f "${fixed_library}"
+    if [ "${package}" = libkrb5-3 ]; then
+        # Require a working valid fixture and real crashes for every bad case.
+        python /usr/local/bin/verify-krb5.py --library "${original_library}" --expect-unpatched
+        python /usr/local/bin/verify-krb5.py --library "${fixed_library}"
+    fi
+    nm -D --defined-only "${original_library}" | awk '{print $3}' | sort >"${work_root}/old-symbols"
+    nm -D --defined-only "${fixed_library}" | awk '{print $3}' | sort >"${work_root}/new-symbols"
+    diff -u "${work_root}/old-symbols" "${work_root}/new-symbols"
+    install -m 0644 "${fixed_library}" "${original_library}"
+    sed -i "s/^Version: .*/Version: ${version}/; s/^Source: .*/Source: krb5/; s/(= 1.21.3-5+deb13u1)/(= ${version})/g; s/^Maintainer: .*/Maintainer: Academy Platform <platform@academy.invalid>/" "${package_root}/DEBIAN/control"
+    grep -Fx 'Source: krb5' "${package_root}/DEBIAN/control"
+    (
+        cd "${package_root}"
+        find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums
+    )
+    dpkg-deb --build --root-owner-group "${package_root}" "${output_root}/${package}-fixed.deb"
+done

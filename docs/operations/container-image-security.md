@@ -21,8 +21,10 @@ COMPLETE scan에서 Cyrus와 함께 High 2건을 확인했다. 운영 교체는 
 [누락 principal 후속 수정](https://github.com/krb5/krb5/commit/5031b854ad8ba6cce20cdd8c991f81dbc3f924bd)을
 SHA-256으로 고정해 적용한다. 실제 source identity `krb5`와
 `1.21.3-5+deb13u1+academy1` 버전을 보존하며 미래 릴리스로 표시하지 않는다.
-Debian `libkrb5-3`의 라이브러리 하나만 교체하고 공개 심볼 집합, 의존성,
-SPAKE 플러그인, 부속 파일과 관리 스크립트는 보존한다.
+Debian `libkrb5-3`·`libgssapi-krb5-2`·`libk5crypto3`·`libkrb5support0`의 클라이언트
+라이브러리 네 개를 함께 빌드하고 각 공개 심볼 집합, 의존성, SPAKE 플러그인,
+부속 파일과 관리 스크립트는 보존한다. GSSAPI의 정확한 libkrb5 버전 의존성도
+같은 수정 버전으로 유지한다. Debian 빌드 hardening 설정을 사용한다.
 
 격리 arm64 빌드는 upstream 검사와 실제 라이브러리의 정상 credential 읽기를
 통과해야 한다. 합성된 배열 불일치·누락 client·누락 server 세 입력은 원본에서
@@ -30,7 +32,14 @@ SIGSEGV로 재현되고 수정본에서 정확한 `KRB5KRB_AP_ERR_MODIFIED`로 �
 한다. 설정/ABI/fixture 오류나 다른 비정상 종료를 취약점 재현으로 인정하지 않는다.
 실제 계정·KDC·네트워크를 사용하지 않으며 마지막 APT 이후 각 이미지에서
 정상/오류 입력과 패키지 identity를 다시 확인한다. Messaging은 base를 상속한다.
+네 패키지의 버전/source와 실제 GSSAPI 초기화·mechanism 반환·해제도 확인한다.
 Python wheel에 별도로 포함된 Kerberos 구현은 이 검사의 보증 범위가 아니다.
+
+첫 ARM 후보 `37c3bb310`의 [job113898074584](https://github.com/guswls3028-art/academy-backend/actions/runs/37953478314/job/113898074584)는
+원본의 세 SIGSEGV, 수정본의 정상/오류 입력 및 공개 심볼 검사를 통과했다.
+그러나 libkrb5 하나만 갱신하면 Debian GSSAPI의 정확한 버전 의존성이 깨져
+최종 `apt-get check`가 실패했다. 설치 검사를 완화하지 않고 위 네 라이브러리를
+같은 소스로 빌드하도록 수정했다. 첫 실패를 완성된 이미지 증거로 사용하지 않는다.
 
 이는 **검증 중인 후보**다. High 예외·상한·만료를 변경하지 않는다. 원본 버전을
 유지한 backport가 스캐너에서 인정될지는 별도 사실이며, 신선한 immutable scan과
