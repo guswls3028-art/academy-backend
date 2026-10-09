@@ -18634,6 +18634,33 @@
         ],
         "type": "object"
       },
+      "TeacherDashboardCounts": {
+        "properties": {
+          "counsel_pending": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "qna_pending": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "submission_pending": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "video_failed": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "counsel_pending",
+          "qna_pending",
+          "submission_pending",
+          "video_failed"
+        ],
+        "type": "object"
+      },
       "TeacherOpsAnalyzeRequest": {
         "properties": {
           "images": {
@@ -43589,11 +43616,18 @@
     },
     "/api/v1/results/admin/teacher-dashboard-counts/": {
       "get": {
-        "description": "GET /api/v1/results/admin/teacher-dashboard-counts/\n\nResponse:\n{\n  \"video_failed\": int\n}",
+        "description": "GET /api/v1/results/admin/teacher-dashboard-counts/\n\nResponse:\n{\n  \"video_failed\": int, \"qna_pending\": int,\n  \"counsel_pending\": int, \"submission_pending\": int\n}",
         "operationId": "results_admin_teacher_dashboard_counts_retrieve",
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherDashboardCounts"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
