@@ -35,6 +35,7 @@ from apps.domains.community.services import CommunityService
 from apps.domains.community.models import PostEntity, PostReply, PostAttachment, PostLike, PostReplyLike, CommunityReport, CommunityUserBlock, CommunityNotification
 from apps.core.permissions import TenantResolvedAndMember
 from apps.core.parsing import parse_bool
+from apps.core.services.tenant_access import get_authorized_tenant_role, user_has_active_staff_access
 from apps.support.community.post_dependencies import (
     dispatch_qna_matchup_search,
     get_reply_event_notifier,
@@ -55,6 +56,24 @@ from ._common import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_node_ids(data, *, required=False):
+    if not isinstance(data, dict) or (required and "node_ids" not in data):
+        raise ValidationError({"detail": "node_ids must be provided as a list"})
+    values = data.get("node_ids", [])
+    if not isinstance(values, list):
+        raise ValidationError({"detail": "node_ids must be a list"})
+    node_ids = []
+    for value in values:
+        if isinstance(value, str):
+            value = value.strip()
+            if value.isascii() and value.isdecimal() and len(value) <= 19:
+                value = int(value)
+        if type(value) is not int or not 0 < value <= 9223372036854775807:
+            raise ValidationError({"detail": "node_ids must be positive integers"})
+        node_ids.append(value)
+    return node_ids
 
 
 class PostViewSet(viewsets.ModelViewSet):
@@ -208,42 +227,14 @@ class PostViewSet(viewsets.ModelViewSet):
 
     def _is_staff_request(self, request) -> bool:
         """staff/admin 여부를 TenantMembership 역할로 판단. 학부모는 staff가 아님."""
-        user = request.user
-        if not user or not user.is_authenticated:
-            return False
-        tenant = getattr(request, "tenant", None)
-        if not tenant:
-            return False
-        from apps.core.models import TenantMembership
-        if TenantMembership.objects.filter(
-            tenant=tenant, user=user, is_active=True,
-            role__in=["owner", "admin", "staff", "teacher"],
-        ).exists():
-            return True
-        return bool(
-            (user.is_superuser or user.is_staff)
-            and getattr(user, "tenant_id", None) == tenant.id
+        return user_has_active_staff_access(
+            request.user, getattr(request, "tenant", None),
         )
 
     def _can_manage_post_nodes(self, request) -> bool:
-        user = request.user
-        if not user or not user.is_authenticated:
-            return False
-        tenant = getattr(request, "tenant", None)
-        if not tenant:
-            return False
-        from apps.core.models import TenantMembership
-        if TenantMembership.objects.filter(
-            tenant=tenant,
-            user=user,
-            is_active=True,
-            role__in=["owner", "admin", "staff"],
-        ).exists():
-            return True
-        return bool(
-            (user.is_superuser or user.is_staff)
-            and getattr(user, "tenant_id", None) == tenant.id
-        )
+        return get_authorized_tenant_role(
+            request.user, getattr(request, "tenant", None),
+        ) in ("owner", "admin", "staff")
 
     def _with_is_liked(self, qs, request):
         user = getattr(request, "user", None)
@@ -528,13 +519,7 @@ class PostViewSet(viewsets.ModelViewSet):
                 {"detail": "tenant required", "code": "tenant_required"},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        node_ids = request.data.get("node_ids") or []
-        if not isinstance(node_ids, list):
-            return Response({"detail": "node_ids must be a list"}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            node_ids = [int(node_id) for node_id in node_ids]
-        except (TypeError, ValueError):
-            return Response({"detail": "node_ids must be integers"}, status=status.HTTP_400_BAD_REQUEST)
+        node_ids = _parse_node_ids(request.data)
         from apps.domains.community.models import ScopeNode
         valid_count = ScopeNode.objects.filter(tenant=tenant, id__in=node_ids).count()
         if valid_count != len(set(node_ids)):
@@ -675,13 +660,7 @@ class PostViewSet(viewsets.ModelViewSet):
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
         if not self._can_manage_post_nodes(request):
             return Response({"detail": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
-        node_ids = request.data.get("node_ids") or []
-        if not isinstance(node_ids, list):
-            return Response({"detail": "node_ids must be a list"}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            node_ids = [int(node_id) for node_id in node_ids]
-        except (TypeError, ValueError):
-            return Response({"detail": "node_ids must be integers"}, status=status.HTTP_400_BAD_REQUEST)
+        node_ids = _parse_node_ids(request.data, required=True)
         from apps.domains.community.models import ScopeNode
         valid_count = ScopeNode.objects.filter(tenant=tenant, id__in=node_ids).count()
         if valid_count != len(set(node_ids)):
