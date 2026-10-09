@@ -20,6 +20,12 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
     autoconf \
     automake \
     bzip2 \
+    bison \
+    comerr-dev \
+    libkeyutils-dev \
+    liblmdb-dev \
+    libverto-dev \
+    ss-dev \
     ca-certificates \
     curl \
     dpkg-dev \
@@ -45,10 +51,12 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
 
 WORKDIR /build
 
-COPY docker/native-security/build-fixed-libs.sh /usr/local/bin/build-fixed-libs.sh
+COPY docker/native-security/build-fixed-libs.sh docker/native-security/build-krb5.sh /usr/local/bin/
+COPY docker/native-security/verify-krb5.py /usr/local/bin/
 COPY docker/native-security/patches/ /usr/local/share/academy-native-security/
 COPY docker/native-security/build-python-xml.py docker/native-security/verify-expat.py /usr/local/bin/
-RUN sh /usr/local/bin/build-fixed-libs.sh /build/native-security/out
+RUN sh /usr/local/bin/build-fixed-libs.sh /build/native-security/out \
+    && sh /usr/local/bin/build-krb5.sh /build/native-security/out
 
 # 의존성 파일 복사 및 설치 (pip 업그레이드와 단일 RUN으로 레이어 최소화)
 COPY requirements/constraints.txt ./requirements/constraints.txt
@@ -123,11 +131,12 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
     && ! command -v perl >/dev/null 2>&1
 
 COPY docker/native-security/tiff-fixtures/ /usr/local/share/academy/native-security/tiff-fixtures/
-COPY docker/native-security/verify-expat.py docker/native-security/verify-aligned-new.py docker/native-security/verify-tiff.py docker/native-security/verify-sasl.py /usr/local/bin/
+COPY docker/native-security/verify-expat.py docker/native-security/verify-aligned-new.py docker/native-security/verify-tiff.py docker/native-security/verify-sasl.py docker/native-security/verify-krb5.py /usr/local/bin/
 RUN python /usr/local/bin/verify-expat.py --library libexpat.so.1 --python --package \
     && python /usr/local/bin/verify-aligned-new.py \
     && python /usr/local/bin/verify-tiff.py \
-    && python /usr/local/bin/verify-sasl.py
+    && python /usr/local/bin/verify-sasl.py \
+    && python /usr/local/bin/verify-krb5.py --package
 
 # non-root 사용자 (보안·감사 대비, CMD/경로 규칙 유지)
 RUN groupadd --gid 1000 appuser \

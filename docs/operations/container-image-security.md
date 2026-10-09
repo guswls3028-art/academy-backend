@@ -5,6 +5,87 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-10-10 Kerberos 후보 차단과 수정 후보
+
+학생 일괄 삭제·복원 입력 검증의 [run37946734823](https://github.com/guswls3028-art/academy-backend/actions/runs/37946734823)는
+`CVE-2026-107778` / `krb5` / `1.21.3-5+deb13u1` High로 development 전에
+차단됐다. AI 후보 `sha256:41b24f588d9a50c7ac43d26fabe19ce8e7698fa3744042c22f6446e4f9c23d36`의
+COMPLETE scan에서 Cyrus와 함께 High 2건을 확인했다. 운영 교체는 실행되지
+않았고 공유 잠금은 해제됐다. 기존 성공 backend `0e4f6a21e`를 유지한다.
+
+[공식 CVE 기록](https://github.com/CVEProject/cvelistV5/blob/main/cves/2026/107xxx/CVE-2026-107778.json)은
+1.22.2까지의 `krb5_rd_cred` 배열 길이 불일치에 의한 NULL 참조를 설명한다.
+공식 Debian trixie 수정 패키지와 새 upstream 정식 릴리스는 확인되지 않았다.
+`build-krb5.sh` 후보는 기존 1.21.3과 Debian deb13u1 패치 전부를 유지하고,
+[배열 경계 수정](https://github.com/krb5/krb5/commit/48afa9abb89ab2176bb20624d87d010b9984fc08)과
+[누락 principal 후속 수정](https://github.com/krb5/krb5/commit/5031b854ad8ba6cce20cdd8c991f81dbc3f924bd)을
+SHA-256으로 고정해 적용한다. 실제 source identity `krb5`와
+`1.21.3-5+deb13u1+academy1` 버전을 보존하며 미래 릴리스로 표시하지 않는다.
+Debian `libkrb5-3`·`libgssapi-krb5-2`·`libk5crypto3`·`libkrb5support0`의 클라이언트
+라이브러리 네 개를 함께 빌드하고 각 공개 심볼 집합, 의존성, SPAKE 플러그인,
+부속 파일과 관리 스크립트는 보존한다. GSSAPI의 정확한 libkrb5 버전 의존성도
+같은 수정 버전으로 유지한다. Debian 빌드 hardening 설정을 사용한다.
+
+격리 arm64 빌드는 upstream 검사와 실제 라이브러리의 정상 credential 읽기를
+통과해야 한다. 합성된 배열 불일치·누락 client·누락 server 세 입력은 원본에서
+SIGSEGV로 재현되고 수정본에서 정확한 `KRB5KRB_AP_ERR_MODIFIED`로 거부돼야
+한다. 설정/ABI/fixture 오류나 다른 비정상 종료를 취약점 재현으로 인정하지 않는다.
+실제 계정·KDC·네트워크를 사용하지 않으며 마지막 APT 이후 각 이미지에서
+정상/오류 입력과 패키지 identity를 다시 확인한다. Messaging은 base를 상속한다.
+네 패키지의 버전/source와 실제 GSSAPI 초기화·mechanism 반환·해제도 확인한다.
+Python wheel에 별도로 포함된 Kerberos 구현은 이 검사의 보증 범위가 아니다.
+
+첫 ARM 후보 `37c3bb310`의 [job113898074584](https://github.com/guswls3028-art/academy-backend/actions/runs/37953478314/job/113898074584)는
+원본의 세 SIGSEGV, 수정본의 정상/오류 입력 및 공개 심볼 검사를 통과했다.
+그러나 libkrb5 하나만 갱신하면 Debian GSSAPI의 정확한 버전 의존성이 깨져
+최종 `apt-get check`가 실패했다. 설치 검사를 완화하지 않고 위 네 라이브러리를
+같은 소스로 빌드하도록 수정했다. 첫 실패를 완성된 이미지 증거로 사용하지 않는다.
+
+최종 `97bbf8548`은 전체 CI와 ARM 원본/수정/ABI/패키지 의존 검사를 통과했다.
+후보 [run37957602402 attempt3](https://github.com/guswls3028-art/academy-backend/actions/runs/37957602402)
+의 새 base/API/AI/Messaging 스캔도 통과했고 Tools scan에서도 Kerberos 항목은
+사라졌다. 그러나 Tools의 GnuTLS 항목 때문에 전체 후보는 실패했다. attempt1의
+Office download checksum 실패와 attempt2의 다른 attempt artifact 재사용 거부는
+보존한다. 공식 ARM archive 실제 SHA256은 기존 pin과 일치했고 attempt3 빌드는 성공했다.
+
+이는 **검증 중인 후보**다. High 예외·상한·만료를 변경하지 않는다. 원본 버전을
+유지한 backport가 스캐너에서 인정될지는 별도 사실이며, 신선한 immutable scan과
+모든 기존 development/preprod/운영 게이트가 통과하기 전에는 보안 해결 또는
+학생 후속 수정의 운영 완료를 선언하지 않는다.
+
+### Tools GnuTLS 후속 (2026-10-10)
+
+위 후보 Tools `sha256:b6fb07daea26813aef8cb23129e765eebd3c3bf61a4884b64810c00abb2c6431`의
+COMPLETE scan에는 `gnutls28 / 3.8.9-3+deb13u4`의 Critical `CVE-2026-95210`과
+High `CVE-2026-95209`, `CVE-2026-95184`가 남았다. Debian tracker의 지원 릴리스는
+아직 vulnerable이다. [CVE 기록](https://github.com/CVEProject/cvelistV5/blob/main/cves/2026/95xxx/CVE-2026-95210.json)과
+[Debian 상태](https://security-tracker.debian.org/tracker/source-package/gnutls28)가 외부 근거다.
+
+Tools는 headless 파일 변환을 위해 CUPS 클라이언트 라이브러리를 로드하며 인쇄
+서버를 운영하지 않는다. 후보 `build-cups-openssl.sh`는 CUPS 2.4.10과 Debian u2의
+전체 보안 패치를 유지하면서 upstream의 정식 `--with-tls=openssl` 옵션으로 빌드한다.
+별도 자격 증명 없는 stage에서 컴파일하고 최종 Tools에 라이브러리 패키지만 설치한다.
+기존 exported symbol을 모두 유지하고 package의 GnuTLS 의존을 실제 OpenSSL 의존으로
+바꾸며 실제 버전 `2.4.10-3+deb13u2+academy1`을 기록한다. SSL을 끄거나 자체 인증서
+검증을 구현하지 않는다. [upstream 빌드 안내](https://github.com/OpenPrinting/cups/blob/v2.4.10/INSTALL.md)를 따른다.
+
+검증 조건은 upstream library unit tests, 기존 ELF symbol 보존, OpenSSL 실제 연결,
+옵션 API 정상/없는 값 처리, GnuTLS 패키지 의존·물리 라이브러리 부재, 한글 DOCX→PDF의
+실제 텍스트 보존이다. 기존 개발 Excel/PPT/R2·preprod·여섯 이미지 scan·운영 게이트도
+유지한다. `aa5f3eccc` 전체 필수 CI와 실제 ARM base 검사는 통과했다. 후보
+[run37969236636](https://github.com/guswls3028-art/academy-backend/actions/runs/37969236636)의
+Tools 빌드에서 upstream library tests·원래 ELF symbol·실제 OpenSSL 연결·옵션 API·
+GnuTLS 물리 부재가 통과했다. 그러나 실제 DOCX→PDF 내용 비교가 실패해 전체 후보는
+중단됐다. 후속 `2f91a0391`은 전체 필수 CI를 통과하고, 후보
+[run37973395491](https://github.com/guswls3028-art/academy-backend/actions/runs/37973395491)에서
+고정 합성 PDF와 추출 결과를 보존했다. 실제 1쪽 PDF를 Poppler로 렌더링하면
+`수업 분석 자료`가 정상 표시되지만 PyMuPDF 1.25.3은 공백을 별도 줄로 추출하여
+한글 run을 `수업분석자료`로 반환했다. 같은 실제 PDF로 재현한 검증기 오판이다.
+후속 검사는 이 공백 표현만 정규화하며 모든 한글 글자의 순서·영문 문장·1쪽 조건을
+유지한다. 빈 내용·누락 글자·순서 변경·잘못된 페이지 수는 계속 거절한다. 실패 때
+고정 합성 PDF를 보존하는 진단도 유지한다. 사용자 문서를 받는 검증기가 아니며,
+이 선행 실패를 운영 수정 완료나 새 스캔 성공으로 집계하지 않는다.
+
 ## 2026-10-09 GCC 예외 종료
 
 release owner가 [run37908819030의 실제 스캔](https://github.com/guswls3028-art/academy-backend/actions/runs/37908819030/job/113751609811)을

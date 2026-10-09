@@ -111,11 +111,12 @@ def test_runtime_images_remove_unused_perl_after_their_final_apt_layer() -> None
 
     for service in ("api", "video", "ai", "tools"):
         dockerfile = _read(PRODUCTION_DOCKERFILES[service])
-        runtime_dockerfile = (
-            dockerfile.split("FROM ${BASE_IMAGE} AS base", maxsplit=1)[1]
-            if service == "video"
-            else dockerfile
-        )
+        # FFmpeg and CUPS compile in disposable stages. Check every apt layer
+        # inherited by the runtime, starting at its verified base image.
+        runtime_stage = "base" if service == "video" else "curl-fixed-system"
+        runtime_dockerfile = dockerfile.split(
+            "FROM ${BASE_IMAGE} AS " + runtime_stage, maxsplit=1
+        )[1]
         apt_layers = re.findall(
             r"RUN apt-get update.*?(?=\n\n)", runtime_dockerfile, flags=re.DOTALL
         )
@@ -138,6 +139,11 @@ def test_runtime_images_remove_unused_perl_after_their_final_apt_layer() -> None
     assert [
         line for line in video_dockerfile.splitlines() if line.startswith("COPY --from=")
     ] == ["COPY --from=ffmpeg-builder /opt/academy-ffmpeg /opt/academy-ffmpeg"]
+
+    tools_dockerfile = _read(PRODUCTION_DOCKERFILES["tools"])
+    assert [
+        line for line in tools_dockerfile.splitlines() if line.startswith("COPY --from=")
+    ] == ["COPY --from=cups-openssl-build /out/ /tmp/academy-cups/"]
 
     messaging_dockerfile = _read(PRODUCTION_DOCKERFILES["messaging"])
     assert "FROM ${BASE_IMAGE}" in messaging_dockerfile

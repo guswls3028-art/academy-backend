@@ -6,6 +6,14 @@
 # ==============================================================================
 
 ARG BASE_IMAGE=academy-base:latest
+FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff AS cups-openssl-build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    autoconf build-essential ca-certificates curl dpkg-dev gettext \
+    libavahi-client-dev libdbus-1-dev libkrb5-dev libpaper-dev libssl-dev \
+    pkg-config quilt zlib1g-dev
+COPY docker/native-security/build-cups-openssl.sh /usr/local/bin/
+RUN sh /usr/local/bin/build-cups-openssl.sh /out
+
 FROM ${BASE_IMAGE} AS curl-fixed-system
 ARG LIBCURL_VERSION=8.21.0-2~bpo13+1
 ARG LIBNGHTTP3_VERSION=1.15.0-1~bpo13+1
@@ -14,6 +22,8 @@ ARG LIBNGTCP2_VERSION=1.22.1-1~bpo13+1
 ENV WORKER_TYPE=TOOLS
 
 USER root
+COPY --from=cups-openssl-build /out/ /tmp/academy-cups/
+COPY docker/native-security/verify-cups.py /usr/local/bin/
 # Problem Studio 원본 이관은 스캔 PDF/이미지의 제한적 OCR까지 tools worker에서
 # 끝내야 API 60초 경계를 피하면서도 산출물 품질이 API와 일치한다.
 # perl-base exists only while Debian configures this same apt transaction.
@@ -30,7 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libseccomp2 \
     libx11-6 libx11-xcb1 libxinerama1 libsm6 libice6 \
     libfontconfig1 libfreetype6 libcairo2 libglib2.0-0t64 \
-    libdbus-1-3 libcups2t64 libnss3 \
+    libdbus-1-3 libnss3 /tmp/academy-cups/libcups2t64-openssl.deb \
     && dpkg --configure -a \
     && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libglib2.0-0t64)" ge "2.84.4-3~deb13u4" \
     && libcurl_version="$(dpkg-query -W -f='${Version}' libcurl4t64)" \
@@ -52,6 +62,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ! dpkg-query -W perl-base >/dev/null 2>&1 \
     && for package in perl 'perl-modules-*' 'libperl*' libdpkg-perl liberror-perl; do ! dpkg-query -W "$package" >/dev/null 2>&1; done \
     && ! command -v perl >/dev/null 2>&1 \
+    && python /usr/local/bin/verify-cups.py \
+    && rm -rf /tmp/academy-cups \
     && python /usr/local/bin/verify-expat.py --library libexpat.so.1 --python --package \
     && python /usr/local/bin/verify-aligned-new.py \
     && python /usr/local/bin/verify-tiff.py
@@ -64,6 +76,7 @@ COPY --chown=appuser:appuser scripts/install-resource-office.py /tmp/install-res
 RUN python /tmp/install-resource-office.py && rm /tmp/install-resource-office.py \
     && test -z "$(dpkg --audit)" && apt-get check \
     && ! command -v perl >/dev/null 2>&1 \
+    && python /usr/local/bin/verify-krb5.py --package \
     && python /usr/local/bin/verify-sasl.py
 
 USER appuser
@@ -72,6 +85,7 @@ FROM curl-fixed-system AS base
 
 COPY --chown=appuser:appuser requirements/constraints.txt requirements/common.txt requirements/worker-tools.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/worker-tools.txt
+RUN python /usr/local/bin/verify-cups.py --office
 
 # 앱 소스는 의존성 설치 뒤에 둬 일반 코드 변경 시 pip 캐시를 보존한다.
 COPY --chown=appuser:appuser academy ./academy
