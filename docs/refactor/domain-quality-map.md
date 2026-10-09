@@ -95,9 +95,17 @@
 |---|---|---|
 | D01 학생 상세·학생별 기록 | backend [PR599](https://github.com/guswls3028-art/academy-backend/pull/599) `bf23b8f56704c56826bdfa46445ea795a45135be`, frontend [PR715](https://github.com/guswls3028-art/academy-frontend/pull/715)·[PR716](https://github.com/guswls3028-art/academy-frontend/pull/716) `a9cd3567ad0ef71facc82b9abac97993715c8ff8` 운영 반영. [frontend run37872808381](https://github.com/guswls3028-art/academy-frontend/actions/runs/37872808381) 동일 빌드 실사용 27건(생략·재시도 0), 양쪽 cleanup tenant/user 0, 운영 읽기 검증 통과. 서버·화면 배포 묶음 검사와 3개 운영 도메인 버전 일치. 배포 정적 자산+합성 API로 1366/1100/390px, 메모 저장→reload 확인, 예외/가로 넘침/예상 밖 업무 요청 0 | 해당 상세 동선 운영 확인 완료. 등록·일괄 업로드·삭제/복원 등 D01의 나머지 동선은 별도 점검 필요 |
 | D16 연속 탭 이동·학부모 질문 작성 | 느린 CPU에서 작성창 소실 재현 후 location effect 경합 수정. PR716에 포함, 최종 번들 커뮤니티 5건·필수 CI·동일 빌드 실사용과 운영 승격 통과 | 연결된 질문 작성 동선 완료. D16 전체 게시/댓글/공개 자료 점검은 순서표대로 진행 |
-| D00 명시적 학원 선택 | 잘못된/비활성 헤더의 다른 학원 대체와 대소문자 중복 코드 임의 선택 재현·수정. 새 회귀 14건+기존 23건=37건, PostgreSQL·SQLite 필수 CI 통과. [PR601](https://github.com/guswls3028-art/academy-backend/pull/601) 병합 `f63d811e6c09378b3b0c6a881eaae1055a657b3d`, [run37877184870](https://github.com/guswls3028-art/academy-backend/actions/runs/37877184870) 출시 게이트 진행 | 후보 보안 검사→격리 개발·preprod→운영 교체·명시적 선택 경계 읽기 검증. 완료 전 운영 반영으로 집계하지 않음 |
+| D00 명시적 학원 선택 | 잘못된/비활성 헤더의 다른 학원 대체와 대소문자 중복 코드 임의 선택 재현·수정. 새 회귀 14건+기존 23건=37건, PostgreSQL·SQLite 필수 CI 통과. [PR601](https://github.com/guswls3028-art/academy-backend/pull/601) 병합. 첫 후보는 새 Cyrus SASL High로 개발/운영 변경 전에 차단. [PR603](https://github.com/guswls3028-art/academy-backend/pull/603)의 ARM64 런타임 검증·정확한 버전/만료를 둔 검토와 필수 CI 통과 후 `cbfa0eb142e2b0a1bcae90e219c6da0275a92541`의 [새 run37882312061](https://github.com/guswls3028-art/academy-backend/actions/runs/37882312061) 진행 | 새 후보 6개 보안 검사→격리 개발·preprod→운영 교체·명시적 선택 경계 읽기 검증. 완료 전 운영 반영으로 집계하지 않음 |
 | D02 전체 목록·시급 변경 이력 실패 | 501번째 직원 누락, 동일 정렬키 페이지 불안정, 시급 태그/개별 배정의 이력 저장 실패에도 변경 성공하는 6개 경로를 재현·수정. backend [PR602](https://github.com/guswls3028-art/academy-backend/pull/602), frontend [PR718](https://github.com/guswls3028-art/academy-frontend/pull/718). 직원 서버 117건·하위 사례 19건, 화면 36건, 최종 번들의 페이지/복구·본인 근무 8건 통과. 기본 3.3%·분 단위 급여·0원 시급·기존 마감 및 시급 고정 회귀도 서버 묶음에서 통과 | 최신 main 통합 후 필수 CI→D00 출시 완료→직원 서버·화면 순서로 격리 실사용·운영 확인. 운영 미반영이며 D02 전체 완료로 집계하지 않음 |
 | 나머지 및 위 도메인의 미검증 하위 동선 | 구조 분류 완료, 이번 순차 점검 **미착수 또는 조사 단계**. 이전 릴리스나 테스트 존재를 현재 완료로 승격하지 않음 | 현재 코드/정책·실사용 흐름을 하위 동선별로 좁혀 점검 |
+
+후속 조사 큐(완료 증거 아님): D03 청구 500건 초과 누락, 조회 실패의 빈 결과 표시,
+한국 시간 월말 기한 하루 오차, 미납 바로가기의 완납 포함을 합성 브라우저에서 재현해
+별도 `domain-fees-20261009-01a10bcb` 작업에서 수정·검증 중이다. 기존 수납 수명주기
+42건·하위 사례 11건은 통과했지만 수납 응답 유실 뒤 재시도 키·학생 조회 오류 복구는
+추가 점검 대상이다. D21 저장소 Dependabot #20의 개발 의존성 `source-map-js`
+High(`CVE-2026-93749`, 수정 1.2.2)도 영향 범위·업데이트 검증을 기다린다. 이 진단을
+현재 운영 브라우저의 노출로 추정하거나 해결 완료로 표시하지 않는다.
 
 작업 카드에는 재현 조건, 영향 역할/tenant, 심각도, 원인, 수정 파일, 파생 영향,
 정상·실패·복구 검사, PR/커밋/CI, 실사용 산출물과 정리 결과, 운영 SHA/시각을 남긴다.
