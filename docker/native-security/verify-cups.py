@@ -76,7 +76,14 @@ def verify_office():
         pdf_path = root / "sample.pdf"
         with fitz.open(pdf_path) as document:
             text = "".join(page.get_text() for page in document)
-            if document.page_count != 1 or "Academy document conversion" not in text or "수업 분석 자료" not in text:
+            # Office can emit Korean word spaces in separate PDF text runs.
+            # Require every Korean glyph in order, independent of those runs.
+            korean_text = "".join(text.split())
+            if (
+                document.page_count != 1
+                or "Academy document conversion" not in text
+                or "수업분석자료" not in korean_text
+            ):
                 # This document is generated above from fixed synthetic text.
                 # Keep the actual output available when an image build fails,
                 # so rendering and extraction defects can be distinguished.

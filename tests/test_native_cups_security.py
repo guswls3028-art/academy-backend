@@ -39,9 +39,21 @@ def test_rejects_a_physical_gnutls_library_despite_relabelled_metadata(monkeypat
 
 
 @pytest.mark.parametrize(
-    "text,pages", [("", 1), ("Academy document conversion", 1), ("Academy document conversion 수업 분석 자료", 0)]
+    "text,pages,valid",
+    [
+        ("", 1, False),
+        ("Academy document conversion", 1, False),
+        ("Academy document conversion 수업 분석 자료", 0, False),
+        ("Academy document conversion 수업 분석 자료", 2, False),
+        ("Academy document conversion 수업 분석 자", 1, False),
+        ("Academy document conversion 분석 수업 자료", 1, False),
+        ("Academy document conversion 수업 분석 자료", 1, True),
+        # Exact extraction from the visually verified ARM candidate PDF:
+        # spaces occupy separate text runs before the Korean glyph run.
+        ("Academy document conversion\n \n \n수업분석자료\n", 1, True),
+    ],
 )
-def test_office_success_exit_without_complete_content_is_rejected(monkeypatch, text, pages):
+def test_office_requires_complete_content_despite_pdf_space_run_order(monkeypatch, text, pages, valid):
     class Document:
         page_count = pages
 
@@ -56,5 +68,8 @@ def test_office_success_exit_without_complete_content_is_rejected(monkeypatch, t
 
     monkeypatch.setitem(sys.modules, "fitz", SimpleNamespace(open=lambda *args: Document()))
     monkeypatch.setattr(verifier.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0))
-    with pytest.raises(RuntimeError, match="lost the document content"):
+    if valid:
         verifier.verify_office()
+    else:
+        with pytest.raises(RuntimeError, match="lost the document content"):
+            verifier.verify_office()
