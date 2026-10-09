@@ -85,26 +85,22 @@ def test_current_candidate_only_accepts_exact_reviewed_high_before_expiry(reposi
     )
     assert not acceptances
     assert known == {
-        (repo, cve, "gcc-14", "14.2.0-19")
-        for repo in gate.REPOSITORIES
-        for cve in ("CVE-2026-102010", "CVE-2026-95619")
-    } | {
         (repo, "CVE-2026-107161", "cyrus-sasl2", "2.1.28+dfsg1-9")
         for repo in gate.REPOSITORIES
     }
-    assert baselines[repository] == 3
+    assert baselines[repository] == 1
     assert gate.evaluate_findings(repository, _scan(), acceptances) == []
     assert gate.evaluate_high_budget(repository, _scan(), baselines, known) == 0
     gcc = _scan(
         _finding("CVE-2026-102010", "gcc-14", "14.2.0-19", "HIGH"),
         _finding("CVE-2026-95619", "gcc-14", "14.2.0-19", "HIGH"),
     )
-    assert gate.evaluate_high_budget(repository, gcc, baselines, known) == 2
+    with pytest.raises(gate.GateError, match="High reviewed policy exceeded"):
+        gate.evaluate_high_budget(repository, gcc, baselines, known)
     reviewed = _scan(
-        *gcc["imageScanFindings"]["findings"],
         _finding("CVE-2026-107161", "cyrus-sasl2", "2.1.28+dfsg1-9", "HIGH"),
     )
-    assert gate.evaluate_high_budget(repository, reviewed, baselines, known) == 3
+    assert gate.evaluate_high_budget(repository, reviewed, baselines, known) == 1
     for finding in [
         _finding("CVE-2099-9999", "gcc-14", "14.2.0-19", "HIGH"),
         _finding("CVE-2026-102010", "gcc-14", "14.2.0-20", "HIGH"),
@@ -124,16 +120,22 @@ def test_current_candidate_only_accepts_exact_reviewed_high_before_expiry(reposi
         ), acceptances)
 
 
-def test_current_gcc_policy_expires_without_automatic_renewal() -> None:
+def test_retired_gcc_exceptions_do_not_block_clean_candidates_after_their_old_expiry() -> None:
     policy = Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
-    with pytest.raises(gate.GateError, match="High risk acceptance expired"):
-        gate.load_high_baselines(policy, date(2026, 10, 10))
+    baselines, known = gate.load_high_baselines(policy, date(2026, 10, 10))
+    for repository in gate.REPOSITORIES:
+        assert gate.evaluate_high_budget(repository, _scan(), baselines, known) == 0
+        for cve in ("CVE-2026-102010", "CVE-2026-95619"):
+            with pytest.raises(gate.GateError, match="unreviewed High"):
+                gate.evaluate_high_budget(repository, _scan(
+                    _finding(cve, "gcc-14", "14.2.0-19", "HIGH")
+                ), baselines, known)
 
 
 def test_current_sasl_review_has_its_own_expiry_without_renewing_gcc(tmp_path) -> None:
     policy = Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
     entries = json.loads(policy.read_text(encoding="utf-8"))["acceptedHighFindings"]
-    assert {entry["expiresOn"] for entry in entries if entry["packageName"] == "gcc-14"} == {"2026-10-09"}
+    assert not [entry for entry in entries if entry["packageName"] == "gcc-14"]
     sasl = [entry for entry in entries if entry["packageName"] == "cyrus-sasl2"]
     assert len(sasl) == 1
     assert sasl[0]["expiresOn"] == "2026-10-10"

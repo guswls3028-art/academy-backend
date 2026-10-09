@@ -5,6 +5,34 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-10-09 GCC 예외 종료
+
+release owner가 [run37908819030의 실제 스캔](https://github.com/guswls3028-art/academy-backend/actions/runs/37908819030/job/113751609811)을
+확인했다. 아래 여섯 immutable 후보 모두 신선한 COMPLETE 스캔을 통과했고
+Critical 0, High 1이었다. 각 repository에서 기존 GCC 두 identity가 사라졌다는
+게이트 readback을 확인했다. 이를 근거로 `CVE-2026-102010`, `CVE-2026-95619` /
+`gcc-14` / `14.2.0-19` 예외를 삭제하고 repository별 High 상한을 3에서 1로 낮춘다.
+
+| 이미지 | 확인한 digest |
+|---|---|
+| base | `sha256:66625864c442768ffc257f71360170b3f10f341c3ec795a1bf20a7a1d7d15d86` |
+| API | `sha256:a72ef99e0f95c656a653aeb527347164fbbc543e29f3082cdd8198727756554f` |
+| Video | `sha256:a89242685c3c154d6e218c4168408b3a7765f4755f942b0b39794eba7b85a00d` |
+| Messaging | `sha256:578f29d237455ae4c3ca6f50216909003d67cbec6e761dc748c5c7eebaefe6f1` |
+| AI | `sha256:15be4b8158882eed3947d65a1404574319eadb3948232995569d32498b4611c7` |
+| Tools | `sha256:7810f874d88468dd993f8d8b4f9b0a0ecaa48a1db0476799cd37422a217479dd` |
+
+예외 기한을 연장하거나 스캐너를 무시하는 변경이 아니다. GCC 두 identity가
+다시 나타나면 건수가 1 이하라도 unreviewed High로 거절한다. 사용하지 않는
+예외의 과거 만료가 깨끗한 후보까지 차단하던 문제를 제거한다. 아래 GCC 수용
+기록은 과거 판단으로 보존하며 현재 정책으로 적용하지 않는다.
+
+Cyrus identity·범위·근거·**2026-10-10 UTC 종료** 기한은 그대로 유지한다.
+이 finding의 upstream 해결을 주장하지 않는다. Critical, 새로운 High, 이후의
+Cyrus 만료, 이미지 빌드 검증과 모든 배포 게이트는 계속 실패 시 차단한다.
+`tests/test_ecr_critical_scan_gate.py`는 여섯 repository의 GCC 재출현 거절,
+2026-10-10 정상 후보 통과와 2026-10-11 Cyrus 예외 만료를 검증한다.
+
 ## 2026-10-09 SASL 후보 차단과 런타임 검증
 
 학원 선택 경계 후보 [37877184870](https://github.com/guswls3028-art/academy-backend/actions/runs/37877184870)는
@@ -42,8 +70,8 @@ core/DB 패키지 두 개, mechanism `EXTERNAL` 하나, DIGEST-MD5 시작 결과
 
 이 증거와 모든 최종 이미지의 같은 빌드 검사를 조건으로 위의 exact
 `CVE/package/version` 하나를 여섯 governed repository에서 **2026-10-10 UTC 종료**까지
-한시적으로 수용한다. `ecr-high-risk-baseline.json`은 이 정확한 identity와 기존 GCC
-두 identity만 허용하며, 기존 GCC의 2026-10-09 만료는 연장하지 않는다. 같은 source의
+한시적으로 수용한다. `ecr-high-risk-baseline.json`은 이 정확한 identity만 허용한다.
+GCC 두 예외는 위 최신 스캔 근거에 따라 종료했다. 같은 source의
 다른 버전·새 CVE·Critical·새 플러그인 구성은 계속 차단한다. 앱이나 vendor package가
 전반적으로 안전하거나 취약점이 수정됐다는 주장은 하지 않는다.
 
