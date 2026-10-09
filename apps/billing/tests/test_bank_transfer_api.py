@@ -107,6 +107,46 @@ class BankTransferApiTests(APITestCase):
             status="SCHEDULED",
         )
 
+    def test_oldest_unpaid_stays_visible_beyond_history_limit_and_accepts_notice(self):
+        self.program.billing_mode = "INVOICE_REQUEST"
+        self.program.save(update_fields=["billing_mode", "updated_at"])
+        self.invoice.billing_mode = "INVOICE_REQUEST"
+        self.invoice.status = "OVERDUE"
+        self.invoice.period_start = date(2025, 7, 1)
+        self.invoice.period_end = date(2025, 7, 31)
+        self.invoice.due_date = date(2025, 7, 15)
+        self.invoice.save()
+        paid_ids = []
+        for index in range(13):
+            period = date(2025 + (7 + index) // 12, (7 + index) % 12 + 1, 1)
+            paid_ids.append(Invoice.objects.create(
+                tenant=self.tenant, invoice_number=f"INV-HISTORY-{index}",
+                plan="all", billing_mode="INVOICE_REQUEST", status="PAID",
+                supply_amount=180_000, tax_amount=18_000, total_amount=198_000,
+                period_start=period, period_end=period + timedelta(days=27), due_date=period,
+            ).id)
+        foreign = Invoice.objects.create(
+            tenant=self.other_tenant, invoice_number="INV-FOREIGN-HISTORY",
+            plan="all", billing_mode="INVOICE_REQUEST", status="OVERDUE",
+            supply_amount=180_000, tax_amount=18_000, total_amount=198_000,
+            period_start=date(2025, 6, 1), period_end=date(2025, 6, 30), due_date=date(2025, 6, 15),
+        )
+        self.client.force_authenticate(self.owner)
+        for _ in range(2):
+            response = self.client.get("/api/v1/billing/bank-transfer/", **self.headers)
+            self.assertEqual(response.status_code, 200, response.data)
+            ids = [row["id"] for row in response.data["invoices"]]
+            self.assertEqual(ids[0], self.invoice.id)
+            self.assertEqual(set(ids), {self.invoice.id, *paid_ids[-12:]})
+            self.assertNotIn(foreign.id, ids)
+        submitted = self.client.post("/api/v1/billing/bank-transfer/notices/", {
+            "invoice_id": self.invoice.id, "depositor_name": "검증 입금자",
+            "deposited_at": timezone.now().isoformat(), "tax_invoice_requested": False,
+        }, format="json", **self.headers)
+        self.assertEqual(submitted.status_code, 201, submitted.data)
+        reloaded = self.client.get("/api/v1/billing/bank-transfer/", **self.headers)
+        self.assertEqual(reloaded.data["invoices"][0]["bank_transfer_notice"]["status"], "SUBMITTED")
+
     def _save_business_profile(self):
         self.client.force_authenticate(self.owner)
         response = self.client.patch(
