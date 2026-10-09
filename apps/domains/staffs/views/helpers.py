@@ -83,6 +83,17 @@ class StaffDomainPagination(PageNumberPagination):
     page_size_query_param = "page_size"
     max_page_size = 500
 
+    def paginate_queryset(self, queryset, request, view=None):
+        # Apply a unique tie-breaker after filters/request ordering and before slicing.
+        ordering = list(queryset.query.order_by)
+        if not ordering and queryset.query.default_ordering:
+            ordering = list(queryset.model._meta.ordering or ())
+        primary_key_names = {"id", "pk", queryset.model._meta.pk.name}
+        if not any(isinstance(field, str) and field.lstrip("-") in primary_key_names for field in ordering):
+            descending = bool(ordering and isinstance(ordering[0], str) and ordering[0].startswith("-"))
+            ordering.append("-pk" if descending else "pk")
+        return super().paginate_queryset(queryset.order_by(*ordering), request, view)
+
 # ===========================
 # Helpers
 # ===========================
