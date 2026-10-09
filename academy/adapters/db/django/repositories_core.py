@@ -63,7 +63,11 @@ def tenant_get_by_code(code: str) -> Optional[Any]:
     raw = (code and str(code).strip()) or ""
     if not raw:
         return None
-    return Tenant.objects.select_related("program").filter(code__iexact=raw, is_active=True).first()
+    matches = list(Tenant.objects.select_related("program").filter(code__iexact=raw)[:2])
+    # The database's case-sensitive unique code can still have two iexact matches.
+    # Login and public requests must never pick an arbitrary academy in that case.
+    # An inactive colliding code is not permission to route its requests elsewhere.
+    return matches[0] if len(matches) == 1 and matches[0].is_active else None
 
 
 def tenant_get_or_create(code: str, defaults: dict) -> tuple[Any, bool]:

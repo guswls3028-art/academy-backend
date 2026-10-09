@@ -58,6 +58,7 @@ backend/docs/
 | 실행 파라미터 | [ssot/params.yaml](ssot/params.yaml) |
 | 레이어/코드 배치 | [architecture/hexagonal-cutover-policy.md](architecture/hexagonal-cutover-policy.md) |
 | OpenAPI·프런트 생성 타입 계약 | [architecture/api-schema-contract.md](architecture/api-schema-contract.md) |
+| 요청의 학원 선택·명시적 선택 실패·공개 문서 링크 | [architecture/tenant-request-context.md](architecture/tenant-request-context.md) |
 | GET/HEAD/OPTIONS 무변경 경계 | [architecture/safe-http-mutation-boundary.md](architecture/safe-http-mutation-boundary.md) |
 | 시험 생성·혼합 채점·오답노트 | [domain/exam-grading.md](domain/exam-grading.md) |
 | 데이터 목록 정렬·필터·페이지네이션 | [domain/data-list-ordering.md](domain/data-list-ordering.md) |
