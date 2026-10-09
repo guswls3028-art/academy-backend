@@ -136,11 +136,19 @@ scenario 56건·세부 51건(로컬 PostgreSQL 전용 3건 생략), SSM 경계 4
 
 선행 frontend PR722 run37912703522는 **격리 실사용 실패로 운영 승격되지 않았다**.
 26건 통과·1건 실패·skip/flaky 0이며 긴 영상 재생 POST의 전송 시간 초과가 발생했다.
-기존 교차 tenant 검증 데이터는 0으로 정리됐지만 주 QA tenant738은 cleanup_database의
-OperationalError 이후 17사용자·2영상이 남아 있다. 정확한 run/tenant 생성 seal과
-비식별 잠금·오류 진단을 통한 별도 복구 검토가 필요하다. 운영은 이전 화면을 유지하며
-새 서버/화면 후보를 이 실패 해결 전에 승격하지 않는다. 위 표의 PR722 진행 표기는
-이 후속 실패 기록으로 갱신한다. 실패 artifact를 성공 증거로 재사용하지 않는다.
+기존 교차 tenant 검증 데이터는 0으로 정리됐고, 주 QA tenant738은 cleanup_database의
+OperationalError 이후 남은 17사용자·2영상을 별도 정확 대상 복구 검토로 정리했다.
+run37912703522 attempt1·개발 인스턴스·불변 release/digest·생성 seal23885·행 수를
+다시 확인한 후 SSM `f27d75b6-2fd7-48f6-bcab-dc5bcbd8529f`에서 기존 destroy 경로로
+소유 합성 데이터만 제거했다. tenant/user/video 상태·R2·process/listener 0과 원래
+생성 seal 보존을 재조회했다. 운영 자료·런타임·인증 capability 변경은 없다.
+비식별 진단에서 gunicorn worker timeout 1건을 관찰했으나 최초 전송 시간 초과의
+원인을 확정하지 않는다. 정리 0 확인 뒤 공식 동일 산출물 attempt2를 시작했으며,
+검사·timeout·보호 조건·변경 요청 재전송 정책은 바꾸지 않았다. 운영은 이전 화면을
+유지하고 새 서버/화면 후보는 이 재검증과 운영 확인이 끝나기 전에 승격하지 않는다.
+위 표의 PR722 진행 표기는 이 후속 기록으로 갱신하며 attempt1 실패 artifact를
+성공 증거로 재사용하지 않는다. 소유 복구 증거는 작업 artifact의
+`qa738-recovery-result.json`에 보존한다.
 
 후속 조사 큐(완료 증거 아님): D19 전체 집계 수정과 별도로 제출 상세 목록의
 200건 이후 탐색과 관리자 시험·공용 평가 선택기의 첫 페이지 제한을 점검한다.
