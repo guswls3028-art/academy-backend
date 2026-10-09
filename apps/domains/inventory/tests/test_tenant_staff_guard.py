@@ -33,8 +33,12 @@ class InventoryTenantStaffGuardTests(TestCase):
     def test_global_staff_without_membership_cannot_access_other_tenant(self):
         self.assertFalse(_is_tenant_staff(self._request(self.tenant_b)))
 
-    def test_global_staff_can_access_own_tenant(self):
-        self.assertTrue(_is_tenant_staff(self._request(self.tenant_a)))
+    def test_global_staff_without_membership_cannot_access_own_tenant(self):
+        self.assertFalse(_is_tenant_staff(self._request(self.tenant_a)))
+
+    def test_global_staff_with_inactive_membership_cannot_access_own_tenant(self):
+        TenantMembership.objects.create(tenant=self.tenant_a, user=self.staff, role="teacher", is_active=False)
+        self.assertFalse(_is_tenant_staff(self._request(self.tenant_a)))
 
     def test_membership_allows_tenant_staff(self):
         TenantMembership.ensure_active(tenant=self.tenant_b, user=self.staff, role="teacher")
