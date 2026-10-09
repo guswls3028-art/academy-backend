@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory
 
-from apps.core.models import Tenant
+from apps.core.models import Tenant, TenantMembership
 from apps.domains.inventory.models import InventoryFile
 from apps.domains.matchup import services, views
 from apps.domains.matchup.models import MatchupDocument, MatchupHitReport
@@ -20,6 +20,7 @@ CYCLES = ["semester1_midterm", "semester1_final", "semester2_midterm", "semester
 def staff():
     tenant = Tenant.objects.create(code="qa-exam-cycle", name="시험 회차 검증")
     user = get_user_model().objects.create_user(username="qa-cycle-staff", tenant=tenant, is_staff=True)
+    TenantMembership.ensure_active(tenant=tenant, user=user, role="teacher")
     return tenant, user
 
 
@@ -93,6 +94,7 @@ def test_patch_preserves_legacy_and_rejects_other_tenant(staff):
     assert other.exam_cycle == "final"
     request.tenant = Tenant.objects.create(code="qa-cycle-other", name="다른 학교")
     request.user = get_user_model().objects.create_user(username="qa-other-staff", tenant=request.tenant, is_staff=True)
+    TenantMembership.ensure_active(tenant=request.tenant, user=request.user, role="teacher")
     assert views.DocumentDetailView().patch(request, doc.id).status_code == 404
     doc.refresh_from_db()
     assert doc.exam_cycle == CYCLES[2]
