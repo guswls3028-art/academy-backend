@@ -12630,6 +12630,10 @@
             "minimum": 1,
             "type": "integer"
           },
+          "expected_paid_amount": {
+            "minimum": 0,
+            "type": "integer"
+          },
           "idempotency_key": {
             "default": "",
             "maxLength": 100,

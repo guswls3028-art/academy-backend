@@ -487,6 +487,12 @@ class FeePaymentViewSet(ModelViewSet):
                 receipt_note=ser.validated_data.get("receipt_note", ""),
                 memo=ser.validated_data.get("memo", ""),
                 idempotency_key=idempotency_key,
+                expected_paid_amount=ser.validated_data.get("expected_paid_amount"),
+            )
+        except services.InvoiceBalanceChanged as e:
+            return Response(
+                {"code": "invoice_balance_changed", "detail": str(e)},
+                status=status.HTTP_409_CONFLICT,
             )
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
