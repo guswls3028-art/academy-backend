@@ -328,6 +328,10 @@ def generate_monthly_invoices(
 PAYMENT_DEDUP_WINDOW_SECONDS = 60  # 동일 파라미터 중복 납부 방지 윈도우
 
 
+class InvoiceBalanceChanged(ValueError):
+    """The payment form was opened before another payment changed the balance."""
+
+
 @transaction.atomic
 def record_payment(
     tenant,
@@ -339,6 +343,7 @@ def record_payment(
     receipt_note: str = "",
     memo: str = "",
     idempotency_key: str = "",
+    expected_paid_amount: int | None = None,
 ) -> FeePayment:
     """
     청구서에 대한 납부를 기록한다.
@@ -359,6 +364,8 @@ def record_payment(
         raise ValueError("납부 금액은 0보다 큰 정수여야 합니다.")
     if not isinstance(idempotency_key, str) or len(idempotency_key) > 100:
         raise ValueError("idempotency_key는 100자 이하 문자열이어야 합니다.")
+    if expected_paid_amount is not None and (type(expected_paid_amount) is not int or expected_paid_amount < 0):
+        raise ValueError("기존 수납 금액은 0 이상의 정수여야 합니다.")
 
     invoice = (
         StudentInvoice.objects
@@ -413,6 +420,11 @@ def record_payment(
                 f"{PAYMENT_DEDUP_WINDOW_SECONDS}초 이내에 이미 기록되었습니다. "
                 f"중복 납부면 잠시 후 다시 시도하거나, 의도적 분할 납부는 idempotency_key를 지정하세요."
             )
+
+    # Replays above return the original result even though that successful
+    # payment changed the balance. New attempts must use the locked row.
+    if expected_paid_amount is not None and invoice.paid_amount != expected_paid_amount:
+        raise InvoiceBalanceChanged("수납 내역이 변경되었습니다. 최신 납부 금액을 확인한 뒤 다시 기록해 주세요.")
 
     outstanding = invoice.outstanding_amount
     if amount > outstanding:

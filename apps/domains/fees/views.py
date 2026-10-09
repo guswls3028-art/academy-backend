@@ -124,7 +124,7 @@ class FeeTemplateViewSet(ModelViewSet):
         if lecture_id is not None:
             qs = qs.filter(lecture_id=lecture_id)
 
-        return qs.order_by("-created_at")
+        return qs.order_by("-created_at", "-id")
 
     def perform_create(self, serializer):
         lecture = serializer.validated_data.get("lecture")
@@ -171,7 +171,7 @@ class StudentFeeViewSet(ModelViewSet):
         if is_active is not None:
             qs = qs.filter(is_active=is_active)
 
-        return qs.order_by("student__name")
+        return qs.order_by("student__name", "id")
 
     def perform_create(self, serializer):
         _validate_student_fee_tenant_consistency(
@@ -325,7 +325,9 @@ class StudentInvoiceViewSet(
             qs = qs.filter(billing_month=month)
 
         status_filter = self.request.query_params.get("status")
-        if status_filter:
+        if status_filter == "UNPAID":
+            qs = qs.filter(status__in=["PENDING", "PARTIAL", "OVERDUE"])
+        elif status_filter:
             qs = qs.filter(status=status_filter)
 
         student_id = parse_query_int(self.request.query_params, "student", min_value=1)
@@ -455,7 +457,7 @@ class FeePaymentViewSet(ModelViewSet):
         if student_id is not None:
             qs = qs.filter(student_id=student_id)
 
-        return qs.order_by("-paid_at")
+        return qs.order_by("-paid_at", "-id")
 
     @extend_schema(
         request=RecordPaymentSerializer,
@@ -485,6 +487,12 @@ class FeePaymentViewSet(ModelViewSet):
                 receipt_note=ser.validated_data.get("receipt_note", ""),
                 memo=ser.validated_data.get("memo", ""),
                 idempotency_key=idempotency_key,
+                expected_paid_amount=ser.validated_data.get("expected_paid_amount"),
+            )
+        except services.InvoiceBalanceChanged as e:
+            return Response(
+                {"code": "invoice_balance_changed", "detail": str(e)},
+                status=status.HTTP_409_CONFLICT,
             )
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -630,7 +638,7 @@ class StudentFeePaymentListView(APIView):
             FeePayment.objects
             .filter(tenant=tenant, student__in=students, status="SUCCESS")
             .select_related("invoice", "student")
-            .order_by("-paid_at")
+            .order_by("-paid_at", "-id")
         )
 
         data = FeePaymentSerializer(payments, many=True).data

@@ -594,16 +594,20 @@ class MyBusinessProfileView(APIView):
 
 
 def _bank_transfer_summary(tenant) -> dict:
+    tenant_invoices = Invoice.objects.filter(
+        tenant=tenant,
+        billing_mode="INVOICE_REQUEST",
+    )
+    recent_ids = tenant_invoices.order_by("-period_start", "-pk").values("pk")[:12]
     invoices = list(
-        Invoice.objects.filter(
-            tenant=tenant,
-            billing_mode="INVOICE_REQUEST",
+        tenant_invoices.filter(
+            Q(status__in=("PENDING", "OVERDUE")) | Q(pk__in=recent_ids)
         )
         .select_related(
             "bank_transfer_notice",
             "tax_invoice_issue",
         )
-        .order_by("-period_start")[:12]
+        .order_by("-period_start", "-pk")
     )
     invoices.sort(
         key=lambda invoice: (

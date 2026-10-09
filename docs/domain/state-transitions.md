@@ -775,6 +775,11 @@ CONFIRMED → {} (종단)
 - 고객은 자기 테넌트의 `INVOICE_REQUEST`이면서 `PENDING/OVERDUE`인
   청구서만 신고할 수 있다. 금액은 클라이언트 입력이 아니라
   `Invoice.total_amount`에서 고정한다.
+- 계좌이체 요약은 최근 청구 이력 12건과 별도로 모든 미납·연체 청구를 포함하며
+  가장 오래된 납부 대상부터 표시한다. 오래된 미납이 이력 제한에 가려져 입금 신고가
+  막히지 않는다. 기존 청구·금액·신고를 자동 수정하지 않고 다른 테넌트는 제외한다.
+  `BankTransferApiTests.test_oldest_unpaid_stays_visible_beyond_history_limit_and_accepts_notice`
+  가 13건의 납부 이력 뒤에도 오래된 미납 조회→신고→재조회와 테넌트 격리를 검증한다.
 - 플랫폼 superuser만 입금을 확인하거나 반려한다.
 - 확인은 `Program → Invoice → BankTransferNotice` 순서로 잠그며,
   `PAID`, 수동 `PaymentTransaction(SUCCESS)`, 구독 갱신,

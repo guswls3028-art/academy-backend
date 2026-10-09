@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+from math import isfinite
 from typing import Optional
 
 from rest_framework import serializers
 
 from apps.domains.homework_results.models import HomeworkScore
+
+
+class _ScoreNumberField(serializers.FloatField):
+    def to_internal_value(self, data):
+        if isinstance(data, bool):
+            self.fail("invalid")
+        value = super().to_internal_value(data)
+        if not isfinite(value):
+            self.fail("invalid")
+        return value
 
 
 class _StatusField(serializers.CharField):
@@ -26,6 +37,8 @@ class _StatusField(serializers.CharField):
 class HomeworkScoreSerializer(serializers.ModelSerializer):
     enrollment_id = serializers.IntegerField(read_only=True)
     updated_by_user_id = serializers.IntegerField(read_only=True)
+    score = _ScoreNumberField(allow_null=True, required=False, min_value=0)
+    max_score = _ScoreNumberField(allow_null=True, required=False, min_value=0)
 
     # write-only convenience field (DB 컬럼 추가 아님)
     status = _StatusField(required=False, allow_null=True, allow_blank=True, write_only=True)
@@ -91,8 +104,8 @@ class HomeworkQuickPatchSerializer(serializers.Serializer):
     enrollment_id = serializers.IntegerField()
     session_id = serializers.IntegerField(required=False)
 
-    score = serializers.FloatField(allow_null=True, required=False)
-    max_score = serializers.FloatField(required=False, allow_null=True)
+    score = _ScoreNumberField(allow_null=True, required=False, min_value=0)
+    max_score = _ScoreNumberField(required=False, allow_null=True, min_value=0)
 
     meta_status = serializers.ChoiceField(
         choices=[HomeworkScore.MetaStatus.NOT_SUBMITTED],
