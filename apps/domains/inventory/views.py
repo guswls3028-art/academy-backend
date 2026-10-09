@@ -1,6 +1,7 @@
 # PATH: apps/domains/inventory/views.py
 # 저장소 API — R2 업로드 후 DB 메타데이터, 비어있지 않은 폴더 삭제 방지
 
+import json
 import logging
 from functools import wraps
 
@@ -66,6 +67,39 @@ except ImportError:
 STORAGE_QUOTA_BYTES = 200 * 1024**3
 SCORE_EVIDENCE_MAX_BYTES = 20 * 1024**2
 logger = logging.getLogger(__name__)
+
+
+def _inventory_json_body(*text_fields):
+    """Validate before namespace locks and retain the parsed object for the view."""
+    def decorate(view_func):
+        @wraps(view_func)
+        def wrapped(request, *args, **kwargs):
+            try:
+                body = json.loads(request.body)
+            except (ValueError, UnicodeDecodeError):
+                return JsonResponse({"detail": "Invalid JSON"}, status=400)
+            if not isinstance(body, dict):
+                return JsonResponse({"detail": "JSON object required"}, status=400)
+            for field in text_fields:
+                if body.get(field) is not None and not isinstance(body[field], str):
+                    return JsonResponse({"detail": f"{field} must be text"}, status=400)
+            request.inventory_body = body
+            return view_func(request, *args, **kwargs)
+        return wrapped
+    return decorate
+
+
+def _positive_inventory_integer(value):
+    # Do not coerce booleans/floats into another object's ID. Bound strings before
+    # int() and database lookup, including Python's oversized-integer limit.
+    if isinstance(value, str):
+        value = value.strip()
+        if not value or len(value) > 19 or not value.isascii() or not value.isdecimal():
+            raise ValueError("Positive integer required")
+        value = int(value)
+    if type(value) is not int or not 0 < value <= 9223372036854775807:
+        raise ValueError("Positive integer required")
+    return value
 
 
 def _score_evidence_signature_matches(file_obj, content_type: str) -> bool:
@@ -165,7 +199,9 @@ def _requested_student_ps(request) -> str:
         body = json.loads(request.body)
     except Exception:
         body = {}
-    return str(body.get("student_ps") or "").strip()
+    if not isinstance(body, dict) or not isinstance(body.get("student_ps", ""), str):
+        return ""
+    return body.get("student_ps", "").strip()
 
 
 def _student_scope_profile(request):
@@ -651,12 +687,9 @@ class FolderCreateView(View):
 
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
+    @method_decorator(_inventory_json_body("scope", "student_ps", "name"))
     def post(self, request):
-        import json
-        try:
-            body = json.loads(request.body)
-        except Exception:
-            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+        body = request.inventory_body
         scope = (body.get("scope") or "admin").lower()
         student_ps = (body.get("student_ps") or "").strip()
         parent_id = body.get("parent_id")
@@ -665,6 +698,8 @@ class FolderCreateView(View):
             return JsonResponse({"detail": "Invalid scope"}, status=400)
         if not name:
             return JsonResponse({"detail": "name required"}, status=400)
+        if len(name) > 100:
+            return JsonResponse({"detail": "이름은 100자 이하로 입력해주세요."}, status=400)
         if scope == "student" and not student_ps:
             return JsonResponse({"detail": "student_ps required for student scope"}, status=400)
 
@@ -675,7 +710,7 @@ class FolderCreateView(View):
         pid = None
         if parent_id is not None and parent_id != "":
             try:
-                pid = int(parent_id)
+                pid = _positive_inventory_integer(parent_id)
             except (TypeError, ValueError):
                 return JsonResponse({"detail": "parent_id must be a number"}, status=400)
 
@@ -840,7 +875,7 @@ class FileUploadView(View):
         folder_path = ""
         if folder_id:
             try:
-                parsed_folder_id = int(folder_id)
+                parsed_folder_id = _positive_inventory_integer(folder_id)
             except (TypeError, ValueError):
                 return JsonResponse({"detail": "folder_id must be a number"}, status=400)
             folder = inv_repo.inventory_folder_get(tenant, parsed_folder_id)
@@ -996,9 +1031,9 @@ class FolderDeleteView(View):
 
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
+    @method_decorator(_inventory_json_body("name", "student_ps"))
     @method_decorator(_inventory_namespace_mutation)
     def patch(self, request, folder_id):
-        import json
         tenant = request.tenant
         scope = (request.GET.get("scope") or "admin").lower()
         student_ps = (request.GET.get("student_ps") or "").strip()
@@ -1014,10 +1049,7 @@ class FolderDeleteView(View):
         if folder.scope != scope or (scope == "student" and folder.student_ps != student_ps):
             return JsonResponse({"detail": "Forbidden"}, status=403)
 
-        try:
-            body = json.loads(request.body)
-        except Exception:
-            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+        body = request.inventory_body
 
         name = (body.get("name") or "").strip()
         if not name:
@@ -1060,9 +1092,9 @@ class FileDeleteView(View):
 
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
+    @method_decorator(_inventory_json_body("displayName", "description", "student_ps"))
     @method_decorator(_inventory_namespace_mutation)
     def patch(self, request, file_id):
-        import json
         tenant = request.tenant
         scope = (request.GET.get("scope") or "admin").lower()
         student_ps = (request.GET.get("student_ps") or "").strip()
@@ -1078,10 +1110,7 @@ class FileDeleteView(View):
         if inv_file.scope != scope or (scope == "student" and inv_file.student_ps != student_ps):
             return JsonResponse({"detail": "Forbidden"}, status=403)
 
-        try:
-            body = json.loads(request.body)
-        except Exception:
-            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+        body = request.inventory_body
 
         fields = []
         if "displayName" in body:
@@ -1114,24 +1143,24 @@ class PresignView(View):
 
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
+    @method_decorator(_inventory_json_body("r2_key", "student_ps"))
     def post(self, request):
-        import json
-        try:
-            body = json.loads(request.body)
-        except Exception:
-            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+        body = request.inventory_body
         tenant = request.tenant
-        file_id = body.get("file_id") or body.get("fileId")
+        file_id = body.get("file_id")
+        if file_id is None or file_id == "":
+            file_id = body.get("fileId")
         r2_key = (body.get("r2_key") or "").strip()
+        expiry = body.get("expires_in")
         try:
-            expires_in = min(int(body.get("expires_in") or 3600), 3600)  # cap at 1 hour
+            expires_in = 3600 if expiry is None or expiry == "" else min(_positive_inventory_integer(expiry), 3600)
         except (TypeError, ValueError):
             return JsonResponse({"detail": "expires_in must be a number"}, status=400)
 
         inv_file = None
         if file_id not in (None, ""):
             try:
-                parsed_file_id = int(file_id)
+                parsed_file_id = _positive_inventory_integer(file_id)
             except (TypeError, ValueError):
                 return JsonResponse({"detail": "file_id must be a number"}, status=400)
             inv_file = inv_repo.inventory_file_get(tenant, parsed_file_id)
@@ -1172,12 +1201,9 @@ class MoveView(View):
 
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
+    @method_decorator(_inventory_json_body("type", "scope", "student_ps", "on_duplicate"))
     def post(self, request):
-        import json
-        try:
-            body = json.loads(request.body)
-        except Exception:
-            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+        body = request.inventory_body
         move_type = (body.get("type") or "file").lower()
         source_id = body.get("source_id")
         target_folder_id = body.get("target_folder_id")
@@ -1197,13 +1223,13 @@ class MoveView(View):
 
         tenant = request.tenant
         try:
-            sid = int(source_id)
+            sid = _positive_inventory_integer(source_id)
         except (TypeError, ValueError):
             return JsonResponse({"detail": "Invalid source_id"}, status=400)
         tid = None
         if target_folder_id is not None and target_folder_id != "":
             try:
-                tid = int(target_folder_id)
+                tid = _positive_inventory_integer(target_folder_id)
             except (TypeError, ValueError):
                 return JsonResponse({"detail": "Invalid target_folder_id"}, status=400)
 
