@@ -9,7 +9,7 @@ from rest_framework.exceptions import ValidationError
 
 from ..serializers import StaffWorkTypeSerializer
 from academy.adapters.db.django import repositories_staffs as staff_repo
-from .helpers import IsPayrollManager, StaffDomainPagination
+from .helpers import IsPayrollManager, StaffDomainPagination, record_required_wage_audit
 
 # ===========================
 # StaffWorkType
@@ -42,11 +42,11 @@ class StaffWorkTypeViewSet(viewsets.ModelViewSet):
                 tenant=self.request.tenant,
                 staff=locked_staff,
             )
-        self._record_assignment_audit(
-            "staff.staff_work_type_created",
-            assignment,
-            old_hourly_wage=None,
-        )
+            self._record_assignment_audit(
+                "staff.staff_work_type_created",
+                assignment,
+                old_hourly_wage=None,
+            )
 
     def perform_update(self, serializer):
         stale_assignment = serializer.instance
@@ -62,11 +62,11 @@ class StaffWorkTypeViewSet(viewsets.ModelViewSet):
             serializer.instance = assignment
             old_hourly_wage = assignment.hourly_wage
             assignment = serializer.save()
-        self._record_assignment_audit(
-            "staff.staff_work_type_updated",
-            assignment,
-            old_hourly_wage=old_hourly_wage,
-        )
+            self._record_assignment_audit(
+                "staff.staff_work_type_updated",
+                assignment,
+                old_hourly_wage=old_hourly_wage,
+            )
 
     def perform_destroy(self, instance):
         with transaction.atomic():
@@ -86,15 +86,12 @@ class StaffWorkTypeViewSet(viewsets.ModelViewSet):
             }
             assignment_id = instance.id
             instance.delete()
-        from apps.core.services.ops_audit import record_audit
-
-        record_audit(
-            self.request,
-            action="staff.staff_work_type_deleted",
-            target_tenant=self.request.tenant,
-            summary=f"assignment_id={assignment_id}",
-            payload=payload,
-        )
+            record_required_wage_audit(
+                self.request,
+                action="staff.staff_work_type_deleted",
+                summary=f"assignment_id={assignment_id}",
+                payload=payload,
+            )
 
     def _record_assignment_audit(
         self,
@@ -103,12 +100,9 @@ class StaffWorkTypeViewSet(viewsets.ModelViewSet):
         *,
         old_hourly_wage,
     ):
-        from apps.core.services.ops_audit import record_audit
-
-        record_audit(
+        record_required_wage_audit(
             self.request,
             action=action,
-            target_tenant=self.request.tenant,
             summary=f"assignment_id={assignment.id}",
             payload={
                 "assignment_id": assignment.id,

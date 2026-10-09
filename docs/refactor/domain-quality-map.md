@@ -2,7 +2,7 @@
 
 - 요청: 2026-10-09 KST, 사용자가 모든 도메인의 숨은 버그·업무 결함을 순서대로 점검·수정하도록 위임.
 - 실행 소유: `student-domain-20261009-01a10bcb`. 전체 실행 순서는 [PLAN](../PLAN.md), 현재 제품 정책은 각 도메인 정본이 소유한다.
-- 단계: **범위 지도 작성 / 학생 도메인 수정·출시 검증 진행**. 다른 도메인은 이번 전수 점검을 통과한 것으로 간주하지 않는다.
+- 단계: **학생 상세·연결 질문 동선 운영 확인 / 학원 선택 경계 출시 검증 / 직원 조회·시급 변경 실패 복구 검증**. 각 도메인 전체가 점검을 통과한 것으로 간주하지 않는다.
 - 구조 기준: backend `58589aaae21b5051e5054e4a1c7a9c7234b93def`, frontend `a3290e20062a3acd5de9b3582400e7ebe82e629e`.
 
 ## 범위와 누락 확인
@@ -93,10 +93,18 @@
 
 | 항목 | 2026-10-09 현재 증거 | 다음 행동 |
 |---|---|---|
-| D01 학생 상세·학생별 기록 | backend [PR599](https://github.com/guswls3028-art/academy-backend/pull/599), [운영 run37838281770](https://github.com/guswls3028-art/academy-backend/actions/runs/37838281770) 성공. frontend [PR715](https://github.com/guswls3028-art/academy-frontend/pull/715) 병합, 후속 [PR716](https://github.com/guswls3028-art/academy-frontend/pull/716) 진행. 운영 번들 메모 저장/삭제 오류 재현·수정, 상세 19건+번들 6건 로컬 통과. **frontend 운영 미반영** | 후속 회귀/필수 CI→동일 산출물 격리 실사용→cleanup0→공식 운영 승격→정확한 SHA/실제 화면 확인 |
-| D16 연속 탭 이동·학부모 질문 작성 | PR716 CI와 로컬 느린 CPU에서 작성창이 사라지는 동일 현상 재현. 이전 허브 CTA와 늦은 location effect 경합. 화면 표시 전 동기화 수정·회귀 검증 진행 | 실제 작성/초안 보존·자녀 격리·390px 확인 후 학생 배치와 함께 승격 |
-| D00 명시적 학원 선택 | 학생 CI 대기 중 선행 조사. 잘못된/비활성 헤더의 다른 학원 대체와 대소문자 중복 코드의 임의 선택을 재현·수정. 헤더·공개 문서 query·ALB·로그인 경계와 복구를 포함한 새 회귀 14건 및 기존 23건, 총 37건 로컬 통과. [PR601](https://github.com/guswls3028-art/academy-backend/pull/601). **운영 미반영, D00 전체 미완료** | 필수 CI. 학생 승격을 우선하고 별도 backend 배포 게이트 적용 |
-| 나머지 및 D01의 상세 외 동선 | 구조 분류 완료, 이번 순차 점검 **미착수**. 이전 릴리스나 테스트 존재를 현재 완료로 승격하지 않음 | 현재 코드/정책·실사용 흐름을 하위 동선별로 좁혀 점검 |
+| D01 학생 상세·학생별 기록 | backend [PR599](https://github.com/guswls3028-art/academy-backend/pull/599) `bf23b8f56704c56826bdfa46445ea795a45135be`, frontend [PR715](https://github.com/guswls3028-art/academy-frontend/pull/715)·[PR716](https://github.com/guswls3028-art/academy-frontend/pull/716) `a9cd3567ad0ef71facc82b9abac97993715c8ff8` 운영 반영. [frontend run37872808381](https://github.com/guswls3028-art/academy-frontend/actions/runs/37872808381) 동일 빌드 실사용 27건(생략·재시도 0), 양쪽 cleanup tenant/user 0, 운영 읽기 검증 통과. 서버·화면 배포 묶음 검사와 3개 운영 도메인 버전 일치. 배포 정적 자산+합성 API로 1366/1100/390px, 메모 저장→reload 확인, 예외/가로 넘침/예상 밖 업무 요청 0 | 해당 상세 동선 운영 확인 완료. 등록·일괄 업로드·삭제/복원 등 D01의 나머지 동선은 별도 점검 필요 |
+| D16 연속 탭 이동·학부모 질문 작성 | 느린 CPU에서 작성창 소실 재현 후 location effect 경합 수정. PR716에 포함, 최종 번들 커뮤니티 5건·필수 CI·동일 빌드 실사용과 운영 승격 통과 | 연결된 질문 작성 동선 완료. D16 전체 게시/댓글/공개 자료 점검은 순서표대로 진행 |
+| D00 명시적 학원 선택 | 잘못된/비활성 헤더의 다른 학원 대체와 대소문자 중복 코드 임의 선택 재현·수정. 새 회귀 14건+기존 23건=37건 및 PostgreSQL·SQLite 필수 CI 통과. [PR601](https://github.com/guswls3028-art/academy-backend/pull/601)·[PR603](https://github.com/guswls3028-art/academy-backend/pull/603), `cbfa0eb142e2b0a1bcae90e219c6da0275a92541`의 [run37882312061](https://github.com/guswls3028-art/academy-backend/actions/runs/37882312061) 운영 완료. 6개 이미지 보안 검사, 격리 개발 Excel/PPT/R2 실사용, preprod DB·CDN·부하, 임시 인스턴스 종료 후 건강 상태 기반 교체 통과. godmin/tchul 정상 조회·빈 값/잘못된 명시 선택 거부 9건 및 공식 서버/화면 배포 묶음·잠금 해제 확인 | 해당 선택 경계 운영 확인 완료. D00 전체 인증·역할·계정 복구 검사는 별도 유지. Cyrus High는 고정 버전·기한·실제 런타임 검증에 한정된 검토이며 영구 해결로 집계하지 않음 |
+| D02 전체 목록·시급 변경 이력 실패 | 501번째 직원 누락, 동일 정렬키 페이지 불안정, 시급 태그/개별 배정의 이력 저장 실패에도 변경 성공하는 6개 경로를 재현·수정. backend [PR602](https://github.com/guswls3028-art/academy-backend/pull/602), frontend [PR718](https://github.com/guswls3028-art/academy-frontend/pull/718). 직원 서버 117건·하위 사례 19건, 화면 36건, 최종 번들의 페이지/복구·본인 근무 8건 통과. 기본 3.3%·분 단위 급여·0원 시급·기존 마감 및 시급 고정 회귀도 서버 묶음에서 통과 | 직원 실행코드 backend `49d2d8089`·frontend `8a20020b9` 필수 CI 통과. 이 상태 문서 갱신을 포함한 필수 CI 후 직원 서버·화면 순서로 격리 실사용·운영 확인. 운영 미반영이며 D02 전체 완료로 집계하지 않음 |
+| D03 수납 목록·기한·중복 기록·조회 복구 | backend [PR604](https://github.com/guswls3028-art/academy-backend/pull/604) `2f29f2378`: 안정 정렬·UNPAID 묶음과 잠긴 청구서의 예상 누적 수납액 대조. 오래된 화면 거부→동일 키 결과 복구→새 부분납 성공을 포함한 45건 통과, 동시 두 담당자 PostgreSQL 회귀 추가. frontend [PR719](https://github.com/guswls3028-art/academy-frontend/pull/719) `06d34c261`: 전체 목록, 한국 시간 말일, PC·모바일 수납 재시도·변경 잔액 재확인, 학생 상세/납부 조회 오류 복구. 관리자 제품 번들 9건·학생 5건, 390px 확인 통과 | 최신 필수 CI→직원 배치 완료→backend 선행 배포→같은 frontend 산출물 격리 실사용·운영 확인. **운영 미반영, D03 전체 미완료** |
+| D04 입금 신고의 오래된 미납 청구서 | 최근 12건 밖의 미납이 조회에서 사라져 다음 입금 신고를 막는 문제 재현·수정. backend [PR605](https://github.com/guswls3028-art/academy-backend/pull/605) `700dc0f5c`: 최근 12건 이력과 별도로 모든 미납/연체 유지. 조회→입금 신고→reload와 tenant 격리를 포함한 12건 및 필수 CI 통과 | 수납 배치 이후 정상 backend 배포·운영 영향 확인. 외부 카드 결제 HOLD 유지. **운영 미반영, D04 전체 미완료** |
+| D05 수강 일괄 등록 ID 경계 | 실제 API에서 학생·강의·차시·수강 ID의 소수값이 정수로 잘려 받아들여지는 4개 경로 재현. 잘못된 값의 수강 재활성화와 명단 영향 확인. 정수 문자열의 기존 정상 동선은 유지하는 검증 수정·회귀 진행 | 수강/강의·출결·영상 권한·수납의 연결 검사를 이어가며 검증 결과와 PR 기록. 운영 미반영 |
+| 나머지 및 위 도메인의 미검증 하위 동선 | 구조 분류 완료, 이번 순차 점검 **미착수 또는 조사 단계**. 이전 릴리스나 테스트 존재를 현재 완료로 승격하지 않음 | 현재 코드/정책·실사용 흐름을 하위 동선별로 좁혀 점검 |
+
+후속 조사 큐(완료 증거 아님): D21 저장소 Dependabot #20의 개발 의존성
+`source-map-js` High(`CVE-2026-93749`, 수정 1.2.2)는 영향 범위·업데이트 검증을
+기다린다. 이 진단을 현재 운영 브라우저의 노출로 추정하거나 해결 완료로 표시하지 않는다.
 
 작업 카드에는 재현 조건, 영향 역할/tenant, 심각도, 원인, 수정 파일, 파생 영향,
 정상·실패·복구 검사, PR/커밋/CI, 실사용 산출물과 정리 결과, 운영 SHA/시각을 남긴다.
