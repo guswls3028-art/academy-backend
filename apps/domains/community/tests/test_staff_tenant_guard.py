@@ -37,11 +37,17 @@ class CommunityStaffTenantGuardTests(TestCase):
         self.assertFalse(self.view._is_staff_request(request))
         self.assertFalse(self.view._can_manage_post_nodes(request))
 
-    def test_django_staff_flag_allows_only_own_tenant(self):
+    def test_django_staff_flag_does_not_replace_current_tenant_membership(self):
         request = self._request(self.tenant_a)
 
-        self.assertTrue(self.view._is_staff_request(request))
-        self.assertTrue(self.view._can_manage_post_nodes(request))
+        self.assertFalse(self.view._is_staff_request(request))
+        self.assertFalse(self.view._can_manage_post_nodes(request))
+
+    def test_inactive_membership_cannot_use_global_flags(self):
+        TenantMembership.objects.create(tenant=self.tenant_a, user=self.staff, role="admin", is_active=False)
+        request = self._request(self.tenant_a)
+        self.assertFalse(self.view._is_staff_request(request))
+        self.assertFalse(self.view._can_manage_post_nodes(request))
 
     def test_membership_allows_community_staff_by_role(self):
         TenantMembership.ensure_active(tenant=self.tenant_b, user=self.staff, role="teacher")
