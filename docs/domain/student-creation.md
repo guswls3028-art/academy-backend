@@ -85,6 +85,13 @@ Excel 파서는 active sheet에 고정하지 않고 표지/안내 시트를 건�
 
 ## 2. 현재 진입점
 
+Excel 충돌 해결의 `student_id`도 [생명주기 ID 검증](student-lifecycle.md)을 따른다.
+소수·불리언·범위 밖 값을 기존 학생 ID로 바꾸지 않고 해당 행을 `failed`로 반환한다.
+행 단위 부분 성공 정책은 유지하므로 뒤의 정상 행은 계속 처리한다. 정상 숫자 문자열
+ID와 복원/삭제 후 재등록은 호환된다. 생명주기 충돌의 사용자용 사유는 보존하며,
+예상 밖 예외의 내부 내용은 응답 대신 서버 로그에만 남긴다. 실제 API의 잘못된 행
+무변경→다음 정상 행 복원 및 재조회 회귀는 `test_bulk_lifecycle_inputs.py`에 있다.
+
 | 진입점 | 위치 | 생성 그래프 처리 |
 |--------|------|----------------|
 | 단건 생성 | `StudentViewSet.create` | `create_student_account(password=...)` |

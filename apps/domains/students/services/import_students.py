@@ -39,7 +39,12 @@ from .identity import (
     resolve_student_login_id,
 )
 from .import_passwords import build_student_import_password_policy
-from .lifecycle import permanently_delete_students, restore_student
+from .lifecycle import (
+    StudentLifecycleError,
+    permanently_delete_students,
+    restore_student,
+    validate_student_lifecycle_ids,
+)
 from .school import get_valid_school_types, is_valid_grade, normalize_school_from_name
 from apps.support.students.namespace_lock import (
     lock_student_creation_tenant_reference,
@@ -690,6 +695,7 @@ def resolve_student_import_conflicts(
             continue
 
         try:
+            student_id = validate_student_lifecycle_ids([student_id])[0]
             deleted_student = student_repo.student_filter_tenant_id_deleted_first(
                 tenant,
                 student_id,
@@ -801,12 +807,12 @@ def resolve_student_import_conflicts(
                     "error": "이미 있는 학생입니다.",
                     "conflict_student_id": getattr(resolved.student, "id", None),
                 })
-        except StudentImportRowError as exc:
+        except (StudentImportRowError, StudentLifecycleError) as exc:
             failed.append({
                 "row": row,
                 "name": display_name,
                 "error": exc.detail,
-                "conflict_student_id": exc.conflict_student_id,
+                "conflict_student_id": getattr(exc, "conflict_student_id", None),
             })
         except Exception as exc:
             logger.warning(
@@ -819,7 +825,7 @@ def resolve_student_import_conflicts(
             failed.append({
                 "row": row,
                 "name": display_name,
-                "error": str(exc)[:500],
+                "error": "처리 중 오류가 발생했습니다. 입력값을 확인한 뒤 다시 시도해 주세요.",
                 "conflict_student_id": None,
             })
 
