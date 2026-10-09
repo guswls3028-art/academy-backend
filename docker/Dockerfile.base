@@ -123,10 +123,11 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
     && ! command -v perl >/dev/null 2>&1
 
 COPY docker/native-security/tiff-fixtures/ /usr/local/share/academy/native-security/tiff-fixtures/
-COPY docker/native-security/verify-expat.py docker/native-security/verify-aligned-new.py docker/native-security/verify-tiff.py /usr/local/bin/
+COPY docker/native-security/verify-expat.py docker/native-security/verify-aligned-new.py docker/native-security/verify-tiff.py docker/native-security/verify-sasl.py /usr/local/bin/
 RUN python /usr/local/bin/verify-expat.py --library libexpat.so.1 --python --package \
     && python /usr/local/bin/verify-aligned-new.py \
-    && python /usr/local/bin/verify-tiff.py
+    && python /usr/local/bin/verify-tiff.py \
+    && python /usr/local/bin/verify-sasl.py
 
 # non-root 사용자 (보안·감사 대비, CMD/경로 규칙 유지)
 RUN groupadd --gid 1000 appuser \

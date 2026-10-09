@@ -5,6 +5,53 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-10-09 SASL 후보 차단과 런타임 검증
+
+학원 선택 경계 후보 [37877184870](https://github.com/guswls3028-art/academy-backend/actions/runs/37877184870)는
+`CVE-2026-107161` / `cyrus-sasl2` / `2.1.28+dfsg1-9` High로 development 진입 전에
+차단됐다. 운영 migration·교체는 건너뛰었고 공유 잠금은 해제됐다. 학생 상세의
+기존 성공 backend `bf23b8f5`와 frontend `a9cd3567`은 그대로 운영 중이다.
+
+[Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-107161)와
+[NVD](https://nvd.nist.gov/vuln/detail/CVE-2026-107161)는 DIGEST-MD5 플러그인의
+문자열 이스케이프 후 크기 계산 오류를 설명하며, 확인 시 Debian 수정본은 없다.
+[upstream PR892](https://github.com/cyrusimap/cyrus-sasl/pull/892)는 병합되지 않고
+닫혀 있으므로 공식 수정 릴리스로 간주하지 않는다.
+
+실패한 AI 후보의 digest로 검증한 공통/마지막 APT 레이어에는 `libsasl2-2`와
+`libsasl2-modules-db`만 설치돼 있었고 DIGEST-MD5 플러그인 패키지는 없었다.
+`libpq5`와 `libcurl4t64`가 LDAP를 통해 SASL core에 의존하므로 필요한 라이브러리나
+package metadata를 지워 진단을 숨기지 않는다. 이 정적 관찰만으로 전체 후보가
+안전하거나 upstream 취약점이 수정됐다고 선언하지 않는다.
+
+`docker/native-security/verify-sasl.py`는 허용한 core/DB 패키지와 plugin 파일,
+실제로 로드한 system SASL의 mechanism 목록을 확인한다. core의 정상 초기화와
+EXTERNAL mechanism을 확인한 뒤 DIGEST-MD5 client 시작이 정확히 `SASL_NOMECH`로
+거부돼야 한다. 초기화·callback 실패는 부재 증거로 인정하지 않는다. base와 최종
+API·AI·Video APT, Tools의 문서 변환기 설치 뒤 실행하며 Messaging은 base를 상속한다.
+arm64 native CI에서도 실행한다. wheel에 포함된 다른 구현의 안전성은 이 검사의
+범위가 아니며 기존 DB·문서·영상 실사용과 모든 출시 게이트가 별도로 필요하다.
+
+### 실제 arm64 확인과 정확한 identity의 한시 검토
+
+`student-domain-20261009-01a10bcb` release owner는 사용자의 Academy 운영 위임 범위에서
+2026-10-09에 이 identity를 개별 검토했다. [arm64 CI job113655196989](https://github.com/guswls3028-art/academy-backend/actions/runs/37879336666/job/113655196989)는
+소스 `118980b07dd990b18bd428f059061c2e01f8c2c9`의 실제 빌드와 최종 실행에서
+core/DB 패키지 두 개, mechanism `EXTERNAL` 하나, DIGEST-MD5 시작 결과 `-4`를
+각각 확인했다. 모의 객체 테스트나 파일명 검사만으로 내린 판단이 아니다.
+
+이 증거와 모든 최종 이미지의 같은 빌드 검사를 조건으로 위의 exact
+`CVE/package/version` 하나를 여섯 governed repository에서 **2026-10-10 UTC 종료**까지
+한시적으로 수용한다. `ecr-high-risk-baseline.json`은 이 정확한 identity와 기존 GCC
+두 identity만 허용하며, 기존 GCC의 2026-10-09 만료는 연장하지 않는다. 같은 source의
+다른 버전·새 CVE·Critical·새 플러그인 구성은 계속 차단한다. 앱이나 vendor package가
+전반적으로 안전하거나 취약점이 수정됐다는 주장은 하지 않는다.
+
+운영 승격은 새 소스의 여섯 신선한 COMPLETE scan, 해당 이미지 빌드 검증,
+격리 development·preprod·임시 인스턴스 종료 및 기존 continuity 게이트를 모두
+통과해야 한다. 이전 실패 후보를 예외 적용만으로 재승격하지 않으며, 정확한 새
+소스/manifest/runtime 확인 전에는 학원 선택·직원 수정의 운영 완료로 집계하지 않는다.
+
 ## 2026-10-07 TIFF 후보 차단과 수정 릴리스
 
 직원 급여 후보 [37584132062](https://github.com/guswls3028-art/academy-backend/actions/runs/37584132062)는

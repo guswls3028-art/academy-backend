@@ -1,14 +1,30 @@
 {
   "schemaVersion": 3,
   "maximumHighFindings": {
-    "academy-base": 2,
-    "academy-api": 2,
-    "academy-video-worker": 2,
-    "academy-messaging-worker": 2,
-    "academy-ai-worker-cpu": 2,
-    "academy-tools-worker": 2
+    "academy-base": 3,
+    "academy-api": 3,
+    "academy-video-worker": 3,
+    "academy-messaging-worker": 3,
+    "academy-ai-worker-cpu": 3,
+    "academy-tools-worker": 3
   },
   "acceptedHighFindings": [
+    {
+      "cve": "CVE-2026-107161",
+      "packageName": "cyrus-sasl2",
+      "packageVersion": "2.1.28+dfsg1-9",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ],
+      "expiresOn": "2026-10-10",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-107161",
+      "rationale": "Release-owner review on 2026-10-09 for the scoped tenant/staff rollout. NVD and Debian locate this flaw in the separately packaged DIGEST-MD5 plugin; Debian has no fixed package and upstream PR892 is not merged. Digest-verified failed-candidate layers contain only libsasl2-2 and libsasl2-modules-db. Native arm64 CI run37879336666/job113655196989 at source118980b07dd990b18bd428f059061c2e01f8c2c9 confirms core initialization, only EXTERNAL, and DIGEST-MD5 client start returning SASL_NOMECH(-4). Every final system package boundary now runs verify-sasl.py; unexpected Cyrus plugin packages, plugin files, an available DIGEST mechanism, or any other start result fail the build. Keep required libpq/curl/LDAP/SASL ABI and package identity. This narrowly reviewed temporary acceptance is not an upstream remediation or universal reachability claim; wheel-vendored implementations are outside this oracle. Accept only the listed exact identity through 2026-10-10 UTC with no automatic extension; existing GCC expiry is unchanged. Critical and every other unreviewed High remain blocked. Six fresh complete candidate scans, isolated development/preprod, temporary-instance cleanup, compatible migration, healthy rollout and affected-flow verification remain required. Owner, evidence and release condition: docs/operations/container-image-security.md."
+    },
     {
       "cve": "CVE-2026-102010",
       "packageName": "gcc-14",

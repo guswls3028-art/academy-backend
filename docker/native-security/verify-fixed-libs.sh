@@ -26,3 +26,4 @@ python -c 'import ctypes, zlib; libz = ctypes.CDLL("libz.so.1"); assert not hasa
 printf 'academy\n' | grep -P '^academy$'
 
 python /usr/local/bin/verify-tiff.py
+python /usr/local/bin/verify-sasl.py
