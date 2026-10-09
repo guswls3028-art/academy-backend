@@ -7,6 +7,24 @@
 `apps/domains/attendance/views.py`의 `AttendanceViewSet`이 소유한다. 화면 동작은
 프런트엔드 [`docs/ATTENDANCE-ROSTER-SAFETY.md`](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/ATTENDANCE-ROSTER-SAFETY.md)에 둔다.
 
+## 학생·학부모 출결 이력
+
+`GET /student/attendance/summary/`는 선택된 본인/자녀의 활성 강의 수강에 연결된
+누적 출결과 최근 20건을 반환한다. 출결 행뿐 아니라 수강·학생·강의·차시가 모두
+현재 학원에 속하고 수강 강의와 차시 강의가 일치해야 합계와 최근 목록에 포함한다.
+관계가 어긋난 저장 데이터는 조회에서 제외하며 자동 수정·삭제하지 않는다.
+
+종료된 강의와 차시만 퇴원한 정상 출결은 기존 이력 정책대로 남긴다. 각 최근 행의
+`can_view_session`은 현재 동일 학원·동일 강의의 유효한 차시 등록과 강의 활성 상태로
+계산한다. 이력이 남아 있어도 상세 접근 권한을 새로 부여하지 않는다. 차시 상세와
+일정 숨김도 같은 관계 경계를 검사하고 불일치 시 404와 무변경을 유지한다.
+기존 소비자는 추가 필드를 무시할 수 있다. 학생 화면은 서버를 먼저 배포한 뒤
+접근할 수 없는 차시를 링크 대신 읽을 수 있는 출결 이력으로 표시한다.
+
+`apps/domains/student_app/tests/test_session_tenant_isolation.py`에서 잘못된 학원·강의
+관계 5종, 정상 상세/숨김, 정상 종료·차시 퇴원 이력 보존을 검증한다. 화면 표시와
+오류 복구는 [학생·학부모 앱 계약](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/STUDENT-PARENT-APP-CONTRACT.md)이 소유한다.
+
 ## 차시 퇴원과 강의 전체 퇴원
 
 출결·성적 화면의 퇴원 선택은 `PATCH /lectures/attendance/{id}/`에
