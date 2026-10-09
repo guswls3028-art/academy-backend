@@ -9,7 +9,7 @@
 **CORE_SEAL**: `apps/core/CORE_SEAL.md` — Core 봉인(헌법). tenant resolve fallback/Program write-on-read/TenantDomain primary 다중/ host 외 식별자/과금·워커 로직 추가 금지.
 
 - **apps/core**: Tenant 식별·request 단위 resolve, TenantMembership(역할 SSOT), Program(tenant 1:1, 브랜딩/기능토글), TenantDomain(host→tenant SSOT), 권한 계층만.
-- **테넌트 결정** (`apps/core/tenant/resolver.py`): (1) 중앙 API + X-Tenant-Code 헤더 (TENANT_HEADER_CODE_ALLOWED_HOSTS), (2) Host → TenantDomain.host. Query/Cookie/Env fallback 금지. 에러: tenant_invalid 404, tenant_inactive 403, tenant_ambiguous 500.
+- **테넌트 결정** (`apps/core/tenant/resolver.py`): 중앙 API의 X-Tenant-Code → 기존 공개 문서용 landing-public query → Host 매핑. 일반 학원 호스트의 헤더는 무시한다. 명시적 선택이 빈 값/없는 코드/비활성이면 다른 학원으로 대체하지 않고 tenant_invalid 404. 호스트 비활성 403, 모호한 호스트 500. 정확한 적용 범위·로그인 bypass·호환성은 [요청의 학원 선택](tenant-request-context.md)이 소유한다. Cookie/Env fallback 금지.
 - **Tenant bypass**: `TENANT_BYPASS_PATH_PREFIXES` (base.py) — /admin/, /api/v1/token/, /api-auth/, /internal/, /swagger, /redoc 등.
 - **TenantDomain**: host DB 전역 unique, tenant당 is_primary=True 1개, is_active + Tenant.is_active 만 resolve.
 - **Program**: Tenant 1:1. Tenant 생성 시 signal/bootstrap만. GET 시 자동 생성 금지. 없으면 ProgramView 404, code program_missing.

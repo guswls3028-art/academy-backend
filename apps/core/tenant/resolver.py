@@ -74,6 +74,19 @@ def _resolve_tenant_from_host(host: str) -> Optional[Tenant]:
     return td.tenant
 
 
+def _require_tenant_from_code(raw: str) -> Tenant:
+    # An explicit selection is authoritative, including when it is invalid.
+    # Returning None here would silently select a different host/query tenant.
+    tenant = core_repo.tenant_get_by_code(raw)
+    if tenant is None:
+        raise TenantResolutionError(
+            code="tenant_invalid",
+            message="The selected tenant is unavailable.",
+            http_status=404,
+        )
+    return tenant
+
+
 def _resolve_tenant_from_header(request) -> Optional[Tenant]:
     """
     중앙 API(api.hakwonplus.com 등) 또는 로컬(localhost)로 요청이 올 때,
@@ -88,11 +101,10 @@ def _resolve_tenant_from_header(request) -> Optional[Tenant]:
     host = _normalize_host(request.get_host())
     if host not in allowed_hosts:
         return None
-    raw = (request.META.get("HTTP_X_TENANT_CODE") or "").strip()
-    if not raw:
+    raw = request.META.get("HTTP_X_TENANT_CODE")
+    if raw is None:
         return None
-    tenant = core_repo.tenant_get_by_code(raw)
-    return tenant
+    return _require_tenant_from_code(raw)
 
 
 # 학생 카톡 share URL (iframe PDF) — landing-public path 한정 query param tenant resolve.
@@ -108,13 +120,10 @@ def _resolve_tenant_from_query_param(request) -> Optional[Tenant]:
     path = getattr(request, "path", "") or "/"
     if not any(path.startswith(p) for p in _QUERY_PARAM_TENANT_PATH_PREFIXES):
         return None
-    try:
-        raw = (request.GET.get("tenant") or "").strip()
-    except Exception:
+    raw = request.GET.get("tenant")
+    if raw is None:
         return None
-    if not raw:
-        return None
-    return core_repo.tenant_get_by_code(raw)
+    return _require_tenant_from_code(raw)
 
 
 def resolve_tenant_from_request(request) -> Optional[Tenant]:
@@ -162,18 +171,9 @@ def resolve_tenant_from_request(request) -> Optional[Tenant]:
         isinstance(host_lower, str) and host_lower.endswith(".elb.amazonaws.com")
     )
     if allowed:
-        raw = (request.META.get("HTTP_X_TENANT_CODE") or "").strip()
-        if raw:
-            tenant = core_repo.tenant_get_by_code(raw)
-            if tenant:
-                return tenant
-            # 로컬 개발: 프론트가 X-Tenant-Code: 9999 를 쓰지만 DB에 테넌트 9999가 없는 경우
-            # → 에러 반환 (cross-tenant fallback 금지). ensure_localhost_tenant 실행 필요.
-            if host_lower in ("localhost", "127.0.0.1") and raw == "9999":
-                import logging
-                logging.getLogger(__name__).warning(
-                    "Tenant code '9999' not found on localhost. Run: python manage.py ensure_localhost_tenant"
-                )
+        raw = request.META.get("HTTP_X_TENANT_CODE")
+        if raw is not None:
+            return _require_tenant_from_code(raw)
         return None
 
     raise TenantResolutionError(
