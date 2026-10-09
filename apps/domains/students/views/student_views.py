@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from collections.abc import Mapping
 
 from django.db import OperationalError, transaction
 from django.utils import timezone
@@ -62,6 +63,7 @@ from ..services import (
     update_student_profile,
 )
 from ..services.account_notifications import send_parent_account_credentials_notice
+from ..services.lifecycle import validate_student_lifecycle_ids
 from ..services.profile import lock_student_profile_for_update
 from ..serializers import (
     StudentListSerializer,
@@ -71,6 +73,23 @@ from ..serializers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _bulk_lifecycle_ids(data, *, maximum_count=None):
+    if not isinstance(data, Mapping):
+        raise ValidationError({"detail": "요청 본문은 객체여야 합니다."})
+    ids = data.get("ids")
+    if not isinstance(ids, (list, tuple)):
+        raise ValidationError({"detail": "ids는 배열이어야 합니다."})
+    if maximum_count is not None and len(ids) > maximum_count:
+        raise ValidationError({"detail": f"최대 {maximum_count}건까지 일괄 처리할 수 있습니다."})
+    try:
+        ids = validate_student_lifecycle_ids(ids)
+    except StudentLifecycleError as exc:
+        raise ValidationError({"detail": exc.detail, "code": exc.code}) from exc
+    if not ids:
+        raise ValidationError({"detail": "선택한 학생 ID가 없습니다."})
+    return ids
 
 
 # ======================================================
@@ -667,14 +686,7 @@ class StudentViewSet(ModelViewSet):
         선택 학생 일괄 소프트 삭제 (30일 보관)
         POST body: { "ids": [1, 2, 3, ...] }
         """
-        ids = request.data.get("ids") or []
-        if not isinstance(ids, (list, tuple)):
-            return Response({"detail": "ids는 배열이어야 합니다."}, status=400)
-        if len(ids) > 200:
-            return Response({"detail": "최대 200건까지 일괄 처리할 수 있습니다."}, status=400)
-        ids = [int(x) for x in ids if isinstance(x, (int, str)) and str(x).isdigit()]
-        if not ids:
-            return Response({"detail": "삭제할 ID가 없습니다."}, status=400)
+        ids = _bulk_lifecycle_ids(request.data, maximum_count=200)
 
         tenant = request.tenant
         to_delete = list(student_repo.student_filter_tenant_ids_active(tenant, ids))
@@ -697,12 +709,7 @@ class StudentViewSet(ModelViewSet):
         정상 학부모 계정의 비밀번호는 변경하지 않는다. 과거 데이터의 학부모
         계정이 없거나 비밀번호를 쓸 수 없을 때만 명시된 초기 비밀번호를 사용한다.
         """
-        ids = request.data.get("ids") or []
-        if not isinstance(ids, (list, tuple)):
-            return Response({"detail": "ids는 배열이어야 합니다."}, status=400)
-        ids = [int(x) for x in ids if isinstance(x, (int, str)) and str(x).isdigit()]
-        if not ids:
-            return Response({"detail": "복원할 ID가 없습니다."}, status=400)
+        ids = _bulk_lifecycle_ids(request.data)
 
         tenant = request.tenant
         options_serializer = StudentBulkCreateSerializer(
@@ -754,12 +761,7 @@ class StudentViewSet(ModelViewSet):
         삭제된 학생 즉시 영구 삭제
         POST body: { "ids": [1, 2, 3, ...] }
         """
-        ids = request.data.get("ids") or []
-        if not isinstance(ids, (list, tuple)):
-            return Response({"detail": "ids는 배열이어야 합니다."}, status=400)
-        ids = [int(x) for x in ids if isinstance(x, (int, str)) and str(x).isdigit()]
-        if not ids:
-            return Response({"detail": "삭제할 ID가 없습니다."}, status=400)
+        ids = _bulk_lifecycle_ids(request.data)
 
         tenant = request.tenant
         try:
@@ -775,7 +777,8 @@ class StudentViewSet(ModelViewSet):
                 e, ids,
             )
             return Response(
-                {"detail": f"영구 삭제 중 오류: {e}"},
+                {"code": "student_permanent_delete_failed",
+                 "detail": "영구 삭제 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."},
                 status=500,
             )
         return Response(

@@ -1,7 +1,7 @@
 # 학생 생명주기 SSOT
 
 **상태:** Active
-**최종 점검:** 2026-10-02
+**최종 점검:** 2026-10-09
 **코드 기준:** `apps/domains/students/services/lifecycle.py`, `apps/domains/enrollment/services/lifecycle.py`, `apps/domains/students/views/student_views.py`
 
 ## 1. 상태
@@ -15,6 +15,22 @@
 
 학생 삭제/복원/영구삭제 신규 코드는 view나 management command에 직접 구현하지 않는다.
 HTTP와 운영 명령은 생명주기 서비스를 호출하는 compatibility facade다.
+
+교직원 `bulk_delete`·`bulk_restore`·`bulk_permanent_delete`는 객체 본문의 비어 있지
+않은 `ids` 배열을 받는다. 각 ID는 양의 bigint 범위 정수 또는 공백을 제거한
+1~19자리 ASCII 숫자 문자열이어야 한다. 불리언·소수·객체·누락값·범위 초과가
+하나라도 섞이면 학생 조회/변경 전에 전체 요청을 400으로 거부한다. 잘못된 항목을
+버리고 나머지만 변경하지 않는다. 중복 ID는 한 번만 처리하며 기존 소프트 삭제의
+요청당 200건 제한, 현재 학원 역할·학원/삭제 상태 범위, 반복 요청의 0건 응답은 유지한다.
+내부 `permanently_delete_students`도 같은 검증을 사용하고 잘못된 선택은
+`StudentLifecycleError(code=invalid_student_ids)`로 거부한다. 내부의 빈 선택은
+기존처럼 0건이며, 사용자 데이터·마이그레이션 변경은 없다.
+
+영구삭제의 예상 밖 오류는 500과 `student_permanent_delete_failed` 및 재시도 안내를
+반환한다. 내부 예외·저장소 키는 서버 로그에만 남긴다. 기존 관리자/강사 선택 및
+오류 UI 계약은 유지하며, 정상 삭제→목록 제외→복원→상세 재조회→영구삭제와
+중복 재시도·다른 학원 보존은 `test_bulk_lifecycle_inputs.py`의 실제 JWT API 회귀로
+확인한다. 파일 정리·동시성 회귀는 기존 생명주기 및 tenant 격리 검사가 소유한다.
 
 서로 혼동하면 안 되는 상태 축은 다음과 같다.
 

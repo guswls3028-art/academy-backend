@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
@@ -551,19 +552,32 @@ def restore_student(
         )
 
 
+def validate_student_lifecycle_ids(student_ids: Iterable[int] | None) -> list[int]:
+    """Validate the entire selection before looking up or changing any student."""
+    if student_ids is None:
+        return []
+    detail = "학생 ID는 1 이상 9223372036854775807 이하의 정수여야 합니다."
+    if isinstance(student_ids, (str, bytes, Mapping)) or not isinstance(student_ids, Iterable):
+        raise StudentLifecycleError("invalid_student_ids", detail)
+    ids = []
+    for value in student_ids:
+        if isinstance(value, str):
+            value = value.strip()
+            if not value or len(value) > 19 or not value.isascii() or not value.isdecimal():
+                raise StudentLifecycleError("invalid_student_ids", detail)
+            value = int(value)
+        if type(value) is not int or not 0 < value <= 9223372036854775807:
+            raise StudentLifecycleError("invalid_student_ids", detail)
+        ids.append(value)
+    return list(dict.fromkeys(ids))
+
+
 def permanently_delete_students(
     *,
     tenant,
     student_ids: Iterable[int],
 ) -> StudentPermanentDeleteResult:
-    ids = []
-    for value in student_ids or []:
-        try:
-            sid = int(value)
-        except (TypeError, ValueError):
-            continue
-        if sid > 0 and sid not in ids:
-            ids.append(sid)
+    ids = validate_student_lifecycle_ids(student_ids)
 
     if not tenant:
         raise StudentLifecycleError("tenant_required", "tenant가 필요합니다.")
