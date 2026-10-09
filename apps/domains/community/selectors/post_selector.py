@@ -1,10 +1,11 @@
 from typing import Optional
 
-from django.db.models import Prefetch, QuerySet, Q, Count
+from django.db.models import Prefetch, QuerySet, Q, Count, Exists, OuterRef
 
 from apps.domains.community.models import (
     PostEntity,
     PostMapping,
+    PostReply,
     ScopeNode,
     platform_support_q,
 )
@@ -40,6 +41,20 @@ def _base_queryset(qs: QuerySet) -> QuerySet:
 def _exclude_platform_support(qs: QuerySet) -> QuerySet:
     """일반 커뮤니티/게시판 목록에서 비공개 개발자 문의를 제외."""
     return qs.exclude(platform_support_q())
+
+
+def get_pending_post_counts(tenant) -> dict[str, int]:
+    """Count actionable published questions/counsel without fetching a page of bodies."""
+    posts = _exclude_platform_support(PostEntity.objects.filter(tenant=tenant, status="published"))
+    posts = posts.filter(_EXCLUDE_DELETED_AUTHOR).filter(
+        Q(created_by__isnull=True) | Q(created_by__tenant=tenant),
+    ).annotate(
+        _has_reply=Exists(PostReply.objects.filter(post_id=OuterRef("pk"), tenant=tenant)),
+    ).filter(_has_reply=False)
+    return posts.aggregate(
+        qna_pending=Count("id", filter=Q(post_type="qna")),
+        counsel_pending=Count("id", filter=Q(post_type="counsel") & ~Q(author_role="staff") & ~Q(category_label="teacher_internal_memo")),
+    )
 
 
 def get_empty_post_queryset() -> QuerySet:
