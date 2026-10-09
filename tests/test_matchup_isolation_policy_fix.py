@@ -25,7 +25,7 @@ import uuid
 
 import pytest
 
-from apps.core.models import Tenant
+from apps.core.models import Tenant, TenantMembership
 from apps.domains.inventory.models import InventoryFile
 from apps.domains.matchup.models import MatchupDocument, MatchupProblem
 from apps.domains.matchup.services import find_similar_problems
@@ -311,6 +311,7 @@ def test_hit_report_draft_returns_candidates_from_split_exam_problem(tenant, aut
     """분리 문항이 threaded hit-report 후보 조회에서 보이는 통합 경로."""
     author.is_staff = True
     author.save(update_fields=["is_staff"])
+    TenantMembership.ensure_active(tenant=tenant, user=author, role="teacher")
 
     exam_inv = _make_inventory_file(tenant=tenant)
     exam_doc = MatchupDocument.objects.create(
