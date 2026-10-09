@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from django.conf import settings
-from django.db.models import F, Max, Q
+from django.db.models import OuterRef, Q, Subquery
 
 from apps.core.models import LandingConsultRequest, OpsAuditLog
 
@@ -13,6 +13,7 @@ INCIDENT_STATUS_ACTION = "inbox.incident_status"
 def platform_inbox_summary() -> dict[str, int]:
     from apps.domains.community.models import (
         PostEntity,
+        PostReply,
         platform_support_kind_q,
         platform_support_q,
     )
@@ -21,13 +22,9 @@ def platform_inbox_summary() -> dict[str, int]:
         PostEntity.objects.filter(post_type="board")
         .filter(platform_support_q())
         .annotate(
-            _latest_platform_reply=Max(
-                "replies__created_at",
-                filter=Q(replies__author_role="platform_staff"),
-            ),
-            _latest_requester_reply=Max(
-                "replies__created_at",
-                filter=~Q(replies__author_role="platform_staff"),
+            _latest_reply_role=Subquery(
+                PostReply.objects.filter(post_id=OuterRef("pk"))
+                .order_by("-created_at", "-pk").values("author_role")[:1]
             ),
         )
     )
@@ -42,8 +39,7 @@ def platform_inbox_summary() -> dict[str, int]:
     incidents = OpsAuditLog.objects.filter(action="user_incident.manual")
     support_total = support_posts.count()
     support_open = support_posts.filter(
-        Q(_latest_platform_reply__isnull=True)
-        | Q(_latest_requester_reply__gt=F("_latest_platform_reply"))
+        Q(_latest_reply_role__isnull=True) | ~Q(_latest_reply_role="platform_staff")
     ).count()
     lead_total = leads.count()
     lead_open = leads.filter(resolved_at__isnull=True).count()

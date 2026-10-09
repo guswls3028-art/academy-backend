@@ -1,5 +1,6 @@
 from django.http import Http404
 import uuid
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -235,8 +236,13 @@ class PublicResourcePostViewSet(viewsets.GenericViewSet):
                 )
                 created = True
             else:
+                previous_version = post.updated_at
                 post.title, post.category, post.content = data["title"], data["category"], data["content"]
                 post.save(update_fields=["title", "category", "content", "updated_at"])
+                # The locked post's revision must advance even on an equal/backward wall clock.
+                if post.updated_at <= previous_version:
+                    post.updated_at = previous_version + timedelta(microseconds=1)
+                    PublicResourcePost.objects.filter(pk=post.pk, tenant=request.tenant).update(updated_at=post.updated_at)
                 post.files.exclude(pk__in=file_ids).update(is_removed=True)
                 created = False
             PublicResourceFile.objects.filter(pk__in=file_ids).update(post=post, is_removed=False)

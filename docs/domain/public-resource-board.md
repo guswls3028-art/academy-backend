@@ -48,6 +48,10 @@ without changing the post or restoring files removed by another publisher. An
 identical successful replay returns the current post without touching its
 revision. The revision field remains optional for already-open older clients
 during rolling release; those retain last-write behavior until refreshed.
+Each successful edit advances the locked post's revision, including when the wall
+clock has not advanced or moves backward. Equal-clock edits therefore still reject
+stale content and preserve an identical replay's revision. The existing timestamp
+contract and stored content remain compatible; no migration is required.
 
 If a create response is lost and the same request UUID is retried with changed
 input, 409 identifies only that author's already-published post, revision and

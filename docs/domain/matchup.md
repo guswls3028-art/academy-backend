@@ -24,6 +24,16 @@
 
 ### 문서 조회·분석 상태와 인증 실패
 
+매치업 진입은 현재 tenant의 활성 `owner/admin/teacher` membership으로
+판정한다. 전역 `is_staff/is_superuser`는 tenant 관리자 권한을 부여하지 않는다.
+일반 강사는 자기 적중보고서만 조회·수정하고 제출 완료 보고서의 수정 잠금을
+유지한다. 다른 작성자·작성자 없는 레거시 보고서의 검수, 제출 후 수정과 문항 분리
+제안 검수는 같은 tenant의 `owner/admin`만 수행한다. 일반 직원(`staff`)·학생·학부모는 이 경로에서
+`403`을 받으며, 별도로 공개한 자료의 공개 읽기 경로는 그대로 유지한다.
+권한 교정은 원본·보고서·수동 선택·승인 데이터나 계정 역할을 재작성하지 않는다.
+실제 JWT 기반 역할별 성공·저장·재조회, 전역 표시 잔존, 제출 잠금과 타 tenant
+격리는 `tests/test_storage_matchup_role_boundaries.py`에서 검증한다.
+
 문서 목록 `GET /matchup/documents/`와 작업 상태
 `GET /matchup/documents/{id}/job/`는 해당 tenant 교직원에게 저장된 문서 상태를
 읽기만 반환한다. 완료·실패한 AI 작업의 callback이 아직 적용되지 않았거나

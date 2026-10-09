@@ -6,7 +6,7 @@ import uuid
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
 
-from apps.core.models import Tenant
+from apps.core.models import Tenant, TenantMembership
 from apps.domains.inventory.models import InventoryFile
 from apps.domains.matchup.models import (
     MatchupDocument,
@@ -29,6 +29,7 @@ class HitReportQuickDraftTest(TestCase):
             tenant=self.tenant,
             is_staff=True,
         )
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.user, role="teacher")
 
     def _inventory_file(self, name: str) -> InventoryFile:
         suffix = uuid.uuid4().hex[:10]
