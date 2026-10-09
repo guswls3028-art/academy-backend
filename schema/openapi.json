@@ -4401,6 +4401,7 @@
           },
           "max_score": {
             "format": "double",
+            "minimum": 0,
             "nullable": true,
             "type": "number"
           },
@@ -4414,6 +4415,7 @@
           },
           "score": {
             "format": "double",
+            "minimum": 0,
             "nullable": true,
             "type": "number"
           },
@@ -4454,11 +4456,13 @@
         "properties": {
           "max_score": {
             "format": "double",
+            "minimum": 0,
             "nullable": true,
             "type": "number"
           },
           "score": {
             "format": "double",
+            "minimum": 0,
             "nullable": true,
             "type": "number"
           },
@@ -9147,11 +9151,13 @@
         "properties": {
           "max_score": {
             "format": "double",
+            "minimum": 0,
             "nullable": true,
             "type": "number"
           },
           "score": {
             "format": "double",
+            "minimum": 0,
             "nullable": true,
             "type": "number"
           },
