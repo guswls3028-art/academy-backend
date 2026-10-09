@@ -147,6 +147,36 @@ flowchart LR
 
 ## 운영 UX SSOT
 
+### 제출함 전체 탐색과 페이지 경계
+
+교직원 제출함 `GET /api/v1/submissions/submissions/pending/`은 진행 중인 시험
+제출 전체와 최근 24시간 내 생성된 완료/실패 제출을 제공한다. 과제 사진/영상은
+기존 과제 상세 검토 경로를 유지한다. 기존 제출·답안·성적·폐기 메타와 보관 기간을
+변경하지 않는다. `superseded`를 새 완료 항목으로 노출하지 않는다.
+
+최근 200개를 자른 뒤 상태를 거르던 흐름은 과거 대기와 드문 완료/실패를 숨겼다.
+`filter=all|pending|done|failed`와 실패 탭의 `failed_type=all|real_failed|discarded`를
+서버 조회에 먼저 적용한다. 폐기는 `meta.discarded`가 객체일 때만 판정하며
+빈 객체도 폐기다. null·문자열·배열은 기존 화면과 같이 일반 실패로 분류한다.
+PostgreSQL/SQLite JSON 객체 판정은 저장소 adapter가 소유한다.
+
+- `page` 또는 `page_size`를 명시하면 `results/count/page/page_size/pages/has_next/
+  has_previous/summary` 응답. `summary.failed/real_failed/discarded`는 실패 분류를
+  적용하기 전 해당 학원의 최근 실패 전체 집계다.
+- page는 1–1,000,000, page_size는 1–200(기본 50). 정렬은 `-created_at,-id`로
+  동일 시각을 안정화한다. 처리 결과 마지막 페이지가 줄면 현재 마지막으로 보정한다.
+  매 조회는 현재 자료 기준이며 변경 불가능한 스냅샷을 보장하지 않는다.
+- 페이지 파라미터 없는 기존 클라이언트는 배열과 최대 200개 크기를 유지한다.
+  새 화면은 페이지 계약을 사용하므로 서버를 먼저 배포한다. 잘못된 수·필터는 400.
+- 인증과 현재 학원의 직원 접근 경계를 유지한다. 다른 학원의 제출/학생/평가
+  메타는 포함하지 않으며 GET은 상태를 바꾸지 않는다. 상세·재처리·폐기 권한은
+  각각의 기존 API가 재검증한다.
+
+서버 회귀는 `test_pending_inbox_pagination.py`의 205개 동시각 제출·상태/폐기
+필터·페이지 축소·오래된 진행·입력 경계·JWT 역할 거부와 기존 security regression.
+화면의 페이지/선택/복구·동일 산출물 실사용은
+[평가 운영 계약](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/ASSESSMENT-OPERATIONS-WORKSPACE.md)이 소유한다.
+
 ### 마커가 잘린 세로 스캔 방향 복구
 
 코너 마커와 문서 외곽을 모두 찾지 못한 세로 스캔은 시계/반시계 90도

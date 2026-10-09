@@ -63,6 +63,7 @@ backend/docs/
 | 시험 생성·혼합 채점·오답노트 | [domain/exam-grading.md](domain/exam-grading.md) |
 | 데이터 목록 정렬·필터·페이지네이션 | [domain/data-list-ordering.md](domain/data-list-ordering.md) |
 | 대시보드 질문·상담·제출 처리 대기 전체 집계 | [domain/operational-dashboard-counts.md](domain/operational-dashboard-counts.md) |
+| 홈페이지 상담 수신함 전체 집계·페이지·읽음/메모 동시 저장 | [domain/landing-consult-inbox.md](domain/landing-consult-inbox.md) |
 | 출결 명단 정렬·페이지네이션 | [domain/attendance.md](domain/attendance.md) |
 | 강의 정규 수업·보강 유형과 이름 | [domain/lecture-sessions.md](domain/lecture-sessions.md) |
 | 과제 만점·합격 정책·성적 저장 | [domain/homework-grading.md](domain/homework-grading.md) |

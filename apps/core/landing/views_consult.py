@@ -12,10 +12,16 @@ from __future__ import annotations
 import logging
 import re as _re
 
+from django.core.paginator import Paginator
+from django.db.models import Count, Q, Value
+from django.db.models.functions import Coalesce
+from drf_spectacular.utils import extend_schema
+from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.api.common.query_params import parse_query_bool, parse_query_int
 from apps.core.permissions import TenantResolved, TenantResolvedAndStaff
 
 from ._helpers import check_landing_admin_role, client_ip
@@ -99,6 +105,25 @@ def is_rate_limited(tenant, phone: str, limit: int = 5, window_sec: int = 60) ->
 # ─────────────────────────────────────────────────
 
 
+class ConsultInboxQuerySerializer(serializers.Serializer):
+    page = serializers.IntegerField(min_value=1, max_value=1_000_000, default=1)
+    page_size = serializers.IntegerField(min_value=1, max_value=200, default=200)
+    filter = serializers.ChoiceField(choices=("all", "unread"), default="all")
+    summary_only = serializers.BooleanField(default=False)
+
+    def to_internal_value(self, data):
+        values = data.copy()
+        values["page"] = parse_query_int(data, "page", default=1, min_value=1, max_value=1_000_000)
+        values["page_size"] = parse_query_int(data, "page_size", default=200, min_value=1, max_value=200)
+        values["summary_only"] = parse_query_bool(data, "summary_only", default=False)
+        return super().to_internal_value(values)
+
+
+class ConsultInboxPatchSerializer(serializers.Serializer):
+    mark_read = serializers.BooleanField(required=False)
+    admin_memo = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=2000, trim_whitespace=False)
+
+
 class LandingConsultPublicView(APIView):
     """POST /api/v1/core/landing/consult/ — 공개 상담 폼 (비로그인 OK + tenant 격리)."""
     permission_classes = [TenantResolved]
@@ -149,9 +174,20 @@ class LandingConsultAdminListView(APIView):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("상담 요청 조회는 원장/관리자만 가능합니다.")
 
+    @extend_schema(parameters=[ConsultInboxQuerySerializer])
     def get(self, request):
         from apps.core.models import LandingConsultRequest
-        qs = LandingConsultRequest.objects.filter(tenant=request.tenant)[:200]
+        query = ConsultInboxQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        params = query.validated_data
+        qs = LandingConsultRequest.objects.filter(tenant=request.tenant).order_by("-created_at", "-id")
+        summary = qs.aggregate(total=Count("pk"), unread=Count("pk", filter=Q(read_at__isnull=True)))
+        if params["summary_only"]:
+            return Response({"items": [], "summary": summary})
+        if params["filter"] == "unread":
+            qs = qs.filter(read_at__isnull=True)
+        paginator = Paginator(qs, params["page_size"])
+        page = paginator.page(min(params["page"], paginator.num_pages))
         items = [{
             "id": r.id,
             "name": r.name,
@@ -165,9 +201,11 @@ class LandingConsultAdminListView(APIView):
             "read_at": r.read_at.isoformat() if r.read_at else None,
             "admin_memo": r.admin_memo,
             "created_at": r.created_at.isoformat(),
-        } for r in qs]
-        unread = sum(1 for r in qs if r.read_at is None)
-        return Response({"items": items, "summary": {"total": len(items), "unread": unread}})
+        } for r in page]
+        return Response({"items": items, "summary": summary, "pagination": {
+            "page": page.number, "page_size": paginator.per_page, "pages": paginator.num_pages,
+            "count": paginator.count, "has_next": page.has_next(), "has_previous": page.has_previous(),
+        }})
 
 
 class LandingConsultAdminDetailView(APIView):
@@ -180,17 +218,21 @@ class LandingConsultAdminDetailView(APIView):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("상담 요청 처리는 원장/관리자만 가능합니다.")
 
+    @extend_schema(request=ConsultInboxPatchSerializer)
     def patch(self, request, item_id):
         from apps.core.models import LandingConsultRequest
         from django.utils import timezone
-        try:
-            r = LandingConsultRequest.objects.get(id=item_id, tenant=request.tenant)
-        except LandingConsultRequest.DoesNotExist:
-            return Response({"detail": "Not found"}, status=404)
-        data = request.data or {}
-        if "mark_read" in data and data["mark_read"]:
-            r.read_at = r.read_at or timezone.now()
+        payload = ConsultInboxPatchSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        now = timezone.now()
+        updates = {"updated_at": now}
+        if data.get("mark_read"):
+            updates["read_at"] = Coalesce("read_at", Value(now))
         if "admin_memo" in data:
-            r.admin_memo = str(data["admin_memo"] or "")[:2000]
-        r.save(update_fields=["read_at", "admin_memo", "updated_at"])
+            updates["admin_memo"] = data["admin_memo"] or ""
+        # A memo and a read acknowledgement can arrive concurrently. Do not write
+        # an old snapshot of fields that this request did not change.
+        if not LandingConsultRequest.objects.filter(id=item_id, tenant=request.tenant).update(**updates):
+            return Response({"detail": "Not found"}, status=404)
         return Response({"ok": True})
