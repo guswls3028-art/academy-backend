@@ -30,6 +30,46 @@ def test_parse_student_excel_allows_long_name_when_valid_phone_exists(tmp_path):
     assert rows[0]["parent_phone"] == "01031217466"
 
 
+@pytest.mark.parametrize("grade,gender,expected_grade,expected_gender", [
+    ("1학년", "남자", "1", "M"), ("３ 학년", "여자", "3", "F"),
+    (2, "female", "2", "F"), ("", "", "", None),
+])
+def test_exported_profile_values_can_be_imported(tmp_path, grade, gender, expected_grade, expected_gender):
+    path = tmp_path / "exported.xlsx"
+    wb = Workbook()
+    wb.active.append(["이름", "학부모 전화", "학교", "학년", "성별"])
+    wb.active.append(["재등록학생", "01070000001", "테스트중", grade, gender])
+    wb.save(path)
+    rows, _ = parse_student_excel_file(str(path))
+    assert rows[0]["grade"] == expected_grade
+    assert rows[0]["gender"] == expected_gender
+
+
+@pytest.mark.parametrize("grade,gender", [
+    ("1.5", "M"), ("4", "F"), ("0", "M"), ("학년", "M"), ("2", "Mystery"),
+    pytest.param("9" * 5000, "M", id="oversized-grade-remains-row-error"),
+])
+def test_profile_errors_keep_excel_row_and_allow_corrected_retry(tmp_path, grade, gender):
+    path = tmp_path / "profiles.xlsx"
+    wb = Workbook()
+    wb.active.append(["이름", "학부모전화번호", "학교", "학년", "성별"])
+    wb.active.append(["정상학생", "01070000001", "테스트중", "2학년", "여자"])
+    wb.active.append(["수정학생", "01070000002", "테스트중", grade, gender])
+    wb.save(path)
+    errors = []
+    rows, _ = parse_student_excel_file(str(path), validation_errors_out=errors)
+    assert [row["name"] for row in rows] == ["정상학생"]
+    assert [error["row"] for error in errors] == [3]
+    matching_rows, _ = parse_student_excel_file(str(path), validate_profile=False)
+    assert [row["name"] for row in matching_rows] == ["정상학생", "수정학생"]
+    wb.active.cell(3, 4, "3학년")
+    wb.active.cell(3, 5, "남자")
+    wb.save(path)
+    rows, _ = parse_student_excel_file(str(path))
+    assert len(rows) == 2
+    assert (rows[1]["grade"], rows[1]["gender"]) == ("3", "M")
+
+
 def test_parse_student_excel_remains_strict_without_partial_error_collector(tmp_path):
     path = tmp_path / "invalid-students.xlsx"
     _write_student_excel(path, name="오류학생", parent_phone="번호오류")

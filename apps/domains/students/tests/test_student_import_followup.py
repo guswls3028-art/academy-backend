@@ -108,9 +108,9 @@ class StudentImportResultContractTests(TestCase):
             path = Path(directory) / "siblings.xlsx"
             workbook = Workbook()
             sheet = workbook.active
-            sheet.append(["이름", "학부모전화번호", "학생전화번호", "학교유형", "학년"])
-            sheet.append(["첫째학생", 1070000001, 1080000001, "MIDDLE", 2])
-            sheet.append(["둘째학생", 1070000001, "", "MIDDLE", 1])
+            sheet.append(["이름", "학부모전화번호", "학생전화번호", "학교유형", "학년", "성별"])
+            sheet.append(["첫째학생", 1070000001, 1080000001, "MIDDLE", "2학년", "남자"])
+            sheet.append(["둘째학생", 1070000001, "", "MIDDLE", "１ 학년", "여자"])
             sheet.append(["오류학생", 1070000001, "0101234567", "MIDDLE", 1])
             workbook.save(path)
             errors = []
@@ -124,6 +124,7 @@ class StudentImportResultContractTests(TestCase):
         self.assertEqual([error["row"] for error in errors], [4])
         students = list(Student.objects.filter(tenant=self.tenant).select_related("parent__user", "user").order_by("id"))
         self.assertEqual(students[0].school_type, "MIDDLE")
+        self.assertEqual([(student.grade, student.gender) for student in students], [(2, "M"), (1, "F")])
         self.assertEqual(students[0].phone, "01080000001")
         self.assertFalse(students[1].phone)
         self.assertEqual(students[0].parent_id, students[1].parent_id)
