@@ -45,7 +45,10 @@ def test_exported_profile_values_can_be_imported(tmp_path, grade, gender, expect
     assert rows[0]["gender"] == expected_gender
 
 
-@pytest.mark.parametrize("grade,gender", [("1.5", "M"), ("4", "F"), ("0", "M"), ("학년", "M"), ("2", "Mystery")])
+@pytest.mark.parametrize("grade,gender", [
+    ("1.5", "M"), ("4", "F"), ("0", "M"), ("학년", "M"), ("2", "Mystery"),
+    pytest.param("9" * 5000, "M", id="oversized-grade-remains-row-error"),
+])
 def test_profile_errors_keep_excel_row_and_allow_corrected_retry(tmp_path, grade, gender):
     path = tmp_path / "profiles.xlsx"
     wb = Workbook()

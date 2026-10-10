@@ -743,10 +743,12 @@ def parse_student_excel_file(
         if grade:
             if not re.fullmatch(r"[+-]?[0-9]+", grade):
                 reason = "학년은 정수 또는 N학년 형식으로 입력해 주세요."
-            elif not 1 <= int(grade) <= (6 if school_type == "ELEMENTARY" else 3):
+            elif grade.lstrip("+").lstrip("0") not in (
+                {"1", "2", "3", "4", "5", "6"} if school_type == "ELEMENTARY" else {"1", "2", "3"}
+            ):
                 reason = "학년은 초등 1~6, 중등·고등 1~3 범위로 입력해 주세요."
             else:
-                grade = str(int(grade))
+                grade = grade.lstrip("+").lstrip("0")
         if not reason and gender_raw and gender is None:
             reason = "성별은 M/F, 남자/여자 또는 공란으로 입력해 주세요."
         if reason and validate_profile:
