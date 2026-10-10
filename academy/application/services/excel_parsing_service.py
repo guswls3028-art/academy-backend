@@ -455,7 +455,7 @@ def _parse_school_grade(value: str) -> tuple[str, str]:
     value = (value or "").strip()
     if not value:
         return "", ""
-    m = re.match(r"^(.+?)\(([０-９0-9]+)\)\s*$", value)
+    m = re.match(r"^(.+?)\(([０-９0-9]+)\s*(?:학년)?\)\s*$", value)
     if not m:
         return value, ""
     school = m.group(1).strip()
@@ -467,14 +467,16 @@ def _parse_school_grade(value: str) -> tuple[str, str]:
     return school, grade
 
 
-def _infer_school_type(school: str) -> str:
+def _infer_school_type(school: str, fallback: str = "HIGH") -> str:
     if not school:
-        return "HIGH"
-    if re.search(r"초등학교|초등|초\b", school):
+        return fallback
+    if "초등학교" in school or (school.endswith("초") and "고" not in school and "중" not in school):
         return "ELEMENTARY"
-    if re.search(r"중학교|중등|중\b", school):
+    if "고" in school:
+        return "HIGH"
+    if "중" in school:
         return "MIDDLE"
-    return "HIGH"
+    return fallback
 
 
 def _row_looks_like_student(
@@ -589,6 +591,7 @@ def parse_student_excel_file(
     local_path: str,
     *,
     validation_errors_out: list[dict[str, Any]] | None = None,
+    validate_profile: bool = True,
 ) -> tuple[list[dict[str, Any]], str]:
     """
     로컬 엑셀 파일을 파싱하여 강의 수강 등록용 행 리스트와 강의 제목 반환.
@@ -729,7 +732,26 @@ def parse_student_excel_file(
                 "reason": "학교유형은 ELEMENTARY, MIDDLE, HIGH 중 하나로 입력해 주세요.",
             })
             continue
-        school_type = school_type_cell or _infer_school_type(school)
+        # Match the final import's school-name precedence, including 중동고.
+        school_type = _infer_school_type(school, school_type_cell or "HIGH")
+        grade = "".join(chr(ord(c) - 0xFEE0) if "０" <= c <= "９" else c for c in grade)
+        grade = re.sub(r"^([+-]?[0-9]+)\s*학년$", r"\1", grade).strip()
+        gender_raw = _cell_str(row, col.get("gender")).upper()
+        gender = {"M": "M", "MALE": "M", "남": "M", "남자": "M", "남성": "M",
+                  "F": "F", "FEMALE": "F", "여": "F", "여자": "F", "여성": "F"}.get(gender_raw)
+        reason = ""
+        if grade:
+            if not re.fullmatch(r"[+-]?[0-9]+", grade):
+                reason = "학년은 정수 또는 N학년 형식으로 입력해 주세요."
+            elif not 1 <= int(grade) <= (6 if school_type == "ELEMENTARY" else 3):
+                reason = "학년은 초등 1~6, 중등·고등 1~3 범위로 입력해 주세요."
+            else:
+                grade = str(int(grade))
+        if not reason and gender_raw and gender is None:
+            reason = "성별은 M/F, 남자/여자 또는 공란으로 입력해 주세요."
+        if reason and validate_profile:
+            validation_errors.append({"row": r + 1, "name": name, "reason": reason})
+            continue
 
         extra_columns: dict[str, str] = {}
         for index, header in extra_headers:
@@ -748,7 +770,7 @@ def parse_student_excel_file(
             "schoolClass": _cell_str(row, col.get("school_class")),
             "major": _cell_str(row, col.get("major")),
             "memo": _cell_str(row, col.get("memo")),
-            "gender": _cell_str(row, col.get("gender")).upper()[:1] or None,
+            "gender": gender,
             "uses_identifier": uses_identifier,
             "high_school_class": _cell_str(row, col.get("school_class")),
             "_extra_columns": extra_columns,
@@ -850,6 +872,7 @@ class ExcelParsingService:
             rows, lecture_title = parse_student_excel_file(
                 str(local_path),
                 validation_errors_out=parsing_errors if lecture_id is None else None,
+                validate_profile=lecture_id is None,
             )
             if not rows and not parsing_errors:
                 raise ValueError("등록할 학생 데이터가 없습니다.")
