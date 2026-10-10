@@ -3,8 +3,8 @@
 - 요청: 2026-10-09 KST, 사용자가 모든 도메인의 숨은 버그·업무 결함을 순서대로 점검·수정하도록 위임.
 - 추가 요청: 2026-10-10 KST, 전체 진행 승인을 재확인하고 기능을 찾기 어렵다는 사용자 평가에 따라 발견성·초심자 동선을 모든 도메인의 공통 점검 항목으로 추가했다.
 - 실행 소유: `student-domain-20261009-01a10bcb`. 전체 실행 순서는 [PLAN](../PLAN.md), 현재 제품 정책은 각 도메인 정본이 소유한다.
-- 단계: **22개 도메인 구조 분류·기록된 수정 운영 확인 / 기능 발견성·학생 삭제·복원·보안 후속 및 D01 파일 등록 연락처·재등록 수정 운영 완료**. 이전 실패와 수정 후 성공 증거는 별도로 보존한다. 완료 판정은 증거가 있는 하위 동선에만 적용한다.
-- 최신 운영 묶음: backend `aa4529482fa189c52497281d22f5aa2aba5faabc`/run38002341219, frontend `b38f6a0f80fa0684a8bcec4d8b8bb3bb33290ad8`/run38016877898. 두 공식 실행 전체 성공, 성공 manifest·잠금 해제·hakwonplus/godmin/tchul 버전 대조 통과.
+- 단계: **22개 도메인 구조 분류·기록된 수정 운영 확인 / 기능 발견성·학생 후속·보안 및 2차 점검 수정 운영 완료**. 이전 실패와 수정 후 성공 증거는 별도로 보존한다. 완료 판정은 증거가 있는 하위 동선에만 적용한다.
+- 최신 운영 묶음: backend `a0568d2188eabb6f67e69c199528df3c37eba56b`/run38041547832, frontend `60ad9b4bb1f60e923417ff9c101c192e9671b100`/run38043505802. 두 공식 실행 성공, 동일 산출물 실사용 27건·cleanup zero·운영 읽기와 세 도메인 버전·성공 manifest·잠금 해제를 2026-10-11 KST 최종 확인했다.
 - 구조 기준: backend `58589aaae21b5051e5054e4a1c7a9c7234b93def`, frontend `a3290e20062a3acd5de9b3582400e7ebe82e629e`.
 
 ## 범위와 누락 확인
@@ -419,13 +419,13 @@ HOLD는 이 수정으로 해제하지 않는다.
 정확한 tenant/object 승인 없이 사용자 데이터를 삭제하거나 운영에서 합성 변경을
 실행하지 않는다. 미해결 항목은 이유·다음 행동을 보존하고 전체 무결함을 보장하지 않는다.
 
-### 2026-10-10 두 번째 전 도메인 점검 후보
+### 2026-10-10 두 번째 전 도메인 점검과 2026-10-11 운영 확인
 
 소유 `domain-quality-round2-20261010-01a10bcb`. 사용자 요청에 따라 D01 후속을
-이어 인증·금액·학습 운영·콘텐츠/소통·설정/플랫폼 순으로 재점검한다. 시작 기준은
+이어 인증·금액·학습 운영·콘텐츠/소통·설정/플랫폼 순으로 재점검했다. 시작 기준은
 backend `3aca81de1b9d0d1e704e761333d766d4107ab327`, frontend
-`b38f6a0f80fa0684a8bcec4d8b8bb3bb33290ad8`이다. 아래는 재현·수정한 후보이며
-CI와 격리 실사용 및 운영 readback 전에는 운영 완료로 판정하지 않는다.
+`b38f6a0f80fa0684a8bcec4d8b8bb3bb33290ad8`이다. 아래 재현·수정은 뒤에 기록한
+전체 CI·격리 실사용·운영 readback으로 해당 범위의 운영 반영을 확인했다.
 
 | 범위 | 재현 및 변경 | 정상·실패·복구 확인 |
 |---|---|---|
@@ -440,7 +440,62 @@ CI와 격리 실사용 및 운영 readback 전에는 운영 완료로 판정하�
 관련 검증: 인증·직원·수강료 192건, 평가·과제·성적·제출/진도 955건, 설정·구독·결제
 259건이 로컬 SQLite에서 통과했다. 중복된 집합을 전 도메인 고유 검사 수로 합산하지
 않으며 PostgreSQL 전용 skip은 통과로 세지 않는다. 학습/청구 묶음의 오래된 클리닉
-기대값 실패는 위 162건 재검증으로 해소했다. 콘텐츠/운영 확대 검사는 로컬 환경의
-지연·실패를 포함해 별도 진단 중이며 전체 성공으로 기록하지 않는다. 최초 화면 검사의
-로컬 연결/개발 모듈 로딩 실패도 운영 결함으로 단정하지 않는다. 소스·정책·화면·실사용의
-증거 수준을 구분하고 필수 전체 CI 및 정확한 배포 후보의 실사용 판정을 이어간다.
+기대값 실패는 위 162건 재검증으로 해소했다. 초기 콘텐츠/운영 확대 검사의 로컬 환경
+지연·실패는 별도 보존하며 최초 실행을 전체 성공으로 바꾸지 않는다. 최초 화면 검사의
+로컬 연결/개발 모듈 로딩 실패도 운영 결함으로 단정하지 않는다. 이후 전체 CI와
+정확한 배포 후보의 실사용·운영 판정은 아래 기록과 같이 각각 확인했다.
+
+서버 [PR617](https://github.com/guswls3028-art/academy-backend/pull/617)
+`b0096c69363ab1154fc31015670a6d3485adc2ba`의 전체
+[CI38040202324](https://github.com/guswls3028-art/academy-backend/actions/runs/38040202324)가
+성공했다. SQLite 6,424건·하위 사례 1,441건(227 skip), PostgreSQL 6,674건·하위 사례
+1,455건(5 skip), 커버리지 71%, 정적·마이그레이션·배포 및 Windows 작업트리 계약이
+통과했다. Linux의 전체 검사에서 공개 자료 native process-group 검증도 통과했으며,
+로컬 Windows의 `os.killpg` 부재를 제품 실패로 집계하지 않는다. main
+`a0568d2188eabb6f67e69c199528df3c37eba56b`로 병합했고 공식
+[배포38041547832](https://github.com/guswls3028-art/academy-backend/actions/runs/38041547832)의
+격리 검증·운영 승격·최종 확인이 모두 성공했다. 두 production 승인은 공식 API에
+기록됐고, preprod `i-0c22b2b6240476fa5` 종료 확인 후 호환 마이그레이션과 건강 상태
+기반 순차 교체를 수행했다. 운영 health/healthz 200, 학생 영상 playback chain,
+실제 digest 검증·latest 승격·잠금 해제를 확인했다. 성공 manifest 커밋
+`b595d86c565bf8afbf9e81345839149f50d80779`는 `successful`, `complete=true`,
+검증 시각 2026-10-10 18:59:59 KST이며 후보의 여섯 이미지 digest와 모두 일치한다.
+
+화면의 보강·평가 복사 18건은 로컬에서 통과했다. 직원·수강료·강의·설정·지원 열람
+확대 검사는 최초 85/87 통과했고 두 초기 빈 화면 timeout을 기록했다. 정확한 두 사례의
+별도 진단에서는 코드·timeout·strict/no-retry 조건 변경 없이 2건 통과했다. 최초 실패를
+지우거나 이를 87건 최초 성공으로 바꾸지 않는다. 증거는 소유 artifact의
+`affected-browser-evidence`, `browser-two-diagnostics`에 보존한다.
+
+화면 [PR729](https://github.com/guswls3028-art/academy-frontend/pull/729)
+`24b5f4ac72774325bd8c5ba54c73e41f2f9fc695`는 사용자 화면 소스 변경 없이 기존
+급여·수강료 실사용 두 사례를 보강한다. 급여 휴게 오류의 무변경→정정→금액 복구,
+설정 JSON 오류→저장→재조회→원래 이름 복구, 할인·기간 동시 저장→실제 할인 청구 및
+대시보드를 검증한다. 기존 일회용 tenant와 27개 필수 사례·정리 0 경계를 유지한다.
+전체 화면 CI에서 route mock 1,195건, WebKit 87건, production bundle 29건,
+theme 1건, 운영 읽기 6건이 통과했다. Typecheck/Lint/Build·Windows COM·미리보기도
+성공했다. main `60ad9b4bb1f60e923417ff9c101c192e9671b100`로 병합했고
+[배포38043505802](https://github.com/guswls3028-art/academy-frontend/actions/runs/38043505802)의
+같은 산출물 격리 실사용 27건이 통과했다. 생략·실패·flaky·runner 오류·조회 재시도·
+mutation replay가 모두 0이며 산출물 SHA-256은
+`d1c15efda041df8a86c2f7b2720089be75ba2fe6320d1684bfe982ef01524666`이다.
+주 시나리오와 교차 tenant 시나리오의 tenant/user 잔여가 각각 0이고, 정리 후
+재조회에서 R2 object·process·listener 잔여 0과 release/digest 일치를 확인했다.
+장시간 영상 검사는 desktop/mobile 모두 완료했고 player error·위반 이벤트가 0이다.
+
+2026-10-11 KST, 중단된 대화의 작업을 `01a1269a-bdec-7661-8e7a-b0ad8f0650d8`가
+이어받았다. 정확한 main·검사 산출물·승인 가능 상태를 다시 읽고 이 실행의
+`production` environment `19052451810`만 공식 API로 승인했다. Pages 배포와
+`Production read-only user flow + tenant availability`가 성공했고, 실패 보상 rollback은
+조건에 따라 생략됐다. `hakwonplus.com`, `godmin.kr`, `tchul.com`의 `version.json`은
+모두 exact frontend SHA를 반환하고 공개 API `/healthz`, `/health`는 200이다.
+정본 `assert-production-release-bundle.ps1`도 두 run·main ancestry·성공 manifest·
+승인 대기 해소·공유 잠금·세 도메인 runtime 대조에서
+`ACADEMY_PRODUCTION_RELEASE_BUNDLE_PASS`를 반환했다.
+
+증거는 기존 소유 artifact의 `frontend-development-evidence/`, `frontend-final-run.json`,
+`frontend-production-readonly.log`, `public-runtime-readback.json`,
+`final-paired-production.log`에 보존한다. 운영 검사는 합성 업무 쓰기를 허용하지 않으며
+인증·허용된 관측 쓰기까지 전체 쓰기 0으로 표현하지 않는다. 이 판정은 PR617/729의
+수정·보강 동선과 해당 릴리스의 완료다. 위 남은 하위 동선 및 Cyrus/Toss/card HOLD는
+그대로 유지한다.
