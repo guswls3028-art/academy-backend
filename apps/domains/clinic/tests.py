@@ -1725,7 +1725,8 @@ class ParticipantStatusTransitionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(resp.status_code, 204, resp.data)
         self.assertFalse(ClinicSession.objects.filter(id=session.id).exists())
 
-    def test_student_can_cancel_own_pending_booking(self):
+    @patch("apps.domains.clinic.services.lifecycle.send_clinic_event_notification", return_value=True)
+    def test_student_can_cancel_own_pending_booking(self, notify):
         self.client.force_authenticate(user=self.student.user)
         participant = self.make_participant(
             self.tenant,
@@ -1745,6 +1746,8 @@ class ParticipantStatusTransitionAPITest(APITestCase, ClinicAPITestMixin):
         participant.refresh_from_db()
         self.assertEqual(participant.status, "cancelled")
         self.assertEqual(participant.status_changed_by_id, self.student.user_id)
+        self.assertEqual(notify.call_count, 2)
+        self.assertEqual({call.kwargs["send_to"] for call in notify.call_args_list}, {"student", "parent"})
 
 
 class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
@@ -2742,7 +2745,8 @@ class ParticipantWriteServiceNotificationTest(TestCase, ClinicTestMixin):
         self.assertIn(str(new_session.date), context["클리닉변동사항"])
         self.assertEqual(context["클리닉수정자"], self.actor.username)
 
-    def test_cancel_notification_contains_clinic_change_variables(self):
+    @patch("apps.domains.clinic.services.lifecycle.send_clinic_event_notification", return_value=True)
+    def test_cancel_notification_contains_clinic_change_variables(self, notify):
         from apps.domains.clinic.services import change_participant_status
 
         participant = self.make_participant(
@@ -2760,11 +2764,16 @@ class ParticipantWriteServiceNotificationTest(TestCase, ClinicTestMixin):
             request_student=self.student,
         )
 
-        self.assertEqual(result.notification.trigger, "clinic_cancelled")
-        context = result.notification.context
-        self.assertEqual(context["클리닉변동사항"], "예약 취소")
-        self.assertIn("클리닉기존일정", context)
-        self.assertEqual(context["클리닉수정자"], self.actor.username)
+        self.assertIsNone(result.notification)
+        self.assertEqual(result.notification_result["requested"], 2)
+        self.assertEqual(notify.call_count, 2)
+        self.assertEqual({call.kwargs["send_to"] for call in notify.call_args_list}, {"student", "parent"})
+        for call in notify.call_args_list:
+            self.assertEqual(call.kwargs["trigger"], "clinic_cancelled")
+            context = call.kwargs["context"]
+            self.assertEqual(context["클리닉변동사항"], "예약 취소")
+            self.assertIn("클리닉기존일정", context)
+            self.assertEqual(context["클리닉수정자"], self.actor.username)
 
 
 class ScoreValidationAPITest(TestCase, ClinicTestMixin):

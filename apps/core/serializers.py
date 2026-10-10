@@ -1,6 +1,7 @@
 # PATH: apps/core/serializers.py
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.db import transaction
 
 from apps.core.models import Attendance, Expense, Program
 from academy.adapters.db.django import repositories_core as core_repo
@@ -164,6 +165,8 @@ class ProgramUpdateSerializer(serializers.ModelSerializer):
         """기능 플래그 변경은 owner만 가능. clinic_mode="regular"는 section_mode=true 필수."""
         if not self._is_owner_or_superuser():
             raise serializers.ValidationError("기능 설정 변경은 대표만 가능합니다.")
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("기능 설정은 객체 형식이어야 합니다.")
         if isinstance(value, dict):
             if value.get("clinic_mode") == "regular" and not value.get("section_mode"):
                 raise serializers.ValidationError(
@@ -171,6 +174,20 @@ class ProgramUpdateSerializer(serializers.ModelSerializer):
                     "활성화되어야 사용할 수 있습니다."
                 )
         return value
+
+    def validate_ui_config(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("화면 설정은 객체 형식이어야 합니다.")
+        return value
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        # Branding/settings and billing share Program. Save against the current
+        # row so an unrelated partial edit cannot undo a committed cancellation.
+        locked = Program.objects.select_for_update().get(
+            pk=instance.pk, tenant_id=instance.tenant_id,
+        )
+        return super().update(locked, validated_data)
 
 
 class ProfileSerializer(serializers.ModelSerializer):

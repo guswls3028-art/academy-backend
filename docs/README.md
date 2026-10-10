@@ -53,6 +53,7 @@ backend/docs/
 | 용도 | 경로 |
 |------|------|
 | 공개 매치업·분석자료 게시판 | [domain/public-resource-board.md](domain/public-resource-board.md) |
+| 프로그램 표시·기능 설정과 구독 상태 보존 | [domain/program-settings.md](domain/program-settings.md) |
 | 개발 저장공간·산출물·CI 캐시 수명주기 | [operations/concurrent-codex-sessions.md](operations/concurrent-codex-sessions.md#session-output-lifecycle) |
 | CURRENT 릴리즈 | [releases/README.md](releases/README.md)의 CURRENT 행 |
 | 실행 파라미터 | [ssot/params.yaml](ssot/params.yaml) |

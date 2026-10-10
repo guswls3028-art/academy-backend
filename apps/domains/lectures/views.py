@@ -3,6 +3,7 @@
 from django.db import transaction, IntegrityError
 from django.db.models import Case, Count, F, IntegerField, Max, OuterRef, Q, Subquery, Value, When
 from django.db.models.functions import Coalesce
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
@@ -239,6 +240,19 @@ class LectureViewSet(ModelViewSet):
         except IntegrityError as e:
             self._handle_title_integrity_error(e)
 
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        reference = self.get_object()
+        with transaction.atomic():
+            lecture = get_object_or_404(
+                Lecture.objects.select_for_update(),
+                pk=reference.pk, tenant=request.tenant,
+            )
+            serializer = self.get_serializer(lecture, data=request.data, partial=partial)
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+            return Response(serializer.data)
+
     def perform_update(self, serializer):
         """🔐 Lecture 수정과 종료 시 재생 권한 회수를 한 transaction으로 처리."""
         try:
@@ -463,7 +477,10 @@ class SessionViewSet(ModelViewSet):
 
         raw_date = self.request.query_params.get("date")
         if raw_date:
-            date = parse_date(raw_date)
+            try:
+                date = parse_date(raw_date)
+            except ValueError:
+                date = None
             if date is None:
                 raise ValidationError({"date": "YYYY-MM-DD 형식의 날짜를 입력해 주세요."})
             qs = qs.filter(date=date)
@@ -707,7 +724,10 @@ class SectionViewSet(ModelViewSet):
             if raw_date in (None, ""):
                 parsed_dates[label] = None
                 continue
-            parsed_date = parse_date(str(raw_date))
+            try:
+                parsed_date = parse_date(str(raw_date))
+            except ValueError:
+                parsed_date = None
             if parsed_date is None:
                 raise ValidationError({"dates": f"{label}반 날짜 형식이 올바르지 않습니다."})
             parsed_dates[label] = parsed_date

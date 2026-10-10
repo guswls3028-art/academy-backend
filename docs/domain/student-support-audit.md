@@ -25,6 +25,11 @@
   `support_student_id` claim으로 일반 학생 세션과 구분한다.
 - 매 요청마다 `impersonated_by` 교직원의 현재 활성 staff membership을 다시
   확인한다. 권한이 회수되면 아직 만료 전인 토큰도 즉시 거부한다.
+- 교직원의 기본 `User.tenant`가 다른 학원이어도 요청 학원의 활성 교직원
+  membership으로 발급과 사용을 일관되게 허용한다. 기본 학원은 권한 근거가 아니다.
+  세션·학생·JWT의 학원 일치, 계정 활성, 매 요청 권한 재검증 및 명시 종료는 유지한다.
+  `test_support_uses_current_membership_when_operator_primary_tenant_differs`는
+  발급→학생 대시보드→권한 회수/복구→종료 후 재사용 거부를 검증한다.
 - 발급 세션은 `StudentSupportSession`에 학생·교직원·만료·종료 시각을 저장한다.
   JWT의 세션 UUID와 활성 DB 행이 함께 일치해야 하므로 브라우저 저장소에서 토큰만
   복사하거나 이미 종료한 세션을 다시 사용할 수 없다.

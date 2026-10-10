@@ -126,7 +126,6 @@ class TokenVersionJWTAuthentication(JWTAuthentication):
                 student__user=user,
                 student__deleted_at__isnull=True,
                 operator_id=operator_id,
-                operator__tenant_id=tenant_id,
                 operator__is_active=True,
                 ended_at__isnull=True,
                 expires_at__gt=timezone.now(),

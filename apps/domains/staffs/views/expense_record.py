@@ -7,7 +7,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets
 from rest_framework.filters import OrderingFilter
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import APIException, PermissionDenied, ValidationError
 
 from ..serializers import ExpenseRecordSerializer
 from academy.adapters.db.django import repositories_staffs as staff_repo
@@ -22,6 +22,12 @@ from .helpers import (
 # ===========================
 # ExpenseRecord
 # ===========================
+
+class ExpenseReviewAuditUnavailable(APIException):
+    status_code = 503
+    default_detail = "환급 처리 이력을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."
+    default_code = "expense_review_audit_unavailable"
+
 
 class ExpenseRecordViewSet(viewsets.ModelViewSet):
     serializer_class = ExpenseRecordSerializer
@@ -135,7 +141,7 @@ class ExpenseRecordViewSet(viewsets.ModelViewSet):
                     **save_kwargs,
                 )
                 from apps.core.services.ops_audit import record_audit
-                record_audit(
+                audit = record_audit(
                     self.request,
                     action="staff.expense_reviewed",
                     target_tenant=self.request.tenant,
@@ -147,6 +153,8 @@ class ExpenseRecordViewSet(viewsets.ModelViewSet):
                         "amount": reviewed.amount,
                     },
                 )
+                if audit is None:
+                    raise ExpenseReviewAuditUnavailable()
                 return
 
             serializer.save(**save_kwargs)

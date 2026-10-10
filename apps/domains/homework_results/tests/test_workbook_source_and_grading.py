@@ -161,6 +161,55 @@ class WorkbookSourceAndGradingTests(TestCase):
         self.assertTrue(score.meta["question_marks"]["2"]["is_correct"])
         self.assertTrue(score.meta["question_marks"]["2"]["include_in_wrong_note"])
 
+    def test_question_grading_rejects_coerced_identifiers_and_numeric_booleans_atomically(self):
+        source_exam = Exam.objects.create(
+            tenant=self.tenant, title="워크북 원본", exam_type=Exam.ExamType.REGULAR,
+            is_active=False, segmentation_status=Exam.SegmentationStatus.READY,
+        )
+        sheet = Sheet.objects.create(exam=source_exam, total_questions=2)
+        ExamQuestion.objects.create(sheet=sheet, number=1)
+        ExamQuestion.objects.create(sheet=sheet, number=2)
+        self.homework.source_exam = source_exam
+        self.homework.save(update_fields=["source_exam", "updated_at"])
+        original_meta = {"custom": "preserve", "question_marks": {"1": {"is_correct": True}}}
+        score = HomeworkScore.objects.create(
+            enrollment=self.enrollment, session=self.session, homework=self.homework,
+            score=80, max_score=100, meta=original_meta,
+        )
+        valid = {"enrollment_id": self.enrollment.pk, "question_number": 1,
+                 "is_correct": False, "include_in_wrong_note": True}
+        invalid_changes = [
+            {"enrollment_id": self.enrollment.pk + 0.5},
+            {"enrollment_id": float(self.enrollment.pk)},
+            {"enrollment_id": True},
+            {"enrollment_id": None},
+            {"question_number": 1.5}, {"question_number": 1.0},
+            {"question_number": True}, {"question_number": 0},
+            {"question_number": "1.0"}, {"question_number": []},
+            {"is_correct": 0}, {"is_correct": 1}, {"is_correct": 0.0},
+            {"include_in_wrong_note": 1},
+        ]
+        view = HomeworkViewSet.as_view({"patch": "question_grading"})
+        for change in invalid_changes:
+            with self.subTest(change=change):
+                HomeworkScore.objects.filter(pk=score.pk).update(meta=original_meta)
+                response = view(self._request("patch", "/question-grading/", {"updates": [
+                    {**valid, "question_number": 2}, {**valid, **change},
+                ]}), pk=self.homework.pk)
+                self.assertEqual(response.status_code, 400, response.data)
+                score.refresh_from_db()
+                self.assertEqual(score.meta, original_meta)
+                self.assertEqual(score.score, 80)
+        response = view(self._request("patch", "/question-grading/", {"updates": [
+            {**valid, "enrollment_id": str(self.enrollment.pk), "question_number": "1"},
+        ]}), pk=self.homework.pk)
+        self.assertEqual(response.status_code, 200, response.data)
+        score.refresh_from_db()
+        self.assertIs(score.meta["question_marks"]["1"]["is_correct"], False)
+        self.assertTrue(score.meta["question_marks"]["1"]["include_in_wrong_note"])
+        self.assertEqual(score.meta["custom"], "preserve")
+        self.assertEqual(score.score, 80)
+
     def test_question_grading_rejects_unassigned_enrollment(self):
         source_exam = Exam.objects.create(
             tenant=self.tenant,

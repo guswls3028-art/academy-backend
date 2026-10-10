@@ -341,6 +341,40 @@ class StudentSupportTests(TestCase):
         claims = AccessToken(response.data["access"])
         self.assertLessEqual(claims["exp"] - claims["iat"], 15 * 60)
 
+    def test_support_uses_current_membership_when_operator_primary_tenant_differs(self):
+        other = Tenant.objects.create(name="다른 기본 학원", code="support-primary-other")
+        self.staff.tenant = other
+        self.staff.save(update_fields=["tenant"])
+        TenantMembership.ensure_active(tenant=other, user=self.staff, role="teacher")
+        client = APIClient()
+        response = client.post(
+            f"/api/v1/students/{self.student.id}/support-session/",
+            {}, format="json", **self._headers(),
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        headers = {
+            "HTTP_HOST": "api.hakwonplus.com",
+            "HTTP_X_TENANT_CODE": self.tenant.code,
+            "HTTP_AUTHORIZATION": f"Bearer {response.data['access']}",
+        }
+        dashboard = client.get("/api/v1/student/dashboard/", **headers)
+        self.assertEqual(dashboard.status_code, 200, dashboard.content)
+        self.assertFalse(OpsAuditLog.objects.filter(action="student_activity.login").exists())
+
+        membership = TenantMembership.objects.get(tenant=self.tenant, user=self.staff)
+        membership.is_active = False
+        membership.save(update_fields=["is_active"])
+        denied = client.get("/api/v1/student/dashboard/", **headers)
+        self.assertEqual(denied.status_code, 401, denied.content)
+        membership.is_active = True
+        membership.save(update_fields=["is_active"])
+        restored = client.get("/api/v1/student/dashboard/", **headers)
+        self.assertEqual(restored.status_code, 200, restored.content)
+        ended = client.post("/api/v1/students/me/support-session/end/", {}, format="json", **headers)
+        self.assertEqual(ended.status_code, 200, ended.content)
+        denied = client.get("/api/v1/student/dashboard/", **headers)
+        self.assertEqual(denied.status_code, 401, denied.content)
+
     def test_support_token_fails_closed_after_operator_access_is_revoked(self):
         response = APIClient().post(
             f"/api/v1/students/{self.student.id}/support-session/",
