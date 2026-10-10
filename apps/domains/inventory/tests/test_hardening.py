@@ -916,6 +916,33 @@ class InventoryHardeningViewTests(TestCase):
         self.assertEqual(quota["plan"], "all")
         self.assertEqual(quota["limitBytes"], 200 * 1024**3)
 
+    def test_hancom_originals_with_browser_mime_are_stored_without_changing_bytes(self):
+        for name, mime, content, canonical in (
+            ("자료.HWP", "application/octet-stream", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1original", "application/x-hwp"),
+            ("자료.hwpx", "application/zip", b"PK\x03\x04original", "application/vnd.hancom.hwpx"),
+            ("자료.hwp", "application/haansofthwp", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1original", "application/x-hwp"),
+        ):
+            with self.subTest(name=name, mime=mime):
+                uploaded = SimpleUploadedFile(name, content, content_type=mime)
+                request = self._multipart_request("/storage/inventory/upload/", {"scope": "admin", "file": uploaded})
+                captured = []
+                with self._auth(self.staff), patch("apps.domains.inventory.views.upload_fileobj_to_r2_storage", side_effect=lambda **kw: captured.append(kw["fileobj"].read())):
+                    response = FileUploadView.as_view()(request)
+                self.assertEqual(response.status_code, 200, response.content)
+                self.assertEqual(captured, [content])
+                stored = InventoryFile.objects.get(pk=json.loads(response.content)["id"])
+                self.assertEqual(stored.original_name, name)
+                self.assertEqual(stored.content_type, canonical)
+
+    def test_invalid_hancom_original_is_rejected_before_storage(self):
+        request = self._multipart_request("/storage/inventory/upload/", {
+            "scope": "admin", "file": SimpleUploadedFile("broken.hwp", b"not a document", content_type="application/octet-stream"),
+        })
+        with self._auth(self.staff), patch("apps.domains.inventory.views.upload_fileobj_to_r2_storage") as upload:
+            response = FileUploadView.as_view()(request)
+        self.assertEqual(response.status_code, 400)
+        upload.assert_not_called()
+
     def test_upload_removes_exact_r2_object_when_metadata_create_fails(self):
         upload = SimpleUploadedFile("metadata-failure.pdf", b"%PDF-1.4", content_type="application/pdf")
         request = self._multipart_request(

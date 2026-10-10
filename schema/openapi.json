@@ -8871,6 +8871,10 @@
             "nullable": true,
             "type": "string"
           },
+          "expected_admin_memo": {
+            "maxLength": 2000,
+            "type": "string"
+          },
           "mark_read": {
             "type": "boolean"
           }

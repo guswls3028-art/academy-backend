@@ -31,8 +31,15 @@ class PublicPwaBrandTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["title"], "새봄학원")
+        self.assertEqual(response.data["tenant_code"], tenant.code)
         self.assertEqual(
             response.data["apple_touch_icon"],
             "https://cdn.example.com/tenant/new/logo.png",
         )
         self.assertNotIn("hakwonplus", str(response.data).lower())
+
+        tenant.is_active = False
+        tenant.save(update_fields=["is_active"])
+        inactive = PublicOgMetaView.as_view()(request)
+        self.assertEqual(inactive.data["title"], "")
+        self.assertNotIn("tenant_code", inactive.data)

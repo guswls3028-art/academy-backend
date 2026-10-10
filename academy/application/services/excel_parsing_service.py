@@ -74,6 +74,10 @@ def _match_header(cell: str, key: str) -> bool:
     norm = _normalize_header(cell)
     if not norm:
         return False
+    if key == "name" and any(keyword in norm for keyword in _PARENT_KEYWORDS):
+        return False
+    if key in {"parent_phone", "student_phone"} and any(word in norm for word in ("이름", "성명", "name")):
+        return False
     for alias in HEADER_ALIASES.get(key, ()):
         a = _normalize_header(alias)
         if not a:
@@ -191,7 +195,8 @@ def _infer_missing_columns(
             header_label = str(header_row[ci] if ci < len(header_row) else "").strip()
             parent_score = _rule_guess_parent_score(header_label, sample_vals)
             phone_col_candidates.append((ci, phone_hits, parent_score))
-        if name_hits >= minimum_hits:
+        label = _normalize_header(str(header_row[ci] if ci < len(header_row) else ""))
+        if name_hits >= minimum_hits and not any(keyword in label for keyword in _PARENT_KEYWORDS):
             name_col_candidates.append((ci, name_hits))
 
     if out.get("parent_phone") is None and phone_col_candidates:
@@ -631,6 +636,9 @@ def parse_student_excel_file(
     name_col = col.get("name")
     parent_col = col.get("parent_phone")
     student_col = col.get("student_phone")
+
+    if name_col is None:
+        raise ExcelValidationError("학생 이름 컬럼을 찾을 수 없습니다. '학생명' 또는 'Student Name'을 명확히 표기해 주세요.")
 
     if parent_col is None:
         raise ExcelValidationError(

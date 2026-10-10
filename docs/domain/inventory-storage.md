@@ -34,6 +34,15 @@ R2/DB 쓰기 전에 `403`으로 실패 폐쇄한다. 교직원 조회는 같은 
 적용한다. 열람 URL 만료 초는 양의 정수이며 기존 기본 3600초와 최대 3600초를
 유지한다. 0/음수/소수는 즉시 만료 URL이나 거짓 성공 대신 `400`으로 응답한다.
 
+학생·학부모 보관함의 원본 다운로드는 presign 본문에 `download: true`를 보낸다.
+서버는 소유권 검사를 통과한 저장 metadata의 원본명과 MIME만 서명에 사용하며
+클라이언트가 임의 파일명을 지정할 수 없다. `Content-Disposition: attachment`와
+비 ASCII 원본명의 RFC 5987 `filename*`로 한글 파일명도 유지한다. 제어 문자·따옴표는
+제거하고 역슬래시는 치환한다. 생략/false는 기존 열람 URL을 유지하며 비 boolean은
+`400`이다. 기존 원본과 DB 행은 바꾸지 않는다. 격리 학생/학부모 QA는 HWP·HWPX
+업로드 → 새로고침 → 원래 이름으로 다운로드 → 원본 바이트 일치와 형제 자녀 격리를
+검증하고 업로드한 exact 파일만 정리한다.
+
 클라이언트는 입력을 고친 뒤 같은 작업을 다시 요청할 수 있다. 기존 저장된 파일,
 폴더, R2 key를 일괄 수정하거나 삭제하지 않는다. 검증은
 `apps/domains/inventory/tests/test_input_contract.py`의 실제 JWT 요청, 잘못된 입력의
@@ -88,10 +97,16 @@ callback 전 응답이 생성되므로 pending은 아직 미실행 상태이며 
 폴더도 남은 intent를 보존한다. cleaned key는 다시 지우지 않으며 failed/deferred만
 정리한다. 상세 계약은 [학생 핵심 계약](student-core.md)의 영구삭제 outbox와 공유한다.
 
-일반 업로드는 PDF·Office·텍스트·ZIP과 `image/*`, `video/*`를 허용하고 파일당 2GB,
+일반 업로드는 PDF·Office·HWP/HWPX·텍스트·ZIP과 `image/*`, `video/*`를 허용하고 파일당 2GB,
 tenant당 200GB 한도를 적용한다. 성적표 제출과 매치업 승격은 별도 제한으로
 PDF/PNG/JPEG만 허용한다. 브라우저가 보내는 MIME은 서버가 다시 검사하며, 허용되지
 않는 형식·용량·폴더·권한 오류는 R2 쓰기 전에 거부한다.
+한글 원본은 확장자와 OLE/ZIP 시그니처를 확인하고 브라우저의 일반 바이너리·ZIP
+MIME 또는 Hancom MIME을 `application/x-hwp` / `application/vnd.hancom.hwpx`로
+정규화한다. 이전에는 유효한 한글 파일도 MIME 때문에 400이므로 이를 교정했다.
+내용은 변환·실행하지 않고 원본 바이트를 보존하여 다운로드한다. 이 최소 컨테이너
+확인은 문서 구조/본문 유효성 검사나 공개 자료실의 변환 준비를 대체하지 않는다.
+학생·선택 자녀·교직원 소유권, 삭제 보상, 성적표/매치업 PDF·이미지 제한은 유지한다.
 
 정상 순서는 R2 원본 업로드 뒤 `InventoryFile` 생성이다. 원본 업로드 뒤 DB 메타데이터
 생성이 실패하면 방금 생성한 exact R2 key를 즉시 삭제하고

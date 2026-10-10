@@ -811,6 +811,19 @@ class FileUploadView(View):
         }
         ALLOWED_TYPE_PREFIXES = ("image/", "video/")
         ct = getattr(file_obj, "content_type", "") or ""
+        # Browsers commonly send Hancom originals as octet-stream. These are
+        # stored/downloaded originals; score evidence and matchup remain PDF/image-only.
+        extension = (file_obj.name or "").rsplit(".", 1)[-1].lower()
+        hancom_types = {"application/x-hwp", "application/haansofthwp", "application/vnd.hancom.hwp", "application/vnd.hancom.hwpx", "application/hwp+zip"}
+        if extension in {"hwp", "hwpx"} and ct in hancom_types | {"", "application/octet-stream", "application/zip"}:
+            signature = file_obj.read(8)
+            file_obj.seek(0)
+            valid = signature == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" if extension == "hwp" else signature.startswith(b"PK\x03\x04")
+            if not valid:
+                return JsonResponse({"detail": "한글 파일 형식을 확인해 주세요."}, status=400)
+            ct = "application/x-hwp" if extension == "hwp" else "application/vnd.hancom.hwpx"
+            file_obj.content_type = ct
+            ALLOWED_CONTENT_TYPES.add(ct)
         if ct not in ALLOWED_CONTENT_TYPES and not any(ct.startswith(p) for p in ALLOWED_TYPE_PREFIXES):
             return JsonResponse(
                 {"detail": "허용되지 않는 파일 형식입니다."},
@@ -1152,6 +1165,9 @@ class PresignView(View):
             file_id = body.get("fileId")
         r2_key = (body.get("r2_key") or "").strip()
         expiry = body.get("expires_in")
+        download = body.get("download", False)
+        if not isinstance(download, bool):
+            return JsonResponse({"detail": "download must be a boolean"}, status=400)
         try:
             expires_in = 3600 if expiry is None or expiry == "" else min(_positive_inventory_integer(expiry), 3600)
         except (TypeError, ValueError):
@@ -1187,7 +1203,9 @@ class PresignView(View):
 
         if not generate_presigned_get_url_storage:
             return JsonResponse({"url": ""}, status=200)
-        url = generate_presigned_get_url_storage(key=inv_file.r2_key, expires_in=expires_in)
+        download_options = ({"filename": inv_file.original_name, "content_type": inv_file.content_type or "application/octet-stream"}
+                            if download else {})
+        url = generate_presigned_get_url_storage(key=inv_file.r2_key, expires_in=expires_in, **download_options)
         return JsonResponse({"url": url})
 
 

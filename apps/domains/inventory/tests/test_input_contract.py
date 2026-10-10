@@ -2,12 +2,27 @@ import json
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.inventory.models import InventoryFile, InventoryFolder
+from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+
+
+class InventoryDownloadDispositionTests(SimpleTestCase):
+    @patch("apps.infrastructure.storage.r2._storage_bucket", return_value="test-storage")
+    @patch("apps.infrastructure.storage.r2._get_s3_client")
+    def test_unicode_original_filename_and_header_controls(self, client, bucket):
+        generate_presigned_get_url_storage(key="owned-key", filename='qa-한글"\r\n\\.HWP', content_type="application/x-hwp")
+        params = client.return_value.generate_presigned_url.call_args.kwargs["Params"]
+        self.assertEqual(params["ResponseContentDisposition"],
+                         'attachment; filename="download"; filename*=UTF-8\'\'qa-%ED%95%9C%EA%B8%80_.HWP')
+        self.assertEqual(params["ResponseContentType"], "application/x-hwp")
+        generate_presigned_get_url_storage(key="owned-key")
+        self.assertEqual(client.return_value.generate_presigned_url.call_args.kwargs["Params"],
+                         {"Bucket": "test-storage", "Key": "owned-key"})
 
 
 class InventoryInputContractTests(TestCase):
@@ -75,6 +90,16 @@ class InventoryInputContractTests(TestCase):
         move.assert_not_called()
         presign.assert_not_called()
         self.assertEqual(InventoryFolder.objects.count(), 1)
+
+    @patch("apps.domains.inventory.views.generate_presigned_get_url_storage", return_value="https://example.test/qa")
+    def test_explicit_download_uses_owned_original_metadata_without_changing_preview(self, presign):
+        response = self.call("presign/", {"file_id": self.file.pk, "download": True, "filename": "ignored.hwp"})
+        self.assertEqual(response.status_code, 200)
+        presign.assert_called_once_with(key=self.file.r2_key, expires_in=3600,
+                                       filename=self.file.original_name, content_type=self.file.content_type or "application/octet-stream")
+        presign.reset_mock()
+        self.assertEqual(self.call("presign/", {"file_id": self.file.pk, "download": "true"}).status_code, 400)
+        presign.assert_not_called()
 
     @patch("apps.domains.inventory.views.generate_presigned_get_url_storage", return_value="https://example.test/qa")
     def test_expiry_requires_positive_integer_and_keeps_one_hour_cap(self, presign):
