@@ -102,14 +102,14 @@ class ProgramView(APIView):
 
         serializer = ProgramUpdateSerializer(
             program,
-            data=(request.data if isinstance(request.data, dict) else {}),
+            data=request.data,
             partial=True,
             context={"request": request},
         )
         serializer.is_valid(raise_exception=True)
         serializer.save()
 
-        return Response(ProgramPublicSerializer(program).data)
+        return Response(ProgramPublicSerializer(serializer.instance).data)
 
     def get_permissions(self):
         if self.request.method == "GET":

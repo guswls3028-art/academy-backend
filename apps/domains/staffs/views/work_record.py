@@ -9,7 +9,7 @@ from rest_framework.decorators import action
 from rest_framework.filters import OrderingFilter
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.exceptions import APIException, PermissionDenied, ValidationError
+from rest_framework.exceptions import APIException, NotFound, PermissionDenied, ValidationError
 
 from academy.adapters.db.django import repositories_staffs as staff_repo
 
@@ -175,6 +175,23 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
                 action="staff.work_record_deleted",
                 payload=payload,
             )
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        record_ref = self.get_object()
+        with transaction.atomic():
+            # Validate combined time/break/pay inputs against the same locked
+            # row that will be saved, not the earlier unlocked detail read.
+            try:
+                record = staff_repo.work_record_get_for_update(
+                    request.tenant.id, record_ref.id,
+                )
+            except WorkRecord.DoesNotExist as exc:
+                raise NotFound("삭제된 근무기록입니다. 목록을 새로고침해 주세요.") from exc
+            serializer = self.get_serializer(record, data=request.data, partial=partial)
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+            return Response(serializer.data)
 
     def perform_update(self, serializer):
         # Direct override fields: admin explicitly sets the final work_hours or amount

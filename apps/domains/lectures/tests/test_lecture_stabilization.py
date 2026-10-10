@@ -9,6 +9,7 @@ D. section 타입 검증
 E. 날짜 정합성 검증
 """
 from importlib import import_module
+from unittest.mock import patch
 
 from django.test import TestCase
 from django.db import IntegrityError, connection
@@ -395,6 +396,20 @@ class TestLectureListNoPagination(LectureTestBase):
 class TestSessionListNoPagination(LectureTestBase):
     """차시 목록은 성적/시험/영상 트리 진입점에서 전체가 필요하다."""
 
+    def test_invalid_calendar_date_filter_returns_400_then_valid_leap_date_works(self):
+        session = Session.objects.create(
+            lecture=self.lecture, order=1, title="윤년 차시", date="2028-02-29",
+        )
+        for value in ("2026-02-29", "2026-04-31", "2026-13-01", "2028-02-29"):
+            with self.subTest(date=value):
+                request = self.factory.get("/sessions/", {"date": value})
+                request.tenant = self.tenant
+                force_authenticate(request, user=self.admin)
+                response = SessionViewSet.as_view({"get": "list"})(request)
+                self.assertEqual(response.status_code, 200 if value == "2028-02-29" else 400)
+                if response.status_code == 200:
+                    self.assertEqual([row["id"] for row in response.data], [session.pk])
+
     def test_session_list_returns_all_rows_over_global_page_size(self):
         """전역 PAGE_SIZE=20을 넘어도 같은 강의의 모든 차시를 반환."""
         for i in range(25):
@@ -563,6 +578,15 @@ class TestSectionBulkCreateSessions(LectureTestBase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(Session.objects.count(), 0)
+
+    def test_invalid_calendar_date_bulk_create_is_atomic_and_correctable(self):
+        response = self._bulk_create({"A": "2026-04-15", "B": "2026-04-31"})
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(Session.objects.filter(lecture=self.lecture).count(), 0)
+        response = self._bulk_create({"A": "2026-04-15", "B": "2026-04-30"})
+        self.assertEqual(response.status_code, 201, response.data)
+        dates = set(Session.objects.filter(lecture=self.lecture).values_list("date", flat=True))
+        self.assertEqual({value.isoformat() for value in dates}, {"2026-04-15", "2026-04-30"})
 
 
 class TestAutoAssignConcurrency(LectureTestBase):
@@ -762,6 +786,21 @@ class TestSectionTypeValidation(LectureTestBase):
 
 class TestDateValidation(LectureTestBase):
     """E. 날짜 정합성 검증"""
+
+    def test_stale_period_update_validates_latest_end_before_save(self):
+        stale = Lecture.objects.get(pk=self.lecture.pk)
+        self.lecture.end_date = "2026-04-10"
+        self.lecture.save(update_fields=["end_date"])
+        for start, expected in (("2026-04-15", 400), ("2026-04-10", 200)):
+            request = self.factory.patch("/lectures/", {"start_date": start}, format="json")
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            with patch.object(LectureViewSet, "get_object", return_value=stale):
+                response = LectureViewSet.as_view({"patch": "partial_update"})(request, pk=stale.pk)
+            self.assertEqual(response.status_code, expected, response.data)
+            self.lecture.refresh_from_db()
+            self.assertEqual(self.lecture.end_date.isoformat(), "2026-04-10")
+            self.assertEqual(self.lecture.start_date.isoformat(), start if expected == 200 else "2026-04-01")
 
     def test_lecture_rejects_start_after_end(self):
         """Lecture 모델이 start_date > end_date를 거부"""

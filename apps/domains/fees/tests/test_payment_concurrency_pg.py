@@ -141,6 +141,46 @@ class FeesConcurrencyPGTest(TransactionTestCase):
         kwargs = {"pk": pk} if pk is not None else {}
         return view(request, **kwargs)
 
+    def test_concurrent_assignment_partial_edits_preserve_both_changes(self):
+        tenant, _student, _template, fee = self._setup_generation_fee()
+        user = self._make_fee_admin(tenant)
+        barrier = threading.Barrier(2, timeout=10)
+        original_get_object = StudentFeeViewSet.get_object
+        outcomes = []
+        errors = []
+
+        def read_same_snapshot(view):
+            instance = original_get_object(view)
+            barrier.wait()
+            return instance
+
+        def worker(data):
+            close_old_connections()
+            try:
+                response = self._student_fee_request(
+                    tenant=tenant, user=user, method="patch", data=data, pk=fee.pk,
+                )
+                outcomes.append(response.status_code)
+            except Exception as exc:
+                errors.append(repr(exc))
+            finally:
+                close_old_connections()
+
+        with patch.object(StudentFeeViewSet, "get_object", read_same_snapshot):
+            threads = [threading.Thread(target=worker, args=(data,)) for data in (
+                {"discount_amount": 30000}, {"billing_end_month": "2026-11"},
+            )]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=20)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        self.assertEqual(outcomes, [200, 200])
+        fee.refresh_from_db()
+        self.assertEqual(fee.discount_amount, 30000)
+        self.assertEqual(fee.billing_end_month, "2026-11")
+
     def _generate_while_fee_rows_are_locked(
         self,
         tenant,

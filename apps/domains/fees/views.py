@@ -3,6 +3,7 @@
 import logging
 from django.db import transaction
 from django.db.models import Q
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import mixins
@@ -197,6 +198,27 @@ class StudentFeeViewSet(ModelViewSet):
                     "fee_template": "이미 이 학생에게 배정된 비목입니다.",
                 })
             serializer.save(tenant=self.request.tenant)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        with transaction.atomic():
+            # Match assignment/generation lock order. A partial edit must not
+            # overwrite a discount or period committed after the detail read.
+            try:
+                services.lock_student_fee_assignment_scopes(
+                    tenant=request.tenant, student_ids=[instance.student_id],
+                )
+            except ValueError as exc:
+                raise ValidationError({"student": str(exc)}) from exc
+            locked_fee = get_object_or_404(
+                StudentFee.objects.select_for_update(),
+                tenant=request.tenant, pk=instance.pk,
+            )
+            serializer = self.get_serializer(locked_fee, data=request.data, partial=partial)
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+            return Response(serializer.data)
 
     def perform_update(self, serializer):
         instance = serializer.instance

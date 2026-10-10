@@ -232,13 +232,17 @@ class HomeworkViewSet(ModelViewSet):
         seen = set()
         for raw in updates:
             try:
-                enrollment_id = int(raw.get("enrollment_id"))
-                question_number = int(raw.get("question_number"))
+                identifiers = (raw.get("enrollment_id"), raw.get("question_number"))
+                if any(isinstance(value, bool) or not isinstance(value, (int, str)) for value in identifiers):
+                    raise ValueError
+                enrollment_id, question_number = map(int, identifiers)
+                if enrollment_id < 1 or question_number < 1:
+                    raise ValueError
             except (AttributeError, TypeError, ValueError):
                 raise ValidationError({"updates": "학생과 문항 번호를 다시 확인해 주세요."})
             is_correct = raw.get("is_correct")
             include = raw.get("include_in_wrong_note", False)
-            if is_correct not in (True, False, None) or not isinstance(include, bool):
+            if (is_correct is not None and not isinstance(is_correct, bool)) or not isinstance(include, bool):
                 raise ValidationError({"updates": "정오 및 복습 표시 값을 다시 확인해 주세요."})
             if is_correct is None and include:
                 raise ValidationError({"updates": "복습 문항은 O 또는 X를 먼저 선택해 주세요."})
