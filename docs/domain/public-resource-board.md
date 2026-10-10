@@ -10,6 +10,15 @@ or change the older family community and generated-report boards.
 
 ## Publishing and isolation
 
+Public article sharing uses the exact hostname's active TenantDomain/tenant code
+from `/core/og-meta/`. The Pages function reads the existing anonymous detail API
+with that code, without a user's credentials, to render the article title and
+plain-text summary in the initial HTML. A missing/deleted/foreign article has no
+article metadata; 404 remains 404 and failed lookups are not indexed. Article HTML
+is not cached, so a deleted article's title is not reused from an edge metadata
+cache. Tenant and article strings are HTML-escaped, including quotes, tags and
+replacement-pattern characters; the underlying authored text is unchanged.
+
 `PublicResourceBoardAccess` names two distinct exact user IDs for one tenant.
 Missing/incomplete configuration denies publishing. Each publisher must remain
 an active user with an active owner/admin/teacher membership in that exact tenant;

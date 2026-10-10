@@ -1165,6 +1165,9 @@ class PresignView(View):
             file_id = body.get("fileId")
         r2_key = (body.get("r2_key") or "").strip()
         expiry = body.get("expires_in")
+        download = body.get("download", False)
+        if not isinstance(download, bool):
+            return JsonResponse({"detail": "download must be a boolean"}, status=400)
         try:
             expires_in = 3600 if expiry is None or expiry == "" else min(_positive_inventory_integer(expiry), 3600)
         except (TypeError, ValueError):
@@ -1200,7 +1203,9 @@ class PresignView(View):
 
         if not generate_presigned_get_url_storage:
             return JsonResponse({"url": ""}, status=200)
-        url = generate_presigned_get_url_storage(key=inv_file.r2_key, expires_in=expires_in)
+        download_options = ({"filename": inv_file.original_name, "content_type": inv_file.content_type or "application/octet-stream"}
+                            if download else {})
+        url = generate_presigned_get_url_storage(key=inv_file.r2_key, expires_in=expires_in, **download_options)
         return JsonResponse({"url": url})
 
 

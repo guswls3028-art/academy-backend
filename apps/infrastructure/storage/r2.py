@@ -219,8 +219,11 @@ def generate_presigned_get_url_storage(
         "Key": key,
     }
     if filename:
-        safe_name = filename.replace('"', "")
-        params["ResponseContentDisposition"] = f'attachment; filename="{safe_name}"'
+        safe_name = "".join(char for char in filename if ord(char) >= 32 and ord(char) != 127).replace('"', "").replace("\\", "_")
+        disposition = f'attachment; filename="{safe_name if safe_name.isascii() else "download"}"'
+        if not safe_name.isascii():
+            disposition += f"; filename*=UTF-8''{quote(safe_name, safe='')}"
+        params["ResponseContentDisposition"] = disposition
     if content_type:
         params["ResponseContentType"] = content_type
     return s3.generate_presigned_url(

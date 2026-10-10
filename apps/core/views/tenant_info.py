@@ -222,7 +222,7 @@ class PublicOgMetaView(APIView):
 
         try:
             td = TenantDomain.objects.select_related("tenant").get(
-                host=hostname, is_active=True,
+                host=hostname, is_active=True, tenant__is_active=True,
             )
         except TenantDomain.DoesNotExist:
             return Response({"title": "", "description": "", "image": ""})
@@ -252,6 +252,7 @@ class PublicOgMetaView(APIView):
                 logo = ""
 
         return Response({
+            "tenant_code": tenant.code,
             "title": title,
             "description": description or f"{title} 학습 플랫폼",
             "image": image,
