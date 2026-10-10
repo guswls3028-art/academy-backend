@@ -64,6 +64,16 @@ class TenantBrandingView(APIView):
     def patch(self, request, tenant_id: int):
         if not self._check_tenant_access(request, tenant_id):
             return Response({"detail": "Cross-tenant access denied."}, status=403)
+        if not isinstance(request.data, dict):
+            return Response({"detail": "Branding fields must be an object."}, status=400)
+        for field in ("displayName", "windowTitle", "loginTitle", "loginSubtitle", "logoUrl"):
+            if field not in request.data:
+                continue
+            value = request.data[field]
+            if not isinstance(value, str) and not (value is None and field != "displayName"):
+                return Response({"detail": f"{field} must be a string."}, status=400)
+            if field == "displayName" and len(value) > 120:
+                return Response({"detail": "displayName must be at most 120 characters."}, status=400)
         tenant = core_repo.tenant_get_by_id_any(tenant_id)
         if not tenant:
             return Response({"detail": "Tenant not found."}, status=404)

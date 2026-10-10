@@ -49,6 +49,23 @@ class SettingsConflictTests(TestCase):
         self.assertEqual(self.request(TenantInfoView).data["academies"], edited)
 
     @patch("apps.infrastructure.storage.r2.resolve_admin_logo_url", return_value="")
+    def test_invalid_branding_never_corrupts_public_text_and_can_retry(self, _logo):
+        args = {"tenant_id": self.tenant.pk}
+        before = self.request(TenantBrandingView, **args).data
+        invalid = [[], True, "text", {"displayName": None}, {"displayName": "x" * 121}]
+        invalid.extend({field: value} for field in ("displayName", "windowTitle", "loginTitle", "loginSubtitle", "logoUrl")
+                       for value in (123, True, [], {}))
+        for data in invalid:
+            with self.subTest(data=data):
+                response = self.request(TenantBrandingView, "patch", data, **args)
+                self.assertEqual(response.status_code, 400, response.data)
+                self.assertEqual(self.request(TenantBrandingView, **args).data, before)
+        response = self.request(TenantBrandingView, "patch", {"displayName": "정상 학원", "loginTitle": None}, **args)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(self.request(TenantBrandingView, **args).data["displayName"], "정상 학원")
+        self.assertEqual(self.request(TenantBrandingView, **args).data["loginTitle"], "")
+
+    @patch("apps.infrastructure.storage.r2.resolve_admin_logo_url", return_value="")
     def test_branding_stale_draft_conflicts_then_fresh_edit_succeeds(self, _logo):
         args = {"tenant_id": self.tenant.pk}
         initial = self.request(TenantBrandingView, **args).data
