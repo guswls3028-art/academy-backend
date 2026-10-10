@@ -122,6 +122,7 @@ class ConsultInboxQuerySerializer(serializers.Serializer):
 class ConsultInboxPatchSerializer(serializers.Serializer):
     mark_read = serializers.BooleanField(required=False)
     admin_memo = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=2000, trim_whitespace=False)
+    expected_admin_memo = serializers.CharField(required=False, allow_blank=True, max_length=2000, trim_whitespace=False)
 
 
 class LandingConsultPublicView(APIView):
@@ -233,6 +234,17 @@ class LandingConsultAdminDetailView(APIView):
             updates["admin_memo"] = data["admin_memo"] or ""
         # A memo and a read acknowledgement can arrive concurrently. Do not write
         # an old snapshot of fields that this request did not change.
-        if not LandingConsultRequest.objects.filter(id=item_id, tenant=request.tenant).update(**updates):
+        owned = LandingConsultRequest.objects.filter(id=item_id, tenant=request.tenant)
+        target = owned
+        if "admin_memo" in data and "expected_admin_memo" in data:
+            target = target.filter(admin_memo=data["expected_admin_memo"])
+        if not target.update(**updates):
+            current = owned.values("admin_memo").first()
+            if current is not None:
+                return Response({
+                    "code": "memo_conflict",
+                    "detail": "다른 담당자가 메모를 변경했습니다. 최신 메모를 확인한 뒤 다시 저장해 주세요.",
+                    "admin_memo": current["admin_memo"],
+                }, status=409)
             return Response({"detail": "Not found"}, status=404)
         return Response({"ok": True})

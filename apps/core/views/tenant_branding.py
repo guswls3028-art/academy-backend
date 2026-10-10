@@ -1,4 +1,5 @@
 # PATH: apps/core/views/tenant_branding.py
+from django.db import transaction
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -8,6 +9,7 @@ from apps.core.permissions import (
     is_platform_admin_tenant,
 )
 from academy.adapters.db.django import repositories_core as core_repo
+from apps.core.models import Program
 
 
 # --------------------------------------------------
@@ -58,6 +60,7 @@ class TenantBrandingView(APIView):
             return Response({"detail": "Program not found for tenant."}, status=404)
         return Response(_tenant_branding_dto(program))
 
+    @transaction.atomic
     def patch(self, request, tenant_id: int):
         if not self._check_tenant_access(request, tenant_id):
             return Response({"detail": "Cross-tenant access denied."}, status=403)
@@ -67,6 +70,18 @@ class TenantBrandingView(APIView):
         program = core_repo.program_get_by_tenant(tenant)
         if not program:
             return Response({"detail": "Program not found for tenant."}, status=404)
+        program = Program.objects.select_for_update().get(pk=program.pk, tenant=tenant)
+        expected = request.data.get("expected")
+        if expected is not None:
+            fields = {"displayName", "windowTitle", "loginTitle", "loginSubtitle"}
+            if not isinstance(expected, dict) or set(expected) - fields:
+                return Response({"detail": "Invalid expected branding fields."}, status=400)
+            current = _tenant_branding_dto(program)
+            if any(current[key] != value for key, value in expected.items()):
+                return Response({
+                    "code": "settings_conflict",
+                    "detail": "다른 사용자가 브랜딩을 변경했습니다. 최신 설정을 확인한 뒤 다시 저장해 주세요.",
+                }, status=409)
         cfg = dict(program.ui_config or {})
         if "loginTitle" in request.data:
             cfg["login_title"] = request.data.get("loginTitle")
@@ -80,9 +95,8 @@ class TenantBrandingView(APIView):
             cfg["window_title"] = request.data.get("windowTitle") or None
         if "displayName" in request.data:
             program.display_name = request.data.get("displayName")
-            program.save(update_fields=["display_name"])
         program.ui_config = cfg
-        program.save(update_fields=["ui_config"])
+        program.save(update_fields=["ui_config", "display_name"])
         return Response(_tenant_branding_dto(program))
 
 
@@ -140,10 +154,14 @@ class TenantBrandingUploadLogoView(APIView):
         # 항상 presigned URL 사용 (버킷별 공개 도메인 의존 제거).
         logo_url = r2_storage.generate_presigned_get_url_admin(key=key, expires_in=86400 * 7)
 
-        cfg = dict(program.ui_config or {})
-        cfg["logo_url"] = logo_url
-        cfg["logo_key"] = key
-        program.ui_config = cfg
-        program.save(update_fields=["ui_config"])
+        # R2 I/O may outlive another editor's save. Merge only logo fields into
+        # the current row and hold the database lock only for this short write.
+        with transaction.atomic():
+            program = Program.objects.select_for_update().get(pk=program.pk, tenant=tenant)
+            cfg = dict(program.ui_config or {})
+            cfg["logo_url"] = logo_url
+            cfg["logo_key"] = key
+            program.ui_config = cfg
+            program.save(update_fields=["ui_config"])
 
         return Response({"logoUrl": logo_url})

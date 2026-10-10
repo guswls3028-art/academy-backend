@@ -127,6 +127,9 @@ class TenantBrandingViewTests(APITestCase):
     )
     @patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_admin")
     def test_valid_svg_upload_uses_tenant_scoped_key(self, upload, _presign):
+        def save_during_upload(**_kwargs):
+            Program.objects.filter(pk=self.program.pk).update(ui_config={"login_title": "Saved during upload"})
+        upload.side_effect = save_during_upload
         logo = SimpleUploadedFile(
             "brand.svg",
             b'<svg xmlns="http://www.w3.org/2000/svg"></svg>',
@@ -146,6 +149,7 @@ class TenantBrandingViewTests(APITestCase):
         self.assertEqual(upload.call_args.kwargs["key"], key)
         self.assertEqual(upload.call_args.kwargs["content_type"], "image/svg+xml")
         self.program.refresh_from_db()
+        self.assertEqual(self.program.ui_config["login_title"], "Saved during upload")
         self.assertEqual(self.program.ui_config["logo_key"], key)
         self.assertEqual(
             self.program.ui_config["logo_url"],

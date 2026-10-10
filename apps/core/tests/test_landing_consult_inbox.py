@@ -45,6 +45,21 @@ class LandingConsultInboxTests(TestCase):
         self.assertEqual(len(response.data["items"]), 200)
         self.assertEqual(response.data["summary"], {"total": 205, "unread": 5})
 
+    def test_same_memo_conflict_preserves_first_editor_and_read_state_then_recovers(self):
+        self.assertEqual(self.patch({"admin_memo": "First", "expected_admin_memo": "Original"}).status_code, 200)
+        response = self.patch({"admin_memo": "Second", "expected_admin_memo": "Original", "mark_read": True})
+        self.assertEqual(response.status_code, 409)
+        row = self.rows[0]
+        row.refresh_from_db()
+        self.assertEqual(row.admin_memo, "First")
+        self.assertIsNone(row.read_at)
+        self.assertEqual(response.data["admin_memo"], "First")
+        self.assertEqual(self.patch({"admin_memo": "Merged", "expected_admin_memo": "First", "mark_read": True}).status_code, 200)
+        row.refresh_from_db()
+        self.assertEqual(row.admin_memo, "Merged")
+        self.assertIsNotNone(row.read_at)
+        self.assertEqual(self.patch({"admin_memo": "Foreign", "expected_admin_memo": ""}, self.foreign_row).status_code, 404)
+
     def test_all_pages_use_stable_tie_order_without_loss_or_foreign_rows(self):
         seen = []
         for page in range(1, 6):

@@ -139,6 +139,15 @@ ID와 복원/삭제 후 재등록은 호환된다. 생명주기 충돌의 사용
 
 ## 4. Frontend 계약
 
+- 파일 미리보기와 서버는 표지 뒤 명단을 포함한 모든 시트를 같은 순서로 평가한다.
+  이름·보호자 전화 헤더, 실제 전화번호가 있는 행과 컬럼을 비교하고 동률이면 활성
+  명단 시트를 선택한다. 활성 시트가 표지인 동률 명단은 임의로 등록하지 않고
+  Excel에서 사용할 명단을 활성화한 뒤 다시 업로드하도록 안내한다.
+- 영문 `Student Name/Student Mobile/Guardian Phone`과 기존 한글 헤더를 지원한다.
+  `Guardian Name`·`학부모성명`은 학생 이름이나 전화 컬럼으로 추정하지 않는다.
+  학생 이름이 없는 파일은 오류이며 보호자 이름으로 학생을 만들지 않는다.
+  표지와 빈 행이 있어도 오류 번호는 선택된 시트의 원래 행 번호다.
+
 - 학생 생성 API 호출은 `src/shared/api/contracts/students.ts`의 `createStudent()`가 canonical mapper다.
 - teacher 모바일 생성 시트는 role-local raw `/students/` POST를 쓰지 않고 shared contract를 호출한다.
 - admin/teacher Excel 업로드에는 계정 안내 on/off 옵션이 없다. 학생-only 등록에서는 발송하지 않고 첫 수강 확정 시 SYSTEM_AUTO 계정 안내가 발송된다.

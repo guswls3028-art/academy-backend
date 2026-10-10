@@ -189,3 +189,51 @@ def test_explicit_invalid_school_type_is_not_silently_changed_to_high(tmp_path):
     assert rows == []
     assert errors[0]["row"] == 2
     assert "학교유형" in errors[0]["reason"]
+
+
+@pytest.mark.parametrize("headers", [
+    ["Guardian Name", "Student Name", "Student Mobile", "Guardian Phone"],
+    ["학부모성명", "학생명", "학생 연락처", "보호자 연락처"],
+])
+def test_guardian_name_header_does_not_replace_student_name(tmp_path, headers):
+    path = tmp_path / "guardian-and-student.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.append(headers)
+    ws.append(["보호자이름", "학생이름", "01011112222", "01033334444"])
+    wb.save(path)
+
+    rows, _ = parse_student_excel_file(str(path))
+
+    assert rows[0]["name"] == "학생이름"
+    assert rows[0]["phone"] == "01011112222"
+    assert rows[0]["parent_phone"] == "01033334444"
+
+
+def test_guardian_name_is_not_inferred_as_missing_student_name(tmp_path):
+    path = tmp_path / "missing-student-name.xlsx"
+    wb = Workbook()
+    wb.active.append(["Guardian Name", "Guardian Phone"])
+    wb.active.append(["보호자", "01033334444"])
+    wb.save(path)
+
+    with pytest.raises(ExcelValidationError, match="학생 이름"):
+        parse_student_excel_file(str(path))
+
+
+def test_active_roster_wins_tie_and_preserves_worksheet_row_numbers(tmp_path):
+    path = tmp_path / "selected-roster.xlsx"
+    wb = Workbook()
+    wb.active.title = "안내"
+    wb.active.append(["표지"])
+    for title in ("이전 명단", "등록할 명단"):
+        ws = wb.create_sheet(title)
+        ws.append([])
+        ws.append(["성명", "보호자 연락처", "학생 연락처"])
+        ws.append([title, "01033334444", "01011112222"])
+    wb.active = 2
+    wb.save(path)
+
+    rows, _ = parse_student_excel_file(str(path))
+
+    assert [(row["name"], row["_excel_row"]) for row in rows] == [("등록할 명단", 3)]

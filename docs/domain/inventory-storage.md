@@ -88,10 +88,16 @@ callback 전 응답이 생성되므로 pending은 아직 미실행 상태이며 
 폴더도 남은 intent를 보존한다. cleaned key는 다시 지우지 않으며 failed/deferred만
 정리한다. 상세 계약은 [학생 핵심 계약](student-core.md)의 영구삭제 outbox와 공유한다.
 
-일반 업로드는 PDF·Office·텍스트·ZIP과 `image/*`, `video/*`를 허용하고 파일당 2GB,
+일반 업로드는 PDF·Office·HWP/HWPX·텍스트·ZIP과 `image/*`, `video/*`를 허용하고 파일당 2GB,
 tenant당 200GB 한도를 적용한다. 성적표 제출과 매치업 승격은 별도 제한으로
 PDF/PNG/JPEG만 허용한다. 브라우저가 보내는 MIME은 서버가 다시 검사하며, 허용되지
 않는 형식·용량·폴더·권한 오류는 R2 쓰기 전에 거부한다.
+한글 원본은 확장자와 OLE/ZIP 시그니처를 확인하고 브라우저의 일반 바이너리·ZIP
+MIME 또는 Hancom MIME을 `application/x-hwp` / `application/vnd.hancom.hwpx`로
+정규화한다. 이전에는 유효한 한글 파일도 MIME 때문에 400이므로 이를 교정했다.
+내용은 변환·실행하지 않고 원본 바이트를 보존하여 다운로드한다. 이 최소 컨테이너
+확인은 문서 구조/본문 유효성 검사나 공개 자료실의 변환 준비를 대체하지 않는다.
+학생·선택 자녀·교직원 소유권, 삭제 보상, 성적표/매치업 PDF·이미지 제한은 유지한다.
 
 정상 순서는 R2 원본 업로드 뒤 `InventoryFile` 생성이다. 원본 업로드 뒤 DB 메타데이터
 생성이 실패하면 방금 생성한 exact R2 key를 즉시 삭제하고

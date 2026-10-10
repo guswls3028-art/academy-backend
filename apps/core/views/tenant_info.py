@@ -6,7 +6,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
 from apps.core.parsing import parse_bool
-from apps.core.models import Program, TenantDomain
+from apps.core.models import Program, Tenant, TenantDomain
 from apps.core.permissions import (
     TenantResolvedAndOwner,
     TenantResolvedAndStaff,
@@ -129,10 +129,21 @@ class TenantInfoView(APIView):
             "fail_label": (getattr(tenant, "fail_label", None) or "").strip(),
         })
 
+    @transaction.atomic
     def patch(self, request):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "Tenant not resolved."}, status=403)
+        tenant = Tenant.objects.select_for_update().get(pk=tenant.pk)
+        request.tenant = tenant
+        if "expected_academies" in request.data:
+            current = self.get(request).data["academies"]
+            if request.data["expected_academies"] != current:
+                return Response({
+                    "code": "settings_conflict",
+                    "detail": "다른 사용자가 학원 정보를 변경했습니다. 최신 목록을 확인한 뒤 다시 저장해 주세요.",
+                    "academies": current,
+                }, status=409)
         update_fields = []
         if "phone" in request.data:
             tenant.phone = (request.data.get("phone") or "").strip()[:50]
