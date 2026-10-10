@@ -3,8 +3,8 @@
 - 요청: 2026-10-09 KST, 사용자가 모든 도메인의 숨은 버그·업무 결함을 순서대로 점검·수정하도록 위임.
 - 추가 요청: 2026-10-10 KST, 전체 진행 승인을 재확인하고 기능을 찾기 어렵다는 사용자 평가에 따라 발견성·초심자 동선을 모든 도메인의 공통 점검 항목으로 추가했다.
 - 실행 소유: `student-domain-20261009-01a10bcb`. 전체 실행 순서는 [PLAN](../PLAN.md), 현재 제품 정책은 각 도메인 정본이 소유한다.
-- 단계: **22개 도메인 구조 분류·기록된 수정 운영 확인 / PR726 기능 발견성 운영 완료 / 학생 삭제·복원 후속 및 보안 수정 운영 완료**. 최종 후보는 Kerberos·CUPS 보안 검사와 실제 한글 PDF 변환을 통과했으며 이전 실패 증거는 별도로 보존한다. 완료 판정은 증거가 있는 하위 동선에만 적용한다.
-- 최신 운영 묶음: backend `3a55a3b65983a5b8831178b2e5835412e3952777`/run37979753832, frontend `81ebe997df816e951db3201cde65f54aa57929fd`/run37966598131. 두 공식 실행 전체 성공, 성공 manifest·잠금 해제·hakwonplus/godmin/tchul 버전 대조 통과.
+- 단계: **22개 도메인 구조 분류·기록된 수정 운영 확인 / 기능 발견성·학생 삭제·복원·보안 후속 및 D01 파일 등록 연락처·재등록 수정 운영 완료**. 이전 실패와 수정 후 성공 증거는 별도로 보존한다. 완료 판정은 증거가 있는 하위 동선에만 적용한다.
+- 최신 운영 묶음: backend `aa4529482fa189c52497281d22f5aa2aba5faabc`/run38002341219, frontend `b38f6a0f80fa0684a8bcec4d8b8bb3bb33290ad8`/run38016877898. 두 공식 실행 전체 성공, 성공 manifest·잠금 해제·hakwonplus/godmin/tchul 버전 대조 통과.
 - 구조 기준: backend `58589aaae21b5051e5054e4a1c7a9c7234b93def`, frontend `a3290e20062a3acd5de9b3582400e7ebe82e629e`.
 
 ## 범위와 누락 확인
@@ -95,9 +95,77 @@
 
 ## 상태와 종료 증거
 
-최신 후속 확인(아래 각 행의 이전 대기 상태를 대체):
+### 2026-10-10 D01 학생 파일 등록 후속
 
-- 최신 화면은 PR726의 `81ebe997df816e951db3201cde65f54aa57929fd`다.
+소유 `domain-student-import-20261010-01a10bcb`. backend
+[PR615](https://github.com/guswls3028-art/academy-backend/pull/615)는 운영
+`aa4529482fa189c52497281d22f5aa2aba5faabc`, 공식
+[run38002341219](https://github.com/guswls3028-art/academy-backend/actions/runs/38002341219)
+전체 성공으로 확인했다. frontend [PR727](https://github.com/guswls3028-art/academy-frontend/pull/727)의
+최종 후보 `4a135b9b7a8966680a6c17b82a58425e5235dbde`는 전체 품질
+run38006526789와 브라우저 run38006526784를 통과했다. 병합
+`eceb76fd0dc2c32c183c7a533b905608b5f33b47`의 공식
+[run38009522155](https://github.com/guswls3028-art/academy-frontend/actions/runs/38009522155)는
+개발 실사용 26건 통과·1건 실패로 운영 승격 전에 중단됐다. 두 검증 테넌트의
+tenant/user·R2·프로세스·리스너 잔여 0을 확인했다. 첫 Excel 업로드는 성공했으나
+검사 코드가 자동으로 열린 결과창을 닫지 않고 두 번째 업로드를 눌렀다.
+동일 `eceb76fd0` 산출물에서 원인을 재현하고 결과의 신규/중복/실패 건수와
+원본 행을 확인한 뒤 창을 닫도록 고쳤다. 격리 집중 검증은 정상 통과했고,
+실패 재현 tenant750·수정 검증 tenant751 모두 cleanup 및 후속 Inspect 0이다.
+후속 [PR728](https://github.com/guswls3028-art/academy-frontend/pull/728)
+`01e493cfff29bc073fb60478a1be0ed0600a9aae`는 품질 run38014449190과
+브라우저 run38014448881을 통과했다. 세 mock 묶음 454/347/394건,
+iPhone WebKit 87건(Chromium 전용 Web Locks 1건은 해당 브라우저에서 제외),
+배포 번들 29건과 테마 1건이 통과했다. 병합
+`b38f6a0f80fa0684a8bcec4d8b8bb3bb33290ad8`의 정식
+[run38016877898](https://github.com/guswls3028-art/academy-frontend/actions/runs/38016877898)은
+전체 성공했다. 동일 산출물 실사용 27건, 생략·flake·전송 재시도·mutation 재실행·
+브라우저 결함 0을 확인했다. 기본/교차 테넌트 cleanup 및 후속 Inspect에서
+tenant/user·R2·프로세스·리스너 잔여 0과 API digest/릴리스 일치가 모두 확인됐다.
+후보 fingerprint는 `860d50fc2af9f618f5f53bab97e79e3228252e7fca544c91c00a13f58fc8e27e`다.
+정확한 production 환경 승인(deployment6975371381) 후 동일 파일을 승격했고,
+운영 읽기 전용 동선·공개 테넌트 가용성·세 도메인 버전 대조를 통과했다.
+실제 배포 자산+합성 API로 PC1366/390px 파일 오류·교체 복구 2건도 재시도0으로
+통과했다. 직접 본 PC의 원본 행·사유 안내와 두 화면의 오류 건수, 스크롤 본문·고정
+등록 버튼, 가로 넘침 없음을 확인했다. 합성 화면 검사는 실제 서버 쓰기 실사용과
+구분하며 인증/관찰 요청 0, 허용된 Cloudflare beacon 차단만 각 1건이었다.
+
+- 잘못된 학생 연락처를 번호 없음으로 바꾸거나 학생 번호를 누락 학부모 번호로
+  대신 사용하지 않는다. 숫자 Excel 연락처의 앞 0은 복구하고, 명시된 학교유형은
+  보존한다. 0·불리언·문자·비ASCII 전화번호와 소수 학년 입력의 계정 생성도 막는다.
+- 일부 오류는 실제 Excel 행 번호·이름·사유로 표시하며 정상 행 등록을 보존한다.
+  새 파일 읽기 실패 시 이전 선택을 비우고, 닫기/재열기 뒤 늦게 끝난 파일 읽기의
+  성공·실패·로딩 종료가 새 선택을 덮지 않도록 한다.
+- backend 최종 CI의 SQLite 6,264건/하위 검사 1,416건, PostgreSQL
+  6,510건/하위 검사 1,430건이 통과했다. 형제 재등록 시 기존 학생/학부모 비밀번호와
+  다른 테넌트의 계정 분리를 검증했다. 격리 개발의 실제 Excel/PPT/문서 변환·R2,
+  preprod 120요청/오류0·운영 DB 접근 거부·CDN을 통과하고 임시 인스턴스 종료를
+  재조회했다. 운영 성공 manifest와 기존 화면의 세 운영 도메인 버전 대조도 통과했다.
+- 화면 PC/390px 오류 표시·파일 교체 복구와 닫기/재열기 경합 3건은 재시도0,
+  브라우저 결함0으로 통과했다. 경합은 이전 코드의 실제 실패를 확인한 회귀다.
+  새 실사용 검사는 UI 업로드→worker 결과→수정 파일 재업로드→명부 reload→
+  학생 로그인·기존 학부모 로그인/형제 연결까지 동일 산출물 집중 검증에서 통과했다.
+  집중 검증의 통과를 정식 전체 실사용 게이트나 운영 승격으로 대신하지 않는다.
+
+남은 D01 경계는 표지+명단/복수 시트의 화면·서버 선택 일치, 영문 헤더 및
+학년 등 필드별 미리보기와 최종 판정 일치, 공유 파일 입력의 비활성 상태/키보드
+동선이다. 현재 화면은 첫 시트만 읽고 서버는 후보 시트를 선택하므로 동일하다고
+가정하지 않는다. 이번 연락처·재등록 하위 동선의 증거를 도메인 전체 완료로 확대하지 않는다.
+현재 정책은 [학생 생성](../domain/student-creation.md)과
+[화면 계정 흐름](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/ACCOUNT-CREDENTIAL-FLOWS.md)이 소유한다.
+
+최종 PR 검사 전에 직원 KPI 필터 검사에서 무관한 상담 요약 요청이 끊기는 실패가
+있었다. trace에서 `setOffline`이 해당 조회를 차단한 것을 확인하고, 필터 검사에서
+필요한 reconnect 이벤트로 실제 재조회를 유도하도록 수정했다. 요청 수·KPI·0건
+상태·선택 필터·엄격한 브라우저 오류 검사는 보존했고 로컬 3회와 전체 CI가 통과했다.
+실패한 run38004929371의 로그/trace는 성공 증거와 구별해 보존했다. 급여 제품의
+동작 변경은 아니다.
+
+### 선행 운영 증거
+
+선행 후속 확인(당시의 대기 상태를 대체하며, 최신 운영 묶음은 위 D01 후속 참조):
+
+- 당시 화면은 PR726의 `81ebe997df816e951db3201cde65f54aa57929fd`다.
   [run37966598131](https://github.com/guswls3028-art/academy-frontend/actions/runs/37966598131)의
   동일 산출물 실사용 27건이 생략·불안정·요청 재시도·mutation replay 없이 통과했다.
   primary `qa-ymath-realuse-fe-37966598131-1-8de492e66276`, cross
@@ -250,7 +318,7 @@
 
 | 항목 | 2026-10-10까지 확인한 증거 | 다음 행동 |
 |---|---|---|
-| D01 학생 상세·학생별 기록 | backend [PR599](https://github.com/guswls3028-art/academy-backend/pull/599) `bf23b8f56704c56826bdfa46445ea795a45135be`, frontend [PR715](https://github.com/guswls3028-art/academy-frontend/pull/715)·[PR716](https://github.com/guswls3028-art/academy-frontend/pull/716) `a9cd3567ad0ef71facc82b9abac97993715c8ff8` 운영 반영. [frontend run37872808381](https://github.com/guswls3028-art/academy-frontend/actions/runs/37872808381) 동일 빌드 실사용 27건(생략·재시도 0), 양쪽 cleanup tenant/user 0, 운영 읽기 검증 통과. 서버·화면 배포 묶음 검사와 3개 운영 도메인 버전 일치. 배포 정적 자산+합성 API로 1366/1100/390px, 메모 저장→reload 확인, 예외/가로 넘침/예상 밖 업무 요청 0 | 해당 상세 동선 운영 확인 완료. 삭제·복원 입력 후속은 위 PR613/614 운영 증거 참조. 등록·일괄 파일 업로드·형제 계정 연결 등 미검증 하위 동선은 별도 점검 |
+| D01 학생 상세·학생별 기록 | backend [PR599](https://github.com/guswls3028-art/academy-backend/pull/599) `bf23b8f56704c56826bdfa46445ea795a45135be`, frontend [PR715](https://github.com/guswls3028-art/academy-frontend/pull/715)·[PR716](https://github.com/guswls3028-art/academy-frontend/pull/716) `a9cd3567ad0ef71facc82b9abac97993715c8ff8` 운영 반영. [frontend run37872808381](https://github.com/guswls3028-art/academy-frontend/actions/runs/37872808381) 동일 빌드 실사용 27건(생략·재시도 0), 양쪽 cleanup tenant/user 0, 운영 읽기 검증 통과. 서버·화면 배포 묶음 검사와 3개 운영 도메인 버전 일치. 배포 정적 자산+합성 API로 1366/1100/390px, 메모 저장→reload 확인, 예외/가로 넘침/예상 밖 업무 요청 0 | 해당 상세 동선 운영 확인 완료. 삭제·복원 입력 후속은 위 PR613/614 운영 증거 참조. 파일 연락처·오류 행·형제 재등록은 위 D01 후속의 운영 증거 참조. 복수 시트/헤더·필드별 미리보기 등 나머지 하위 동선은 별도 점검 |
 | D16 연속 탭 이동·학부모 질문 작성 | 느린 CPU에서 작성창 소실 재현 후 location effect 경합 수정. PR716에 포함, 최종 번들 커뮤니티 5건·필수 CI·동일 빌드 실사용과 운영 승격 통과 | 연결된 질문 작성 동선 완료. D16 전체 게시/댓글/공개 자료 점검은 순서표대로 진행 |
 | D00 명시적 학원 선택 | 잘못된/비활성 헤더의 다른 학원 대체와 대소문자 중복 코드 임의 선택 재현·수정. 새 회귀 14건+기존 23건=37건 및 PostgreSQL·SQLite 필수 CI 통과. [PR601](https://github.com/guswls3028-art/academy-backend/pull/601)·[PR603](https://github.com/guswls3028-art/academy-backend/pull/603), `cbfa0eb142e2b0a1bcae90e219c6da0275a92541`의 [run37882312061](https://github.com/guswls3028-art/academy-backend/actions/runs/37882312061) 운영 완료. 6개 이미지 보안 검사, 격리 개발 Excel/PPT/R2 실사용, preprod DB·CDN·부하, 임시 인스턴스 종료 후 건강 상태 기반 교체 통과. godmin/tchul 정상 조회·빈 값/잘못된 명시 선택 거부 9건 및 공식 서버/화면 배포 묶음·잠금 해제 확인 | 해당 선택 경계 운영 확인 완료. D00 전체 인증·역할·계정 복구 검사는 별도 유지. Cyrus High는 고정 버전·기한·실제 런타임 검증에 한정된 검토이며 영구 해결로 집계하지 않음 |
 | D02 전체 목록·시급 변경 이력 실패 | 501번째 직원 누락, 동일 정렬키 페이지 불안정, 시급 태그/개별 배정의 이력 저장 실패에도 변경 성공하는 6개 경로를 재현·수정. backend [PR602](https://github.com/guswls3028-art/academy-backend/pull/602), frontend [PR718](https://github.com/guswls3028-art/academy-frontend/pull/718). 직원 서버 117건·하위 사례 19건, 화면 36건, 최종 번들의 페이지/복구·본인 근무 8건 통과. 기본 3.3%·분 단위 급여·0원 시급·기존 마감 및 시급 고정 회귀도 서버 묶음에서 통과 | 서버 `2fe2c1ef362d2b07a8a9da918221ce3a654e3640` run37890575883, 화면 `ea8381ed8509423eebd79b3d01b26416f679ab8a` [run37893211864](https://github.com/guswls3028-art/academy-frontend/actions/runs/37893211864) 운영 완료. 동일 빌드 실사용 27건·cleanup zero·공식 승인·운영 배포 묶음 통과. **해당 수정 동선 운영 확인, D02 전체 미완료** |
@@ -335,7 +403,7 @@ run37961409345가 통과했다. main `81ebe997d`로 정상 병합하고 run37966
 페이지, D20 원장 설정은 위 PR724/725의 실제 실행·승격 결과로 판정한다. 코드를
 고쳤거나 helper를 작성했다는 이유만으로 통과 처리하지 않는다.
 
-D01의 나머지 일괄 파일 등록/계정 그래프, D13의 나머지 형식/소유권/경합,
+D01의 복수 시트/헤더·필드별 미리보기 판정·나머지 계정 그래프, D13의 나머지 형식/소유권/경합,
 D17의 다양한 HWP/PDF 원본·모바일 읽기·SEO 및 같은 메모의 동시 편집,
 D20의 동시 사용자 설정 저장 충돌은 별도 하위 동선으로 남긴다. D19 완료·실패의
 오래된 전체 이력은 현재 24시간 접수 범위 정책 밖이므로 명시적인 정책 검토 대상으로
