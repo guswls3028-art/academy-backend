@@ -147,10 +147,10 @@ tenant/user·R2·프로세스·리스너 잔여 0과 API digest/릴리스 일치
   학생 로그인·기존 학부모 로그인/형제 연결까지 동일 산출물 집중 검증에서 통과했다.
   집중 검증의 통과를 정식 전체 실사용 게이트나 운영 승격으로 대신하지 않는다.
 
-남은 D01 경계는 표지+명단/복수 시트의 화면·서버 선택 일치, 영문 헤더 및
-학년 등 필드별 미리보기와 최종 판정 일치, 공유 파일 입력의 비활성 상태/키보드
-동선이다. 현재 화면은 첫 시트만 읽고 서버는 후보 시트를 선택하므로 동일하다고
-가정하지 않는다. 이번 연락처·재등록 하위 동선의 증거를 도메인 전체 완료로 확대하지 않는다.
+당시 D01에는 화면의 첫 시트 읽기와 서버의 후보 시트 선택 차이, 영문 헤더가 남았다.
+이 경계는 아래 2026-10-11 PR619/730의 실제 증거로 갱신한다. 학년 등 다른 필드별
+미리보기와 최종 판정 일치, 공유 파일 입력의 비활성 상태/키보드 동선은 남은 범위다.
+연락처·재등록 하위 동선의 증거를 도메인 전체 완료로 확대하지 않는다.
 현재 정책은 [학생 생성](../domain/student-creation.md)과
 [화면 계정 흐름](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/ACCOUNT-CREDENTIAL-FLOWS.md)이 소유한다.
 
@@ -318,7 +318,7 @@ tenant/user·R2·프로세스·리스너 잔여 0과 API digest/릴리스 일치
 
 | 항목 | 2026-10-10까지 확인한 증거 | 다음 행동 |
 |---|---|---|
-| D01 학생 상세·학생별 기록 | backend [PR599](https://github.com/guswls3028-art/academy-backend/pull/599) `bf23b8f56704c56826bdfa46445ea795a45135be`, frontend [PR715](https://github.com/guswls3028-art/academy-frontend/pull/715)·[PR716](https://github.com/guswls3028-art/academy-frontend/pull/716) `a9cd3567ad0ef71facc82b9abac97993715c8ff8` 운영 반영. [frontend run37872808381](https://github.com/guswls3028-art/academy-frontend/actions/runs/37872808381) 동일 빌드 실사용 27건(생략·재시도 0), 양쪽 cleanup tenant/user 0, 운영 읽기 검증 통과. 서버·화면 배포 묶음 검사와 3개 운영 도메인 버전 일치. 배포 정적 자산+합성 API로 1366/1100/390px, 메모 저장→reload 확인, 예외/가로 넘침/예상 밖 업무 요청 0 | 해당 상세 동선 운영 확인 완료. 삭제·복원 입력 후속은 위 PR613/614 운영 증거 참조. 파일 연락처·오류 행·형제 재등록은 위 D01 후속의 운영 증거 참조. 복수 시트/헤더·필드별 미리보기 등 나머지 하위 동선은 별도 점검 |
+| D01 학생 상세·학생별 기록 | backend [PR599](https://github.com/guswls3028-art/academy-backend/pull/599) `bf23b8f56704c56826bdfa46445ea795a45135be`, frontend [PR715](https://github.com/guswls3028-art/academy-frontend/pull/715)·[PR716](https://github.com/guswls3028-art/academy-frontend/pull/716) `a9cd3567ad0ef71facc82b9abac97993715c8ff8` 운영 반영. [frontend run37872808381](https://github.com/guswls3028-art/academy-frontend/actions/runs/37872808381) 동일 빌드 실사용 27건(생략·재시도 0), 양쪽 cleanup tenant/user 0, 운영 읽기 검증 통과. 서버·화면 배포 묶음 검사와 3개 운영 도메인 버전 일치. 배포 정적 자산+합성 API로 1366/1100/390px, 메모 저장→reload 확인, 예외/가로 넘침/예상 밖 업무 요청 0 | 해당 상세 동선 운영 확인 완료. 삭제·복원 입력 후속은 위 PR613/614 운영 증거 참조. 파일 연락처·오류 행·형제 재등록은 위 D01 후속의 운영 증거 참조. 복수 시트/헤더는 아래 2026-10-11 추가 점검 참조. 다른 필드별 미리보기 등 남은 하위 동선은 별도 점검 |
 | D16 연속 탭 이동·학부모 질문 작성 | 느린 CPU에서 작성창 소실 재현 후 location effect 경합 수정. PR716에 포함, 최종 번들 커뮤니티 5건·필수 CI·동일 빌드 실사용과 운영 승격 통과 | 연결된 질문 작성 동선 완료. D16 전체 게시/댓글/공개 자료 점검은 순서표대로 진행 |
 | D00 명시적 학원 선택 | 잘못된/비활성 헤더의 다른 학원 대체와 대소문자 중복 코드 임의 선택 재현·수정. 새 회귀 14건+기존 23건=37건 및 PostgreSQL·SQLite 필수 CI 통과. [PR601](https://github.com/guswls3028-art/academy-backend/pull/601)·[PR603](https://github.com/guswls3028-art/academy-backend/pull/603), `cbfa0eb142e2b0a1bcae90e219c6da0275a92541`의 [run37882312061](https://github.com/guswls3028-art/academy-backend/actions/runs/37882312061) 운영 완료. 6개 이미지 보안 검사, 격리 개발 Excel/PPT/R2 실사용, preprod DB·CDN·부하, 임시 인스턴스 종료 후 건강 상태 기반 교체 통과. godmin/tchul 정상 조회·빈 값/잘못된 명시 선택 거부 9건 및 공식 서버/화면 배포 묶음·잠금 해제 확인 | 해당 선택 경계 운영 확인 완료. D00 전체 인증·역할·계정 복구 검사는 별도 유지. Cyrus High는 고정 버전·기한·실제 런타임 검증에 한정된 검토이며 영구 해결로 집계하지 않음 |
 | D02 전체 목록·시급 변경 이력 실패 | 501번째 직원 누락, 동일 정렬키 페이지 불안정, 시급 태그/개별 배정의 이력 저장 실패에도 변경 성공하는 6개 경로를 재현·수정. backend [PR602](https://github.com/guswls3028-art/academy-backend/pull/602), frontend [PR718](https://github.com/guswls3028-art/academy-frontend/pull/718). 직원 서버 117건·하위 사례 19건, 화면 36건, 최종 번들의 페이지/복구·본인 근무 8건 통과. 기본 3.3%·분 단위 급여·0원 시급·기존 마감 및 시급 고정 회귀도 서버 묶음에서 통과 | 서버 `2fe2c1ef362d2b07a8a9da918221ce3a654e3640` run37890575883, 화면 `ea8381ed8509423eebd79b3d01b26416f679ab8a` [run37893211864](https://github.com/guswls3028-art/academy-frontend/actions/runs/37893211864) 운영 완료. 동일 빌드 실사용 27건·cleanup zero·공식 승인·운영 배포 묶음 통과. **해당 수정 동선 운영 확인, D02 전체 미완료** |
@@ -403,9 +403,12 @@ run37961409345가 통과했다. main `81ebe997d`로 정상 병합하고 run37966
 페이지, D20 원장 설정은 위 PR724/725의 실제 실행·승격 결과로 판정한다. 코드를
 고쳤거나 helper를 작성했다는 이유만으로 통과 처리하지 않는다.
 
-D01의 복수 시트/헤더·필드별 미리보기 판정·나머지 계정 그래프, D13의 나머지 형식/소유권/경합,
-D17의 다양한 HWP/PDF 원본·모바일 읽기·SEO 및 같은 메모의 동시 편집,
-D20의 동시 사용자 설정 저장 충돌은 별도 하위 동선으로 남긴다. D19 완료·실패의
+D01의 복수 시트/헤더, D13의 HWP/HWPX 원본, D17의 SEO·메모 동시 편집,
+D20의 학원 목록·브랜딩 동시 저장은 아래 2026-10-11 추가 점검의 실제 증거로 판정한다.
+여전히 D01의 다른 필드별 미리보기·계정 그래프·공유 파일 입력 키보드/비활성 동선,
+D13의 그 밖의 형식·소유권·경합,
+D17의 다양한 원본·모바일 읽기 조합, D20의 일반 Program JSON 필드 전체에 대한
+동시 편집 정책은 미검증 하위 동선으로 남긴다. D19 완료·실패의
 오래된 전체 이력은 현재 24시간 접수 범위 정책 밖이므로 명시적인 정책 검토 대상으로
 구별한다. 위 순서표의 그 밖의 미검증 하위 동선도 계속 추적한다.
 
@@ -499,3 +502,87 @@ mutation replay가 모두 0이며 산출물 SHA-256은
 인증·허용된 관측 쓰기까지 전체 쓰기 0으로 표현하지 않는다. 이 판정은 PR617/729의
 수정·보강 동선과 해당 릴리스의 완료다. 위 남은 하위 동선 및 Cyrus/Toss/card HOLD는
 그대로 유지한다.
+
+### 2026-10-11 D01/D13/D17/D20 잔여 동선 추가 점검
+
+소유 `domain-remaining-20261011-01a1269a`. 위 잔여 큐에서 다음 경계를 좁혀
+재현·수정했다. 아래 표는 해당 동선의 판정이며 도메인 전체 무결함 판정이 아니다.
+
+| 범위 | 원인과 수정 | 확인한 정상·실패·복구 경계 |
+|---|---|---|
+| D01 복수 시트·헤더 | 첫 표지 시트를 미리보기로 쓰거나 GuardianName/보호자 이름을 학생 이름으로 선택하던 경로 수정. 서버와 같은 명단 순위 및 활성 시트 우선 동률 처리 | 표지+영문 명단의 학생 이름·연락처 역할 보존, 빈 행 뒤 실제 오류 행 번호, 모호한 동률의 명시적 재선택. 기존 필수 연락처·학교유형 판정과 worker 최종 검증을 유지 |
+| D13 HWP/HWPX 원본 | 일반 브라우저 MIME으로 보낸 정상 HWP/HWPX 업로드 거부를 최소 컨테이너 서명 확인 후 수용. 다운로드에 저장 metadata의 MIME·원본명을 서명하고 한글 filename* 적용 | 원본 바이트 보존, 잘못된 컨테이너 거절, 미리보기 호환. exact QA 업로드와 presign 응답만 연결하는 개발 R2 경계는 다른 tenant·bucket·key·MIME·이름·크기·자격 증명·redirect를 거부 |
+| D17 상담 메모·공개 자료 SEO | 같은 메모의 오래된 저장을 조건부 UPDATE로 409 처리. 공개 글의 초기 HTML에 exact 활성 tenant의 제목·요약 반영, 삭제 글은 404/noindex/no-store. 메타 문자열의 HTML/JSON 삽입 제거 | 내 초안 보존 → 최신 메모 확인 → 재작성·저장·reload. 메모 충돌 시 읽음 상태도 무변경. 따옴표/태그/$& 리터럴 및 삭제 글 재조회 계약 확인 |
+| D20 학원 목록·브랜딩 | 오래된 학원 목록/브랜딩 일괄 저장이 타인의 수정·분원을 지우지 않도록 원본 비교와 잠금 적용. 로고 업로드는 최신 행에 로고 필드만 병합 | 충돌 초안 보존·명시적 최신값 복구·정상 재저장, PostgreSQL 동시 학원 저장 200/409와 winner 보존. 잘못된 브랜딩 객체/텍스트 및 120자 초과 표시명은 기존 값 보존 후 400→정정 성공 |
+
+서버 [PR619](https://github.com/guswls3028-art/academy-backend/pull/619)의 최종
+`467b3d965a7b08e429cfabdbcdce68cd1821d339`는
+[CI38074589548](https://github.com/guswls3028-art/academy-backend/actions/runs/38074589548)에서
+SQLite 6,436건·하위 사례 1,469건(228 skip), PostgreSQL 6,687건·하위 사례 1,483건
+(5 skip), 커버리지 71%, 정적·마이그레이션·배포/작업트리 계약을 통과했다.
+main `70046edda3c29beb7363b67944aa02d83fbbdbff`의
+[배포38075839375](https://github.com/guswls3028-art/academy-backend/actions/runs/38075839375)가
+성공했다. 여섯 immutable digest 스캔, 격리 Excel/PPT/문서/R2 실사용, preprod 운영 DB
+거부·120건 오류 0·CDN 200/200/206과 임시 `i-0d4b53ed9a64a9046` 종료를 확인했다.
+account cutover 계획은 `required=false`였다. 두 production 승인, 건강 기반 순차 교체,
+최종 런타임·재생 검증과 공유 잠금 해제 후 성공 manifest
+`987e4e5d2dcd4e4f2c5b9868e976791ee9619a4c`가 2026-10-11 04:00 KST에 승격됐다.
+PostDeploy 읽기 전용 canary는 PASS 30 / WARN 0 / FAIL 0이었다. 별도 인프라 검증
+`4dd032e2bedb4e95b0201f4800299ea9`도 PASS/GO, drift·경고 없음이었다. 실제 API
+`i-0fa5713fea45c67bc`의 digest는 성공 manifest의 `d371013a…67b302`와 일치했다.
+이 인프라 검사는 화면 승격 전 실행했으며 새 화면 버전의 운영 증거와 구분한다.
+
+화면 [PR730](https://github.com/guswls3028-art/academy-frontend/pull/730)은
+`d7e660abf9c863d310a7f3b9242e24cca3073234`로 병합했다. PR 품질/후보 preview
+[38073990583](https://github.com/guswls3028-art/academy-frontend/actions/runs/38073990583),
+브라우저 [38073990559](https://github.com/guswls3028-art/academy-frontend/actions/runs/38073990559)가
+성공했다. 기본 route mock 1,204건, iPhone WebKit 87건과 기존 배포 번들 검사를 포함한다.
+로컬 변경 동선 42건(PC/390px), SEO/라우팅 17건, 원본 다운로드 경계 9건도 통과했다.
+
+운영 run38076586078 attempt1은 서버 완료 대기 조회에서 실패해 실사용 QA·운영 승격을
+시작하지 않았다. 상세 예외가 기록되지 않아 원인은 확정하지 않는다. backend 완료 후
+성공 manifest의 여섯 digest, 실제 개발 인스턴스 `i-04cc299ea94227556`의 identity와
+ReleaseId/VerifiedReleaseId를 원래 검사 함수로 재대조해 ready를 확인했다. attempt2는
+같은 산출물로 대기 단계를 통과하고 격리 실사용 27건을 모두 통과했다. 생략·불안정
+결과·읽기 재시도·변경 재실행·브라우저 결함·결함 억제는 모두 0이었다. exact QA 학원
+두 곳의 tenant/user 잔여는 각각 0이며, 사후 재조회에서 R2 객체·프로세스·리스너도
+0, release/digest 일치를 확인했다. 서버·화면 양쪽에 보강한 복수 시트 학생 등록,
+설정/상담 메모 충돌 복구, 한글 이름 HWP/HWPX 업로드→reload→원본 바이트 다운로드가
+포함된다. 화면 산출물 SHA-256은
+`c5b9d98021389fcc86e65113d46c8f43a4fa29d1ed1d6f2d80c13e11667da723`이다.
+exact main과 승인 가능 상태를 공식 API로 재확인하고 production 환경 `19052451810`의
+이 실행만 승인했다. Cloudflare 배포·기존 운영 읽기·tenant 가용성까지 공식 run은
+성공했으나, 추가 공개 자료 초기 HTML readback에서 글 제목 미반영과 없는 글의
+200/noindex를 발견했다. `redirect: "error"`가 workerd에서 요청 전에 예외를 내는
+런타임 차이였다. Node 모의 검사만으로 확인되지 않아 당시 이 경계를 완료 처리하지
+않았다. 아래 `manual`과 기존 non-2xx 거부를 조합한 후속 수정·실제 승격 증거로 판정한다.
+
+후속 [PR731](https://github.com/guswls3028-art/academy-frontend/pull/731)
+`1ca9c216191a34b1d99ba25f8bbf60531949bf83`은 실패를 먼저 재현하고 수정 후
+집중 계약 3건·배포 계약 6건·런타임 복구 32건·타입·변경 파일 lint를 통과했다.
+[품질 CI38081871039](https://github.com/guswls3028-art/academy-frontend/actions/runs/38081871039)는
+새 경계를 포함한 라우팅/PWA 18건과 전체 품질/후보 preview를 통과했다.
+[브라우저 CI38081871032](https://github.com/guswls3028-art/academy-frontend/actions/runs/38081871032)는
+route mock 1,204건·WebKit 87건·운영 읽기 6건 및 기존 번들 검사를 통과했다.
+main `1621634d9eb8fc70cc16bea5c74c1c00ecbdaa21`로 병합한
+[run38084466103](https://github.com/guswls3028-art/academy-frontend/actions/runs/38084466103)의
+빌드·preview·개발 기준선 확인 및 새 산출물 실사용 27건이 모두 성공했다.
+생략·불안정 결과·읽기 재시도·변경 재실행·브라우저 결함·억제 0,
+양쪽 QA tenant/user 잔여 0 및 R2·프로세스·리스너 정리 0을 사후 재조회로 확인했다.
+산출물 SHA-256은
+`c676404fe0c7fb8dec6fb1086952bc7704ebaeb9bb8b65cdd78c981bafd18d98`이다.
+정확한 main과 승인 가능 상태를 다시 대조하고 이 실행만 production 승인했다.
+후속 Cloudflare 배포·운영 읽기·tenant 가용성 검사까지 run 전체가 성공했다.
+2026-10-11 06:25 KST 추가 읽기에서 hakwonplus.com·godmin.kr·tchul.com의
+`version.json`이 모두 위 main과 일치했다. godmin의 기존 공개 글 10은 API와 초기
+HTML 제목·canonical이 일치하고 indexable/no-store였다. godmin/tchul의 없는 글은
+모두 404/noindex/no-store였고 API healthz는 200이었다. 실제 고객 자료는 수정하지
+않았다. 최초의 일반 CI 성공으로 누락됐던 edge 런타임 성공 경계까지 재확인했다.
+
+최종 화면 승격 후 배포 묶음 검증 `1f462a188397440ebdacd9e6e6dfcf90`도 06:27 KST
+PASS/GO였다. API 실제 digest와 성공 manifest 일치, 인프라 drift·경고 없음 및 화면
+연결을 재확인했다. 위 네 묶음의 기록된 동선은 운영 확인 완료이며, 다른 필드·계정
+그래프·형식/소유권/경합 및 정책 검토까지 전체 완료로 확대하지 않는다. 기존 HOLD도
+그대로 유지한다. 소유 증거는 `_artifacts/sessions/domain-remaining-20261011-01a1269a/`의
+`frontend-edge-development-evidence`, `production-resource-readback-final.json`,
+`infrastructure-verification-final`에 보존한다.
