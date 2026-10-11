@@ -24,8 +24,8 @@ def example():
         SimpleNamespace(text="두 번째 문항의 모든 선택지를 보존합니다.", x0=105, y0=700, x1=820, y1=750),
     ]
     data = {"confidence": .95, "problems": [
-        {"number": 12, "anchor_id": 0, "content_ids": [0, 1, 2], "shared_with": []},
-        {"number": 13, "anchor_id": 3, "content_ids": [3, 4], "shared_with": []},
+        {"number": 12, "anchor_id": 0, "shared_with": []},
+        {"number": 13, "anchor_id": 3, "shared_with": []},
     ]}
     return blocks, data
 
@@ -53,7 +53,6 @@ def test_occluded_number_gets_left_room_without_crossing_neighbor_text():
 def test_shared_stem_preserves_both_numbers_and_identical_complete_crop():
     raw, data = example()
     for p in data["problems"]:
-        p["content_ids"] = list(range(5))
         p["shared_with"] = [13 if p["number"] == 12 else 12]
     regions = grounded_photo_regions(data, photo_ocr_blocks(raw, 1920, 2560), 1920, 2560)
     assert regions[0]["bbox"] == regions[1]["bbox"]
@@ -62,13 +61,13 @@ def test_shared_stem_preserves_both_numbers_and_identical_complete_crop():
 
 @pytest.mark.parametrize("mutation", [
     lambda d: d["problems"].pop(),
-    lambda d: d["problems"][0].update(content_ids=[0, 1]),
+    lambda d: d["problems"].pop(0),
     lambda d: d["problems"][0].update(number=True),
     lambda d: d["problems"][0].update(number=13),
-    lambda d: d["problems"][0].update(content_ids=[0, 1, 2, 999]),
+    lambda d: d["problems"][0].update(anchor_id=999),
     lambda d: d["problems"][0].update(anchor_id=False),
     lambda d: d["problems"][0].update(anchor_id=3),
-    lambda d: d["problems"][0].update(content_ids=[0, 1, 2, 3]),
+    lambda d: d["problems"][0].update(context_id=999),
     lambda d: d["problems"][0].update(shared_with=[13]),
     lambda d: d["problems"][0].update(shared_with=[99]),
 ])
@@ -99,6 +98,72 @@ def test_real_numbered_body_can_discuss_an_academic_year():
     raw, data = example()
     raw[0].text = "12. 다음 학년도 자료에 대한 설명으로 옳은 것은?"
     assert len(grounded_photo_regions(data, photo_ocr_blocks(raw, 1920, 2560), 1920, 2560)) == 2
+
+
+def test_model_only_returns_starts_server_includes_table_choices_and_inner_steps():
+    raw, data = example()
+    raw[1].text = "1. 실험 과정의 첫 번째 단계에 대한 내용입니다."
+    regions = grounded_photo_regions(data, photo_ocr_blocks(raw, 1920, 2560), 1920, 2560)
+    assert regions[0]["ids"] == {0, 1, 2}
+    assert regions[1]["ids"] == {3, 4}
+    assert "content_ids" not in photo_grounding_prompt(photo_ocr_blocks(raw, 1920, 2560), 1920, 2560)
+
+
+@pytest.mark.parametrize("explicit_context", [True, False])
+def test_shared_context_above_first_number_is_preserved(explicit_context):
+    raw, data = example()
+    raw.append(SimpleNamespace(text="[12~13] 다음 공통 자료를 보고 답하시오.", x0=105, y0=20, x1=790, y1=60))
+    for p in data["problems"]:
+        p["shared_with"] = [25 - p["number"]]
+        if explicit_context:
+            p["context_id"] = 5
+    regions = grounded_photo_regions(data, photo_ocr_blocks(raw, 1920, 2560), 1920, 2560)
+    assert regions[0]["bbox"] == regions[1]["bbox"]
+    assert regions[0]["bbox"][1] <= 20
+    assert regions[0]["ids"] == set(range(6))
+
+
+def test_slanted_first_line_split_by_ocr_is_kept_whole():
+    raw, data = example()
+    raw[0].x1 = 350
+    raw.append(SimpleNamespace(text="이어진 첫 문장 전체가 잘리지 않아야 합니다.", x0=355, y0=75, x1=790, y1=115))
+    first = grounded_photo_regions(data, photo_ocr_blocks(raw, 1920, 2560), 1920, 2560)[0]
+    assert first["bbox"][1] <= 75 and 5 in first["ids"]
+
+
+def test_sloping_columns_keep_far_right_choices_in_the_left_question():
+    raw, data = example()
+    raw[2].x0, raw[2].x1 = 820, 870
+    raw[4].x0, raw[4].x1 = 105, 870
+    raw.extend([
+        SimpleNamespace(text="14. 다음 오른쪽 첫 문항에 답하시오.", x0=850, y0=100, x1=1300, y1=130),
+        SimpleNamespace(text="15. 다음 오른쪽 둘째 문항에 답하시오.", x0=950, y0=560, x1=1400, y1=590),
+    ])
+    data["problems"].extend([{"number":14,"anchor_id":5}, {"number":15,"anchor_id":6}])
+    regions = grounded_photo_regions(data, photo_ocr_blocks(raw, 1920, 2560), 1920, 2560)
+    assert 2 in regions[0]["ids"] and 2 not in regions[2]["ids"]
+    assert 4 in regions[1]["ids"] and 4 not in regions[3]["ids"]
+
+
+def test_shared_group_cannot_swallow_an_intervening_question():
+    raw, data = example()
+    raw.append(SimpleNamespace(text="14. 마지막 독립 문항의 설명입니다.", x0=110, y0=900, x1=790, y1=930))
+    data["problems"][0]["shared_with"] = [14]
+    data["problems"].append({"number":14,"anchor_id":5,"shared_with":[12]})
+    with pytest.raises(ValueError, match="Interleaved"):
+        grounded_photo_regions(data, photo_ocr_blocks(raw, 1920, 2560), 1920, 2560)
+
+
+def test_split_footer_does_not_extend_last_question_to_page_bottom():
+    raw, data = example()
+    raw.extend([
+        SimpleNamespace(text="고등학교의 실험 조건을 비교하는 본문입니다.", x0=110, y0=800, x1=750, y1=840),
+        SimpleNamespace(text="숙명 여자 고등 학", x0=400, y0=2420, x1=800, y1=2470),
+        SimpleNamespace(text="다음 면 에 계", x0=650, y0=2420, x1=800, y1=2470),
+    ])
+    last = grounded_photo_regions(data, photo_ocr_blocks(raw, 1920, 2560), 1920, 2560)[-1]
+    assert 5 in last["ids"] and not {6, 7} & last["ids"]
+    assert last["bbox"][1] + last["bbox"][3] < 900
 
 
 @pytest.mark.parametrize("coordinate", [float("nan"), float("inf"), 3000])
