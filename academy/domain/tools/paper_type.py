@@ -87,6 +87,7 @@ def classify_paper_type(
     from academy.domain.tools.question_splitter import (
         _detect_column_layout,
         _detect_quad_layout,
+        _looks_like_header_folio,
         is_non_question_page,
     )
 
@@ -103,6 +104,12 @@ def classify_paper_type(
             has_embedded_text=has_embedded_text,
             debug=debug,
         )
+
+    if text_blocks:
+        text_blocks = [
+            block for block in text_blocks
+            if not _looks_like_header_folio(block, page_width=page_width, page_height=page_height)
+        ]
 
     # 1. 비-문항 페이지
     if text_blocks:

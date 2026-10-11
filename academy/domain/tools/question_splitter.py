@@ -614,6 +614,21 @@ def _extract_marginal_question_number(text: str) -> Optional[int]:
     return None
 
 
+def _looks_like_header_folio(
+    block: TextBlock,
+    *,
+    page_width: float,
+    page_height: float,
+) -> bool:
+    """A standalone current/total counter in a top corner is not a question."""
+    if page_width <= 0 or page_height <= 0 or block.y1 > page_height * 0.13:
+        return False
+    if not (block.x1 <= page_width * 0.25 or block.x0 >= page_width * 0.75):
+        return False
+    counter = re.fullmatch(r"\s*(\d{1,3})\s*[/／]\s*(\d{1,3})\s*", block.text or "")
+    return bool(counter and 1 <= int(counter[1]) <= int(counter[2]))
+
+
 def _looks_like_footer_folio(
     block: TextBlock,
     *,
@@ -1666,6 +1681,12 @@ def split_questions(
     if not text_blocks:
         return []
 
+    # Remove page counters before either splitter can mistake them for OCR
+    # slash anchors or use their corner position to infer a second column.
+    text_blocks = [
+        block for block in text_blocks
+        if not _looks_like_header_folio(block, page_width=page_width, page_height=page_height)
+    ]
     text_blocks = _expand_inline_anchor_blocks(text_blocks)
 
     # paper_type이 명시되면 휴리스틱 우회. NON_QUESTION이면 빈 리스트 반환.
