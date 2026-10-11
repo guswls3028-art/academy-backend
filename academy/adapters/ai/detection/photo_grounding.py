@@ -149,7 +149,13 @@ def _assign_photo_content(regions: list[dict], blocks: list[dict], width: int, h
         for index, (top, group) in enumerate(starts):
             bottom = starts[index + 1][0] if index + 1 < len(starts) else math.inf
             if any(blocks[r["anchor_id"]]["bbox"][1] >= bottom for r in group):
-                raise ValueError("Interleaved shared photo material")
+                # Preserve bounded structural evidence for a rejected page.
+                # No OCR text, image bytes or provider response enters logs.
+                anchors = [(r["number"], r["anchor_id"], r["context_id"]) for r in regions]
+                raise ValueError("Interleaved shared photo material: "
+                                 f"anchors={anchors[:32]} count={len(anchors)} "
+                                 f"group={[r['number'] for r in group][:32]} "
+                                 f"interval=({top},{bottom})")
             ids = set()
             for i, block in enumerate(blocks):
                 x0, y0, x1, y1 = block["bbox"]
@@ -237,8 +243,10 @@ def grounded_photo_regions(data: dict, blocks: list[dict], width: int, height: i
         x0, y0, x1, y1 = r["content_bbox"]
         anchor = blocks[r["anchor_id"]]
         ax0, ay0, ax1, ay1 = anchor["bbox"]
-        printed_number = re.match(r"^\s*" + str(r["number"]) + r"(?:\D|$)", anchor["text"])
-        left_pad = 8 if printed_number else min(width * .035, (ay1 - ay0) * 1.5)
+        # Circled choices may extend left of every recognized block even when
+        # the question number is readable. Keep glyph-sized room in both cases;
+        # the neighbouring-content bounds below still limit this padding.
+        left_pad = min(width * .035, (ay1 - ay0) * 1.5)
         crop = [max(0, x0 - left_pad), max(0, y0 - 8), min(width, x1 + 8), min(height, y1 + 8)]
         for other in regions:
             if other is r or other["number"] in r["shared_with"]:
