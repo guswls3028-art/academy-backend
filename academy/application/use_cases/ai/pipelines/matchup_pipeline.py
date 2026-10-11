@@ -1690,7 +1690,9 @@ def _augment_questions_with_vlm_for_underfilled_pages(
 
     Empty-page 보강만으로는 운영 T1 학생 촬영 시험지처럼 Q4/Q6/Q8만 잡히고
     Q1/Q2/Q3/Q5/Q7이 빠지는 under-cut을 복구할 수 없다. 이 경로는 기존 box를
-    지우지 않고 VLM이 찾은 missing number만 추가한다.
+    보존하고 VLM이 찾은 missing number만 추가한다. 학생 사진에서 번호를 전혀
+    읽지 못해 만든 임시 counter box는 검증된 VLM 페이지 결과로 교체한다.
+    저장된 수동/승인 문항의 보존·제안 처리는 기존 결과 callback이 소유한다.
     """
     if not _env_flag("MATCHUP_VLM_AUTO_SPLIT", True):
         return None
@@ -1751,6 +1753,8 @@ def _augment_questions_with_vlm_for_underfilled_pages(
     duplicate_number_skips = 0
     overlap_skips = 0
     relabeled_overlaps = 0
+    replaced_auto = 0
+    replacement_pages = 0
     pages_used = 0
     paper_type_updates = 0
 
@@ -1783,6 +1787,49 @@ def _augment_questions_with_vlm_for_underfilled_pages(
             q for q in questions
             if q.get("page_index") == page_idx and q.get("bbox")
         ]
+        # Unnumbered image contours are provisional, not printed anchors. Keeping
+        # them makes their arbitrary counter numbers/large boxes suppress real
+        # questions (including both numbers that share one validated stem crop).
+        if (
+            source_type == "student_exam_photo"
+            and page_reason == "numberless_scan_page"
+            and existing_page_questions
+            and len(existing_page_questions) == sum(
+                q.get("page_index") == page_idx for q in questions
+            )
+            and all(_is_counter_fallback_question(q) for q in existing_page_questions)
+        ):
+            proposed_numbers = [prob.number for prob in vlm.problems]
+            other_page_numbers = {
+                q.get("number") for q in questions if q.get("page_index") != page_idx
+            }
+            if (
+                proposed_numbers
+                and all(type(number) is int and number > 0 for number in proposed_numbers)
+                and len(set(proposed_numbers)) == len(proposed_numbers)
+                and not other_page_numbers.intersection(proposed_numbers)
+            ):
+                questions[:] = [q for q in questions if q.get("page_index") != page_idx]
+                used_numbers = {q["number"] for q in questions}
+                for prob in vlm.problems:
+                    questions.append({
+                        "number": prob.number,
+                        "page_index": page_idx,
+                        "image_path": page["image_path"],
+                        "bbox": list(prob.bbox),
+                        "meta_extra": {
+                            "engine": "vlm",
+                            "number_source": "vlm_replacement",
+                            "vlm_reason": "numberless_photo_replacement",
+                            "shared_with": list(getattr(prob, "shared_with", []) or []),
+                        },
+                    })
+                    used_numbers.add(prob.number)
+                replaced_auto += len(existing_page_questions)
+                replacement_pages += 1
+                added += len(vlm.problems)
+                pages_used += 1
+                continue
         page_added = 0
         page_relabeled = 0
         for prob in vlm.problems:
@@ -1851,6 +1898,8 @@ def _augment_questions_with_vlm_for_underfilled_pages(
         "duplicate_number_skips": duplicate_number_skips,
         "overlap_skips": overlap_skips,
         "relabeled_overlaps": relabeled_overlaps,
+        "replaced_auto": replaced_auto,
+        "replacement_pages": replacement_pages,
         "paper_type_updates": paper_type_updates,
     }
 
