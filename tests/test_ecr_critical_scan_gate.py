@@ -170,7 +170,10 @@ def test_vendor_fixed_findings_are_no_longer_accepted(cve, package, version, sev
         with pytest.raises(gate.GateError, match="unaccepted critical"):
             gate.evaluate_findings("academy-api", findings, acceptances)
     else:
-        baselines, known = gate.load_high_baselines(policy_dir / "ecr-high-risk-baseline.json")
+        # Identity rejection is independent of the separately tested expiry boundary.
+        baselines, known = gate.load_high_baselines(
+            policy_dir / "ecr-high-risk-baseline.json", date(2026, 10, 9)
+        )
         with pytest.raises(gate.GateError, match="High"):
             gate.evaluate_high_budget("academy-api", findings, baselines, known)
 
@@ -195,7 +198,7 @@ def test_historical_acceptance_is_exact_and_time_bounded() -> None:
 @pytest.mark.parametrize("version", ["2.8.3-1~deb13u1", "2.8.4+academy1-1"])
 def test_expat_backport_does_not_override_actual_high_scan(repository, version):
     policy = Path(__file__).parents[1] / "docs/ssot/ecr-high-risk-baseline.json"
-    baselines, known = gate.load_high_baselines(policy)
+    baselines, known = gate.load_high_baselines(policy, date(2026, 10, 9))
     with pytest.raises(gate.GateError, match="High"):
         gate.evaluate_high_budget(
             repository, _scan(_finding("CVE-2026-93990", "expat", version, "HIGH")),
