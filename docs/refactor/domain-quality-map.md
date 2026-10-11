@@ -26,14 +26,14 @@ backend `a8a06124739b859de35d9427b48c803f125424a2`, frontend
 | D11 | 대상/자격·다중 시간대·정원 경합·예약/취소·출석/통과/취소·보고서 | 서버 정원/중복/다중 슬롯 원자성·자정/다음날·과거 기록 보존 대조 완료(B1/F0/F1). 390px picker 동작 전환 경합 검사 보강, 전체 메뉴 감사(M1) 통과 |
 | D12 | 업로드/Batch·수강/공개 권한·HLS/YouTube·탐색/속도·갱신/복원·종료 강의 | 실제 두 학생 CDN 갱신/690초 재생·reload 및 격리 정리(F0), Batch/권한/종료수강/세션 회귀(B1/F1) 대조 완료 |
 | D13 | 폴더·학생/학부모/교직원 소유권·원본 형식·만료·업로드/삭제 경합·복구 | 결함 수정: 삭제 거절 취소→재열기 오류 잔존. 학생/학부모 PC/390px 14건 red→green. PR733 병합(9966d807), 새28건 실사용·정리0 통과(F2), 운영 배포·사용자 동선·3도메인 SHA readback 통과 |
-| D14 | 원본 업로드·분리/수정·분석 제안/승인·수동 보존·보고서/공개 공유·대체 업로드 | 기존 서버/화면·수동/승인 보존 회귀(B1/F1) 대조. 7사진 실제 분석에서 가짜 counter 번호/누락 재현(32실제 문항 대신37행). 검증된 VLM 문항을 임시 영역이 중복 거절하는 원인 수정, 관련105건·수동/고정 보존28건 통과. 실제 잘린 본문도 확인해 VLM 정규화 좌표→원본 크기 환산을 교정. 새 후보 시각·수동/보고서·재분석/정리와 운영 검증 전까지 사진 HOLD 유지 |
-| D15 | PDF/PPT/HWPX·문제 리뷰·진행/실패/재시도/취소·작업 귀속·타이머·Beta 경계 | 실제 PPT에서 상단 7/7이 가짜 문항·반쪽 크롭을 만드는 결함 재현. 공통 분류/분리 수정,143건 통과·합성 PDF 22장/원본문항/4 fallback 육안 확인. 새 immutable 후보·격리 실사용·운영 반영은 native HOLD로 미완료 |
+| D14 | 원본 업로드·분리/수정·분석 제안/승인·수동 보존·보고서/공개 공유·대체 업로드 | 임시 counter 중복 거절과 좌표 환산 수정(PR623) 후 exact31cbe829 후보의 실제 7사진을 재검증. 6장은 번호 일치했으나 photo06 가짜25 때문에 32문항 대신33행, 본문 잘림·인접 문항 유입도 잔존. 해당 후보의 migration 승인 거절, 운영 변경 없음. 소유768/769 작업·tenant/user/R2 정리0. OCR 재생도 번호 누락/오탐이 있어 번호만 보존하는 수정으로는 부족. 시각·수동/보고서·재분석/운영 검증 전까지 사진 HOLD 유지 |
+| D15 | PDF/PPT/HWPX·문제 리뷰·진행/실패/재시도/취소·작업 귀속·타이머·Beta 경계 | 상단7/7 가짜 문항 결함 수정(PR623),143건 및 전체 CI 통과. exact31cbe829 후보와 frontend c27dc4c3 동등 artifact의 격리 실사용 성공: 자동22장·수동2장·다운로드·reload·잘못된PDF400복구·390px. 소유771 작업·tenant/user/R2/process/listener 정리 및 독립 Inspect0. 검사 PR734 병합(da60a55c). backend 제품 운영 반영은 D14 후보 실패로 대기 |
 | D16 | 공지/질문/상담 작성/수정/삭제·본문/첨부·댓글/좋아요·초안·검색/페이지·알림 | 공지3/QnA4 및 학생·학부모 커뮤니티 실제 동선(F0), 초안·권한/tenant·첨부/삭제 원자성/outbox(B1/F1) 대조 완료 |
 | D17 | 공개 홈페이지/상담·게시자·원본 유형별 읽기/다운로드·모바일/Safari·미발행/SEO | 기존 원본5종(F0) 및 브라우저 회귀(F1) 대조. DOCX/PPTX/TXT/PNG 실제 변환·익명 PC/390px·bytes/reload/삭제 검사를 추가. F2 실제28건 통과, 추가4종 원본의 변환/익명읽기/reload/다운로드/삭제 성공 |
 | D18 | 설정/예약/취소·수신자/정확한 승인 템플릿·멱등성·발송/도착/실패 표시·읽음 | 승인 템플릿/수신자 봉투→멱등 수락→격리 mock worker→로그 reload(F0), 예약/취소/상태·권한 회귀(B1/F1) 대조. 실제 외부 수신자 임의 발송 없음 |
 | D19 | 원천/집계·페이지·기간/시간대·0건/오류·자녀/학원·캐시·자동 분석 제안 | 접수함 24시간 정책과 오래된 미완료 보존, program probe 합계12건 및 analytics/tenant 회귀(B1/F1) 대조 완료. 오래된 완료/실패는 현행 정책상 제외 |
 | D20 | 개인/조직 설정·Program JSON 저장 계약·테마/가이드/약관·역할/390px | Program 일반 JSON 필드 전체 교체·다른 필드 보존·개별 CAS 정책 대조. 실제 API 계약12건, 원장 PC/390px 실패→재시도→저장→reload·취소2건 통과. 공통 메뉴/시각(M1/V1) 대조 |
-| D21 | 지원 문의·tenant/유지보수·큐/재시도·health·배포/복구·관측·보안 만료 | 이전 exact manifest·preprod120건/CDN200·206·임시종료·rolling/잠금/운영 readback(F0) 대조. 지원 문의 actual JWT/격리 회귀(B1/F1). Cyrus 만료 후 새 vendor·6개 scan·실제3개 runtime oracle 재검토 PR624 준비. 새 정책/CI/후보 게이트 통과 전 HOLD 유지 |
+| D21 | 지원 문의·tenant/유지보수·큐/재시도·health·배포/복구·관측·보안 만료 | PR624 exact Cyrus 예외를 사용자 명시 승인으로 병합(26fb1d63), 2026-10-12 UTC 종료 유지. 31cbe829 후보 6scan 각각 High1/Critical0, 개발 Excel/PPT/R2, preprod120건 오류0/CDN200·200·206/임시종료 통과. D14 실제 QA 실패로 post-preprod migration 공식 거절, API/worker 교체 skipped·공유 잠금 해제 확인. 운영357b459 유지, 다음 후보는 전체 게이트 재확인 |
 
 증거 키(검사 파일 존재와 실제 실행을 구분):
 - B1: backend CI 38089673701 PostgreSQL 6697 pass/5 skip, SQLite 6446 pass/228 skip.
@@ -43,6 +43,8 @@ backend `a8a06124739b859de35d9427b48c803f125424a2`, frontend
 - F1: PR733 HEAD4f1e5f4 필수 Quality38125794519, E2E38125794530 전부 success.
   인증 production read-only와 세 shard mock 검증은 실사용 증거와 구별한다.
 - F2: PR733 main9966d807의 공식 run38128543512: 같은 산출물28/28, skip/flaky/unexpected0, strictDefects/readFetchRetry/mutationReplay/suppression0, 양쪽 tenant/user/R2/process/listener0. 플랫폼 권한/게이트 확인 후 production 승인, 배포·운영 동선·3도메인9966d807 readback 통과.
+- B2: PR623 CI38139522679 PostgreSQL6735 pass/5 skip, SQLite6484 pass/228 skip. exact product tree로 병합된31cbe829의 후보 run38140716038은 native/개발/preprod 성공 후 사진 QA 실패로 production migration을 거절했다. CI·격리 게이트 통과를 사진 성공으로 집계하지 않는다.
+- P1: `focused-ppt-runtime-qa-ymath-realuse-fe-1791725892970-1-926d6813f437.json`: testsPassed/cleanupConfirmed/positiveInspectZero 모두 true. frontend c27dc4c3, 동등 CI artifact b4214d21, backend31cbe829. 앞선770 실패는 one-off static server의 `.mjs` MIME 누락이며, 이를 고친771 실행에서 실제 수동 자르기까지 통과했다.
 - M1: 전체 메뉴 감사38123117741(91012127d) success, admin/student/teacher read-only 3건(1.5시간). 이후 제품/메뉴 소스는 동일하며 picker 테스트/개수 계약만 변경했다.
 - V1: 전체 시각 감사38123116060, 역할별 desktop/compact/390px 9건 pass(9.4분).
   화면 도달·시각 검사는 저장 성공을 대체하지 않는다.
