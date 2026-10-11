@@ -106,7 +106,7 @@ jobs:
 
       - name: Upload current verified release baseline
         if: github.event_name == 'push'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-baseline-${{ github.run_attempt }}
           path: ${{ runner.temp }}/release-baseline/release-manifest.latest.json
@@ -391,7 +391,7 @@ jobs:
 
       - name: Download current verified release baseline
         if: github.event_name == 'push'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: release-baseline-${{ github.run_attempt }}
           path: ${{ runner.temp }}/release-baseline
@@ -692,7 +692,7 @@ jobs:
 
       - name: Download current verified release baseline
         if: github.event_name == 'push'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: release-baseline-${{ github.run_attempt }}
           path: ${{ runner.temp }}/release-baseline
@@ -933,7 +933,7 @@ jobs:
 
       - name: Download current verified release baseline
         if: github.event_name == 'push'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: release-baseline-${{ github.run_attempt }}
           path: ${{ runner.temp }}/release-baseline
@@ -1055,7 +1055,7 @@ jobs:
           cat docs/reports/ci-build.latest.md >> $GITHUB_STEP_SUMMARY
 
       - name: Upload ci-build.latest.md artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ci-build-report
           path: |
@@ -1114,7 +1114,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download exact release candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ci-build-report
           path: /tmp/api-development-candidate
@@ -1193,7 +1193,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download exact release candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ci-build-report
           path: /tmp/api-preprod-candidate
@@ -1257,7 +1257,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download exact migration and cutover candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ci-build-report
           path: docs/reports
@@ -1290,7 +1290,7 @@ jobs:
           echo "planned=true" >> "$GITHUB_OUTPUT"
 
       - name: Preserve the exact cutover plan before opening
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: account-cutover-plan-${{ github.run_attempt }}
           path: ${{ runner.temp }}/account-cutover-plan.json
@@ -2178,7 +2178,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Download original cutover plan
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: account-cutover-plan-${{ github.run_attempt }}
           path: ${{ runner.temp }}
@@ -2201,7 +2201,7 @@ jobs:
             | tee "$RUNNER_TEMP/account-cutover-clear.json"
       - name: Preserve cutover restoration evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: account-cutover-restoration-${{ github.run_attempt }}
           path: |
@@ -2230,7 +2230,7 @@ jobs:
           ssh-key: ${{ secrets.ACADEMY_RELEASE_DEPLOY_KEY }}
 
       - name: Download exact release candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ci-build-report
           # upload-artifact computes docs/reports as the least-common-ancestor,
