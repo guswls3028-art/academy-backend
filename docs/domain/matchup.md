@@ -154,6 +154,23 @@ VLM 좌표는 [Gemini의 공식 계약](https://ai.google.dev/gemini-api/docs/im
 7사진/32실제 문항의 번호·완전한 이미지·reload·수동 보존·보고서·격리 정리 및
 운영 readback을 통과하기 전에는 위 사진 품질 HOLD가 해소된 것으로 기록하지 않는다.
 
+[CANDIDATE 2026-10-12] 위 후보의 실제 사진에서 본문 잘림과 가짜 문항이 남아
+운영 승격을 거절했다. 학생 사진의 보강 경로는 AI가 OCR 블록 ID를 문항별로
+배정하고, `photo_grounding.py`가 원본 OCR 좌표에서 크롭을 계산하도록 변경한다.
+공유 자료는 상호 공유 관계와 동일한 내용 집합을 확인해 같은 크롭을 유지한다.
+없는 ID, 중복 번호, 다른 문항의 시작점 혼입, 헤더·이전 문항의 후반부를 시작점으로
+삼은 결과와 큰 본문 누락은 전체 페이지 결과를 거절한다. 이 크롭의 여백은
+주변 문항의 실제 글자 위치로 제한하며 업로드 단계에서 비율 여백을 다시 붙이지 않는다.
+원본·기존 저장 결과·수동/승인 문항과 다른 자료 유형의 분리 전략은 그대로 보존한다.
+OCR 관측값을 얻지 못하거나 품질 검증에 실패하면 기존 검수/직접 자르기 경로로
+남으며, 실제 7장·32문항 검증 전에는 자동 분리 성공으로 집계하지 않는다.
+
+Gemini 응답은 `finishReason=STOP`과 완전한 JSON이 필요하다. 잘린 JSON에서
+마지막 완성 문항까지만 복구하던 동작은 부분 분석을 성공으로 숨겨 제거했다.
+학생 사진의 OCR 배정 요청만 [Gemini 2.5 Flash thinkingBudget](https://ai.google.dev/gemini-api/docs/generate-content/thinking)을
+2048로 제한해 전체 응답 예산8192에서 문항 목록을 출력할 공간을 남긴다.
+문항 번호·내용/공유·좌표·누락 판정의 회귀는 `tests/test_matchup_photo_grounding.py`가 소유한다.
+
 [CURRENT 2026-06-20] Tenant 2 과거 실사용 자료 중 손촬영 사진을 제외한 PDF/스캔본/텍스트 PDF는 v55 full-display 감사에서 운영 baseline을 닫았다. 수동 GT가 있는 61개 문서의 물리 문항 기준 `physical_missed_count=0`, `physical_recall=1.0`이며, raw miss 11건은 중복 GT row로 설명된다. 재현 절차와 합격 기준은 `docs/operations/runbooks/matchup-segmentation-qa.md`를 정본으로 본다. 새 자료 유형이나 손촬영 사진은 이 baseline에 자동 포함하지 않고 별도 감사로 편입한다. 숨은 버그 후보와 다음 실행 단위는 `docs/refactor/matchup-segmentation-risk-backlog.md`에 [PROPOSED]로 둔다.
 
 [CURRENT 2026-08-02] 텍스트가 살아 있는 학원 워크북 PDF의 제품 표시 박스는 본문 텍스트만이 아니라 바로 아래에 분리되어 배치된 그래프/도형까지 포함한다. dispatcher는 다음 같은 열의 문항을 넘지 않는 범위에서 렌더 잉크를 결합하고, 결합이 끝난 뒤에는 그래프/도형을 보존한 채 과도한 빈 하단 여백만 줄인다. 이 보정은 문항 수/번호와 audit/body bbox를 바꾸지 않고 업로드 후 저장되는 문항 이미지용 `display_bbox`에만 적용한다. YMath 실자료 23개 PDF, 194페이지, 403개 박스에서 전체 overlay를 육안 검수했고, 알려진 그래프 누락 3건과 과대 여백 9건의 전후 결과를 확인했다. 이 표본은 해당 반복형 워크북 양식의 회귀 근거이며 모든 PDF/사진 형식의 무인 자동 성공을 뜻하지 않는다. 재현 명령과 시각 합격 기준은 `docs/operations/runbooks/matchup-segmentation-qa.md`를 따른다.

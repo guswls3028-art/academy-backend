@@ -63,7 +63,7 @@ def test_gemini_request_keeps_key_out_of_url_and_errors(monkeypatch, caplog):
         calls.append((url, kwargs))
         response = MagicMock(status_code=200)
         response.json.return_value = {
-            "candidates": [{"content": {"parts": [{"text": "{}"}]}}]
+            "candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": "{}"}]}}]
         }
         return response
 

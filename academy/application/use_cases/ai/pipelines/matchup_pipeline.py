@@ -1330,6 +1330,7 @@ def _detect_page_with_vlm(
                 "page_index": page["page_index"],
                 "page_width": page.get("width"),
                 "page_height": page.get("height"),
+                "paper_type": page.get("paper_type"),
             },
         )
     except Exception as e:
@@ -1822,6 +1823,7 @@ def _augment_questions_with_vlm_for_underfilled_pages(
                             "number_source": "vlm_replacement",
                             "vlm_reason": "numberless_photo_replacement",
                             "shared_with": list(getattr(prob, "shared_with", []) or []),
+                            "photo_ocr_grounded": bool(getattr(prob, "ocr_grounded", False)),
                         },
                     })
                     used_numbers.add(prob.number)
@@ -1877,6 +1879,7 @@ def _augment_questions_with_vlm_for_underfilled_pages(
                     "engine": "vlm",
                     "vlm_reason": "underfilled_page_fallback",
                     "vlm_candidate_reason": page_reason,
+                    "photo_ocr_grounded": bool(getattr(prob, "ocr_grounded", False)),
                 },
             }
             if proposed <= 0:
@@ -1982,7 +1985,7 @@ def _validate_vlm_bboxes(result, image_path: str, page_idx: int) -> Optional[Any
             return None
 
         # D-4: bbox y_min — 헤더 침범 차단 (4% 이하만)
-        if y < header_zone:
+        if y < header_zone and not getattr(p, "ocr_grounded", False):
             logger.info(
                 "VLM_GATE_REJECT_HEADER | page=%s | num=%s | y=%d zone=%.0f",
                 page_idx, p.number, y, header_zone,
@@ -2165,6 +2168,7 @@ def _pages_via_vlm(
                         "meta_extra": {
                             "engine": "vlm",
                             "vlm_reason": "auto_split",
+                            "photo_ocr_grounded": bool(getattr(prob, "ocr_grounded", False)),
                         },
                     }
                     shared = list(getattr(prob, "shared_with", []) or [])
@@ -2896,7 +2900,8 @@ def _upload_cropped_images(
                 # 사용자 directive: '작게 잘라 손상 = 실패. 조금 크게 잘라 여백/출처 = 허용'.
                 # 추가 directive: '2분할 / 4분할 자료에서 다른 문항 침범 X'.
                 # ENV flag default off → T1 점진 → T2.
-                if os.environ.get("MATCHUP_OVER_CROP_PADDING", "0") == "1":
+                if (os.environ.get("MATCHUP_OVER_CROP_PADDING", "0") == "1"
+                        and not (q.get("meta_extra") or {}).get("photo_ocr_grounded")):
                     # 자가 검수 (2026-05-10 doc 615 num=1 보기 ㄴ 잘림) 결과 padding
                     # 부족 발견. pad_y_bottom h*7%→15% min 12→30px (~1줄) 강화.
                     # auto-merge 가 fragment 합치기 + padding 이 마지막 줄 안전망.

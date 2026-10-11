@@ -68,6 +68,8 @@ class ProblemBbox:
     # 묶인 다른 문항 번호 list. 묶음 문항은 동일 bbox 가지며 D-1 IoU 게이트는
     # shared_with set이 일치하는 문항 쌍은 overlap reject 면제.
     shared_with: List[int] = field(default_factory=list)
+    # True only after every OCR reference and whole-page coverage is validated.
+    ocr_grounded: bool = False
 
 
 @dataclass
@@ -292,14 +294,14 @@ def _gemini_request(
     document_id: str | int | None = None,
     tenant_id: str | int | None = None,
     enforce_per_doc_cap: bool = True,
+    thinking_budget: int | None = None,
 ) -> Dict[str, Any]:
     """Gemini generateContent REST 호출. JSON 응답 강제.
 
     실패 정책 (silent mock fallback 금지 — 호출자에서 RuntimeError catch):
     - timeout / 5xx → RuntimeError
     - 429 (quota) → backoff 후 1회 retry, 재실패 시 RuntimeError
-    - 응답 truncated → MAX_TOKENS finishReason 명시
-    - JSON 파싱 실패 → 응답 마지막 미완 } 보정 시도, 실패 시 RuntimeError
+    - STOP 이외의 완료 사유 또는 불완전 JSON → RuntimeError (부분 문항 복구 금지)
 
     Cost cap (P0-2, 2026-05-04):
     - doc별: _check_doc_quota (ASG 재기동 시 reset)
@@ -344,6 +346,8 @@ def _gemini_request(
             "maxOutputTokens": _GEMINI_MAX_OUTPUT_TOKENS,
         },
     }
+    if thinking_budget is not None:
+        payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": thinking_budget}
     url = f"{_GEMINI_API_BASE}/models/{model}:generateContent"
 
     # 호출 + 429/503 단발 retry. 503 = Gemini 서버 deadline(~30s) 초과 (큰 vision payload).
@@ -381,6 +385,8 @@ def _gemini_request(
 
     cand0 = candidates[0]
     finish_reason = cand0.get("finishReason") or ""
+    if finish_reason != "STOP":
+        raise RuntimeError(f"Gemini 응답이 완료되지 않았습니다 (finish={safe_detail(finish_reason)})")
     parts_out = (cand0.get("content") or {}).get("parts") or []
     text = "".join(p.get("text", "") for p in parts_out).strip()
     if not text:
@@ -400,29 +406,6 @@ def _gemini_request(
             return _json.loads(m.group(0))
         except _json.JSONDecodeError:
             pass
-
-    # 2차: MAX_TOKENS로 잘린 경우 — 마지막 완전한 problems[] 항목까지만 살리고 닫음.
-    # truncated 응답 패턴: ...{"number":N, "bbox":[..], "confidence": (잘림)
-    if finish_reason == "MAX_TOKENS" or len(text) >= _GEMINI_MAX_OUTPUT_TOKENS // 4:
-        # problems 배열 닫기 시도
-        last_complete = text.rfind('},')
-        if last_complete > 0:
-            head = text[:last_complete + 1]
-            # array+object 닫기. 모델이 "problems": [ 까지만 응답한 경우 등 다양한 케이스 보정.
-            patched = head + ']}'
-            try:
-                return _json.loads(patched)
-            except _json.JSONDecodeError:
-                pass
-            # array가 problems 안에 있을 경우 추가 닫기
-            patched2 = head + ']'
-            outer = _re.search(r'\{[\s\S]*?"problems"\s*:\s*\[', text)
-            if outer:
-                try:
-                    rebuilt = outer.group(0) + text[outer.end():last_complete + 1] + ']}'
-                    return _json.loads(rebuilt)
-                except _json.JSONDecodeError:
-                    pass
 
     raise RuntimeError(
         f"Gemini 응답 JSON 파싱 실패 (finish={safe_detail(finish_reason)}, "
@@ -654,16 +637,40 @@ class GeminiVLMVisionAdapter:
             raise RuntimeError("VLM vision 원본 이미지 크기를 읽을 수 없습니다")
         b64 = base64.b64encode(img_bytes).decode("ascii")
 
+        grounded_blocks = None
         try:
+            prompt = _PROBLEM_BBOX_PROMPT
+            if meta.get("paper_type") == "student_answer_photo":
+                from academy.adapters.ai.ocr.google import google_ocr_blocks
+                from academy.adapters.ai.detection.photo_grounding import (
+                    grounded_photo_regions, photo_grounding_prompt, photo_ocr_blocks,
+                )
+                grounded_blocks = photo_ocr_blocks(google_ocr_blocks(image_path), orig_w, orig_h)
+                prompt = photo_grounding_prompt(grounded_blocks, orig_w, orig_h)
             data = _gemini_request(
                 model=self.model,
                 parts=[
-                    {"text": _PROBLEM_BBOX_PROMPT},
+                    {"text": prompt},
                     {"inline_data": {"mime_type": mime, "data": b64}},
                 ],
                 document_id=document_id,
                 tenant_id=tenant_id,
+                **({"thinking_budget": 2048} if grounded_blocks is not None else {}),
             )
+            if grounded_blocks is not None:
+                regions = grounded_photo_regions(data, grounded_blocks, orig_w, orig_h)
+                confidence = float(data.get("confidence", 0.7))
+                return ProblemBboxResult(
+                    page_role=PageRole.PROBLEM, should_skip=False,
+                    problems=[ProblemBbox(
+                        number=r["number"], bbox=r["bbox"], confidence=confidence,
+                        shared_with=r["shared_with"], ocr_grounded=True,
+                    ) for r in regions],
+                    confidence=confidence, paper_type="student_answer_photo",
+                    debug={"adapter": "gemini", "model": self.model,
+                           "raw_count": len(regions), "ocr_blocks": len(grounded_blocks),
+                           "coordinate_system": "ocr_source_pixels", "ocr_grounded": True},
+                )
         except Exception as e:
             logger.warning("Gemini vision detect 실패: %s", e)
             # 명시적 fallback — debug에 실패 사유 표시 (검수 UI에서 사용자가 판단 가능).
