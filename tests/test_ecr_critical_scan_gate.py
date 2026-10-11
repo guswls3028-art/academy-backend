@@ -138,16 +138,16 @@ def test_current_sasl_review_has_its_own_expiry_without_renewing_gcc(tmp_path) -
     assert not [entry for entry in entries if entry["packageName"] == "gcc-14"]
     sasl = [entry for entry in entries if entry["packageName"] == "cyrus-sasl2"]
     assert len(sasl) == 1
-    assert sasl[0]["expiresOn"] == "2026-10-10"
+    assert sasl[0]["expiresOn"] == "2026-10-12"
     isolated = tmp_path / "sasl-review.json"
     isolated.write_text(json.dumps(_high_policy_document(*sasl)), encoding="utf-8")
-    baselines, known = gate.load_high_baselines(isolated, date(2026, 10, 10))
+    baselines, known = gate.load_high_baselines(isolated, date(2026, 10, 12))
     for repository in gate.REPOSITORIES:
         assert gate.evaluate_high_budget(repository, _scan(
             _finding("CVE-2026-107161", "cyrus-sasl2", "2.1.28+dfsg1-9", "HIGH")
         ), baselines, known) == 1
     with pytest.raises(gate.GateError, match="High risk acceptance expired"):
-        gate.load_high_baselines(isolated, date(2026, 10, 11))
+        gate.load_high_baselines(isolated, date(2026, 10, 13))
 
 
 @pytest.mark.parametrize(

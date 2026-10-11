@@ -5,6 +5,42 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-10-11 Cyrus 사용 경로 재검토
+
+`domain-native-review-20261011-01a1269a` release owner는 사용자의 잔여 품질 검증·
+수정·운영 반영 위임에 따라 만료된 Cyrus 수용을 새로 검토했다. 이전 만료를
+자동 연장하거나 실패 후보를 다시 승인한 것이 아니다.
+
+- [Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-107161)는
+  trixie `2.1.28+dfsg1-9`를 여전히 unfixed로 기록한다.
+  [upstream PR892](https://github.com/cyrusimap/cyrus-sasl/pull/892)는 10월 8일
+  작성자 저장소 삭제로 닫혔으며 병합되지 않았다.
+- 성공 manifest `357b459c2198985d223d4905a6342b12534e69dc`의 여섯 exact digest를
+  10월 11일 조회했다. COMPLETE scan(10월 10일 22:25–22:27 UTC)은 모두
+  `CVE-2026-107161 / cyrus-sasl2 / 2.1.28+dfsg1-9` High 1건, Critical 0건이다.
+  이는 현재 상태의 비교 근거이며 새 후보의 scan을 대체하지 않는다.
+- read-only SSM `372dc96c-9a88-4ea1-9502-7fa9889203ad`는 격리 개발 인스턴스
+  `i-0671d8b4355a2cff4`의 manifest와 일치하는 API·AI·Tools 컨테이너에서
+  실제 SASL oracle을 다시 실행했다. 세 컨테이너 모두 core/DB 패키지 두 개,
+  `EXTERNAL`만 존재, DIGEST-MD5 시작은 `SASL_NOMECH(-4)`였다.
+  oracle SHA-256은 `2676232c220c934c99dff12cd54fe9fe2bbdc8deedd8362a3aec3b5edce9c452`다.
+  기존 arm64 및 최종 APT 경계 검사는 변경하지 않는다.
+
+설치된 system SASL의 해당 mechanism 부재와 기존 libpq/curl/LDAP ABI 보존을
+조건으로, 이 exact identity만 **2026-10-12 UTC 종료**까지 여섯 repository에서
+수용한다. 10월 13일 UTC부터 다시 실패하며 자동 갱신은 없다. 기존에 제거한
+GCC 예외, 다른 package/version, 새로운 High 및 Critical은 계속 차단한다.
+현재 운영에도 존재하는 동일 finding으로 검증된 제품 교정을 멈추는 비용과,
+해당 plugin이 없는 실행 경로의 잔여 위험을 비교한 한시 결정이다.
+vendor 수정 완료나 모든 라이브러리의 안전성을 주장하지 않으며, wheel에 포함된
+별도 구현은 이 oracle 범위 밖이다.
+
+이 PR 검증과 새 immutable 후보의 여섯 신선한 COMPLETE scan, 최종 package
+oracle, development·preprod·임시 인스턴스 종료·정상 rolling·실사용 readback을
+모두 통과하기 전에는 새 제품 수정의 운영 완료로 집계하지 않는다. 소유 증거는
+`_artifacts/sessions/domain-unverified-closure-20261011-01a1269a/native-current-scans.json`과
+`native-runtime-result.json`이며 날짜별 기록은 아래에 보존한다.
+
 ## 2026-10-10 Kerberos 후보 차단과 수정 후보
 
 학생 일괄 삭제·복원 입력 검증의 [run37946734823](https://github.com/guswls3028-art/academy-backend/actions/runs/37946734823)는
