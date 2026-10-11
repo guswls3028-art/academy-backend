@@ -405,10 +405,11 @@ run37961409345가 통과했다. main `81ebe997d`로 정상 병합하고 run37966
 
 D01의 복수 시트/헤더, D13의 HWP/HWPX 원본, D17의 SEO·메모 동시 편집,
 D20의 학원 목록·브랜딩 동시 저장은 아래 2026-10-11 추가 점검의 실제 증거로 판정한다.
-여전히 D01의 다른 필드별 미리보기·계정 그래프·공유 파일 입력 키보드/비활성 동선,
-D13의 그 밖의 형식·소유권·경합,
-D17의 다양한 원본·모바일 읽기 조합, D20의 일반 Program JSON 필드 전체에 대한
-동시 편집 정책은 미검증 하위 동선으로 남긴다. D19 완료·실패의
+D01 학년·성별 미리보기/계정 저장·공유 파일 입력과 D13 학생/학부모 자료함 삭제는
+아래 학생 필드·자료함 삭제 후속 기록의 검사·승격 상태로 판정한다. 기록된 사례 밖의
+D01 필드·계정·학원별 조합, D13 형식·소유권·경합,
+D17 원본·기기 조합 및 D20 일반 Program JSON 필드 전체의 동시 편집 정책은
+별도 미검증 또는 정책 검토 범위로 남긴다. D19 완료·실패의
 오래된 전체 이력은 현재 24시간 접수 범위 정책 밖이므로 명시적인 정책 검토 대상으로
 구별한다. 위 순서표의 그 밖의 미검증 하위 동선도 계속 추적한다.
 
@@ -586,3 +587,69 @@ PASS/GO였다. API 실제 digest와 성공 manifest 일치, 인프라 drift·경
 그대로 유지한다. 소유 증거는 `_artifacts/sessions/domain-remaining-20261011-01a1269a/`의
 `frontend-edge-development-evidence`, `production-resource-readback-final.json`,
 `infrastructure-verification-final`에 보존한다.
+
+### 2026-10-11 학생 필드·파일 입력과 학생/학부모 자료함 삭제 후속
+
+소유 `domain-field-validation-20261011-01a1269a`. 시작 main은 backend
+`f1ed65e701cc2fd3e6d142c2a603a9093efdad21`, frontend
+`1621634d9eb8fc70cc16bea5c74c1c00ecbdaa21`이다. 현재 확인한 범위는 다음과 같다.
+
+| 범위 | 실제 결함과 수정 | 검증 경계 |
+|---|---|---|
+| D01 학년·성별 Excel | 내보낸 `2학년`·전각 `１ 학년`·`남자/여자`를 화면과 서버가 다르게 해석하던 경로를 일치시켰다. 초등 1–6/중고 1–3과 성별 별칭을 검증하고 잘못된 값은 원본 행 오류로 표시한다. 5,000자리 학년도 파일 전체 예외 대신 해당 행 오류로 처리한다 | 파서 red 확인 후 최종 서버 31건, 화면 10건 통과. 학교 이름에 따른 최종 유형, 오류 행 정정·같은 이름 재업로드, DB 저장 학년/성별·형제 계정/부모 연결·비밀번호 보존 경계 확인. 기존 학생의 강의/차시 매칭은 쓰지 않는 프로필 필드로 차단하지 않는다 |
+| D01 공유 파일 입력 | 비활성 입력을 통한 파일 교체와 Enter 키의 모달 기본 동작 충돌을 수정했다. Space/Enter 선택, parsing 중 입력 차단과 진행 안내, 실패 후 정정 동선을 유지한다 | 실제 키보드 실패를 재현한 뒤 최종 관련 3건, 빌드 산출물의 학생 등록/강의·차시 연결 19건 통과. 390px/1366px 오류 행·성공 미리보기와 넘침 확인 |
+| D13 학생/학부모 삭제 | DB에서는 삭제됐지만 R2 정리 지연 502가 오면 일반 실패와 오래된 목록을 남기던 경로를 수정했다. 정확한 부분 완료 응답에는 확인창을 닫고 정리 대기를 안내하며, 모든 결과 뒤 현재 자녀의 목록을 다시 읽는다 | 수정 전 실제 브라우저 실패, 수정 후 학생/학부모×390px/1366px 정상/부분 완료/증빙 보호 거절과 A→B→A 범위 등 14건 통과. DELETE 1회, reload 후 결과·형제 원본 보존. 보호 거절 사유와 취소 복귀를 표시한다 |
+
+backend [PR621](https://github.com/guswls3028-art/academy-backend/pull/621)의
+최종 검사 head `774020bd5dee3f5777bef85c3a4e323d16b59e31`은
+[CI38089673701](https://github.com/guswls3028-art/academy-backend/actions/runs/38089673701)의
+SQLite 6,446건/228 skip/1,469 subtests, PostgreSQL 6,697건/5 skip/1,483 subtests와
+정적·마이그레이션·세션 수명 검사를 통과했다. skip은 원래 실행 환경별 분리이며
+실사용 27건의 생략 허용으로 해석하지 않는다. 최종 병합 tree와 검사 tree도 일치한다.
+변경 없는 D13의 학생 삭제/업로드 잠금 순서·기존 namespace 소유권·학부모 선택 자녀·
+tenant 격리·점수 증빙 보존은 이 PostgreSQL 실행의 해당 회귀 증거를 재사용한다.
+기존 테스트 존재만으로 모든 소유권 경합을 완료 처리하지 않는다.
+
+서버 main `357b459c2198985d223d4905a6342b12534e69dc`의 공식
+[run38090950036](https://github.com/guswls3028-art/academy-backend/actions/runs/38090950036)은
+전체 성공했다. 런타임 이미지 5개를 빌드하고 base를 재사용했으며 총 6개 이미지
+보안 검사를 통과했다. 기존 Cyrus 정확한 예외/기한을 변경하지 않았다. 영구 개발환경
+Excel/PPT/R2 실사용, preprod 운영 DB 연결 거부·120건 오류 0·CDN 200/200/206 및
+임시 인스턴스 `i-0ca28590bcbe0226d`의 terminated를 확인한 뒤 공식 production
+환경의 이 실행만 두 단계 승인했다. 두 번째 승인 시 main의 차이는 이 실행 산출물과
+blob이 같은 CI 보고서뿐이었다. 마이그레이션·워커/API 교체·실제 digest 대조·성공
+manifest·공유 잠금 해제까지 통과했다. 추가 운영 canary는 30 PASS/0 WARN/0 FAIL,
+07:55 KST 인프라 검사 `c6664411`은 PASS/GO이며 API digest는
+`sha256:546964a75bf9b1104f865c858aac209b3e99247b1ce50c103d9c6eae43350f6b`와 일치했다.
+
+화면 [PR732](https://github.com/guswls3028-art/academy-frontend/pull/732)의 최종 후보는
+`677d40309a74d234eeca7b130d21072aedcb3571`이다. 순수 Excel 계약은 폐쇄 proxy의
+독립 shard 단계로 검사하고 기존 필수 API mock 단계/승격 검사를 유지했다.
+최종 품질 [CI38092420809](https://github.com/guswls3028-art/academy-frontend/actions/runs/38092420809)는
+성공했다. 전체 브라우저 [CI38092420758](https://github.com/guswls3028-art/academy-frontend/actions/runs/38092420758)도
+성공했다. Chromium route mock 1,219건(458/355/406), 순수 Excel 10건,
+WebKit 87건(Chromium 전용 Web Locks 1건은 해당 브라우저에서 제외), 번들 30건,
+운영 읽기 6건을 통과했다. main `d16e23fd14adfaeb46303d5a107007c81fe23f8d`로
+병합했고 검사한 tree와 일치한다. 공식
+[run38094707943](https://github.com/guswls3028-art/academy-frontend/actions/runs/38094707943)은
+전체 성공했다. 동일 산출물 SHA-256
+`5915d2d3502cf2ba5f6ff3da429a0ae728a6d4b6ce74140f3aa34fc4078df405`에서 실사용
+27건을 통과했고 생략·불안정 결과·읽기 재시도·변경 재실행·브라우저 결함·억제는 0이었다.
+학생 등록 후 실제 DB/학생 로그인에서 학년·성별을 대조했고, 학생/학부모 각각 파일을
+삭제한 뒤 reload·재로그인과 다른 원본 보존을 확인했다. 두 QA tenant/user 잔여 0,
+R2·프로세스·리스너 정리 0을 사후 Inspect로 다시 확인했다. 정확한 main과 승인 가능
+상태를 공식 API에서 대조한 뒤 production 환경 `19052451810`의 이 실행만 승인했다.
+Cloudflare 배포·운영 읽기·tenant 가용성까지 성공했다. 09:11 KST 추가 읽기에서
+hakwonplus.com·godmin.kr·tchul.com이 모두 위 main과 일치했고 API healthz는 200이었다.
+godmin 기존 공개 글 10은 API와 초기 HTML 제목·canonical이 일치하고 indexable/no-store,
+godmin/tchul의 없는 글은 404/noindex/no-store였다. 실제 사용자 자료는 변경하지 않았다.
+마지막 `assert-production-release-bundle.ps1`도 위 서버/화면 SHA·공식 run·성공 manifest·
+승인 대기/잠금 상태와 세 도메인 버전 대조를 모두 통과했다.
+
+일반 Program JSON은 현재 `docs/domain/program-settings.md`의 필드 전체 교체 계약이다.
+기존 원장 학원 목록/브랜딩의 원본 대조와 구별하며, 전체 JSON 동시 편집 정책을 이번
+수정으로 바꾸지 않았다. D19의 24시간 밖 완료/실패 이력, Cyrus 및 Toss/card HOLD도
+유지한다. D17의 현재 격리 실사용은 PDF/HWP/HWPX/XLSX/ZIP 원본과 모바일/PC 읽기를
+검사하지만 모든 가능한 원본·기기 조합을 보장하지 않는다. 남은 하위 동선과 정책
+검토를 그대로 추적한다. 소유 로그·화면·readback은
+`_artifacts/sessions/domain-field-validation-20261011-01a1269a/`에 보존한다.
