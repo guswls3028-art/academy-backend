@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from academy.adapters.ai.detection import vlm_fallback
 from academy.adapters.ai.detection.photo_grounding import (
@@ -48,6 +48,22 @@ def test_occluded_number_gets_left_room_without_crossing_neighbor_text():
     raw[0].x0 = raw[1].x0 = raw[2].x0 = 150
     region = grounded_photo_regions(data, photo_ocr_blocks(raw, 1920, 2560), 1920, 2560)[0]
     assert region["bbox"][0] <= 110
+
+
+@pytest.mark.parametrize("printed_number", [True, False])
+def test_unrecognized_left_choice_glyph_survives_even_when_question_number_is_read(printed_number):
+    raw, data = example()
+    if not printed_number:
+        raw[0].text = "다음 자료를 보고 알맞은 답을 고르시오."
+    # OCR reads the answer text at x=100 but misses a circled choice to its left.
+    # A readable question number must not shrink the room for that missing glyph.
+    source = Image.new("L", (1920, 2560), 255)
+    ImageDraw.Draw(source).ellipse((70, 501, 90, 524), outline=0, width=2)
+    first = grounded_photo_regions(data, photo_ocr_blocks(raw, 1920, 2560), 1920, 2560)[0]
+    x, y, w, h = first["bbox"]
+    assert x <= 70 and y <= 501 and x + w >= 91 and y + h >= 525
+    crop = source.crop((x, y, x + w, y + h))
+    assert crop.crop((70 - x, 501 - y, 91 - x, 525 - y)).tobytes() == source.crop((70, 501, 91, 525)).tobytes()
 
 
 def test_shared_stem_preserves_both_numbers_and_identical_complete_crop():
@@ -150,8 +166,11 @@ def test_shared_group_cannot_swallow_an_intervening_question():
     raw.append(SimpleNamespace(text="14. 마지막 독립 문항의 설명입니다.", x0=110, y0=900, x1=790, y1=930))
     data["problems"][0]["shared_with"] = [14]
     data["problems"].append({"number":14,"anchor_id":5,"shared_with":[12]})
-    with pytest.raises(ValueError, match="Interleaved"):
+    with pytest.raises(ValueError, match="Interleaved") as error:
         grounded_photo_regions(data, photo_ocr_blocks(raw, 1920, 2560), 1920, 2560)
+    assert "anchors=[(12, 0, None), (13, 3, None), (14, 5, None)]" in str(error.value)
+    assert "group=[12, 14]" in str(error.value) and "interval=" in str(error.value)
+    assert all(block.text not in str(error.value) for block in raw)
 
 
 def test_split_footer_does_not_extend_last_question_to_page_bottom():
