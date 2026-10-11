@@ -138,16 +138,16 @@ def test_current_sasl_review_has_its_own_expiry_without_renewing_gcc(tmp_path) -
     assert not [entry for entry in entries if entry["packageName"] == "gcc-14"]
     sasl = [entry for entry in entries if entry["packageName"] == "cyrus-sasl2"]
     assert len(sasl) == 1
-    assert sasl[0]["expiresOn"] == "2026-10-10"
+    assert sasl[0]["expiresOn"] == "2026-10-12"
     isolated = tmp_path / "sasl-review.json"
     isolated.write_text(json.dumps(_high_policy_document(*sasl)), encoding="utf-8")
-    baselines, known = gate.load_high_baselines(isolated, date(2026, 10, 10))
+    baselines, known = gate.load_high_baselines(isolated, date(2026, 10, 12))
     for repository in gate.REPOSITORIES:
         assert gate.evaluate_high_budget(repository, _scan(
             _finding("CVE-2026-107161", "cyrus-sasl2", "2.1.28+dfsg1-9", "HIGH")
         ), baselines, known) == 1
     with pytest.raises(gate.GateError, match="High risk acceptance expired"):
-        gate.load_high_baselines(isolated, date(2026, 10, 11))
+        gate.load_high_baselines(isolated, date(2026, 10, 13))
 
 
 @pytest.mark.parametrize(
@@ -170,7 +170,10 @@ def test_vendor_fixed_findings_are_no_longer_accepted(cve, package, version, sev
         with pytest.raises(gate.GateError, match="unaccepted critical"):
             gate.evaluate_findings("academy-api", findings, acceptances)
     else:
-        baselines, known = gate.load_high_baselines(policy_dir / "ecr-high-risk-baseline.json")
+        # Identity rejection is independent of the separately tested expiry boundary.
+        baselines, known = gate.load_high_baselines(
+            policy_dir / "ecr-high-risk-baseline.json", date(2026, 10, 9)
+        )
         with pytest.raises(gate.GateError, match="High"):
             gate.evaluate_high_budget("academy-api", findings, baselines, known)
 
@@ -195,7 +198,7 @@ def test_historical_acceptance_is_exact_and_time_bounded() -> None:
 @pytest.mark.parametrize("version", ["2.8.3-1~deb13u1", "2.8.4+academy1-1"])
 def test_expat_backport_does_not_override_actual_high_scan(repository, version):
     policy = Path(__file__).parents[1] / "docs/ssot/ecr-high-risk-baseline.json"
-    baselines, known = gate.load_high_baselines(policy)
+    baselines, known = gate.load_high_baselines(policy, date(2026, 10, 9))
     with pytest.raises(gate.GateError, match="High"):
         gate.evaluate_high_budget(
             repository, _scan(_finding("CVE-2026-93990", "expat", version, "HIGH")),
