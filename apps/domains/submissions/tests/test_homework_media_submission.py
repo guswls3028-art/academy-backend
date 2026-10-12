@@ -213,6 +213,64 @@ class HomeworkSubmissionMediaTests(TestCase):
             homework_id=self.homework.id,
         )
 
+    def test_paginated_teacher_list_includes_old_submissions_and_full_review_fingerprint(self):
+        from apps.domains.submissions.services.homework_media import homework_media_set_fingerprint
+
+        submissions = Submission.objects.bulk_create([
+            Submission(
+                tenant=self.tenant,
+                user=self.student_user,
+                enrollment=self.enrollment,
+                target_type=Submission.TargetType.HOMEWORK,
+                target_id=self.homework.id,
+                source=Submission.Source.HOMEWORK_IMAGE,
+                status=Submission.Status.DONE,
+                file_key=f"tenants/{self.tenant.id}/ai/submissions/history-{index}.jpg",
+            )
+            for index in range(201)
+        ])
+        path = f"/api/v1/submissions/submissions/homework/{self.homework.id}/"
+        view = HomeworkSubmissionsListView.as_view()
+        expected_fingerprint = homework_media_set_fingerprint(
+            tenant=self.tenant, enrollment_id=self.enrollment.id, homework_id=self.homework.id,
+        )
+        ids = []
+        for page in range(1, 4):
+            response = view(self._request(
+                "get", path, user=self.teacher, data={"page": page, "page_size": 100},
+            ), homework_id=self.homework.id)
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertIsInstance(response.data, dict)
+            self.assertEqual(response.data["count"], 201)
+            self.assertEqual(bool(response.data["next"]), page < 3)
+            for item in response.data["results"]:
+                ids.append(item["id"])
+                self.assertEqual(item["media_set_fingerprint"], expected_fingerprint)
+                self.assertNotIn("file_key", item)
+        self.assertEqual(ids, [item.id for item in reversed(submissions)])
+        legacy = view(self._request("get", path, user=self.teacher), homework_id=self.homework.id)
+        self.assertIsInstance(legacy.data, list)
+        self.assertEqual(len(legacy.data), 200)
+        self.assertEqual(legacy.data[0]["media_set_fingerprint"], expected_fingerprint)
+
+    def test_paginated_teacher_list_rejects_invalid_pages_and_preserves_scope(self):
+        path = f"/api/v1/submissions/submissions/homework/{self.homework.id}/"
+        view = HomeworkSubmissionsListView.as_view()
+        for params in ({"page": "1.5"}, {"page": 0}, {"page_size": 0}, {"page_size": 201}):
+            with self.subTest(params=params):
+                response = view(self._request("get", path, user=self.teacher, data=params), homework_id=self.homework.id)
+                self.assertEqual(response.status_code, 400, response.data)
+        denied = view(self._request("get", path, data={"page": 1}), homework_id=self.homework.id)
+        self.assertEqual(denied.status_code, 403, denied.data)
+        other_tenant = Tenant.objects.create(code="homework-media-other-list", name="다른 학원")
+        other_teacher = User.objects.create_user(username="other-list-teacher", tenant=other_tenant)
+        TenantMembership.ensure_active(tenant=other_tenant, user=other_teacher, role="teacher")
+        empty = view(self._request(
+            "get", path, user=other_teacher, tenant=other_tenant, data={"page": 1},
+        ), homework_id=self.homework.id)
+        self.assertEqual(empty.status_code, 200, empty.data)
+        self.assertEqual(empty.data, {"count": 0, "next": None, "previous": None, "results": []})
+
     @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
     def test_parent_selected_child_upload_persists_as_child_and_reloads_in_projection(
         self,
