@@ -6,7 +6,9 @@ from typing import Any, Dict, Optional
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.pagination import PageNumberPagination
 
+from apps.api.common.query_params import parse_query_int
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.services.homework_media import (
@@ -72,9 +74,6 @@ class HomeworkSubmissionsListView(APIView):
             return Response([], status=200)
 
         # 테넌트 격리: homework가 해당 테넌트 소속인지 검증
-        if not homework_submission_target_exists(homework_id=int(homework_id), tenant=tenant):
-            return Response([], status=200)
-
         qs = (
             Submission.objects.filter(
                 tenant=tenant,
@@ -82,18 +81,34 @@ class HomeworkSubmissionsListView(APIView):
                 target_id=int(homework_id),
             )
             .prefetch_related("media_files")
-            .order_by("-id")[:200]
+            .order_by("-id")
         )
+        if not homework_submission_target_exists(homework_id=int(homework_id), tenant=tenant):
+            qs = qs.none()
+
+        paginator = None
+        if "page" in request.query_params or "page_size" in request.query_params:
+            parse_query_int(request.query_params, "page", default=1, min_value=1, max_value=1_000_000)
+            paginator = PageNumberPagination()
+            paginator.page_size = parse_query_int(
+                request.query_params, "page_size", default=200, min_value=1, max_value=200,
+            )
+            submissions_list = list(paginator.paginate_queryset(qs, request, view=self))
+        else:
+            # Older clients retain their array contract during rolling upgrades.
+            submissions_list = list(qs[:200])
 
         # ✅ 클리닉 하이라이트 일괄 계산
-        submissions_list = list(qs)
         enrollment_ids = set()
-        submissions_by_enrollment: dict[int, list[Submission]] = {}
         for s in submissions_list:
             eid = getattr(s, "enrollment_id", None)
             if eid:
                 enrollment_ids.add(int(eid))
-                submissions_by_enrollment.setdefault(int(eid), []).append(s)
+        # Review fingerprints describe all current evidence for a student,
+        # including historical parents outside this page.
+        submissions_by_enrollment: dict[int, list[Submission]] = {}
+        for s in qs.filter(enrollment_id__in=enrollment_ids).exclude(status=Submission.Status.SUPERSEDED):
+            submissions_by_enrollment.setdefault(int(s.enrollment_id), []).append(s)
         media_fingerprint_by_enrollment = {
             enrollment_id: homework_media_set_fingerprint_for_submissions(submissions)
             for enrollment_id, submissions in submissions_by_enrollment.items()
@@ -195,4 +210,6 @@ class HomeworkSubmissionsListView(APIView):
                 }
             )
 
+        if paginator is not None:
+            return paginator.get_paginated_response(items)
         return Response(items, status=200)
