@@ -2,11 +2,11 @@
   "schemaVersion": 3,
   "maximumHighFindings": {
     "academy-base": 1,
-    "academy-api": 1,
-    "academy-video-worker": 1,
-    "academy-messaging-worker": 1,
-    "academy-ai-worker-cpu": 1,
-    "academy-tools-worker": 1
+    "academy-api": 3,
+    "academy-video-worker": 3,
+    "academy-messaging-worker": 3,
+    "academy-ai-worker-cpu": 3,
+    "academy-tools-worker": 3
   },
   "acceptedHighFindings": [
     {
@@ -24,6 +24,36 @@
       "expiresOn": "2026-10-12",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-107161",
       "rationale": "Release-owner review on 2026-10-11 for the delegated Academy residual-quality fixes. Debian still marks cyrus-sasl2 2.1.28+dfsg1-9 unfixed; upstream PR892 was closed unmerged on 2026-10-08. Current successful manifest357b459 has six COMPLETE scans with this exact High alone and no Critical. Read-only SSM command372dc96c-9a88-4ea1-9502-7fa9889203ad independently re-ran verify-sasl.py (sha256 2676232c220c934c99dff12cd54fe9fe2bbdc8deedd8362a3aec3b5edce9c452) in exact development API/AI/Tools digests: only libsasl2-2 and libsasl2-modules-db, EXTERNAL only, DIGEST-MD5 client start SASL_NOMECH(-4). The unchanged final-package-boundary oracle still runs in every affected image build; Messaging inherits the checked base. Preserve required libpq/curl/LDAP/SASL ABI and package identity. Accept only this identity through 2026-10-12 UTC, with no automatic extension; other versions, new High, Critical, unexpected plugins or failed runtime oracle remain blocked. This is a scoped risk acceptance, not vendor remediation or a universal reachability claim; wheel-vendored implementations are outside the oracle. New candidate scans, isolated development/preprod, temporary-instance termination, compatible migration, healthy rollout and affected-flow verification remain mandatory. Review evidence and release conditions: docs/operations/container-image-security.md."
+    },
+    {
+      "cve": "CVE-2026-19499",
+      "packageName": "glibc",
+      "packageVersion": "2.41-12+deb13u4",
+      "repositories": [
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ],
+      "expiresOn": "2026-10-12",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-19499",
+      "rationale": "Explicitly approved by the task owner on 2026-10-12 after review of the exact two findings, five service repositories, residual risk and expiry. Exact package and CVE, High severity only, for the five observed service repositories through 2026-10-12 UTC. Debian trixie has no vendor fix and classifies this as a minor no-DSA issue; replacing the core C runtime with testing/unstable is a separate migration. Release38200263352 was stopped before development or production mutation, with its shared lock released. Read-only development SSM bf2aa85e-9ebf-4187-be15-3c04f23b9599 observed this libc package already installed in the previously verified c8 API/AI images. An ELF dynamic-reference census (908 API,1308 AI binaries) and application source search found no direct references to the exact affected names; it does not exclude symbol aliases, dlsym, statically linked code, other service images, or unexercised flows, and does not establish universal non-reachability. Residual memory corruption risk remains. This time-limited acceptance trades that scoped unchanged-package risk against blocking the verified report data-loss fix; it does not claim remediation or a false positive. The base repository allowance, Critical policy, existing Cyrus expiry, unknown identities, vendor versions, isolated development/preprod, temporary-instance termination, rolling health gates, photo/manual/report QA, and exact cleanup-zero remain unchanged. No automatic renewal."
+    },
+    {
+      "cve": "CVE-2026-5435",
+      "packageName": "glibc",
+      "packageVersion": "2.41-12+deb13u4",
+      "repositories": [
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ],
+      "expiresOn": "2026-10-12",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-5435",
+      "rationale": "Explicitly approved by the task owner on 2026-10-12 after review of the exact two findings, five service repositories, residual risk and expiry. Exact package and CVE, High severity only, for the five observed service repositories through 2026-10-12 UTC. Debian trixie has no vendor fix and classifies this as a minor no-DSA issue; replacing the core C runtime with testing/unstable is a separate migration. Release38200263352 was stopped before development or production mutation, with its shared lock released. Read-only development SSM bf2aa85e-9ebf-4187-be15-3c04f23b9599 observed this libc package already installed in the previously verified c8 API/AI images. An ELF dynamic-reference census (908 API,1308 AI binaries) and application source search found no direct references to the exact affected names; it does not exclude symbol aliases, dlsym, statically linked code, other service images, or unexercised flows, and does not establish universal non-reachability. Residual memory corruption risk remains. This time-limited acceptance trades that scoped unchanged-package risk against blocking the verified report data-loss fix; it does not claim remediation or a false positive. The base repository allowance, Critical policy, existing Cyrus expiry, unknown identities, vendor versions, isolated development/preprod, temporary-instance termination, rolling health gates, photo/manual/report QA, and exact cleanup-zero remain unchanged. No automatic renewal."
     }
   ]
 }
