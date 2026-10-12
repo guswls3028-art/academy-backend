@@ -5,6 +5,42 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-10-12 glibc 두 진단의 승인된 한시 수용
+
+사진 분할·보고서 재분석 보존 수정 PR629의
+[run38200263352](https://github.com/guswls3028-art/academy-backend/actions/runs/38200263352)은
+ECR High 검사에서 중단됐다. 새 서비스 이미지 5개가 공통으로
+`CVE-2026-19499`, `CVE-2026-5435` / `glibc` / `2.41-12+deb13u4`를 반환했고,
+기존 Cyrus High와 합쳐 3건이었다. Critical은 없었으며 개발·preprod·운영
+전환은 실행되지 않았다. 공유 잠금 해제 job114653422063은 성공했다.
+
+- [CVE-2026-19499](https://security-tracker.debian.org/tracker/CVE-2026-19499)는
+  `strfmon/strfmon_l`의 특정 우측 정렬 출력에서 버퍼 경계를 넘는 문제다.
+  [CVE-2026-5435](https://security-tracker.debian.org/tracker/CVE-2026-5435)는
+  폐기 예정 DNS 진단 함수의 TSIG 출력 경계 문제다. 확인 시점의 Debian trixie는
+  두 건 모두 수정 패키지가 없고 `no-dsa / Minor issue`로 분류한다.
+- 읽기 전용 SSM `bf2aa85e-9ebf-4187-be15-3c04f23b9599`는 이전에 검증한 c8
+  개발 API/AI 이미지에도 같은 libc 버전이 있음을 확인했다. API 908개·AI 1308개
+  ELF의 동적 심볼 참조와 앱 소스에서 해당 정확한 함수 이름의 직접 호출은
+  발견되지 않았다. alias, `dlsym`, 정적 링크, 다른 서비스 이미지와 미실행 경로는
+  이 검사로 배제하지 못하며, 비도달성·오탐·수정 완료를 주장하지 않는다.
+- 사용자는 위 대상·남은 메모리 손상 위험·만료 조건을 제시받은 뒤 10월 12일
+  **“무조건 승인”**으로 한시 수용을 명시 승인했다. 이는 해당 질문의 정확한 범위에
+  대한 승인으로 기록하며 다른 취약점이나 무기한 허용으로 확대하지 않는다.
+
+정책은 `docs/ssot/ecr-high-risk-baseline.json`에 두 exact identity를 API·Video·
+Messaging·AI·Tools의 **High에만** 추가한다. 만료는 **2026-10-12 UTC 종료**, 즉
+**10월 13일 09:00 KST**이며 자동 연장은 없다. base repository의 상한 1,
+빈 Critical acceptance, 기존 Cyrus 만료일은 그대로다. 다른 CVE·package·version,
+Critical 상승 또는 만료는 계속 실패한다. 이미 쓰는 기반 라이브러리를 testing/unstable로
+교체하는 별도 위험과 보고서 데이터 손실 교정 지연 비용을 비교한 제한적 수용이다.
+
+실패 run을 성공으로 바꾸지 않는다. 승인 정책의 CI 이후 새 공식 릴리스에서
+신선한 전체 이미지 scan, 격리 개발·preprod·임시 인스턴스 종료, 사진 업로드와
+수동/보고서 보존 재분석·cleanup zero를 확인한 뒤에만 운영 전환한다.
+사진 검증의 남은 2회는 기존 승인 총 10회 안에서 사용한다. 호환 migration,
+health 기반 rolling 및 정확한 운영 readback과 frontend 동일 artifact canary도 유지한다.
+
 ## 2026-10-11 Cyrus 사용 경로 재검토
 
 `domain-native-review-20261011-01a1269a` release owner는 사용자의 잔여 품질 검증·
