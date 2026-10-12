@@ -256,6 +256,37 @@ class TestPinHelperIntegration:
             meta__is_partial=True,
         ).exists()
 
+    def test_report_exam_protection_is_scoped_and_deduplicated(self):
+        from apps.domains.matchup.models import MatchupHitReport, MatchupHitReportEntry
+        from apps.domains.matchup.services import protected_matchup_problem_ids
+
+        tenant, doc, exam, automatic = self._setup_tenant_and_problems()
+        for _ in range(2):
+            report = MatchupHitReport.objects.create(tenant=tenant, document=doc)
+            MatchupHitReportEntry.objects.create(tenant=tenant, report=report, exam_problem=exam)
+        assert protected_matchup_problem_ids(doc.problems.all()) == [exam.id]
+        assert protected_matchup_problem_ids(doc.problems.filter(id=automatic.id)) == []
+        assert exam.meta == {}
+
+    def test_single_delete_preserves_report_exam_without_pin_metadata(self):
+        from apps.domains.matchup.models import MatchupHitReport, MatchupHitReportEntry, MatchupProblem
+        from apps.domains.matchup.views import ProblemDetailView
+
+        tenant, doc, exam, selected = self._setup_tenant_and_problems()
+        report = MatchupHitReport.objects.create(tenant=tenant, document=doc)
+        entry = MatchupHitReportEntry.objects.create(
+            tenant=tenant, report=report, exam_problem=exam,
+            selected_problem_ids=[selected.id], comment="Keep teacher work",
+        )
+        user = self._staff_user(tenant)
+        request, auth = self._request("delete", f"/api/v1/matchup/problems/{exam.id}/", tenant=tenant, user=user)
+        with auth:
+            response = ProblemDetailView.as_view()(request, problem_id=exam.id)
+        assert response.status_code == 409
+        assert MatchupProblem.objects.filter(id=exam.id).exists()
+        entry.refresh_from_db()
+        assert entry.selected_problem_ids == [selected.id] and entry.comment == "Keep teacher work"
+
     def test_manual_crop_preserves_owner_pinned_meta_on_recut(self, tmp_path):
         """같은 번호 재크롭은 이미지/분리 메타만 갱신하고 학원장 pin은 보존한다."""
         from PIL import Image

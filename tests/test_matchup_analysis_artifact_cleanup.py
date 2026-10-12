@@ -137,6 +137,61 @@ class AnalysisArtifactCleanupTests(TestCase):
         self.assertTrue(self.doc.problems.filter(number=1, image_key=accepted).exists())
         self.assertEqual(self._intent_keys(), {rejected, unused_page})
 
+    def test_reanalysis_preserves_report_exam_rows_and_authored_entries(self):
+        from academy.application.use_cases.ai.pipelines.matchup_pipeline import _insert_skeleton_problems
+        from apps.domains.matchup.models import MatchupHitReport, MatchupHitReportEntry
+
+        prefix = f"tenants/{self.tenant.id}/matchup/legacy/"
+        exam = self._problem(1, prefix + "exam.png", {})
+        selected = self._problem(2, prefix + "selected.png", {})
+        commented = self._problem(3, prefix + "commented.png", {})
+        excluded = self._problem(4, prefix + "excluded.png", {})
+        automatic = self._problem(5, prefix + "automatic.png", {})
+        manual = self._problem(6, prefix + "manual.png", {"manual": True})
+        report = MatchupHitReport.objects.create(tenant=self.tenant, document=self.doc)
+        for problem, values in (
+            (exam, {"selected_problem_ids": [selected.id], "order": 3}),
+            (commented, {"comment": "Teacher-authored explanation", "order": 2}),
+            (excluded, {"excluded": True, "order": 1}),
+        ):
+            MatchupHitReportEntry.objects.create(
+                tenant=self.tenant, report=report, exam_problem=problem, **values,
+            )
+        fields = ("id", "exam_problem_id", "selected_problem_ids", "comment", "order", "excluded", "selection_history")
+        before = list(report.entries.order_by("id").values(*fields))
+        preserved = {p.id: p.image_key for p in (exam, selected, commented, excluded, manual)}
+        job_id = "report-preservation-reanalysis"
+        self.doc.status = "done"
+        self.doc.save(update_fields=["status"])
+        with patch("apps.infrastructure.storage.r2.generate_presigned_get_url_storage", return_value="https://example.test/source"), patch(
+            "apps.domains.matchup.services.dispatch_ai_job", return_value={"ok": True, "job_id": job_id},
+        ):
+            self.assertEqual(retry_document(self.doc), job_id)
+        self.assertEqual(list(report.entries.order_by("id").values(*fields)), before)
+        self.assertFalse(MatchupProblem.objects.filter(id=automatic.id).exists())
+        self.assertEqual(dict(self.doc.problems.values_list("id", "image_key")), preserved)
+
+        generated = [{"number": n, "page_index": 0, "bbox": {"x": n * 10, "y": 0, "w": 8, "h": 8}} for n in range(1, 7)]
+        _insert_skeleton_problems(generated, document_id=str(self.doc.id), tenant_id=str(self.tenant.id), job_id=job_id)
+        self.assertEqual(list(report.entries.order_by("id").values(*fields)), before)
+        AIJobModel.objects.create(job_id=job_id, job_type="matchup_analysis", tenant_id=str(self.tenant.id),
+                                  source_domain="matchup", source_id=str(self.doc.id))
+        new_prefix = analysis_artifact_prefix(tenant_id=self.tenant.id, job_id=job_id)
+        results = [{"number": n, "image_key": new_prefix + f"problems/run/{n}.png",
+                    "meta": {"page_index": 0, "bbox": {"x": 0, "y": 0, "w": .4, "h": .4}}} for n in range(1, 7)]
+        with patch("academy.adapters.storage.r2_objects.iter_r2_objects", return_value=[{"Key": p["image_key"]} for p in results]), patch(
+            "academy.application.use_cases.ai.segmentation.fingerprint_collector.collect_and_save",
+        ):
+            _handle_matchup_ai_result(job_id=job_id, status="DONE", source_id=str(self.doc.id), error=None,
+                                     result_payload={"segmentation_method": "image", "problems": results})
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.status, "done")
+        self.assertEqual(self.doc.problem_count, 6)
+        self.assertEqual(list(report.entries.order_by("id").values(*fields)), before)
+        self.assertEqual(dict(self.doc.problems.filter(id__in=preserved).values_list("id", "image_key")), preserved)
+        self.assertTrue(self.doc.problems.filter(number=5, image_key=results[4]["image_key"]).exists())
+        self.assertFalse(set(preserved.values()) & self._intent_keys())
+
     def test_failed_callback_queues_partial_uploads_from_exact_job(self):
         job_id = "job-partial-failure"
         self.doc.ai_job_id = job_id

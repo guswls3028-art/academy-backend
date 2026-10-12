@@ -47,14 +47,16 @@ PUBLIC_CLEANUP_REVIEW_STATUSES = frozenset({PUBLIC_CLEANUP_STATUS_REVIEW_REQUIRE
 
 
 def is_problem_delete_protected(problem: MatchupProblem) -> bool:
-    """단건 삭제 보호: 보고서 선별 문제만 차단하고, 사용자가 직접 만든 수동 문제는 삭제 허용."""
+    """보고서 기준/선별 문항은 보호하고, 참조 없는 수동 문항의 명시 삭제는 허용."""
     meta = problem.meta or {}
-    return meta.get("manual_owner_pinned") is True
+    return meta.get("manual_owner_pinned") is True or problem.hit_report_entries.filter(
+        tenant_id=problem.tenant_id,
+    ).exists()
 
 
 def protected_matchup_problem_ids(problem_queryset) -> list[int]:
     """QuerySet 안에서 삭제 보호 대상 problem id만 반환한다."""
-    from django.db.models import Q
+    from django.db.models import F, Q
 
     return list(
         problem_queryset.filter(
@@ -62,7 +64,10 @@ def protected_matchup_problem_ids(problem_queryset) -> list[int]:
             | Q(meta__manual_owner_pinned=True)
             | Q(meta__confirmation_status="confirmed")
             | Q(meta__public_cleanup__status="approved")
-        ).values_list("id", flat=True)
+            # Legacy entries may lack pin metadata. Deleting their exam row
+            # cascades into the teacher's selections, comments and history.
+            | Q(hit_report_entries__tenant_id=F("tenant_id"))
+        ).values_list("id", flat=True).distinct()
     )
 
 
