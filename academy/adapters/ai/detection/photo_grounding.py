@@ -69,6 +69,38 @@ def _footer(block: dict, height: int) -> bool:
         or bool(re.fullmatch(r"끝|다음[ㄱ-ㅎ]", compact)))
 
 
+def _without_clipped_left_background(regions: list[dict], blocks: list[dict],
+                                     width: int, height: int) -> list[dict]:
+    """Exclude a narrow exposed sheet strip only when OCR supports the foreground.
+
+    A short/number-only anchor by itself is valid. Exclusion additionally needs
+    several substantial starts across the foreground, a separate narrow strip,
+    and no substantial observed content or shared context in that strip.
+    """
+    starts = [blocks[r["anchor_id"]] for r in regions]
+    substantial = [b for b in starts if b["bbox"][2] - b["bbox"][0] >= width * .14
+                   and len(re.findall(r"[가-힣]", b["text"])) >= 8]
+    if len(substantial) < 2:
+        return regions
+    if max(b["bbox"][1] for b in substantial) - min(b["bbox"][1] for b in substantial) < height * .2:
+        return regions
+    edge = min(b["bbox"][0] for b in substantial) - width * .035
+    if not 0 < edge <= width * .16:
+        return regions
+    # A genuine narrow column, split first line or occluded question number
+    # still has body observations; do not infer background from numbering.
+    for block in blocks:
+        x0, _, x1, _ = block["bbox"]
+        if x0 >= edge or _non_body(block["text"]) or _footer(block, height):
+            continue
+        if x1 - x0 >= width * .14 or len(re.findall(r"[가-힣]", block["text"])) >= 8:
+            return regions
+    clipped = [r for r in regions if blocks[r["anchor_id"]]["bbox"][2] < edge]
+    if not clipped or any(r["shared_with"] or r["context_id"] is not None for r in clipped):
+        return regions
+    return [r for r in regions if r not in clipped]
+
+
 def _assign_photo_content(regions: list[dict], blocks: list[dict], width: int, height: int) -> None:
     """Partition observations at semantic starts, independently of model block lists."""
     columns = []
@@ -217,6 +249,7 @@ def grounded_photo_regions(data: dict, blocks: list[dict], width: int, height: i
             if (other is None or r["number"] not in other["shared_with"]
                     or {r["number"], *r["shared_with"]} != {number, *other["shared_with"]}):
                 raise ValueError("Asymmetric shared photo material")
+    regions = _without_clipped_left_background(regions, blocks, width, height)
     _assign_photo_content(regions, blocks, width, height)
     for r in regions:
         for other in regions:

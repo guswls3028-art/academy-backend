@@ -173,6 +173,58 @@ def test_shared_group_cannot_swallow_an_intervening_question():
     assert all(block.text not in str(error.value) for block in raw)
 
 
+def exposed_background():
+    raw, data = example()
+    for block in raw:
+        block.x0 += 180
+        block.x1 += 180
+    raw[3].y0, raw[3].y1 = 900, 940
+    raw[4].y0, raw[4].y1 = 1100, 1150
+    raw.extend([
+        SimpleNamespace(text="31", x0=90, y0=650, x1=130, y1=680),
+        SimpleNamespace(text="32. 그림", x0=35, y0=915, x1=150, y1=950),
+        SimpleNamespace(text="는 반응", x0=40, y0=980, x1=150, y1=1010),
+    ])
+    data["problems"].extend([{"number": 31, "anchor_id": 5}, {"number": 32, "anchor_id": 6}])
+    return raw, data
+
+
+@pytest.mark.parametrize("scale", [.5, 1, 2])
+def test_clipped_background_starts_do_not_reject_complete_foreground(scale):
+    raw, data = exposed_background()
+    for block in raw:
+        for key in ("x0", "y0", "x1", "y1"):
+            setattr(block, key, getattr(block, key) * scale)
+    w, h = int(1920 * scale), int(2560 * scale)
+    blocks = photo_ocr_blocks(raw, w, h)
+    foreground = copy.deepcopy(data)
+    foreground["problems"] = foreground["problems"][:2]
+    expected = grounded_photo_regions(foreground, blocks, w, h)
+    actual = grounded_photo_regions(data, blocks, w, h)
+    assert actual == expected
+    assert [r["number"] for r in actual] == [12, 13]
+    assert not any(r["ids"] & {5, 6, 7} for r in actual)
+
+
+@pytest.mark.parametrize("body", ["왼쪽 문항에도 온전한 본문이 있으므로 보존합니다.", "x + y = 123456789"])
+def test_short_left_anchors_with_real_body_are_not_silently_discarded(body):
+    raw, data = exposed_background()
+    raw[7].text = body
+    raw[7].x1 = 390
+    # The contradictory layout must still fail, never pass by dropping a
+    # potentially valid column with complete prose or a wide math expression.
+    with pytest.raises(ValueError):
+        grounded_photo_regions(data, photo_ocr_blocks(raw, 1920, 2560), 1920, 2560)
+
+
+def test_background_exclusion_does_not_discard_shared_material():
+    raw, data = exposed_background()
+    data["problems"][2]["shared_with"] = [12]
+    data["problems"][0]["shared_with"] = [31]
+    with pytest.raises(ValueError):
+        grounded_photo_regions(data, photo_ocr_blocks(raw, 1920, 2560), 1920, 2560)
+
+
 def test_split_footer_does_not_extend_last_question_to_page_bottom():
     raw, data = example()
     raw.extend([
