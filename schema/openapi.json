@@ -5866,6 +5866,128 @@
         ],
         "type": "string"
       },
+      "ManagedShowcase": {
+        "properties": {
+          "hero_video_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "hero_video_id",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "ManagedVideo": {
+        "properties": {
+          "canonical_url": {
+            "format": "uri",
+            "type": "string"
+          },
+          "channel_title": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "draft_content": {
+            "$ref": "#/components/schemas/VideoContent"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "metadata_ready": {
+            "type": "boolean"
+          },
+          "published_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "published_content": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VideoContent"
+              }
+            ],
+            "nullable": true
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "source_title": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PublicVideoStatus"
+          },
+          "thumbnail_url": {
+            "format": "uri",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "youtube_video_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "canonical_url",
+          "channel_title",
+          "created_at",
+          "draft_content",
+          "id",
+          "metadata_ready",
+          "published_at",
+          "published_content",
+          "revision",
+          "source_title",
+          "status",
+          "thumbnail_url",
+          "updated_at",
+          "youtube_video_id"
+        ],
+        "type": "object"
+      },
+      "ManagedVideoPage": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "next": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "previous": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ManagedVideo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "next",
+          "previous",
+          "results"
+        ],
+        "type": "object"
+      },
       "ManualAnswerQuestion": {
         "properties": {
           "answer": {
@@ -10497,6 +10619,32 @@
         },
         "type": "object"
       },
+      "PatchedVideoEditRequest": {
+        "properties": {
+          "draft_content": {
+            "$ref": "#/components/schemas/VideoContentRequest"
+          },
+          "expected_revision": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedVideoShowcaseRequest": {
+        "properties": {
+          "expected_revision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "hero_video_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "PayTypeEnum": {
         "description": "* `HOURLY` - 시급\n* `MONTHLY` - 월급",
         "enum": [
@@ -12370,6 +12518,126 @@
         ],
         "type": "object"
       },
+      "PublicVideo": {
+        "properties": {
+          "canonical_url": {
+            "format": "uri",
+            "type": "string"
+          },
+          "category": {
+            "$ref": "#/components/schemas/PublicVideoCategory"
+          },
+          "channel_title": {
+            "type": "string"
+          },
+          "format": {
+            "$ref": "#/components/schemas/PublicVideoFormat"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "source_title": {
+            "type": "string"
+          },
+          "summary": {
+            "default": "",
+            "maxLength": 220,
+            "type": "string"
+          },
+          "thumbnail_url": {
+            "format": "uri",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 90,
+            "type": "string"
+          },
+          "youtube_video_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "canonical_url",
+          "category",
+          "channel_title",
+          "format",
+          "id",
+          "published_at",
+          "source_title",
+          "thumbnail_url",
+          "title",
+          "youtube_video_id"
+        ],
+        "type": "object"
+      },
+      "PublicVideoCategory": {
+        "description": "* `interview` - interview\n* `lesson` - lesson\n* `news` - news",
+        "enum": [
+          "interview",
+          "lesson",
+          "news"
+        ],
+        "type": "string"
+      },
+      "PublicVideoFormat": {
+        "description": "* `landscape` - landscape\n* `vertical` - vertical",
+        "enum": [
+          "landscape",
+          "vertical"
+        ],
+        "type": "string"
+      },
+      "PublicVideoHero": {
+        "properties": {
+          "hero": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PublicVideo"
+              }
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "hero"
+        ],
+        "type": "object"
+      },
+      "PublicVideoPage": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "next": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "previous": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/PublicVideo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "next",
+          "previous",
+          "results"
+        ],
+        "type": "object"
+      },
       "PublicVideoSession": {
         "properties": {
           "lecture_id": {
@@ -12386,6 +12654,15 @@
           "session_id"
         ],
         "type": "object"
+      },
+      "PublicVideoStatus": {
+        "description": "* `draft` - draft\n* `published` - published\n* `unpublished` - unpublished",
+        "enum": [
+          "draft",
+          "published",
+          "unpublished"
+        ],
+        "type": "string"
       },
       "PublicViewCount": {
         "properties": {
@@ -19219,6 +19496,172 @@
         "required": [
           "changed",
           "updated"
+        ],
+        "type": "object"
+      },
+      "VideoCapability": {
+        "properties": {
+          "can_publish": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "can_publish"
+        ],
+        "type": "object"
+      },
+      "VideoContent": {
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/PublicVideoCategory"
+          },
+          "format": {
+            "$ref": "#/components/schemas/PublicVideoFormat"
+          },
+          "summary": {
+            "default": "",
+            "maxLength": 220,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 90,
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "format",
+          "title"
+        ],
+        "type": "object"
+      },
+      "VideoContentRequest": {
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/PublicVideoCategory"
+          },
+          "format": {
+            "$ref": "#/components/schemas/PublicVideoFormat"
+          },
+          "summary": {
+            "default": "",
+            "maxLength": 220,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 90,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "format",
+          "title"
+        ],
+        "type": "object"
+      },
+      "VideoCreateRequest": {
+        "properties": {
+          "draft_content": {
+            "$ref": "#/components/schemas/VideoContentRequest"
+          },
+          "request_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft_content",
+          "request_id",
+          "url"
+        ],
+        "type": "object"
+      },
+      "VideoPublication": {
+        "properties": {
+          "showcase_revision": {
+            "type": "integer"
+          },
+          "video": {
+            "$ref": "#/components/schemas/ManagedVideo"
+          }
+        },
+        "required": [
+          "showcase_revision",
+          "video"
+        ],
+        "type": "object"
+      },
+      "VideoPublishRequest": {
+        "properties": {
+          "expected_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "expected_showcase_revision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "set_as_hero": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "expected_showcase_revision"
+        ],
+        "type": "object"
+      },
+      "VideoResolveRequestRequest": {
+        "properties": {
+          "url": {
+            "format": "uri",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "VideoResolveResult": {
+        "properties": {
+          "canonical_url": {
+            "format": "uri",
+            "type": "string"
+          },
+          "channel_title": {
+            "type": "string"
+          },
+          "format": {
+            "$ref": "#/components/schemas/PublicVideoFormat"
+          },
+          "source_title": {
+            "type": "string"
+          },
+          "thumbnail_url": {
+            "format": "uri",
+            "type": "string"
+          },
+          "youtube_video_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "canonical_url",
+          "channel_title",
+          "format",
+          "source_title",
+          "thumbnail_url",
+          "youtube_video_id"
         ],
         "type": "object"
       },
@@ -34669,6 +35112,541 @@
             "sessionAuth": []
           }
         ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/videos/": {
+      "get": {
+        "operationId": "public_videos_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicVideoPage"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/videos/capabilities/": {
+      "get": {
+        "operationId": "landing_public_videos_capabilities_retrieve",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoCapability"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/videos/manage/": {
+      "get": {
+        "operationId": "managed_videos_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedVideoPage"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      },
+      "post": {
+        "operationId": "landing_public_videos_manage_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoCreateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoCreateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedVideo"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedVideo"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/videos/manage/showcase/": {
+      "get": {
+        "operationId": "landing_public_videos_manage_showcase_retrieve",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedShowcase"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      },
+      "patch": {
+        "operationId": "landing_public_videos_manage_showcase_partial_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedVideoShowcaseRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedVideoShowcaseRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedVideoShowcaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedShowcase"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/videos/manage/{id}/": {
+      "get": {
+        "operationId": "managed_videos_detail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedVideo"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      },
+      "patch": {
+        "operationId": "landing_public_videos_manage_partial_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedVideoEditRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedVideoEditRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedVideoEditRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedVideo"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/videos/manage/{id}/publish/": {
+      "post": {
+        "operationId": "landing_public_videos_manage_publish_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoPublishRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoPublishRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoPublishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoPublication"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/videos/manage/{id}/unpublish/": {
+      "post": {
+        "operationId": "landing_public_videos_manage_unpublish_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoPublishRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoPublishRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoPublishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoPublication"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/videos/resolve/": {
+      "post": {
+        "operationId": "landing_public_videos_resolve_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoResolveRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoResolveRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoResolveRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoResolveResult"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/videos/showcase/": {
+      "get": {
+        "operationId": "landing_public_videos_showcase_retrieve",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicVideoHero"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/videos/{id}/": {
+      "get": {
+        "operationId": "public_videos_detail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicVideo"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
         "tags": [
           "landing-public"
         ]

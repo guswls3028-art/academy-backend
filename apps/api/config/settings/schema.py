@@ -20,6 +20,9 @@ SPECTACULAR_SETTINGS = {
     "COMPONENT_SPLIT_REQUEST": True,
     "DISABLE_ERRORS_AND_WARNINGS": True,
     "ENUM_NAME_OVERRIDES": {
+        "PublicVideoCategory": ["interview", "lesson", "news"],
+        "PublicVideoFormat": ["landscape", "vertical"],
+        "PublicVideoStatus": ["draft", "published", "unpublished"],
         "AccountPasswordModeEnum": "apps.core.services.initial_password_policy.MODES",
         "SessionAttendanceStatus": "apps.domains.attendance.serializers.attendance_status_choices",
         "EventTypeEnum": "apps.domains.video.models.VideoPlaybackEvent.EventType",

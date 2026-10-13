@@ -16,6 +16,11 @@ from .views import (
 
 
 from .views.resource_views import PublicResourcePostViewSet, PublicResourceUploadView, PublicResourceFileView, PublicResourceReaderView
+from .views.video_views import (
+    PublicVideoListView, PublicVideoDetailView, PublicVideoShowcaseView, PublicVideoCapabilityView,
+    PublicVideoResolveView, ManageVideoListView, ManageVideoDetailView, ManageVideoPublishView,
+    ManageVideoUnpublishView, ManageVideoShowcaseView,
+)
 
 router = DefaultRouter()
 router.register("resources", PublicResourcePostViewSet, basename="landing-public-resource")
@@ -32,6 +37,16 @@ router.register(
 )
 
 urlpatterns = [
+    path("videos/", PublicVideoListView.as_view(), name="public-video-list"),
+    path("videos/showcase/", PublicVideoShowcaseView.as_view(), name="public-video-showcase"),
+    path("videos/capabilities/", PublicVideoCapabilityView.as_view(), name="public-video-capabilities"),
+    path("videos/resolve/", PublicVideoResolveView.as_view(), name="public-video-resolve"),
+    path("videos/manage/", ManageVideoListView.as_view(), name="manage-video-list"),
+    path("videos/manage/showcase/", ManageVideoShowcaseView.as_view(), name="manage-video-showcase"),
+    path("videos/manage/<uuid:pk>/", ManageVideoDetailView.as_view(), name="manage-video-detail"),
+    path("videos/manage/<uuid:pk>/publish/", ManageVideoPublishView.as_view(), name="manage-video-publish"),
+    path("videos/manage/<uuid:pk>/unpublish/", ManageVideoUnpublishView.as_view(), name="manage-video-unpublish"),
+    path("videos/<uuid:pk>/", PublicVideoDetailView.as_view(), name="public-video-detail"),
     path("uploads/resource/", PublicResourceUploadView.as_view(), name="landing-public-resource-upload"),
     path("resource-files/<uuid:file_id>/reader/", PublicResourceReaderView.as_view(), name="landing-public-resource-reader"),
     path("resource-files/<uuid:file_id>/", PublicResourceFileView.as_view(), name="landing-public-resource-file"),
