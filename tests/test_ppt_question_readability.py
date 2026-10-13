@@ -1,6 +1,26 @@
+import io
+
 from PIL import Image, ImageDraw
 
+from academy.application.use_cases.tools.generate_ppt import GeneratePptUseCase
 from academy.domain.tools.image_preprocessor import compact_internal_whitespace, reflow_tall_question
+
+
+def _image_bytes(width: int, height: int) -> bytes:
+    output = io.BytesIO()
+    Image.new("RGB", (width, height), "white").save(output, format="PNG")
+    return output.getvalue()
+
+
+def test_ppt_result_flags_only_narrow_contain_slides():
+    images = [_image_bytes(300, 1200), _image_bytes(1600, 900)]
+
+    result = GeneratePptUseCase().execute(images, config={"fit_mode": "contain"})
+
+    assert result.slide_count == 2
+    assert result.narrow_slide_numbers == [1]
+    assert GeneratePptUseCase().execute(images[1:], config={"fit_mode": "contain"}).narrow_slide_numbers == []
+    assert GeneratePptUseCase().execute(images[:1], config={"fit_mode": "cover"}).narrow_slide_numbers == []
 
 
 def test_tall_question_keeps_all_visible_content_on_one_readable_image():

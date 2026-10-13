@@ -284,6 +284,11 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
         if ppt_mode:
             # "page" → 사용자 안내: 텍스트 추출 안 됨, 페이지 단위로 변환됨
             result_payload["mode"] = ppt_mode
+        if result.narrow_slide_numbers:
+            result_payload["readability_warning"] = {
+                "narrow_slide_count": len(result.narrow_slide_numbers),
+                "slide_numbers": result.narrow_slide_numbers[:12],
+            }
         return AIResult.done(job.id, result_payload)
 
     except Exception as e:
