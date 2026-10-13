@@ -5,6 +5,71 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-10-13 세 예외의 재검토와 제한된 수용
+
+사용자는 기존 세 보안 예외의 필요한 조치를 자율적으로 마무리하도록
+**“모든권한 있음”**으로 위임했다. 확인 시각은 10월 13일 15:14 KST로 이전
+만료(같은 날 09:00 KST) 이후였다. 기존 정책을 현재 날짜로 읽으면 실제로
+`High risk acceptance expired`로 실패한다. 이전 승인 기간을 소급하거나
+취약점 수정 완료로 처리하지 않는다.
+
+게시에 대한 자동 승인 심사는 일반 위임만으로 정확한 설정·범위·기한의 승인을
+확인할 수 없어 거부했다. 이후 사용자는 아래 세 CVE/package/version을 기존
+다섯 서비스와 `academy-base`, 총 여섯 저장소에서 **10월 16일 09:00 KST까지**
+허용하는 질문에 **“해당 범위·기한의 한시 수용 승인”**이라고 명시 승인했다.
+이는 취약점 미수정과 Critical·새 CVE·다른 버전·만료 차단 유지를 포함한 승인이다.
+
+현재 성공 manifest `d2a003cfa0a0d831fea9ca4c755cba0b71a7c9a1`의 여섯 exact
+digest를 다시 조회했다. 최초 검토 당시 서비스 다섯 개의 COMPLETE scan은 24시간 이내이며
+아래 exact High 세 건, Critical 0건이다. 24시간이 지난 base는 재스캔했고
+**2026-10-13 06:22:40 UTC** COMPLETE 결과에서 동일한 glibc 두 건이 추가됐다.
+따라서 base 상한도 관측한 **3건**으로 맞추고, 아래 세 identity만 여섯
+repository에 적용한다. 새로운 CVE나 다른 package/version을 허용하지 않는다.
+명시 승인 후 10월 13일 23시대 KST 게시 전 확인에서는 24시간이 지난 서비스
+다섯 개를 공식 gate로 다시 스캔했다. 여섯 이미지 모두 COMPLETE이며 exact High
+세 건과 Critical 0건이 유지되어 통과했다. base의 같은 날 완료 결과는 재사용했다.
+
+| CVE | 정확한 package/version | 현재 수정본과 검증 범위 |
+|---|---|---|
+| `CVE-2026-107161` | `cyrus-sasl2 / 2.1.28+dfsg1-9` | [Debian](https://security-tracker.debian.org/tracker/CVE-2026-107161)은 unfixed이며 [upstream PR892](https://github.com/cyrusimap/cyrus-sasl/pull/892)는 병합 없이 닫혔다. 설치된 system DIGEST-MD5 mechanism의 부재를 재검증했다. |
+| `CVE-2026-19499` | `glibc / 2.41-12+deb13u4` | [Debian](https://security-tracker.debian.org/tracker/CVE-2026-19499) trixie 수정본이 없으며 `no-dsa / Minor issue`다. testing/unstable의 수정 glibc는 별도의 core runtime 교체다. |
+| `CVE-2026-5435` | `glibc / 2.41-12+deb13u4` | [Debian](https://security-tracker.debian.org/tracker/CVE-2026-5435) trixie 수정본이 없으며 `no-dsa / Minor issue`다. 폐기 예정 DNS 출력 함수의 직접 참조를 제한적으로 재검토했다. |
+
+읽기 전용 SSM `d2886ac6-40e9-4590-adef-4e2923dc9c92`는 격리 개발 인스턴스
+`i-011413fe45a1d97e9`의 API·AI·Tools가 위 manifest의 exact digest임을 확인한 뒤
+다음 검사를 실행했다. 패키지 설치, 서비스 설정·데이터 변경, 외부 발송은 없다.
+
+- 기존 `verify-sasl.py` SHA-256
+  `2676232c220c934c99dff12cd54fe9fe2bbdc8deedd8362a3aec3b5edce9c452`가 세 컨테이너에서
+  일치한다. `libsasl2-2`·`libsasl2-modules-db`만 있고 mechanism은 `EXTERNAL`뿐이며
+  DIGEST-MD5 시작은 정확한 `SASL_NOMECH(-4)`로 거부된다. 마지막 APT 이후 기존
+  빌드 oracle과 libpq/curl/LDAP ABI 보존 조건을 유지한다.
+- API 908개·AI 1308개·Tools 863개 ELF에서 `strfmon`, `strfmon_l`, `ns_printrrf`,
+  `ns_printrr`, `fp_nquery`의 undefined dynamic reference는 0개, 검사 오류도 0개다.
+  현재 앱 소스의 직접 참조도 없다. symbol alias, `dlsym`, 정적 링크, 다른 서비스
+  컨테이너와 미실행 경로는 배제하지 못한다. wheel 내 별도 SASL 구현도 oracle의
+  범위 밖이며 잔여 메모리 손상 위험은 남아 있다.
+
+release owner는 이 근거와 사용자의 정확한 범위·기한에 대한 명시 승인에 따라
+**2026-10-15 UTC 종료, 즉 10월 16일 09:00 KST까지만** 한시 수용한다.
+이는 수정본이 없는 stable runtime을 검증되지 않은 libc 교체로 바꾸는 위험과
+현재 완화 조건의 잔여 위험을 비교한 제한적 결정이다. Critical acceptance는
+계속 비어 있고, 만료·새 identity·예상 밖 SASL 플러그인·oracle 실패는 차단한다.
+후속 후보의 scan과 개발·preprod·임시 인스턴스 종료·rolling·실사용·cleanup 게이트도
+유지한다. 이번 변경은 보안 정책과 기록만 바꾸며 운영 이미지를 교체하지 않는다.
+
+이 작업의 소유자가 **10월 15일 09:00 KST 이전**에 vendor 상태, exact image scan과
+완화 조건을 다시 검토한다. 유효한 수정 후보는 정상 release 경로로 검증한 뒤
+해당 예외를 제거하며, 수정 증거가 없으면 자동 연장하지 않는다. 만료 시 새 후보는
+계속 실패하고 기존 운영의 취약점 잔여 상태를 명시적으로 보고한다. 예약 실행은
+이 기한을 보완할 뿐 실행 시각이나 성공을 보증하지 않으며, 정책의 날짜 검사가
+최종 차단 장치다.
+
+소유 증거는 `_artifacts/sessions/security-expiry-01a13042/`의
+`current-scans.json`, `scan-academy-base-refreshed.json`, `native-result.json`,
+`expired-gate-before.log`, `approved-scans.json`, `approved-live-six-image-gate.log`에
+보존한다. 아래 날짜별 기록은 당시 결정의 이력이다.
+
 ## 2026-10-12 glibc 두 진단의 승인된 한시 수용
 
 사진 분할·보고서 재분석 보존 수정 PR629의
