@@ -1,6 +1,7 @@
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 from rest_framework import serializers
 from rest_framework.exceptions import APIException, NotFound
 from rest_framework.pagination import PageNumberPagination
@@ -46,6 +47,52 @@ class VideoPublishSerializer(serializers.Serializer):
 class VideoShowcaseSerializer(serializers.Serializer):
     expected_revision = serializers.IntegerField(min_value=0)
     hero_video_id = serializers.UUIDField(allow_null=True)
+
+
+class VideoSourceSerializer(serializers.Serializer):
+    youtube_video_id = serializers.CharField()
+    canonical_url = serializers.URLField()
+    source_title = serializers.CharField()
+    channel_title = serializers.CharField()
+    thumbnail_url = serializers.URLField()
+
+
+class PublicVideoSerializer(VideoContentSerializer, VideoSourceSerializer):
+    id = serializers.UUIDField()
+    published_at = serializers.DateTimeField()
+
+
+class ManagedVideoSerializer(VideoSourceSerializer):
+    id = serializers.UUIDField()
+    draft_content = VideoContentSerializer()
+    published_content = VideoContentSerializer(allow_null=True)
+    status = serializers.ChoiceField(choices=["draft", "published", "unpublished"])
+    revision = serializers.IntegerField()
+    created_at = serializers.DateTimeField()
+    updated_at = serializers.DateTimeField()
+    published_at = serializers.DateTimeField(allow_null=True)
+    metadata_ready = serializers.BooleanField()
+
+
+class PublicVideoPageSerializer(serializers.Serializer):
+    count = serializers.IntegerField()
+    next = serializers.URLField(allow_null=True)
+    previous = serializers.URLField(allow_null=True)
+    results = PublicVideoSerializer(many=True)
+
+
+class ManagedVideoPageSerializer(PublicVideoPageSerializer):
+    results = ManagedVideoSerializer(many=True)
+
+
+class ManagedShowcaseSerializer(serializers.Serializer):
+    hero_video_id = serializers.UUIDField(allow_null=True)
+    revision = serializers.IntegerField()
+
+
+class VideoPublicationSerializer(serializers.Serializer):
+    video = ManagedVideoSerializer()
+    showcase_revision = serializers.IntegerField()
 
 
 def validated(serializer_type, data):
@@ -129,6 +176,8 @@ class VideoAPIView(APIView):
 
 
 class PublicVideoListView(VideoAPIView):
+    @extend_schema(auth=[], operation_id="public_videos_list", responses=PublicVideoPageSerializer,
+                   parameters=[OpenApiParameter("page", type=int)])
     def get(self, request):
         rows = self.published(request).order_by("-published_at", "id")
         paginator = VideoPage()
@@ -137,11 +186,13 @@ class PublicVideoListView(VideoAPIView):
 
 
 class PublicVideoDetailView(VideoAPIView):
+    @extend_schema(auth=[], operation_id="public_videos_detail", responses=PublicVideoSerializer)
     def get(self, request, pk):
         return Response(public_video(get_object_or_404(self.published(request), pk=pk)))
 
 
 class PublicVideoShowcaseView(VideoAPIView):
+    @extend_schema(auth=[], responses=inline_serializer("PublicVideoHero", fields={"hero": PublicVideoSerializer(allow_null=True)}))
     def get(self, request):
         showcase = PublicVideoShowcase.objects.filter(tenant=request.tenant).first()
         hero = self.published(request).filter(pk=showcase.hero_video_id).first() if showcase else None
@@ -149,23 +200,31 @@ class PublicVideoShowcaseView(VideoAPIView):
 
 
 class PublicVideoCapabilityView(VideoAPIView):
+    @extend_schema(responses=inline_serializer("VideoCapability", fields={"can_publish": serializers.BooleanField()}))
     def get(self, request):
         return Response({"can_publish": can_publish(request)})
 
 
 class PublicVideoResolveView(VideoAPIView):
+    @extend_schema(request=inline_serializer("VideoResolveRequest", fields={"url": serializers.URLField()}),
+                   responses=inline_serializer("VideoResolveResult", fields={
+                       **VideoSourceSerializer().fields, "format": serializers.ChoiceField(choices=["landscape", "vertical"]),
+                   }))
     def post(self, request):
         require_publisher(request)
         return Response(resolve_youtube(request.data.get("url", "")))
 
 
 class ManageVideoListView(VideoAPIView):
+    @extend_schema(operation_id="managed_videos_list", responses=ManagedVideoPageSerializer,
+                   parameters=[OpenApiParameter("page", type=int)])
     def get(self, request):
         require_publisher(request)
         paginator = VideoPage()
         page = paginator.paginate_queryset(self.videos(request).order_by("-created_at", "id"), request)
         return paginator.get_paginated_response([managed_video(row) for row in page])
 
+    @extend_schema(request=VideoCreateSerializer, responses={201: ManagedVideoSerializer, 200: ManagedVideoSerializer})
     def post(self, request):
         require_publisher(request)
         data = validated(VideoCreateSerializer, request.data)
@@ -204,10 +263,12 @@ class ManageVideoListView(VideoAPIView):
 
 
 class ManageVideoDetailView(VideoAPIView):
+    @extend_schema(operation_id="managed_videos_detail", responses=ManagedVideoSerializer)
     def get(self, request, pk):
         require_publisher(request)
         return Response(managed_video(get_object_or_404(self.videos(request), pk=pk)))
 
+    @extend_schema(request=VideoEditSerializer, responses=ManagedVideoSerializer)
     def patch(self, request, pk):
         data = validated(VideoEditSerializer, request.data)
         with transaction.atomic():
@@ -224,6 +285,7 @@ class ManageVideoDetailView(VideoAPIView):
 
 
 class ManageVideoPublishView(VideoAPIView):
+    @extend_schema(request=VideoPublishSerializer, responses=VideoPublicationSerializer)
     def post(self, request, pk):
         require_publisher(request)
         data = validated(VideoPublishSerializer, request.data)
@@ -254,6 +316,7 @@ class ManageVideoPublishView(VideoAPIView):
 
 
 class ManageVideoUnpublishView(VideoAPIView):
+    @extend_schema(request=VideoPublishSerializer, responses=VideoPublicationSerializer)
     def post(self, request, pk):
         data = validated(VideoPublishSerializer, request.data)
         with transaction.atomic():
@@ -274,12 +337,14 @@ class ManageVideoUnpublishView(VideoAPIView):
 
 
 class ManageVideoShowcaseView(VideoAPIView):
+    @extend_schema(responses=ManagedShowcaseSerializer)
     def get(self, request):
         require_publisher(request)
         row = PublicVideoShowcase.objects.filter(tenant=request.tenant).first()
         return Response({"hero_video_id": str(row.hero_video_id) if row and row.hero_video_id else None,
                          "revision": row.revision if row else 0})
 
+    @extend_schema(request=VideoShowcaseSerializer, responses=ManagedShowcaseSerializer)
     def patch(self, request):
         data = validated(VideoShowcaseSerializer, request.data)
         with transaction.atomic():

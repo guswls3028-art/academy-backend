@@ -38,6 +38,13 @@ class Migration(migrations.Migration):
                 ('tenant', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='core.tenant')),
                 ('updated_by', models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='public_videos_updated', to=settings.AUTH_USER_MODEL)),
             ],
+            options={
+                'indexes': [models.Index(fields=['tenant', 'status', '-published_at'], name='public_video_published_idx')],
+                'constraints': [
+                    models.UniqueConstraint(fields=('tenant', 'youtube_video_id'), name='public_video_tenant_youtube'),
+                    models.UniqueConstraint(fields=('tenant', 'request_id'), name='public_video_tenant_request'),
+                ],
+            },
         ),
         migrations.CreateModel(
             name='PublicVideoEvent',
@@ -60,17 +67,5 @@ class Migration(migrations.Migration):
                 ('hero_video', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='landing_public.publicvideo')),
                 ('tenant', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, to='core.tenant')),
             ],
-        ),
-        migrations.AddIndex(
-            model_name='publicvideo',
-            index=models.Index(fields=['tenant', 'status', '-published_at'], name='public_video_published_idx'),
-        ),
-        migrations.AddConstraint(
-            model_name='publicvideo',
-            constraint=models.UniqueConstraint(fields=('tenant', 'youtube_video_id'), name='public_video_tenant_youtube'),
-        ),
-        migrations.AddConstraint(
-            model_name='publicvideo',
-            constraint=models.UniqueConstraint(fields=('tenant', 'request_id'), name='public_video_tenant_request'),
         ),
     ]
