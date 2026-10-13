@@ -2,7 +2,6 @@ from django.http import Http404
 import uuid
 from datetime import timedelta
 
-from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404
@@ -16,14 +15,12 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.models import TenantMembership
 from apps.core.permissions import TenantResolved
-from apps.core.services.tenant_access import get_authorized_tenant_role
 from apps.domains.landing_public.models.resource import (
-    PublicResourceBoardAccess,
     PublicResourceFile,
     PublicResourcePost,
 )
+from apps.domains.landing_public.services.publishing import can_publish, require_publisher
 from apps.domains.landing_public.services.resource_files import resource_content_disposition, validate_resource_file
 from apps.infrastructure.storage.r2 import (
     delete_object_r2_admin,
@@ -35,34 +32,7 @@ from apps.domains.landing_public.services.resource_reader import (
     delete_reader_objects, prepare_reader, reader_payload, reader_state,
 )
 
-PUBLISHER_ROLES = ("owner", "admin", "teacher")
 LINK_TTL = 300
-
-
-def can_publish(request):
-    user, tenant = request.user, request.tenant
-    if not user or not user.is_authenticated or not user.is_active:
-        return False
-    access = PublicResourceBoardAccess.objects.filter(tenant=tenant).first()
-    if not access or not access.publisher_one_id or not access.publisher_two_id:
-        return False
-    return (
-        user.id in (access.publisher_one_id, access.publisher_two_id)
-        and get_authorized_tenant_role(user, tenant) in PUBLISHER_ROLES
-    )
-
-
-def require_publisher(request, *, lock=False):
-    if lock:
-        # Keep the core lifecycle's User → membership lock order for revocation.
-        locked_user = get_user_model().objects.select_for_update().filter(pk=request.user.pk).first()
-        if not locked_user or not locked_user.is_active:
-            raise PermissionDenied("자료 게시 권한이 없습니다.")
-        request.user.is_active = locked_user.is_active
-        TenantMembership.objects.select_for_update().filter(tenant=request.tenant, user=request.user).first()
-        PublicResourceBoardAccess.objects.select_for_update().filter(tenant=request.tenant).first()
-    if not can_publish(request):
-        raise PermissionDenied("자료 게시 권한이 없습니다.")
 
 
 class ResourceFileSerializer(serializers.ModelSerializer):
