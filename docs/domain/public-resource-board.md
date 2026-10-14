@@ -86,6 +86,9 @@ Reader formats and results:
 - PDF opens immediately through the established PDFJS canvas reader, with
   accessible extracted text, lazy visible-page rendering and zoom.
 - HWP/HWPX are converted by the checksum-pinned official rhwp 0.8.7 executable.
+  Pins select the official 2026-10-11 Native Skia repack from the same v0.8.7
+  source tag, checked against the publisher's SHA256SUMS and GitHub asset digests
+  ([release provenance](https://github.com/edwardkim/rhwp/releases/tag/v0.8.7)).
   The whole document becomes an inline PDF preserving its pages, tables, images
   and formulas. Teachers upload the original file without splitting or retyping it.
 - DOCX/XLSX/PPTX use the pinned official LibreOffice 26.8.1 Writer/Calc/Impress
