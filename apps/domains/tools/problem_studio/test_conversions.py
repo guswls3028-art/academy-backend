@@ -273,6 +273,12 @@ class ConversionJourneyTests(TestCase):
         row.save(update_fields=["document"])
         page_data, _ = _question_image(row, row.document["questions"][0], prefer_page=True)
         crop_data, _ = _question_image(row, row.document["questions"][0])
+        tiny_data, _ = _question_image(row, {"page_index": 0, "crop": [0, 0, 0.0001, 0.0001]})
+        with Image.open(io.BytesIO(tiny_data)) as tiny:
+            self.assertEqual(tiny.size, (1, 1))
+        from rest_framework.exceptions import ValidationError
+        with self.assertRaises(ValidationError):
+            validate_question({"crop": [1, 0, 0.000001, 0.5]}, {})
         with Image.open(io.BytesIO(page_data)) as page, Image.open(io.BytesIO(crop_data)) as crop:
             self.assertGreater(page.height, crop.height)
             expected = crop.size

@@ -5,6 +5,7 @@ import copy
 import hashlib
 import io
 import logging
+import math
 from dataclasses import asdict
 from pathlib import Path
 
@@ -161,7 +162,9 @@ def _question_image(row, question, *, prefer_page=False):
         page = row.document["pages"][page_index]
         with Image.open(io.BytesIO(_read(row, page))) as image:
             x, y, width, height = question["crop"]
-            box = (int(x * image.width), int(y * image.height), int((x + width) * image.width), int((y + height) * image.height))
+            box = (int(x * image.width), int(y * image.height),
+                   min(image.width, math.ceil((x + width) * image.width)),
+                   min(image.height, math.ceil((y + height) * image.height)))
             output = io.BytesIO()
             image.crop(box).convert("RGB").save(output, format="PNG")
             return output.getvalue(), "image/png"

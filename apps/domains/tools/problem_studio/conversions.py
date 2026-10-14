@@ -53,7 +53,7 @@ def validate_question(raw, original):
             if not isinstance(crop, list) or len(crop) != 4 or any(isinstance(v, bool) or not isinstance(v, (float, int)) or not math.isfinite(v) for v in crop):
                 raise ValidationError("그림 범위를 확인해 주세요.")
             x, y, width, height = crop
-            if min(x, y) < 0 or min(width, height) <= 0 or x + width > 1.00001 or y + height > 1.00001:
+            if min(x, y) < 0 or max(x, y) >= 1 or min(width, height) <= 0 or x + width > 1.00001 or y + height > 1.00001:
                 raise ValidationError("그림 범위가 원본을 벗어났습니다.")
         result["crop"] = crop
     if "page_index" in raw:
