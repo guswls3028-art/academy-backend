@@ -118,6 +118,9 @@ class ConversionDetailView(APIView):
                     if not proposal:
                         raise ValidationError("적용할 수정 제안이 없습니다.")
                     revised = validate_question(proposal, question)
+                    revised["review_flags"] = list(dict.fromkeys([
+                        *question.get("review_flags", []), *proposal.get("review_flags", []),
+                    ]))
                     if proposal.get("redrawn"):
                         revised["redrawn"] = proposal["redrawn"]
                     questions[questions.index(question)] = revised

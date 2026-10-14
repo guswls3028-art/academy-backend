@@ -48,6 +48,7 @@ exams become separate frontend-created conversions.
 Configured OpenAI/Bedrock routes and AI quotas remain. Existing full-book Beta
 reservations/completed/free-run accounting remains on its legacy endpoint.
 Teacher-requested AI changes are validated proposals and reopen question review.
+Applying a proposal preserves both existing and newly reported review flags.
 Accepting current content (one/all) explicitly discards the corresponding proposals
 without applying them. Figure redraw returns bounded
 line/rectangle/ellipse/text primitives, rendered locally with Korean fonts; arbitrary

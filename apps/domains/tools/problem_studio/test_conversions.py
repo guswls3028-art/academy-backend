@@ -142,7 +142,7 @@ class ConversionJourneyTests(TestCase):
         original = row.document["questions"][0]["prompt"]
         with self.captureOnCommitCallbacks(execute=True):
             ConversionActionView.as_view()(self.request("post", {"version": row.version, "action": "correct", "question_id": "q1", "instruction": "고쳐 주세요"}), conversion_id=row.id)
-        with patch("apps.domains.tools.problem_studio.conversion_ai.propose_question", return_value={"prompt": "AI proposal", "choices": [], "answer": "5", "explanation": "검수할 해설"}):
+        with patch("apps.domains.tools.problem_studio.conversion_ai.propose_question", return_value={"prompt": "AI proposal", "choices": [], "answer": "5", "explanation": "검수할 해설", "review_flags": ["원본의 아래첨자를 확인해 주세요."]}):
             self.assertEqual(handle_conversion_job(self.jobs[-1]).status, "DONE")
         row.refresh_from_db()
         self.assertEqual(row.document["questions"][0]["prompt"], original)
@@ -152,6 +152,7 @@ class ConversionJourneyTests(TestCase):
         response = ConversionDetailView.as_view()(self.request("patch", {"version": row.version, "question_id": "q1", "action": "apply_proposal"}), conversion_id=row.id)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["document"]["questions"][0]["prompt"], "AI proposal")
+        self.assertIn("원본의 아래첨자를 확인해 주세요.", response.data["document"]["questions"][0]["review_flags"])
 
     def test_accepting_current_content_resolves_pending_proposals(self):
         row = self.create()
