@@ -58,7 +58,7 @@ existing_id만 반환한다. 테넌트 밖 ID는 404 또는 권한 거부로 처
 | POST `resolve/` | 지정 게시자 링크 메타데이터 조회 |
 | GET/POST `manage/` | 지정 게시자 목록/임시저장 등록 |
 | GET/PATCH `manage/<uuid>/` | 관리 상세/초안 수정(expected_revision) |
-| DELETE `manage/<uuid>/` | 두 revision 검증 후 삭제, 성공/재시도 204 |
+| DELETE `manage/<uuid>/` | query의 expected_revision/expected_showcase_revision 검증 후 삭제, 성공/재시도 204 |
 | POST `manage/<uuid>/publish/`, `unpublish/` | 두 revision 검증 후 공개/비공개 |
 | GET/PATCH `manage/showcase/` | 대표 ID/revision/제목/소개 조회 및 명시된 설정 수정 |
 

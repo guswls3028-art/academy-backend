@@ -39,9 +39,12 @@ class VideoEditSerializer(serializers.Serializer):
     draft_content = VideoContentSerializer()
 
 
-class VideoPublishSerializer(serializers.Serializer):
+class VideoRevisionSerializer(serializers.Serializer):
     expected_revision = serializers.IntegerField(min_value=1)
     expected_showcase_revision = serializers.IntegerField(min_value=0)
+
+
+class VideoPublishSerializer(VideoRevisionSerializer):
     set_as_hero = serializers.BooleanField(default=False)
 
 
@@ -304,9 +307,9 @@ class ManageVideoDetailView(VideoAPIView):
                 record_event(request, "edit", video)
             return Response(managed_video(video))
 
-    @extend_schema(request=VideoPublishSerializer, responses={204: None})
+    @extend_schema(parameters=[VideoRevisionSerializer], responses={204: None})
     def delete(self, request, pk):
-        data = validated(VideoPublishSerializer, request.data)
+        data = validated(VideoRevisionSerializer, request.query_params)
         with transaction.atomic():
             require_publisher(request, lock=True)
             video = get_object_or_404(PublicVideo.objects.select_for_update(), tenant=request.tenant, pk=pk)

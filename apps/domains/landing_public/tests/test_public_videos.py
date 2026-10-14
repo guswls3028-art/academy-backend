@@ -6,6 +6,7 @@ from threading import Barrier
 from unittest import skipUnless
 from unittest.mock import patch
 from types import SimpleNamespace
+from urllib.parse import urlencode
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
@@ -49,7 +50,8 @@ class PublicVideoTests(TestCase):
         return user
 
     def call(self, view, method="get", data=None, user=None, tenant=None, pk=None):
-        request = getattr(self.factory, method)("/qa/", data=data or {}, format="json")
+        path = f"/qa/?{urlencode(data or {})}" if method == "delete" else "/qa/"
+        request = getattr(self.factory, method)(path, data={} if method == "delete" else data or {}, format="json")
         request.tenant = tenant or self.tenant
         if user:
             force_authenticate(request, user=user)
