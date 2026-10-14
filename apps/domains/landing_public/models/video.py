@@ -16,7 +16,7 @@ class PublicVideo(models.Model):
     draft_content = models.JSONField(default=dict)
     published_content = models.JSONField(null=True, blank=True)
     status = models.CharField(max_length=12, default="draft", choices=[
-        ("draft", "초안"), ("published", "게시 중"), ("unpublished", "게시 중단"),
+        ("draft", "초안"), ("published", "게시 중"), ("unpublished", "게시 중단"), ("deleted", "삭제"),
     ])
     revision = models.PositiveIntegerField(default=1)
     request_id = models.UUIDField()
@@ -29,7 +29,7 @@ class PublicVideo(models.Model):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["tenant", "youtube_video_id"], name="public_video_tenant_youtube"),
+            models.UniqueConstraint(fields=["tenant", "youtube_video_id"], condition=~models.Q(status="deleted"), name="public_video_tenant_youtube"),
             models.UniqueConstraint(fields=["tenant", "request_id"], name="public_video_tenant_request"),
         ]
         indexes = [models.Index(fields=["tenant", "status", "-published_at"], name="public_video_published_idx")]
@@ -39,6 +39,8 @@ class PublicVideoShowcase(models.Model):
     tenant = models.OneToOneField("core.Tenant", on_delete=models.CASCADE)
     hero_video = models.ForeignKey(PublicVideo, null=True, blank=True, on_delete=models.SET_NULL)
     revision = models.PositiveIntegerField(default=0)
+    title = models.CharField(max_length=60, default="영상")
+    description = models.CharField(max_length=220, blank=True, default="")
 
 
 class PublicVideoEvent(models.Model):

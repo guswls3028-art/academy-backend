@@ -19,14 +19,27 @@ godmin의 신민·박철 운영 계정은 기존 공개 자료게시판의 두 �
 PublicVideo는 tenant + YouTube ID별 한 행이다. `draft_content`(제목·소개·분류·형태)를
 저장해도 `published_content`는 바뀌지 않는다. 공개 시 서버에서 원본 메타데이터를 다시
 조회하고 검증된 초안을 공개 스냅샷으로 복사한다. 비공개는 status만 변경하고 초안과
-이전 공개 스냅샷을 보존한다. 공개 API는 published 상태만 반환한다. 삭제 API는 없다.
+이전 공개 스냅샷을 보존한다. 공개 API는 published 상태만 반환한다.
+삭제는 별도 확인을 거쳐 `deleted` 상태로 전환하며 공개/관리 목록·상세에서 모두 제외한다.
+대표 해제와 삭제 이벤트를 같은 트랜잭션에 남긴다. 원본 YouTube는 변경하지 않는다.
+감사·늦은 요청 재전송 방지를 위해 삭제 행과 스냅샷은 DB에 보존하며 제품 복원 API는 없다.
+같은 YouTube 링크는 새 request_id로 다시 등록할 수 있다. 삭제된 최초 등록 요청을
+재전송하면 409이며 삭제 재시도는 204다. 삭제 전후 다른 영상의 대표 설정은 보존한다.
+
+영상의 자유 입력 분류는 `draft_content.category_label`(선택, 40자)이며 공개 시 스냅샷에
+복사한다. 초기값은 빈 문자열이다. 이전 `category` 코드 세 개는 열린 구버전 편집기와의
+호환 목적으로 보존하며 새 UI는 이 코드에 임의의 의미나 분류명을 붙이지 않는다.
+구버전 PATCH가 category_label을 보내지 않으면 기존 사용자 작성 분류를 유지한다.
 
 PublicVideoShowcase는 tenant별 대표 영상 0~1개다. 대표 지정과 공개, 비공개 시 대표 해제는
 하나의 트랜잭션이다. 비공개 대표는 홈페이지의 기존 강사 프로필로 복귀한다.
+같은 행의 title(필수, 60자, 기본 `영상`)과 description(선택, 220자, 기본 빈 문자열)은
+홈페이지 영상 영역과 영상 목록에서 공통으로 사용한다. 지정 게시자가 명시적으로 저장하면
+즉시 공개되며, 생략한 설정 필드는 유지한다. 대표 선택과 동일 revision을 검증한다.
 모든 쓰기는 User → TenantMembership → PublicResourceBoardAccess 순으로 잠근다.
 tenant의 access 행으로 편집자 간 쓰기를 직렬화하고 video/showcase revision으로
 오래된 화면의 덮어쓰기를 409로 거절한다. 권한 회수와 동일 잠금 순서를 유지한다.
-공개/비공개 요청에는 두 revision이 필요하다. 감사를 위한 PublicVideoEvent에
+공개/비공개/삭제 요청에는 두 revision이 필요하다. 감사를 위한 PublicVideoEvent에
 tenant/actor/action/video revision 및 대표 변경 ID를 남긴다.
 
 등록은 tenant + request_id로 재시도 가능하다. 같은 작성자·원본·최초 초안이면 저장된
@@ -45,8 +58,9 @@ existing_id만 반환한다. 테넌트 밖 ID는 404 또는 권한 거부로 처
 | POST `resolve/` | 지정 게시자 링크 메타데이터 조회 |
 | GET/POST `manage/` | 지정 게시자 목록/임시저장 등록 |
 | GET/PATCH `manage/<uuid>/` | 관리 상세/초안 수정(expected_revision) |
+| DELETE `manage/<uuid>/` | 두 revision 검증 후 삭제, 성공/재시도 204 |
 | POST `manage/<uuid>/publish/`, `unpublish/` | 두 revision 검증 후 공개/비공개 |
-| GET/PATCH `manage/showcase/` | 대표 ID/revision 조회 및 공개 영상만 대표 지정 |
+| GET/PATCH `manage/showcase/` | 대표 ID/revision/제목/소개 조회 및 명시된 설정 수정 |
 
 ## 원본 확인·실패 복구
 
@@ -72,7 +86,19 @@ YouTube의 유효 재생 집계는 원본 영상/채널에 귀속되며 매 재�
 
 마이그레이션 0011은 새 테이블/제약만 추가하므로 구버전 API와 공존한다. 롤백해도 새 테이블의
 사용자 작성 내용을 삭제하지 않는다. 백엔드 먼저 배포한 뒤 프론트엔드를 승격한다.
+0012는 기존 행의 유일성을 유지하면서 삭제되지 않은 행에만 YouTube 유일 제약을 적용하고,
+설정 필드를 기본값과 함께 추가한다. 상태 선택지 변경은 컬럼 타입/기존 값을 바꾸지 않는다.
+RemoveConstraint/AlterField는 release guard상 contract이므로 호환성을 검토한 정확한 main을
+`workflow_dispatch`의 `allow_contract_migrations=true`로 배포한다. 일반 push gate를 우회하지 않는다.
+전체 API 교체·검증 이후에만 삭제/재등록 UI를 승격한다. 삭제 사용 후에는 삭제 상태를 모르는
+구버전 API로 되돌리지 않고 호환 수정 버전으로 복구한다.
+0013은 godmin의 알려진 초기 4개 행 중 creation_content가 원본과 정확히 같은 대상만 잠근다.
+초기 자동 소개와 여전히 같은 draft/published summary만 비우고 revision·감사 이벤트를 남긴다.
+수정된 제목·소개·분류·공개 상태·대표·다른 tenant는 보존한다. 구버전이 읽는 category 코드는
+유지한다. 역방향은 의미를 임의로 복구하지 않는 no-op이며 재실행해도 추가 변경이 없다.
 `test_public_videos`는 두 게시자의 저장→reload→공개→초안 수정→재공개→대표 변경→비공개,
 중복·응답 유실 재시도·조회 장애·권한·tenant 격리·동시 수정과 URL 요청 경계를 검증한다.
+추가로 영역 설정/자유 분류 저장·reload·공개, 삭제·대표 해제·재등록·늦은 재시도,
+삭제/수정 경합과 초기 문구의 사용자 수정 보존을 검증한다.
 기존 `test_public_resources` 회귀와 PostgreSQL CI를 함께 유지한다. 브라우저의 동일 산출물
 실사용은 격리 개발 QA tenant에서 실행하고 최종 tenant/user cleanup zero가 필수다.
