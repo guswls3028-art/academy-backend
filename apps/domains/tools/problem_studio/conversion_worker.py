@@ -48,6 +48,8 @@ def _save(job, **values):
 
 def _put(row, name, data, mime, **metadata):
     from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
+    if mime == "image/jpeg" and name.endswith(".png"):
+        name = name[:-4] + ".jpg"
     digest = hashlib.sha256(data).hexdigest()
     key = f"tenants/{row.tenant_id}/tools/problem-studio/conversions/{row.id}/{digest[:20]}/{name}"
     upload_fileobj_to_r2_storage(fileobj=io.BytesIO(data), key=key, content_type=mime)

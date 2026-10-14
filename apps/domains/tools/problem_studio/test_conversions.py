@@ -86,6 +86,13 @@ class ConversionJourneyTests(TestCase):
         self.assertEqual(result.status, "DONE", result.error)
         row.refresh_from_db()
         self.assertEqual(len(row.document["questions"]), 2)
+        from PIL import Image
+        for page in row.document["pages"]:
+            with Image.open(io.BytesIO(self.storage[page["key"]])) as image:
+                mime, suffix = {"JPEG": ("image/jpeg", ".jpg"), "PNG": ("image/png", ".png")}[image.format]
+            self.assertEqual(page["mime"], mime)
+            self.assertTrue(page["filename"].endswith(suffix), page)
+            self.assertTrue(page["key"].endswith("/" + page["filename"]))
         self.assertEqual(set(row.artifacts), {"manuscript", "arranged", "a3"})
         question = row.document["questions"][0]
         response = ConversionDetailView.as_view()(self.request("patch", {
