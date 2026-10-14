@@ -35,7 +35,8 @@
 | [community.md](community.md) | 커뮤니티 |
 | [matchup.md](matchup.md) | 매치업 사용자 흐름 |
 | [omr.md](omr.md) | OMR v15 인식 시스템 |
-| [problem-studio.md](problem-studio.md) | 문제 제작/한글 이관 |
+| [problem-conversion.md](problem-conversion.md) | 시험지 변환 이력·검수·수정 제안·한글 출력 |
+| [problem-studio.md](problem-studio.md) | 기존 문제 제작/한글 이관·개인 문서 스타일 |
 | [teacher-mobile.md](teacher-mobile.md) | 선생앱 모바일 설계 |
 
 ## 다른 폴더로 분리된 문서

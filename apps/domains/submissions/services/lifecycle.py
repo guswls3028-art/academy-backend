@@ -98,6 +98,7 @@ STORAGE_OBJECT_REFERENCE_FIELDS = frozenset({
     ("storage", "problem_studio", "ProblemStudioBetaRun", "result_key"),
     ("storage", "problem_studio", "ProblemStudioBetaRun", "solutions_key"),
     ("storage", "problem_studio", "ProblemStudioBetaRun", "source_archive_key"),
+    ("storage", "problem_studio", "ProblemStudioConversion", "source_archive_key"),
     ("storage", "problem_studio", "ProblemStudioFontAsset", "r2_key"),
     ("storage", "results", "WrongNotePDF", "file_path"),
     ("storage", "students", "Student", "profile_photo_r2_key"),
