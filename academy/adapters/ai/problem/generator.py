@@ -216,13 +216,11 @@ def _generate_package_content_with_bedrock(
     additional_fields: dict[str, object] = {}
     normalized_effort = reasoning_effort.strip().lower()
     if "nova-2" in model and normalized_effort in {"low", "medium", "high"}:
-        inference_config["maxTokens"] = {
-            "low": 15000,
-            "medium": 30000,
-            "high": 50000,
-        }[normalized_effort]
         if normalized_effort == "high":
-            inference_config.pop("temperature", None)
+            # Nova 2 high reasoning manages its own token budget and sampling.
+            inference_config = {}
+        else:
+            inference_config["maxTokens"] = {"low": 15000, "medium": 30000}[normalized_effort]
         additional_fields["reasoningConfig"] = {
             "type": "enabled",
             "maxReasoningEffort": normalized_effort,
@@ -234,7 +232,7 @@ def _generate_package_content_with_bedrock(
             "role": "user",
             "content": content,
         }],
-        inferenceConfig=inference_config,
+        **({"inferenceConfig": inference_config} if inference_config else {}),
         **({"additionalModelRequestFields": additional_fields} if additional_fields else {}),
     )
     blocks = response.get("output", {}).get("message", {}).get("content", [])

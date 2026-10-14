@@ -47,6 +47,9 @@ exams become separate frontend-created conversions.
 
 Configured OpenAI/Bedrock routes and AI quotas remain. Existing full-book Beta
 reservations/completed/free-run accounting remains on its legacy endpoint.
+Nova 2 high reasoning (thorough review and figure redraw) omits token-limit and
+sampling options, as required by the [provider request contract](https://docs.aws.amazon.com/nova/latest/nova2-userguide/extended-thinking.html).
+Low/medium and ordinary generation retain their existing inference settings.
 Teacher-requested AI changes are validated proposals and reopen question review.
 Question validation is shared as a framework-independent function: the API maps
 invalid input to HTTP 400, while the AI worker needs no REST framework package.
@@ -88,6 +91,8 @@ required review and storage-key isolation. Existing Problem Studio tests cover t
 underlying source/HWPX engine. Run model/migration checks, lint and owning CI gates.
 `tests/test_worker_entrypoint_imports.py` also imports conversion processing and AI
 proposal modules with REST framework imports blocked, matching the worker image.
+`tests/test_problem_bedrock_reasoning.py` checks high-reasoning request compatibility,
+unchanged lower-effort requests, image forwarding and final-text extraction.
 These checks do not establish actual AI fidelity, licensed Hancom layout, or deployed
 runtime identity. Preserve existing production continuity and paired release gates.
 The isolated real-use gate invokes the existing Nova 2 Lite route using the development
