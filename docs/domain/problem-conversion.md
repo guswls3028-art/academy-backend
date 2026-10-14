@@ -65,6 +65,9 @@ SHA-256. Responses omit storage keys and issue short-lived URLs only for current
 review-eligible artifacts. The original source ZIP has an owner-scoped fresh download
 URL. Reanalysis reads the full source page when known; figure redraw uses the selected
 crop/figure. Export preserves the actual image aspect ratio.
+Preserved pages and figures keep their actual PNG/JPEG bytes and MIME; newly saved
+JPEG assets use `.jpg` filenames. Existing JPEG assets with `.png` names remain
+readable by their recorded MIME and signed key; no saved sources are rewritten.
 
 The existing HWPX writer produces manuscript, four-question groups and portrait A3
 two-column documents. Requested solutions begin on a new page. Long questions flow
