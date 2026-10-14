@@ -10,3 +10,9 @@ def dispatch_tools_ai_job(**kwargs: Any) -> Any:
 
     return dispatch_job(**kwargs)
 
+
+def consume_tools_ai_quota(*, kind: str) -> None:
+    from apps.domains.ai.services.quota import consume_ai_quota
+
+    consume_ai_quota(kind=kind)
+

@@ -10,6 +10,34 @@ from apps.core.db import TenantQuerySet
 from apps.core.models import Tenant
 
 
+class ProblemStudioConversion(TimestampModel):
+    """Teacher-owned conversion draft; source and generated files stay private."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.RESTRICT)
+    title = models.CharField(max_length=160)
+    status = models.CharField(max_length=16, default="PENDING")
+    stage = models.CharField(max_length=16, default="source")
+    version = models.PositiveIntegerField(default=1)
+    job_id = models.CharField(max_length=64, blank=True, default="")
+    source_archive_key = models.CharField(max_length=512)
+    source_files = models.JSONField(default=list)
+    options = models.JSONField(default=dict)
+    document = models.JSONField(default=dict)
+    checkpoints = models.JSONField(default=dict)
+    operation = models.JSONField(default=dict)
+    artifacts = models.JSONField(default=dict)
+    artifact_version = models.PositiveIntegerField(default=0)
+    error = models.CharField(max_length=500, blank=True, default="")
+
+    objects = TenantQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["-updated_at"]
+        indexes = [models.Index(fields=["tenant", "owner", "-updated_at"], name="ps_conversion_owner_updated")]
+
+
 class ProblemStudioFontAsset(TimestampModel):
     class Status(models.TextChoices):
         READY = "ready", "사용 가능"

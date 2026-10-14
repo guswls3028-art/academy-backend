@@ -3,6 +3,7 @@
 
 from django.urls import path
 from .ppt.views import PptGenerateView
+from .problem_studio.conversion_views import ConversionCollectionView, ConversionDetailView, ConversionActionView
 from .problem_studio.views import (
     ProblemStudioJobCreateView,
     ProblemStudioJobStatusView,
@@ -43,6 +44,9 @@ from apps.support.omr.route_dependencies import (
 )
 
 urlpatterns = [
+    path("problem-studio/conversions/", ConversionCollectionView.as_view(), name="tools-conversion-list"),
+    path("problem-studio/conversions/<uuid:conversion_id>/", ConversionDetailView.as_view(), name="tools-conversion-detail"),
+    path("problem-studio/conversions/<uuid:conversion_id>/actions/", ConversionActionView.as_view(), name="tools-conversion-action"),
     path("ppt/generate/", PptGenerateView.as_view(), name="tools-ppt-generate"),
     path("problem-review/reports/", ProblemReviewReportCollectionView.as_view(), name="tools-problem-review-report-collection"),
     path("problem-review/reports/<uuid:report_id>/", ProblemReviewReportDetailView.as_view(), name="tools-problem-review-report-detail"),

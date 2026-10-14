@@ -16,7 +16,16 @@ This matters because the early teacher need is not "make perfect new questions".
 
 Do not describe the current product as "rewriting other textbooks" or "automatically making derivative questions". Safer product language is "source transfer", "teacher review draft", "academy template", and, for future stages, "teacher-approved similar-type candidates from permitted source/context".
 
-## Current User-Facing Shape
+## Current conversion workspace
+
+The primary `/workspace/tools/problem-studio` route now follows the persistent
+conversion/review flow in [problem-conversion.md](problem-conversion.md).
+The implementations below remain available through
+`/workspace/tools/problem-studio/legacy`; existing jobs, personal styles/fonts and
+browser drafts are preserved. This replaces the old primary screen hierarchy at
+the user's request, without changing its standalone APIs or Beta run allowance.
+
+## Legacy user-facing shape
 
 - Route: frontend `/admin/tools/problem-studio`
 - Tool tab label: `AI 시험지 타이핑`
@@ -35,7 +44,8 @@ Do not describe the current product as "rewriting other textbooks" or "automatic
   one run. There is no paid continuation in this Beta contract yet.
 - `내 문서 스타일` keeps each teacher's title/body font, point size, line spacing, and question spacing. Teachers can upload private TTF/OTF files after confirming their usage rights.
 
-Keep this hierarchy. If the page starts feeling like a full authoring studio again, it is probably regressing for the current use case.
+This hierarchy applies to the preserved legacy screen only. The conversion
+workspace has its own current-state owner above.
 
 ## Current Implementation Truth
 

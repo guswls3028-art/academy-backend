@@ -742,6 +742,8 @@ def build_hwpx_exam_document(
     document_style: dict[str, Any] | None = None,
     solutions: bool = False,
     question_visuals: dict[int, dict[str, Any]] | None = None,
+    questions_per_page: int = 0,
+    append_solutions: bool = False,
 ) -> bytes:
     """Build a Korean exam/solution sheet with source-sized pages and flowing columns."""
 
@@ -826,7 +828,7 @@ def build_hwpx_exam_document(
             )
             preview_paragraphs.append(preview)
 
-        for item in items:
+        for item_index, item in enumerate(items):
             number = int(item.get("number") or 0)
             question_visual = (question_visuals or {}).get(number)
             if solutions:
@@ -852,6 +854,8 @@ def build_hwpx_exam_document(
                 base_unit=round(style.body_size_pt * 100),
                 native_equations=style.native_equations,
             )
+            if questions_per_page and item_index and item_index % questions_per_page == 0:
+                _heading_paragraph.element.set("pageBreak", "1")
             question_paragraph_indexes.append(len(document.paragraphs) - 1)
             preview_paragraphs.append(preview)
             if solutions and question_visual:
@@ -880,6 +884,25 @@ def build_hwpx_exam_document(
                         page_layout=page_layout,
                     )
                     preview_paragraphs.append(f"[{number}번 원본 그림·표]")
+
+        if append_solutions and not solutions and items:
+            solution_heading, preview = _append_document_paragraph(
+                document, text="정답 및 해설", char_pr_id=title_style_id,
+                base_unit=round(title_size_pt * 100), native_equations=False,
+            )
+            solution_heading.element.set("pageBreak", "1")
+            preview_paragraphs.append(preview)
+            for item in items:
+                for line in (
+                    f"{item.get('number')}번 정답  {item.get('answer') or '검수 필요'}",
+                    str(item.get("explanation") or "검수 후 작성"),
+                ):
+                    for text_line in normalize_space(line).splitlines():
+                        _paragraph, preview = _append_document_paragraph(
+                            document, text=text_line, char_pr_id=body_style_id,
+                            base_unit=round(style.body_size_pt * 100), native_equations=style.native_equations,
+                        )
+                        preview_paragraphs.append(preview)
 
         _apply_page_layout(document, page_layout)
         document.styles.apply_paragraph_format(

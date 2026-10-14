@@ -53,6 +53,10 @@ def _record_progress(
 
 def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
     payload = job.payload or {}
+    if payload.get("conversion_id"):
+        from apps.domains.tools.problem_studio.conversion_worker import handle_conversion_job
+
+        return handle_conversion_job(job)
     from apps.domains.tools.problem_studio.explanation_workflow import (
         handle_problem_studio_explanation_step,
         is_explanation_step_payload,
