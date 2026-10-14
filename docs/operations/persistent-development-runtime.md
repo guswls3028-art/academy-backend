@@ -66,6 +66,15 @@ IAM 시뮬레이션은 KMS key policy, 조직 SCP 등을 포함한 실제 복호
 QA를 실행하지 않는다. frontend 전용 OIDC 역할의 도입은 이 개발 host 역할 교정과
 분리해 검토하며 backend production 역할의 신뢰나 권한을 넓히지 않는다.
 
+시험지 변환의 실제 OCR·수정 제안·그림 재작성 QA는 개발 AI worker에서도 운영과
+동일한 Nova 2 Lite 모델을 호출한다. `--problem-transcription`은 기존 두 parameter
+deny가 정확히 적용된 host에 `policy_workers_bedrock_problem_transcription.json`의
+고정 `bedrock:InvokeModel` Allow 하나만 추가하는 별도 선택이다. 현재 account의
+`global.amazon.nova-2-lite-v1:0` profile과 그 모델의 지역별 foundation ARN만 허용한다.
+다른 모델·account의 profile·streaming 호출은 허용하지 않는다. 기존 정책 필드,
+trust, attachment, frontend OIDC 역할, 운영 역할과 데이터 격리는 유지한다.
+정적 AI 키를 복사하지 않으며 합성 fixture와 일회용 QA tenant에만 호출한다.
+
 #### host 단일 정책 적용과 공용 잠금
 
 `converge_frontend_development_qa.py --apply-host-boundary`만 명시적 host 쓰기
@@ -81,6 +90,12 @@ python scripts/v1/converge_frontend_development_qa.py --aws-profile <approved-pr
 # 적용 후 재검증은 읽기 전용이며 잠금도 변경하지 않는다:
 python scripts/v1/converge_frontend_development_qa.py --aws-profile <approved-profile> --verify-host-boundary --expected-proposed-hash <after_sha256> --expected-inventory-hash <inventory_sha256>
 ```
+
+Nova 호출 권한의 계획·적용·검증은 위 각 명령에 `--problem-transcription`을 함께
+전달한다. 기본 deny-only 모드와 혼용하지 않는다. 동일한 세 hash 검토와 단일 정책
+쓰기, 공용 잠금, readback, parameter 양성/음성 검증에 모델 허용/거부 검증을 더한다.
+이미 적용된 SID는 재작성하지 않고 검증 모드로 확인한다. 전체 bootstrap도 같은
+Nova 정책을 포함하므로 이후 환경 재구성에서 이 권한을 누락하지 않는다.
 
 적용기는 기존 `deployment_lock.py`와 `academy-v1-video-job-lock`의
 `videoId=__deployment_control_v2__`를 재사용한다. 새 잠금/테이블/권한을 만들지
