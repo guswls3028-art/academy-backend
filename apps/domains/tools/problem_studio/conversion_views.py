@@ -56,7 +56,7 @@ class ConversionCollectionView(APIView):
         files = request.FILES.getlist("source_files")
         if not files or any(str(f.name).rsplit(".", 1)[-1].lower() not in {"pdf", "png", "jpg", "jpeg", "webp"} for f in files):
             raise ValidationError("PDF 또는 PNG·JPG·WebP 이미지를 올려 주세요.")
-        title = str(payload.get("title") or files[0].name.rsplit(".", 1)[0]).strip()[:160]
+        title = (str(payload.get("title") or "").strip() or files[0].name.rsplit(".", 1)[0] or "시험지 변환")[:160]
         conversion_id = uuid.uuid4()
         key = f"tenants/{request.tenant.id}/tools/problem-studio/conversions/{conversion_id}/sources.zip"
         from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage, delete_object_r2_storage

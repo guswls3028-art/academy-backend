@@ -62,7 +62,7 @@ class ConversionJourneyTests(TestCase):
         force_authenticate(request, user=user or self.user)
         return request
 
-    def create(self):
+    def create(self, title="합성 시험지"):
         from reportlab.pdfgen.canvas import Canvas
         output = io.BytesIO()
         canvas = Canvas(output)
@@ -74,7 +74,7 @@ class ConversionJourneyTests(TestCase):
         pdf = output.getvalue()
         with self.captureOnCommitCallbacks(execute=True):
             response = ConversionCollectionView.as_view()(self.request("post", {
-                "payload": json.dumps({"title": "합성 시험지", "options": {"level": "questions", "external_ai_confirmed": True}}),
+                "payload": json.dumps({"title": title, "options": {"level": "questions", "external_ai_confirmed": True}}),
                 "source_files": SimpleUploadedFile("qa-exam.pdf", pdf, content_type="application/pdf"),
             }, multipart=True))
         self.assertEqual(response.status_code, 202, response.data)
@@ -232,6 +232,9 @@ class ConversionJourneyTests(TestCase):
         row.refresh_from_db()
         row.version += 1
         self.assertEqual(serialize_conversion(row)["artifacts"], {})
+
+    def test_blank_title_uses_the_original_filename(self):
+        self.assertEqual(self.create("   ").title, "qa-exam")
 
     def test_failed_worker_readback_is_readonly_and_explicit_edit_recovers(self):
         row = self.create()
