@@ -149,7 +149,7 @@ jobs:
             --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
             --archive image/image.tar.gz --output image/receipt.json
       - name: Upload verified base artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: candidate-base-${{ github.run_id }}-${{ github.run_attempt }}
           path: image/
@@ -195,7 +195,7 @@ jobs:
             --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
             --archive image/image.tar.gz --output image/receipt.json
       - name: Upload base artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: candidate-base-${{ github.run_id }}-${{ github.run_attempt }}
           path: image/
@@ -233,7 +233,7 @@ jobs:
           persist-credentials: false
       - name: Download exact base artifact
         if: matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: candidate-base-${{ github.run_id }}-${{ github.run_attempt }}
           path: base
@@ -271,7 +271,7 @@ jobs:
             --archive image/image.tar.gz --output image/receipt.json
       - name: Upload runtime artifact
         if: matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: candidate-${{ matrix.service }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: image/
@@ -303,7 +303,7 @@ jobs:
           persist-credentials: false
       - name: Download exact build artifact
         if: (matrix.service != 'base' || needs.validate.outputs.reuse_base != 'true') && (matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true')
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: candidate-${{ matrix.service }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: image
@@ -389,7 +389,7 @@ jobs:
           echo "$REPOSITORY@$DIGEST from $SOURCE_SHA ($QA_TAG)" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload readback receipt
         if: (matrix.service != 'base' || needs.validate.outputs.reuse_base != 'true') && (matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true')
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: candidate-published-${{ matrix.service }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: image/published-${{ matrix.service }}.json
@@ -426,7 +426,7 @@ jobs:
             --expected-quality-run-id "$QUALITY_RUN_ID" \
             --expected-quality-run-attempt "$QUALITY_RUN_ATTEMPT"
       - name: Download all individual publication receipts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: candidate-published-*-${{ github.run_id }}-${{ github.run_attempt }}
           merge-multiple: true
@@ -483,7 +483,7 @@ jobs:
             --output receipt/candidate-build-only.json
           cat receipt/candidate-build-only.json >> "$GITHUB_STEP_SUMMARY"
       - name: Upload complete QA-only receipt
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: candidate-complete-${{ github.run_id }}-${{ github.run_attempt }}
           path: receipt/candidate-build-only.json
