@@ -21,6 +21,10 @@ class SupersededConversion(Exception):
     pass
 
 
+class ConversionInputError(ValueError):
+    """Safe source-recovery guidance authored by this workflow, never provider details."""
+
+
 def _query(job):
     payload = job.payload or {}
     if not job.tenant_id or str(payload.get("tenant_id")) != str(job.tenant_id) or not payload.get("request_user_id"):
@@ -88,7 +92,7 @@ def _extract(job, row):
             bedrock_model=cfg.PROBLEM_TRANSCRIPTION_BEDROCK_MODEL, bedrock_region=cfg.BEDROCK_REGION,
         )
         if not text:
-            raise ValueError("원본의 글자를 읽지 못했습니다. 더 선명한 파일을 사용해 주세요.")
+            raise ConversionInputError("원본의 글자를 읽지 못했습니다. 더 선명한 파일로 새 변환을 시작해 주세요.")
         checkpoints[digest] = text
         _save(job, checkpoints=checkpoints, stage="transcribe")
         return OcrResult(text=text, status="extracted", engine="ai")
@@ -104,10 +108,10 @@ def _extract(job, row):
         cleanup_tmp_for_path(path)
     structure = analyze_transfer_documents(collection.documents, collection.warnings)
     if structure.ocr_pending_unit_count or structure.structure_limit_reached:
-        raise ValueError("일부 페이지를 읽지 못했습니다. 파일을 나누거나 선명한 원본으로 다시 변환해 주세요.")
+        raise ConversionInputError("일부 페이지를 읽지 못했습니다. 파일을 나누거나 선명한 원본으로 새 변환을 시작해 주세요.")
     items = [item for item in structure.items if item.item_type == "problem"]
     if not items:
-        raise ValueError("원본에서 문항을 찾지 못했습니다. 문항 번호와 글자가 보이는 시험지를 올려 주세요.")
+        raise ConversionInputError("원본에서 문항을 찾지 못했습니다. 문항 번호와 글자가 보이는 시험지로 새 변환을 시작해 주세요.")
     pages, page_indexes, visuals, crops = [], {}, {}, {}
     for document in collection.documents:
         for page in document.source_pages:
@@ -274,11 +278,12 @@ def handle_conversion_job(job):
         return AIResult.done(job.id, {"conversion_id": str(row.id)})
     except SupersededConversion:
         return AIResult.failed(job.id, "Conversion operation was superseded")
-    except Exception:
+    except Exception as exc:
         logger.exception("Conversion failed job=%s tenant=%s", job.id, job.tenant_id)
         try:
             if row is not None:
-                _save(job, status="FAILED", error="작업을 완료하지 못했습니다. 원본과 저장된 수정 내용은 보관돼 있습니다. 이어서 하기로 다시 시도해 주세요.")
+                guidance = str(exc) if isinstance(exc, ConversionInputError) else "작업을 완료하지 못했습니다. 원본과 저장된 수정 내용은 보관돼 있습니다. 이어서 하기로 다시 시도해 주세요."
+                _save(job, status="FAILED", error=guidance)
         except (SupersededConversion, ValueError):
             pass
         return AIResult.failed(job.id, "Conversion failed; saved checkpoints are available")

@@ -188,6 +188,17 @@ class ConversionJourneyTests(TestCase):
         with patch("apps.domains.tools.problem_studio.conversion_worker._extract", side_effect=AssertionError("must reuse checkpoint")):
             self.assertEqual(handle_conversion_job(self.jobs[-1]).status, "DONE")
 
+    def test_source_failure_exposes_safe_recovery_guidance(self):
+        row = self.create()
+        empty = SimpleNamespace(ocr_pending_unit_count=0, structure_limit_reached=False, items=[])
+        with patch("apps.domains.tools.problem_studio.structure.analyze_transfer_documents", return_value=empty):
+            self.assertEqual(handle_conversion_job(self.jobs[-1]).status, "FAILED")
+        response = ConversionDetailView.as_view()(self.request("get"), conversion_id=row.id)
+        self.assertEqual(response.data["status"], "FAILED")
+        self.assertIn("문항을 찾지 못했습니다", response.data["error"])
+        self.assertIn("새 변환", response.data["error"])
+        self.assertIn(row.source_archive_key, self.storage)
+
     def test_uncertain_review_gate_and_invalid_crop(self):
         from rest_framework.exceptions import ValidationError
         with self.assertRaises(ValidationError):

@@ -37,6 +37,9 @@ Extraction reuses the source renderer/structural analyzer. Successful image
 transcriptions are checkpointed by SHA-256. After question extraction, retry reuses
 saved questions and completed per-question analysis. Missing OCR coverage or
 structural truncation fails rather than presenting partial output as complete.
+Unreadable/no-question sources retain the original and show safe guidance to start
+a new conversion with a clearer/smaller source. Provider/internal failures expose
+only the generic resume guidance, never raw provider diagnostics.
 Questions-only transcribes without solving; explanations adds review-draft solutions;
 thorough requests deeper reasoning. Same-exam copies select the highest structural
 confidence by question number and keep source pages for comparison. Different PDF
