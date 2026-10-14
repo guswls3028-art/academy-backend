@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "status": "successful",
   "complete": true,
-  "generatedAt": "2026-10-14T16:10:35+00:00",
-  "gitSha": "4ad629c36d92c924d3f7e39f4f1a35dfa68dfe35",
-  "releaseImageTag": "sha-4ad629c36d92c924d3f7e39f4f1a35dfa68dfe35-run-38594490107-1",
+  "generatedAt": "2026-10-14T18:06:41+00:00",
+  "gitSha": "85a4479de0dc8f1db8f26c2fe21e99177b76b236",
+  "releaseImageTag": "sha-85a4479de0dc8f1db8f26c2fe21e99177b76b236-run-38611200236-1",
   "images": {
     "academy-base": {
       "digest": "sha256:eb9d8a5cb9df52fd6be18da5ba0c412ad89fff575311e6aa3db267c70c9bcdf7",
@@ -12,8 +12,8 @@
       "source": "prior-success"
     },
     "academy-api": {
-      "digest": "sha256:f0ee82fac9e5de6ff52411e8341e9e3e6ed5267190d2eb08fcbabccf5d578996",
-      "tag": "sha-4ad629c36d92c924d3f7e39f4f1a35dfa68dfe35-run-38594490107-1",
+      "digest": "sha256:f9c2d958343ffe6ad17fc63c5f76832a81f412ea0196ded3e886d50a53287dfb",
+      "tag": "sha-85a4479de0dc8f1db8f26c2fe21e99177b76b236-run-38611200236-1",
       "source": "built"
     },
     "academy-video-worker": {
@@ -27,15 +27,15 @@
       "source": "prior-success"
     },
     "academy-ai-worker-cpu": {
-      "digest": "sha256:d62e5b791c31f9b41b3d88906e06b66570a33020eb3ba7fc4dac4d807423d74f",
-      "tag": "sha-4ad629c36d92c924d3f7e39f4f1a35dfa68dfe35-run-38594490107-1",
+      "digest": "sha256:af3fd815f6190cecaf142fcf79046ba1d2046aba3f1b91e70cf5b261487264f8",
+      "tag": "sha-85a4479de0dc8f1db8f26c2fe21e99177b76b236-run-38611200236-1",
       "source": "built"
     },
     "academy-tools-worker": {
-      "digest": "sha256:dfb9aef51da3bebbdaca406d4369334a96c163506327c1f20514c4c8e12d8088",
-      "tag": "sha-4ad629c36d92c924d3f7e39f4f1a35dfa68dfe35-run-38594490107-1",
+      "digest": "sha256:825babaf831ce5c4198569547ed58e3d4fa7e25640a8edde7d0a36cde0c84396",
+      "tag": "sha-85a4479de0dc8f1db8f26c2fe21e99177b76b236-run-38611200236-1",
       "source": "built"
     }
   },
-  "verifiedAt": "2026-10-14T16:34:36+00:00"
+  "verifiedAt": "2026-10-14T18:55:54+00:00"
 }
