@@ -264,6 +264,7 @@ def handle_conversion_job(job):
                 instruction = row.operation.get("instruction") or "원본과 다시 대조하여 문항, 정답, 해설의 오류를 바로잡으세요."
                 proposal = propose_question(question, data, mime, instruction=instruction, thorough=True)
             question["proposal"] = proposal
+            question["reviewed"] = False
             row = _save(job, document=document)
         state = "REVIEW" if any(not q.get("reviewed") or q.get("proposal") for q in row.document.get("questions", [])) else "DONE"
         final = {"status": state, "stage": "finish", "error": ""}

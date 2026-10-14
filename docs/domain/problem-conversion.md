@@ -23,6 +23,9 @@ Creation requires explicit external-AI consent and bounded PDF/PNG/JPEG/WebP
 uploads. Sources remain under the exact tenant/conversion R2 prefix for resume.
 They are persistent user documents, unlike legacy temporary archives. No automatic
 error-report uploads to external support are added.
+The source archive participates in the shared storage-reference registry, so an
+unrelated cleanup cannot remove a still-referenced original. Disposable development
+tenant cleanup removes the exact conversion prefix after worker writes have ended.
 
 The existing AI CPU `problem_studio_transcription` job carries scoped conversion
 identity and a committed operation nonce. Version/nonce checks fence superseded
@@ -41,7 +44,9 @@ exams become separate frontend-created conversions.
 
 Configured OpenAI/Bedrock routes and AI quotas remain. Existing full-book Beta
 reservations/completed/free-run accounting remains on its legacy endpoint.
-Teacher-requested AI changes are validated proposals. Figure redraw returns bounded
+Teacher-requested AI changes are validated proposals and reopen question review.
+Accepting current content (one/all) explicitly discards the corresponding proposals
+without applying them. Figure redraw returns bounded
 line/rectangle/ellipse/text primitives, rendered locally with Korean fonts; arbitrary
 code, SVG or external URLs are not executed. Original images remain available.
 Reconstructed diagrams require teacher comparison; scientific equivalence is not promised.

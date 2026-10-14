@@ -105,12 +105,14 @@ class ConversionDetailView(APIView):
             if action == "accept_all":
                 for question in questions:
                     question["reviewed"] = True
+                    question.pop("proposal", None)
             else:
                 question = next((q for q in questions if q["id"] == request.data.get("question_id")), None)
                 if question is None:
                     raise ValidationError("문항을 찾을 수 없습니다.")
                 if action == "accept":
                     question["reviewed"] = True
+                    question.pop("proposal", None)
                 elif action == "apply_proposal":
                     proposal = question.get("proposal")
                     if not proposal:

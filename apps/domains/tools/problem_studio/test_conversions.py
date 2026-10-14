@@ -136,6 +136,9 @@ class ConversionJourneyTests(TestCase):
         row = self.create()
         self.assertEqual(handle_conversion_job(self.jobs[-1]).status, "DONE")
         row.refresh_from_db()
+        response = ConversionDetailView.as_view()(self.request("patch", {"version": row.version, "action": "accept_all"}), conversion_id=row.id)
+        self.assertEqual(response.data["review_count"], 0)
+        row.refresh_from_db()
         original = row.document["questions"][0]["prompt"]
         with self.captureOnCommitCallbacks(execute=True):
             ConversionActionView.as_view()(self.request("post", {"version": row.version, "action": "correct", "question_id": "q1", "instruction": "고쳐 주세요"}), conversion_id=row.id)
@@ -144,9 +147,33 @@ class ConversionJourneyTests(TestCase):
         row.refresh_from_db()
         self.assertEqual(row.document["questions"][0]["prompt"], original)
         self.assertEqual(row.document["questions"][0]["proposal"]["prompt"], "AI proposal")
+        self.assertFalse(row.document["questions"][0]["reviewed"])
+        self.assertEqual(serialize_conversion(row)["review_count"], 1)
         response = ConversionDetailView.as_view()(self.request("patch", {"version": row.version, "question_id": "q1", "action": "apply_proposal"}), conversion_id=row.id)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["document"]["questions"][0]["prompt"], "AI proposal")
+
+    def test_accepting_current_content_resolves_pending_proposals(self):
+        row = self.create()
+        self.assertEqual(handle_conversion_job(self.jobs[-1]).status, "DONE")
+        row.refresh_from_db()
+        original = row.document["questions"][0]["prompt"]
+        for action in ("accept", "accept_all"):
+            with self.subTest(action=action):
+                for question in row.document["questions"]:
+                    question.update(reviewed=False, proposal={"prompt": "unaccepted AI change"})
+                row.save(update_fields=["document"])
+                response = ConversionDetailView.as_view()(self.request("patch", {
+                    "version": row.version, "action": action, "question_id": "q1",
+                }), conversion_id=row.id)
+                self.assertEqual(response.status_code, 200)
+                question = response.data["document"]["questions"][0]
+                self.assertTrue(question["reviewed"])
+                self.assertNotIn("proposal", question)
+                self.assertEqual(question["prompt"], original)
+                if action == "accept_all":
+                    self.assertTrue(all("proposal" not in q for q in response.data["document"]["questions"]))
+                row.refresh_from_db()
 
     def test_failed_export_resumes_without_reextracting_source(self):
         row = self.create()
