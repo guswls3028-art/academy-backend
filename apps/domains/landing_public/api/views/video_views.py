@@ -23,7 +23,8 @@ class VideoConflict(APIException):
 class VideoContentSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=90)
     summary = serializers.CharField(max_length=220, allow_blank=True, default="")
-    category = serializers.ChoiceField(choices=["interview", "lesson", "news"])
+    category = serializers.ChoiceField(choices=["interview", "lesson", "news"], default="interview")
+    category_label = serializers.CharField(max_length=40, allow_blank=True, required=False)
     format = serializers.ChoiceField(choices=["landscape", "vertical"])
 
 
@@ -38,15 +39,20 @@ class VideoEditSerializer(serializers.Serializer):
     draft_content = VideoContentSerializer()
 
 
-class VideoPublishSerializer(serializers.Serializer):
+class VideoRevisionSerializer(serializers.Serializer):
     expected_revision = serializers.IntegerField(min_value=1)
     expected_showcase_revision = serializers.IntegerField(min_value=0)
+
+
+class VideoPublishSerializer(VideoRevisionSerializer):
     set_as_hero = serializers.BooleanField(default=False)
 
 
 class VideoShowcaseSerializer(serializers.Serializer):
     expected_revision = serializers.IntegerField(min_value=0)
-    hero_video_id = serializers.UUIDField(allow_null=True)
+    hero_video_id = serializers.UUIDField(allow_null=True, required=False)
+    title = serializers.CharField(max_length=60, required=False)
+    description = serializers.CharField(max_length=220, allow_blank=True, required=False)
 
 
 class VideoSourceSerializer(serializers.Serializer):
@@ -88,6 +94,8 @@ class ManagedVideoPageSerializer(PublicVideoPageSerializer):
 class ManagedShowcaseSerializer(serializers.Serializer):
     hero_video_id = serializers.UUIDField(allow_null=True)
     revision = serializers.IntegerField()
+    title = serializers.CharField()
+    description = serializers.CharField()
 
 
 class VideoPublicationSerializer(serializers.Serializer):
@@ -133,6 +141,15 @@ def showcase_for_write(tenant):
     return row
 
 
+def showcase_content(row):
+    return {"title": row.title if row else "영상", "description": row.description if row else ""}
+
+
+def managed_showcase(row):
+    return {"hero_video_id": str(row.hero_video_id) if row and row.hero_video_id else None,
+            "revision": row.revision if row else 0, **showcase_content(row)}
+
+
 def record_event(request, action, video, detail=None):
     PublicVideoEvent.objects.create(
         tenant=request.tenant, actor=request.user, video=video, action=action,
@@ -169,7 +186,7 @@ class VideoAPIView(APIView):
         return response
 
     def videos(self, request):
-        return PublicVideo.objects.filter(tenant=request.tenant)
+        return PublicVideo.objects.filter(tenant=request.tenant).exclude(status="deleted")
 
     def published(self, request):
         return self.videos(request).filter(status="published", published_content__isnull=False)
@@ -192,11 +209,13 @@ class PublicVideoDetailView(VideoAPIView):
 
 
 class PublicVideoShowcaseView(VideoAPIView):
-    @extend_schema(auth=[], responses=inline_serializer("PublicVideoHero", fields={"hero": PublicVideoSerializer(allow_null=True)}))
+    @extend_schema(auth=[], responses=inline_serializer("PublicVideoHero", fields={
+        "hero": PublicVideoSerializer(allow_null=True), "title": serializers.CharField(), "description": serializers.CharField(),
+    }))
     def get(self, request):
         showcase = PublicVideoShowcase.objects.filter(tenant=request.tenant).first()
         hero = self.published(request).filter(pk=showcase.hero_video_id).first() if showcase else None
-        return Response({"hero": public_video(hero) if hero else None})
+        return Response({"hero": public_video(hero) if hero else None, **showcase_content(showcase)})
 
 
 class PublicVideoCapabilityView(VideoAPIView):
@@ -231,15 +250,17 @@ class ManageVideoListView(VideoAPIView):
         normalized = normalize_youtube_url(data["url"])
         metadata = None
         # A retry can recover the saved create without depending on YouTube availability.
-        if not self.videos(request).filter(request_id=data["request_id"]).exists():
+        if not PublicVideo.objects.filter(tenant=request.tenant, request_id=data["request_id"]).exists():
             try:
                 metadata = resolve_youtube(data["url"])
             except YouTubeUnavailable:
                 pass  # A visible metadata_ready=false draft; publication still requires lookup success.
         with transaction.atomic():
             require_publisher(request, lock=True)
-            existing = self.videos(request).filter(request_id=data["request_id"]).first()
+            existing = PublicVideo.objects.filter(tenant=request.tenant, request_id=data["request_id"]).first()
             if existing:
+                if existing.status == "deleted":
+                    raise VideoConflict("삭제된 영상의 등록 요청입니다. 새 영상 등록에서 다시 시작해주세요.")
                 if (existing.created_by_id != request.user.id or existing.creation_content != data["draft_content"]
                         or existing.youtube_video_id != normalized["youtube_video_id"]):
                     raise VideoConflict("다른 등록 내용에 이미 사용한 요청입니다. 새 등록을 시작해주세요.")
@@ -275,6 +296,9 @@ class ManageVideoDetailView(VideoAPIView):
             require_publisher(request, lock=True)
             video = get_object_or_404(self.videos(request).select_for_update(), pk=pk)
             check_revision(video.revision, data["expected_revision"])
+            # Older open editors do not know the free-form label; preserve it.
+            if "category_label" not in data["draft_content"] and "category_label" in video.draft_content:
+                data["draft_content"]["category_label"] = video.draft_content["category_label"]
             if video.draft_content != data["draft_content"]:
                 video.draft_content = data["draft_content"]
                 video.updated_by = request.user
@@ -282,6 +306,27 @@ class ManageVideoDetailView(VideoAPIView):
                 video.save(update_fields=["draft_content", "updated_by", "revision", "updated_at"])
                 record_event(request, "edit", video)
             return Response(managed_video(video))
+
+    @extend_schema(parameters=[VideoRevisionSerializer], responses={204: None})
+    def delete(self, request, pk):
+        data = validated(VideoRevisionSerializer, request.query_params)
+        with transaction.atomic():
+            require_publisher(request, lock=True)
+            video = get_object_or_404(PublicVideo.objects.select_for_update(), tenant=request.tenant, pk=pk)
+            # A lost response is safe to retry; the old create request stays a tombstone.
+            if video.status == "deleted":
+                return Response(status=204)
+            showcase = showcase_for_write(request.tenant)
+            check_revision(video.revision, data["expected_revision"])
+            check_revision(showcase.revision, data["expected_showcase_revision"])
+            if showcase.hero_video_id == video.id:
+                update_hero(request, showcase, None)
+            video.status = "deleted"
+            video.updated_by = request.user
+            video.revision += 1
+            video.save(update_fields=["status", "updated_by", "revision", "updated_at"])
+            record_event(request, "delete", video)
+            return Response(status=204)
 
 
 class ManageVideoPublishView(VideoAPIView):
@@ -341,8 +386,7 @@ class ManageVideoShowcaseView(VideoAPIView):
     def get(self, request):
         require_publisher(request)
         row = PublicVideoShowcase.objects.filter(tenant=request.tenant).first()
-        return Response({"hero_video_id": str(row.hero_video_id) if row and row.hero_video_id else None,
-                         "revision": row.revision if row else 0})
+        return Response(managed_showcase(row))
 
     @extend_schema(request=VideoShowcaseSerializer, responses=ManagedShowcaseSerializer)
     def patch(self, request):
@@ -351,7 +395,14 @@ class ManageVideoShowcaseView(VideoAPIView):
             require_publisher(request, lock=True)
             row = showcase_for_write(request.tenant)
             check_revision(row.revision, data["expected_revision"])
-            video = get_object_or_404(self.published(request), pk=data["hero_video_id"]) if data["hero_video_id"] else None
-            update_hero(request, row, video)
-            return Response({"hero_video_id": str(row.hero_video_id) if row.hero_video_id else None,
-                             "revision": row.revision})
+            if "hero_video_id" in data:
+                video = get_object_or_404(self.published(request), pk=data["hero_video_id"]) if data["hero_video_id"] else None
+                update_hero(request, row, video)
+            changed = [field for field in ("title", "description") if field in data and getattr(row, field) != data[field]]
+            if changed:
+                for field in changed:
+                    setattr(row, field, data[field])
+                row.revision += 1
+                row.save(update_fields=[*changed, "revision"])
+                record_event(request, "settings", None, {"fields": changed, "showcase_revision": row.revision})
+            return Response(managed_showcase(row))
