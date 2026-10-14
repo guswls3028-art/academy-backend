@@ -18,6 +18,8 @@ WORKER_ENTRYPOINT_MODULES = (
 AI_WORKER_RUNTIME_MODULES = (
     "apps.domains.results.services.grading_service",
     "apps.domains.submissions.services.ai_omr_result_mapper",
+    "apps.domains.tools.problem_studio.conversion_worker",
+    "apps.domains.tools.problem_studio.conversion_ai",
 )
 
 

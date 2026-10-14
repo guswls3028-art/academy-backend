@@ -48,6 +48,8 @@ exams become separate frontend-created conversions.
 Configured OpenAI/Bedrock routes and AI quotas remain. Existing full-book Beta
 reservations/completed/free-run accounting remains on its legacy endpoint.
 Teacher-requested AI changes are validated proposals and reopen question review.
+Question validation is shared as a framework-independent function: the API maps
+invalid input to HTTP 400, while the AI worker needs no REST framework package.
 Applying a proposal preserves both existing and newly reported review flags.
 Accepting current content (one/all) explicitly discards the corresponding proposals
 without applying them. Figure redraw returns bounded
@@ -84,6 +86,8 @@ introduced; retention must be included in future user/tenant deletion procedures
 tenant/owner isolation, stale versions, proposal-only AI, failed export resume,
 required review and storage-key isolation. Existing Problem Studio tests cover the
 underlying source/HWPX engine. Run model/migration checks, lint and owning CI gates.
+`tests/test_worker_entrypoint_imports.py` also imports conversion processing and AI
+proposal modules with REST framework imports blocked, matching the worker image.
 These checks do not establish actual AI fidelity, licensed Hancom layout, or deployed
 runtime identity. Preserve existing production continuity and paired release gates.
 The isolated real-use gate invokes the existing Nova 2 Lite route using the development

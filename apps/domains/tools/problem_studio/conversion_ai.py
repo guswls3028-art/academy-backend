@@ -11,7 +11,7 @@ from academy.adapters.ai.config import AIConfig
 from academy.adapters.ai.problem.generator import _generate_package_content_with_bedrock, _json_from_content
 from academy.adapters.ai.problem.transcriber import _bedrock_image
 from apps.support.tools.ai_dependencies import consume_tools_ai_quota
-from apps.domains.tools.problem_studio.conversions import validate_question
+from apps.domains.tools.problem_studio.conversion_question import validate_question
 
 
 def _ask(system, prompt, image, mime, *, thorough=False):
