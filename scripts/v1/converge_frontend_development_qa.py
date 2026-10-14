@@ -23,6 +23,7 @@ INLINE = "academy-api-development-runtime"
 ACCOUNT = "809466760795"
 REGION = "ap-northeast-2"
 BOUNDARY = ROOT / "scripts/v1/templates/iam/policy_api_development_parameter_boundary.json"
+TRANSCRIPTION = BOUNDARY.with_name("policy_workers_bedrock_problem_transcription.json")
 LOCK_TABLE = "academy-v1-video-job-lock"
 LOCK_TTL = 10800
 LOCK_HELPER = Path(__file__).with_name("deployment_lock.py")
@@ -151,22 +152,45 @@ def append_boundary(document):
     return {**document, "Statement": document["Statement"] + statements}
 
 
+def proposed_transcription():
+    expected = {"Version": "2012-10-17", "Statement": [{
+        "Sid": "ProblemStudioNova2LiteTranscription", "Effect": "Allow", "Action": "bedrock:InvokeModel",
+        "Resource": [f"arn:aws:bedrock:{REGION}:{ACCOUNT}:inference-profile/global.amazon.nova-2-lite-v1:0",
+                     "arn:aws:bedrock:*::foundation-model/amazon.nova-2-lite-v1:0"],
+    }]}
+    actual = json.loads(TRANSCRIPTION.read_text(encoding="utf-8"))
+    if actual != expected:
+        raise ValueError("Transcription grant differs from the sealed Nova 2 Lite contract")
+    return actual
+
+
+def append_transcription(document):
+    for expected in proposed_boundary()["Statement"]:
+        if [item for item in document["Statement"] if item.get("Sid") == expected["Sid"]] != [expected]:
+            raise ValueError("The exact development parameter denies must already be applied")
+    statement, = proposed_transcription()["Statement"]
+    if any(item.get("Sid") == statement["Sid"] for item in document["Statement"]):
+        raise ValueError("Transcription Sid already exists; verify the current policy instead")
+    return {**document, "Statement": document["Statement"] + [statement]}
+
+
 def require_hashes(*values):
     if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in values):
         raise ValueError("Reviewed canonical SHA256 values are required")
 
 
-def verify_host_boundary(profile, expected_policy_hash, expected_inventory_hash, checkpoint=lambda: None):
+def verify_host_boundary(profile, expected_policy_hash, expected_inventory_hash, checkpoint=lambda: None, *, problem_transcription=False):
     require_hashes(expected_policy_hash, expected_inventory_hash)
     snapshot = host_snapshot(profile, checkpoint)
     if policy_hash(snapshot["policy"]) != expected_policy_hash or policy_hash(snapshot["inventory"]) != expected_inventory_hash:
         raise ValueError("Current host policy/inventory hash mismatch")
     statements = snapshot["policy"]["Statement"]
-    for expected in proposed_boundary()["Statement"]:
+    required = proposed_boundary()["Statement"] + (proposed_transcription()["Statement"] if problem_transcription else [])
+    for expected in required:
         matches = [item for item in statements if item.get("Sid") == expected["Sid"]]
         if matches != [expected]:
-            raise ValueError("Current policy lacks the exact unique deny boundary")
-    cases = simulation_cases()
+            raise ValueError("Current policy lacks the exact unique required statements")
+    cases = simulation_cases(problem_transcription=problem_transcription)
     actual = []
     for action, wildcard in dict.fromkeys((case[0], case[1] == "*") for case in cases):
         group = [case for case in cases if case[0] == action and (case[1] == "*") == wildcard]
@@ -205,7 +229,7 @@ class HostApplyError(RuntimeError):
         super().__init__(report["mode"])
 
 
-def apply_host_boundary(profile, expected_current_hash, expected_proposed_hash, expected_inventory_hash):
+def apply_host_boundary(profile, expected_current_hash, expected_proposed_hash, expected_inventory_hash, *, problem_transcription=False):
     require_hashes(expected_current_hash, expected_proposed_hash, expected_inventory_hash)
     aws_environment(profile)
     if os.environ.get("ACADEMY_DEPLOY_LOCK_OWNER") or os.environ.get("ACADEMY_RUNTIME_ENV_LOCK_OWNER"):
@@ -217,7 +241,8 @@ def apply_host_boundary(profile, expected_current_hash, expected_proposed_hash, 
     # profile-only environment. Neither a profile name nor a plan authorizes Apply.
     if aws(["sts", "get-caller-identity"], profile)["Account"] != ACCOUNT:
         raise ValueError("Wrong AWS account")
-    owner = f"host-parameter-boundary:{os.getpid()}:{uuid.uuid4().hex}"
+    purpose = "problem-transcription" if problem_transcription else "parameter-boundary"
+    owner = f"host-{purpose}:{os.getpid()}:{uuid.uuid4().hex}"
     deadline = time.monotonic() + 600
     report = {"mode": "HOST_POLICY_FAILED", "role": ROLE, "inline_policy": INLINE, "owner": owner,
               "iam_write_attempted": False, "lock_state": "not_acquired", "verification": None, "stage": "acquire",
@@ -243,7 +268,7 @@ def apply_host_boundary(profile, expected_current_hash, expected_proposed_hash, 
         snapshot = host_snapshot(profile, checkpoint)
         if policy_hash(snapshot["policy"]) != expected_current_hash or policy_hash(snapshot["inventory"]) != expected_inventory_hash:
             raise ValueError("Reviewed current policy/inventory changed")
-        proposed = append_boundary(snapshot["policy"])
+        proposed = append_transcription(snapshot["policy"]) if problem_transcription else append_boundary(snapshot["policy"])
         if policy_hash(proposed) != expected_proposed_hash:
             raise ValueError("Reviewed proposed policy changed")
         report["stage"] = "prewrite"
@@ -261,7 +286,8 @@ def apply_host_boundary(profile, expected_current_hash, expected_proposed_hash, 
         aws(["iam", "put-role-policy", "--role-name", ROLE, "--policy-name", INLINE,
              "--policy-document", canonical(proposed)], profile)
         report["stage"] = "postverify"
-        report["verification"] = verify_host_boundary(profile, expected_proposed_hash, expected_inventory_hash, checkpoint)
+        report["verification"] = verify_host_boundary(profile, expected_proposed_hash, expected_inventory_hash, checkpoint,
+                                                      problem_transcription=problem_transcription)
         checkpoint()
         verified = True
     except BaseException as error:
@@ -297,7 +323,7 @@ def proposed_boundary():
     return json.loads(text.replace("__REGION__", REGION).replace("__ACCOUNT_ID__", ACCOUNT))
 
 
-def simulation_cases():
+def simulation_cases(*, problem_transcription=False):
     prefix = f"arn:aws:ssm:{REGION}:{ACCOUNT}:parameter"
     allowed = proposed_boundary()["Statement"][0]["NotResource"]
     denied = [f"{prefix}{name}" for name in (
@@ -318,16 +344,26 @@ def simulation_cases():
                    "ssm:UpdateInstanceInformation", "ssm:ListInstanceAssociations",
                    "ssm:GetDocument", "ec2messages:GetMessages", "ec2messages:AcknowledgeMessage"):
         result.append((action, "*", "allowed"))
+    if problem_transcription:
+        profile = proposed_transcription()["Statement"][0]["Resource"][0]
+        result.extend([
+            ("bedrock:InvokeModel", profile, "allowed"),
+            ("bedrock:InvokeModel", f"arn:aws:bedrock:{REGION}::foundation-model/amazon.nova-2-lite-v1:0", "allowed"),
+            ("bedrock:InvokeModel", "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-lite-v1:0", "allowed"),
+            ("bedrock:InvokeModel", profile.replace(ACCOUNT, "000000000000"), "implicitDeny"),
+            ("bedrock:InvokeModel", f"arn:aws:bedrock:{REGION}::foundation-model/amazon.nova-pro-v1:0", "implicitDeny"),
+            ("bedrock:InvokeModelWithResponseStream", profile, "implicitDeny"),
+        ])
     return result
 
 
-def audit(profile):
+def audit(profile, *, problem_transcription=False):
     snapshot = host_snapshot(profile)
     inline_document = snapshot["policy"]
     inventory = snapshot["inventory"]
     grants = [{"kind": "inline", "name": INLINE, "document": inline_document}, *inventory["managed_grants"]]
-    boundary = proposed_boundary()
-    after = append_boundary(inline_document)
+    boundary = proposed_transcription() if problem_transcription else proposed_boundary()
+    after = append_transcription(inline_document) if problem_transcription else append_boundary(inline_document)
     evidence = {
         "mode": "READ_ONLY_PLAN", "role": ROLE, "inline_policy": INLINE,
         "trust": inventory["trust"], "permissions_boundary": None,
@@ -338,10 +374,13 @@ def audit(profile):
         "cases": [], "iam_mutation": 0, "parameter_value_reads": 0,
         "limitation": "IAM simulation only; no KMS decryption, resource-policy, SCP or live access success claim",
     }
+    if problem_transcription:
+        evidence["mode"] = "READ_ONLY_PROBLEM_TRANSCRIPTION_PLAN"
+        evidence["proposed_allow"] = evidence.pop("proposed_deny")
     arn = f"arn:aws:iam::{ACCOUNT}:role/{ROLE}"
     # Batch by action while preserving every per-resource result. No SSM API is
     # called: parameter names and parent paths are simulator inputs only.
-    cases = simulation_cases()
+    cases = simulation_cases(problem_transcription=problem_transcription)
     # IAM rejects a resource list mixing '*' and specific ARNs.
     for action, wildcard in dict.fromkeys((case[0], case[1] == "*") for case in cases):
         group = [case for case in cases if case[0] == action and (case[1] == "*") == wildcard]
@@ -501,10 +540,13 @@ def main(argv=None):
     mode.add_argument("--frontend-role-plan", action="store_true", help="Separate frontend role/document plan; never Apply")
     mode.add_argument("--apply-host-boundary", action="store_true", help="Explicit separately authorized host-only mutation")
     mode.add_argument("--verify-host-boundary", action="store_true", help="Current principal verification; never writes")
+    parser.add_argument("--problem-transcription", action="store_true", help="Plan/apply/verify only the sealed Nova 2 Lite grant on the isolated development host; requires existing parameter denies")
     parser.add_argument("--expected-current-hash")
     parser.add_argument("--expected-proposed-hash")
     parser.add_argument("--expected-inventory-hash")
     arguments = parser.parse_args(argv)
+    if arguments.problem_transcription and arguments.frontend_role_plan:
+        parser.error("Problem transcription changes only the development host, never the frontend role")
     hashes = (arguments.expected_current_hash, arguments.expected_proposed_hash, arguments.expected_inventory_hash)
     if arguments.apply_host_boundary:
         if not all(hashes):
@@ -516,11 +558,11 @@ def main(argv=None):
         parser.error("expected hashes require an explicit host Apply or verification mode")
     try:
         if arguments.apply_host_boundary:
-            report = apply_host_boundary(arguments.aws_profile, *hashes)
+            report = apply_host_boundary(arguments.aws_profile, *hashes, problem_transcription=arguments.problem_transcription)
         elif arguments.verify_host_boundary:
-            report = verify_host_boundary(arguments.aws_profile, *hashes[1:])
+            report = verify_host_boundary(arguments.aws_profile, *hashes[1:], problem_transcription=arguments.problem_transcription)
         else:
-            report = frontend_plan(arguments.aws_profile) if arguments.frontend_role_plan else audit(arguments.aws_profile)
+            report = frontend_plan(arguments.aws_profile) if arguments.frontend_role_plan else audit(arguments.aws_profile, problem_transcription=arguments.problem_transcription)
         print(json.dumps(report, indent=2))
         return 0 if report.get("proposed_simulation_pass", True) else 1
     except HostApplyError as error:

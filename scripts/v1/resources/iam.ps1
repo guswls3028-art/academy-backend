@@ -246,6 +246,10 @@ function Ensure-ApiDevelopmentIAM {
     $parameterBoundaryJson = (Get-Content -LiteralPath $parameterBoundaryPath -Raw).
         Replace("__REGION__", $script:Region).Replace("__ACCOUNT_ID__", $script:AccountId)
     $runtimePolicy.Statement += @(($parameterBoundaryJson | ConvertFrom-Json).Statement)
+    # Same sealed model as production; development keeps its own DB/queues/R2
+    # and the explicit parameter denies above. No provider credential is copied.
+    $transcriptionPolicyPath = Join-Path $TemplatesPath "policy_workers_bedrock_problem_transcription.json"
+    $runtimePolicy.Statement += @((Get-Content -LiteralPath $transcriptionPolicyPath -Raw | ConvertFrom-Json).Statement)
     $runtimePolicyJson = $runtimePolicy | ConvertTo-Json -Depth 20 -Compress
     $runtimePolicyRef = Convert-JsonArgToFileRef $runtimePolicyJson
     $runtimePolicyFile = $runtimePolicyRef -replace '^file://', ''

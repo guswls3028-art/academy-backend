@@ -30,7 +30,8 @@ def powershell_host_writer(mode="direct", holder="", fault="", missing=False, en
         scripts = fixture / "scripts/v1"
         for name in ("initialize-api-development.ps1", "converge-api-development-prerequisites.ps1",
                      "resources/iam.ps1", "core/guard.ps1", "templates/iam/trust_ec2.json",
-                     "templates/iam/policy_api_development_parameter_boundary.json"):
+                     "templates/iam/policy_api_development_parameter_boundary.json",
+                     "templates/iam/policy_workers_bedrock_problem_transcription.json"):
             path = scripts / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes((ROOT / "scripts/v1" / name).read_bytes())
@@ -265,6 +266,7 @@ class FakeHostAws:
         self.subject = subject
         self.calls = []
         self.fault = ""
+        self.problem_transcription = False
         self.reads = 0
         self.policy = {"Version": "2012-10-17", "Id": "preserve-manual-fields",
                        "Statement": [{"Sid": "Existing", "Effect": "Allow", "Action": "ecr:GetAuthorizationToken", "Resource": "*"}]}
@@ -320,7 +322,7 @@ class FakeHostAws:
             action = args[args.index("--action-names") + 1]
             end = args.index("--policy-input-list") if "--policy-input-list" in args else len(args)
             resources = args[args.index("--resource-arns") + 1:end]
-            expected = {(action, resource): decision for action, resource, decision in s.simulation_cases()}
+            expected = {(action, resource): decision for action, resource, decision in s.simulation_cases(problem_transcription=self.problem_transcription)}
             results = [{"EvalActionName": action, "EvalResourceName": resource,
                         "EvalDecision": expected[(action, resource)]} for resource in resources]
             if self.fault == "postverify":
@@ -424,6 +426,45 @@ class HostBoundaryApplyTests(unittest.TestCase):
             self.apply()
         self.assertEqual(self.puts(), [])
         self.assertEqual(caught.exception.report["lock_state"], "released")
+
+    def test_problem_transcription_plan_and_apply_preserve_denies_and_existing_grants(self):
+        self.aws.policy = copy.deepcopy(self.after)
+        self.aws.problem_transcription = True
+        before = copy.deepcopy(self.aws.policy)
+        plan = self.subject.audit("offline", problem_transcription=True)
+        self.assertTrue(plan["proposed_simulation_pass"])
+        self.assertEqual(self.puts(), [])
+        self.assertEqual(self.lease.actions, [])
+        result = self.subject.apply_host_boundary("offline", plan["before_sha256"], plan["after_sha256"],
+            plan["inventory_sha256"], problem_transcription=True)
+        self.assertEqual(result["lock_state"], "released")
+        self.assertEqual(len(self.puts()), 1)
+        self.assertEqual(self.aws.policy["Id"], before["Id"])
+        self.assertEqual(self.aws.policy["Statement"][:-1], before["Statement"])
+        added = self.aws.policy["Statement"][-1]
+        self.assertEqual(added["Action"], "bedrock:InvokeModel")
+        self.assertEqual(len(added["Resource"]), 2)
+        cases = result["verification"]["cases"]
+        self.assertEqual(len(cases), 50)
+        self.assertTrue(any(case["action"] == "bedrock:InvokeModelWithResponseStream" and
+            case["decision"] == "implicitDeny" for case in cases))
+        self.assertTrue(any(case["resource"].endswith("/academy/api/env") and
+            case["decision"] == "explicitDeny" for case in cases))
+
+    def test_problem_transcription_rejects_missing_denies_and_widened_model_policy_before_put(self):
+        target = {**self.before, "Statement": self.before["Statement"] + self.subject.proposed_transcription()["Statement"]}
+        with self.assertRaises(self.subject.HostApplyError):
+            self.subject.apply_host_boundary("offline", self.hashes[0], self.subject.policy_hash(target),
+                self.hashes[2], problem_transcription=True)
+        self.assertEqual(self.puts(), [])
+        self.assertIsNone(self.lease.item)
+        self.aws.policy = copy.deepcopy(self.after)
+        broad = self.subject.proposed_transcription()
+        broad["Statement"][0]["Resource"] = "*"
+        with patch.object(self.subject, "TRANSCRIPTION", Mock(read_text=Mock(return_value=json.dumps(broad)))):
+            with self.assertRaises(ValueError):
+                self.subject.append_transcription(self.aws.policy)
+        self.assertEqual(self.puts(), [])
 
     def test_other_writer_held_lock_fails_acquisition_without_release(self):
         self.lease("acquire", "bootstrap-peer", "offline")

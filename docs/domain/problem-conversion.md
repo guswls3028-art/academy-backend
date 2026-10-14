@@ -83,3 +83,5 @@ required review and storage-key isolation. Existing Problem Studio tests cover t
 underlying source/HWPX engine. Run model/migration checks, lint and owning CI gates.
 These checks do not establish actual AI fidelity, licensed Hancom layout, or deployed
 runtime identity. Preserve existing production continuity and paired release gates.
+The isolated real-use gate invokes the existing Nova 2 Lite route using the development
+host's sealed transcription grant; see [development runtime](../operations/persistent-development-runtime.md).
