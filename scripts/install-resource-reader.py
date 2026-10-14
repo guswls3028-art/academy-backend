@@ -7,9 +7,10 @@ import tarfile
 from urllib.request import urlopen
 
 RELEASE = "v0.8.7"
+# Official 2026-10-11 Native Skia repack, verified against release SHA256SUMS.txt.
 ARCHIVES = {
-    "x86_64": ("linux-x86_64", "24de2bdaa0b69f86302a27e7fdfb570ad3c53b0ab3a4eac06446adc651dfb988"),
-    "aarch64": ("linux-aarch64", "8c9d75ce14cdc3c34d3c7d843a44de3e77ab0dff04a5b189f23fea21999b4455"),
+    "x86_64": ("linux-x86_64", "f1e541a25cfe76b6bc1daf18bf9c1f9a5ac5e03e2c01b188daaf54107214f631"),
+    "aarch64": ("linux-aarch64", "c4a70f5ed11b99586ee89d1ac9069145d58a0831d00e87858bb01626e2ebf313"),
 }
 
 
