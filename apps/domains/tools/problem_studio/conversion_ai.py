@@ -78,11 +78,16 @@ def redraw_figure(image, mime):
     for attempt in range(2):
         try:
             response = _ask(system, prompt, image, mime, thorough=True)
-            return render_figure(response)
-        except ValueError:
+        except json.JSONDecodeError:
             if attempt:
                 raise
-            prompt += " 이전 응답의 JSON 또는 도형 형식이 올바르지 않았습니다. 지정한 좌표 수·범위·도형 제한을 지킨 JSON 객체 하나만 반환하고 코드 블록이나 설명을 덧붙이지 마세요."
+        else:
+            try:
+                return render_figure(response)
+            except ValueError:
+                if attempt:
+                    raise
+        prompt += " 이전 응답의 JSON 또는 도형 형식이 올바르지 않았습니다. 지정한 좌표 수·범위·도형 제한을 지킨 JSON 객체 하나만 반환하고 코드 블록이나 설명을 덧붙이지 마세요."
 
 
 def render_figure(response):

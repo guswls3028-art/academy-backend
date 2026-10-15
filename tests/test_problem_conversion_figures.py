@@ -72,9 +72,10 @@ def test_redraw_rejects_repeated_invalid_output_without_unbounded_retry():
     assert ask.call_count == 2
 
 
-def test_redraw_does_not_retry_provider_errors_or_valid_output():
-    with patch("apps.domains.tools.problem_studio.conversion_ai._ask", side_effect=RuntimeError("provider unavailable")) as ask:
-        with pytest.raises(RuntimeError, match="provider unavailable"):
+@pytest.mark.parametrize("error", [RuntimeError("provider unavailable"), ValueError("provider unavailable")])
+def test_redraw_does_not_retry_provider_errors_or_valid_output(error):
+    with patch("apps.domains.tools.problem_studio.conversion_ai._ask", side_effect=error) as ask:
+        with pytest.raises(type(error), match="provider unavailable"):
             redraw_figure(b"synthetic source", "image/png")
     assert ask.call_count == 1
     valid = {"shapes": [{"type": "line", "points": [100, 200, 300, 400]}]}
