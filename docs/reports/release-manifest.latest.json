@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "status": "successful",
   "complete": true,
-  "generatedAt": "2026-10-15T16:06:51+00:00",
-  "gitSha": "6bc14bf1113d871a357e345805085217f1af3507",
-  "releaseImageTag": "sha-6bc14bf1113d871a357e345805085217f1af3507-run-38765072405-1",
+  "generatedAt": "2026-10-15T17:17:24+00:00",
+  "gitSha": "01bb2f735014ea47e858c66a7f839a6b4264f4ba",
+  "releaseImageTag": "sha-01bb2f735014ea47e858c66a7f839a6b4264f4ba-run-38774924773-1",
   "images": {
     "academy-base": {
       "digest": "sha256:eb9d8a5cb9df52fd6be18da5ba0c412ad89fff575311e6aa3db267c70c9bcdf7",
@@ -12,8 +12,8 @@
       "source": "prior-success"
     },
     "academy-api": {
-      "digest": "sha256:dc41f1d0ecdd6edaadca99861a1aa2b728ea7853b26f7080edf738e433d2b814",
-      "tag": "sha-6bc14bf1113d871a357e345805085217f1af3507-run-38765072405-1",
+      "digest": "sha256:6e2edf4cf0bbdb9330ef5d10977b5be796a669dd4d2e025dcdce6f10047c8900",
+      "tag": "sha-01bb2f735014ea47e858c66a7f839a6b4264f4ba-run-38774924773-1",
       "source": "built"
     },
     "academy-video-worker": {
@@ -27,8 +27,8 @@
       "source": "prior-success"
     },
     "academy-ai-worker-cpu": {
-      "digest": "sha256:070a49b9177e4576c4edea69c3c80022eb1b299ce68c2a3b6f92869003c9e55a",
-      "tag": "sha-6bc14bf1113d871a357e345805085217f1af3507-run-38765072405-1",
+      "digest": "sha256:90654c3a4e2a1a86af92f69050542bfe3298c686c9f63065eb1fa5c01bb14d15",
+      "tag": "sha-01bb2f735014ea47e858c66a7f839a6b4264f4ba-run-38774924773-1",
       "source": "built"
     },
     "academy-tools-worker": {
@@ -37,5 +37,5 @@
       "source": "prior-success"
     }
   },
-  "verifiedAt": "2026-10-15T16:29:30+00:00"
+  "verifiedAt": "2026-10-15T17:38:12+00:00"
 }
