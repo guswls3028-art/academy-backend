@@ -57,7 +57,16 @@ Applying a proposal preserves both existing and newly reported review flags.
 Accepting current content (one/all) explicitly discards the corresponding proposals
 without applying them. Figure redraw returns bounded
 line/rectangle/ellipse/text primitives, rendered locally with Korean fonts; arbitrary
-code, SVG or external URLs are not executed. Original images remain available.
+code, SVG or external URLs are not executed. Text labels use an `[x, y]` anchor;
+existing four-coordinate labels remain compatible and use their first two values.
+Line/rectangle/ellipse primitives require four coordinates. Every supplied coordinate
+must remain finite and within 0..1000, including unused legacy text values; shape
+and text length limits remain enforced. Figure requests keep high reasoning but
+do not receive question-solving instructions. Invalid JSON or geometry triggers
+one bounded format-correction request, with the same quota accounting per request;
+only a fully validated PNG becomes a proposal. Provider errors are not retried by
+this repair. Repeated invalid output fails with the saved original and edits
+available for retry. Original images remain available.
 Reconstructed diagrams require teacher comparison; scientific equivalence is not promised.
 
 ## Editing and output
@@ -93,6 +102,9 @@ underlying source/HWPX engine. Run model/migration checks, lint and owning CI ga
 proposal modules with REST framework imports blocked, matching the worker image.
 `tests/test_problem_bedrock_reasoning.py` checks high-reasoning request compatibility,
 unchanged lower-effort requests, image forwarding and final-text extraction.
+`tests/test_problem_conversion_figures.py` verifies two/four-coordinate label
+compatibility, PNG rendering, finite bounded geometry, and a single format repair
+without retrying provider failures or accepting repeated invalid output.
 These checks do not establish actual AI fidelity, licensed Hancom layout, or deployed
 runtime identity. Preserve existing production continuity and paired release gates.
 The isolated real-use gate invokes the existing Nova 2 Lite route using the development
