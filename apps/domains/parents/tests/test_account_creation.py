@@ -13,6 +13,35 @@ class ParentAccountCreationTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="Parent Account", code="parent-account")
 
+    def test_long_student_name_preserves_existing_parent_name_when_creating_login(self):
+        name = "직접작성한학부모이름" * 4
+        parent = Parent.objects.create(tenant=self.tenant, phone="01012345678", name=name)
+        result = ensure_parent_account_for_student(
+            tenant=self.tenant, parent_phone=parent.phone, student_name="가" * 50,
+            initial_password="chosen-5678",
+        )
+        parent.refresh_from_db()
+        self.assertEqual(result.parent.pk, parent.pk)
+        self.assertEqual(parent.name, name)
+        self.assertEqual(parent.user.name, name)
+        self.assertTrue(parent.user.check_password("chosen-5678"))
+
+    def test_long_student_name_links_orphan_login_without_renaming_or_resetting_it(self):
+        phone = "01012345678"
+        user = get_user_model().objects.create_user(
+            username=f"p_{self.tenant.id}_{phone}", tenant=self.tenant, phone=phone,
+            name="직접 작성한 이름", password="keep-original",
+        )
+        result = ensure_parent_account_for_student(
+            tenant=self.tenant, parent_phone=phone, student_name="가" * 50,
+            initial_password="unused-new-password",
+        )
+        user.refresh_from_db()
+        self.assertEqual(result.parent.user_id, user.pk)
+        self.assertEqual(result.parent.name, "가" * 46 + " 학부모")
+        self.assertEqual(user.name, "직접 작성한 이름")
+        self.assertTrue(user.check_password("keep-original"))
+
     def test_phone_is_normalized_before_identity_creation(self):
         result = ensure_parent_account_for_student(
             tenant=self.tenant,

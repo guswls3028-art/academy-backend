@@ -89,12 +89,18 @@ class DevelopmentAccountProbeTests(TestCase):
     def test_registered_accounts_pass_probe_with_their_own_phone_passwords(self):
         from apps.domains.students.services.creation import create_student_account
 
+        student_name = (PROBE.fixture_prefix(self.tenant.code) + "긴학생이름" * 3)[:50]
         created = create_student_account(
             tenant=self.tenant, password_mode="phone_last4", parent_password_mode="phone_last4",
-            student_data={"name": PROBE.fixture_prefix(self.tenant.code) + "registered",
+            student_data={"name": student_name,
                           "ps_number": "registered-student", "phone": "01087659876",
                           "parent_phone": "01087655432"},
         )
+        created.student.refresh_from_db()
+        self.assertEqual(created.student.name, student_name)
+        self.assertEqual(created.student.user.name, student_name)
+        self.assertEqual(created.parent.name, student_name[:46] + " 학부모")
+        self.assertEqual(created.parent.user.name, created.parent.name)
         with patch.object(PROBE, "runtime_scope", return_value="a" * 64), \
                 patch.object(PROBE.urllib.request, "build_opener") as opener:
             opener.return_value.open.side_effect = self.open_request
