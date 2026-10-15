@@ -173,3 +173,8 @@ class AssessmentCorrectionUpdateSerializer(serializers.Serializer):
         allow_null=True,
         required=False,
     )
+    expected_media_set_fingerprint = serializers.RegexField(
+        regex=r"^[0-9a-f]{64}$",
+        max_length=64,
+        required=False,
+    )

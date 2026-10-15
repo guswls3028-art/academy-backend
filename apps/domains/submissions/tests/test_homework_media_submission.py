@@ -1138,6 +1138,57 @@ class HomeworkSubmissionMediaTests(TestCase):
         self.assertIsNone(media.removed_at)
 
     @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
+    def test_review_rejects_changed_media_and_accepts_reloaded_evidence(self, upload_fileobj_to_r2):
+        from apps.domains.submissions.services.homework_media import homework_media_set_fingerprint
+
+        first = self._post(file=_jpeg("viewed.jpg", body=b"viewed"))
+        self.assertEqual(first.status_code, 201, first.data)
+        viewed_fingerprint = homework_media_set_fingerprint(
+            tenant=self.tenant, enrollment_id=self.enrollment.id, homework_id=self.homework.id,
+        )
+        added = self._post(file=_jpeg("added.jpg", body=b"added-after-preview"), position=1)
+        self.assertEqual(added.status_code, 201, added.data)
+        path = f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/"
+        endpoint = resolve(path)
+
+        def review(fingerprint):
+            request = self._request("patch", path, user=self.teacher, data={
+                "enrollment_id": self.enrollment.id,
+                "source_type": "homework",
+                "source_id": self.homework.id,
+                "completed": True,
+                "note": "제출 파일 확인 완료",
+                "expected_updated_at": None,
+                "expected_media_set_fingerprint": fingerprint,
+            })
+            return endpoint.func(request, **endpoint.kwargs)
+
+        stale = review(viewed_fingerprint)
+        self.assertEqual(stale.status_code, 409, stale.data)
+        self.assertEqual(stale.data["code"], "HOMEWORK_MEDIA_CHANGED")
+        AssessmentCorrection = django_apps.get_model("progress", "AssessmentCorrection")
+        self.assertFalse(AssessmentCorrection.objects.filter(
+            tenant=self.tenant, enrollment=self.enrollment, source_id=self.homework.id,
+        ).exists())
+        self.assertEqual(SubmissionMedia.objects.filter(removed_at__isnull=True).count(), 2)
+
+        current_fingerprint = homework_media_set_fingerprint(
+            tenant=self.tenant, enrollment_id=self.enrollment.id, homework_id=self.homework.id,
+        )
+        self.assertNotEqual(current_fingerprint, viewed_fingerprint)
+        saved = review(current_fingerprint)
+        self.assertEqual(saved.status_code, 200, saved.data)
+        correction = AssessmentCorrection.objects.get(
+            tenant=self.tenant, enrollment=self.enrollment, source_id=self.homework.id,
+        )
+        self.assertTrue(correction.completed)
+        self.assertEqual(correction.source_fingerprint, current_fingerprint)
+        denied = self._post(file=_jpeg("after-review.jpg", body=b"after-review"))
+        self.assertEqual(denied.status_code, 409, denied.data)
+        self.assertEqual(denied.data["code"], "HOMEWORK_MEDIA_REVIEWED")
+        self.assertEqual(upload_fileobj_to_r2.call_count, 2)
+
+    @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
     def test_student_cannot_remove_another_students_file(
         self,
         upload_fileobj_to_r2,
