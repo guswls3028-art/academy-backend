@@ -27,6 +27,17 @@
 같은 tenant·차시·수강생·현재 과제 배정, `expected_updated_at` 충돌 검사를
 유지한다. 점수나 온라인 제출이 없는 종이 과제도 이 동선으로 직접 완료할 수 있다.
 
+PC 제출 파일 검수의 완료 요청은 목록에서 직접 열람한 파일 묶음의
+`media_set_fingerprint`를 `expected_media_set_fingerprint`로 함께 보낸다.
+서버는 기존 과제 배정 잠금 안에서 현재 파일 지문을 비교하며, 마지막 조회 이후
+추가·교체·삭제된 파일이 있으면 `409 HOMEWORK_MEDIA_CHANGED`를 반환한다.
+이 경우 판정·원점수·제출 원본을 변경하지 않는다. 교사는 최신 목록과 미리보기를
+다시 확인한 후 새 지문으로 저장할 수 있으며, 성공한 지문을 판정에 보존한다.
+새 필드는 선택적 64자리 소문자 SHA-256 값이다. 기존 앱·종이 과제의 필드 없는
+요청과 완료 취소는 기존 계약을 유지하므로 서버를 먼저 배포할 수 있다.
+동시 파일 변경 거절 → 재조회 후 정상 완료 → 학생 파일 변경 잠금 회귀는
+`apps/domains/submissions/tests/test_homework_media_submission.py`가 검증한다.
+
 - `ProgressPolicy.homework_pass_type=TEACHER_APPROVAL`은 화면과 같은
   `AssessmentCorrection.completed`를 읽는다. 이 상태는 과제 점수와 독립적이다.
   40점인 과제의 명시적 교사 완료도 인정하고, 그 뒤 점수를 입력·수정해도 완료를

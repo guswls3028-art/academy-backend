@@ -1275,6 +1275,18 @@ class SessionScoreCorrectionView(APIView):
                     enrollment_id=enrollment_id,
                     homework_id=source_id,
                 )
+                expected_media_fingerprint = payload.get("expected_media_set_fingerprint")
+                if (
+                    expected_media_fingerprint is not None
+                    and expected_media_fingerprint != source_fingerprint
+                ):
+                    return Response(
+                        {
+                            "detail": "제출 파일이 변경되었습니다. 최신 파일을 다시 확인해 주세요.",
+                            "code": "HOMEWORK_MEDIA_CHANGED",
+                        },
+                        status=409,
+                    )
 
         if source_type == AssessmentCorrection.SourceType.EXAM:
             if score is None or max_score is None or max_score <= 0:
