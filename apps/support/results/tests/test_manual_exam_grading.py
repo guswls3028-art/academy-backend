@@ -23,6 +23,7 @@ from apps.domains.results.services.manual_exam_grading import (
     plan_manual_grading,
 )
 from apps.domains.results.utils.ranking import compute_exam_rankings
+from apps.domains.results.utils.initial_exam_score import load_initial_exam_scores
 from apps.domains.results.views.admin_exam_manual_grading_view import (
     AdminExamManualGradingView,
 )
@@ -284,6 +285,41 @@ class ManualExamGradingTests(TestCase):
         self.assertTrue(plan.can_apply, plan.errors)
         self.assertEqual(plan.rows[0].total_score, 90.0)
         self.assertEqual(plan.rows[0].wrong_question_numbers, (1,))
+
+    def test_corrected_first_score_survives_a_representative_retake(self):
+        exam, first, second = self._exam(
+            grading_mode=Exam.GradingMode.WRITTEN,
+            manual_method=Exam.ManualGradingMethod.SCORE,
+        )
+        for first_score in (10, 30):
+            sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+            plan = plan_manual_grading(exam=exam, tenant=self.tenant, payload={"rows": [{
+                "enrollment_id": self.enrollment.id,
+                "expected_version": sheet["rows"][0]["expected_version"],
+                "attendance": "present",
+                "cells": {str(first.id): {"score": first_score}, str(second.id): {"score": 60}},
+            }]})
+            self.assertTrue(plan.can_apply, plan.errors)
+            apply_manual_grading(plan=plan)
+            if first_score == 10:
+                initial = ExamAttempt.objects.get(exam=exam, attempt_index=1).meta["initial_snapshot"]
+
+        first_attempt = ExamAttempt.objects.get(exam=exam, attempt_index=1)
+        self.assertEqual(first_attempt.meta["initial_snapshot"]["submitted_at"], initial["submitted_at"])
+        self.assertEqual(first_attempt.meta["initial_snapshot"]["source"], initial["source"])
+        first_attempt.is_representative = False
+        first_attempt.save(update_fields=["is_representative"])
+        retake = ExamAttempt.objects.create(
+            exam=exam, enrollment=self.enrollment, attempt_index=2,
+            is_retake=True, is_representative=True, status="done",
+            meta={"total_score": 100, "max_score": 100},
+        )
+        Result.objects.filter(target_type="exam", target_id=exam.id, enrollment=self.enrollment).update(
+            attempt=retake, total_score=100, max_score=100,
+        )
+        scores = load_initial_exam_scores(exam_ids=[exam.id], enrollment_ids=[self.enrollment.id])
+        self.assertEqual(scores[(exam.id, self.enrollment.id)].total_score, 90)
+        self.assertEqual(compute_exam_rankings(exam_id=exam.id, tenant=self.tenant)[self.enrollment.id]["cohort_avg"], 90)
 
     def test_staff_score_preview_publish_reload_and_invalid_score_recovery(self):
         exam, first, second = self._exam(

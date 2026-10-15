@@ -108,14 +108,19 @@ OMR_UPLOAD_REQUEST_SCHEMA = {
         },
     ]
 }
-PROCESSING_STATUSES = {
-    Submission.Status.DISPATCHED,
-    Submission.Status.EXTRACTING,
-    Submission.Status.ANSWERS_READY,
-    Submission.Status.GRADING,
-}
-
 logger = logging.getLogger(__name__)
+
+
+class OmrUploadBatchItemSummarySerializer(serializers.Serializer):
+    id = serializers.CharField()
+    ordinal = serializers.IntegerField()
+    admission_status = serializers.CharField()
+    status = serializers.CharField()
+    submission_id = serializers.IntegerField(allow_null=True)
+    submission_status = serializers.CharField(allow_null=True)
+    identifier_status = serializers.CharField(allow_null=True)
+    failure_code = serializers.CharField(allow_null=True)
+    failure_message = serializers.CharField(allow_null=True)
 
 
 class OmrUploadBatchSummarySerializer(serializers.Serializer):
@@ -129,6 +134,7 @@ class OmrUploadBatchSummarySerializer(serializers.Serializer):
     failed_ordinals = serializers.ListField(child=serializers.IntegerField())
     admission_failed_ordinals = serializers.ListField(child=serializers.IntegerField())
     duplicate_ordinals = serializers.ListField(child=serializers.IntegerField())
+    items = OmrUploadBatchItemSummarySerializer(many=True)
     terminal = serializers.BooleanField()
     overall_status = serializers.CharField()
     grading_complete = serializers.BooleanField()
@@ -241,13 +247,59 @@ def _owned_batch(request, batch_id: str | UUID, *, exam_id: int | None = None):
         return None
 
 
+def _batch_item_summary(batch: OmrUploadBatch, item: OmrUploadBatchItem) -> dict:
+    submission = item.submission
+    scope_mismatch = (
+        item.tenant_id not in (None, batch.tenant_id)
+        or item.exam_id not in (None, batch.exam_id)
+    )
+    if submission is not None:
+        scope_mismatch = scope_mismatch or (
+            submission.tenant_id != batch.tenant_id
+            or submission.target_type != Submission.TargetType.EXAM
+            or submission.target_id != batch.exam_id
+        )
+    if scope_mismatch:
+        submission = None
+
+    if scope_mismatch:
+        item_status = "failed"
+    elif item.admission_status == OmrUploadBatchItem.AdmissionStatus.PENDING:
+        item_status = "pending_admission"
+    elif item.admission_status == OmrUploadBatchItem.AdmissionStatus.DUPLICATE:
+        item_status = "duplicate"
+    elif item.admission_status == OmrUploadBatchItem.AdmissionStatus.FAILED or submission is None:
+        item_status = "failed"
+    else:
+        item_status = {
+            Submission.Status.SUBMITTED: "received",
+            Submission.Status.DONE: "completed",
+            Submission.Status.NEEDS_IDENTIFICATION: "needs_identification",
+            Submission.Status.SUPERSEDED: "superseded",
+            Submission.Status.FAILED: "failed",
+        }.get(submission.status, "processing")
+    meta = submission.meta if submission and isinstance(submission.meta, dict) else {}
+    return {
+        "id": f"{batch.id}:{int(item.ordinal)}",
+        "ordinal": int(item.ordinal),
+        "admission_status": "failed" if scope_mismatch else item.admission_status,
+        "status": item_status,
+        "submission_id": int(submission.id) if submission else None,
+        "submission_status": submission.status if submission else None,
+        "identifier_status": meta.get("identifier_status") or None,
+        "failure_code": "invalid_submission_scope" if scope_mismatch else item.failure_code or None,
+        "failure_message": "접수 내역을 확인하지 못했습니다." if scope_mismatch else item.failure_message or None,
+    }
+
+
 def _batch_summary(batch: OmrUploadBatch, *, grading_statuses=None) -> dict:
     prefetched_items = getattr(batch, "_prefetched_objects_cache", {}).get("items")
-    items = (
+    items = sorted((
         list(prefetched_items)
         if prefetched_items is not None
         else list(batch.items.select_related("submission").order_by("ordinal"))
-    )
+    ), key=lambda item: int(item.ordinal))
+    ledger = [_batch_item_summary(batch, item) for item in items]
     counts = {
         "pending_admission": 0,
         "received": 0,
@@ -278,29 +330,23 @@ def _batch_summary(batch: OmrUploadBatch, *, grading_statuses=None) -> dict:
             },
         )
 
-    for item in items:
+    for item, entry in zip(items, ledger, strict=True):
         submission = item.submission
-        if item.admission_status == OmrUploadBatchItem.AdmissionStatus.PENDING:
-            counts["pending_admission"] += 1
+        item_status = entry["status"]
+        counts[item_status] += 1
+        if item_status == "pending_admission":
             pending_admission_ordinals.append(int(item.ordinal))
             continue
-        if item.admission_status == OmrUploadBatchItem.AdmissionStatus.DUPLICATE:
-            counts["duplicate"] += 1
+        if item_status == "duplicate":
             duplicate_ordinals.append(int(item.ordinal))
             continue
-        if item.admission_status == OmrUploadBatchItem.AdmissionStatus.FAILED or submission is None:
-            counts["failed"] += 1
+        if item_status == "failed":
             failed_ordinals.append(int(item.ordinal))
-            admission_failed_ordinals.append(int(item.ordinal))
+            if entry["admission_status"] == OmrUploadBatchItem.AdmissionStatus.FAILED or entry["submission_id"] is None:
+                admission_failed_ordinals.append(int(item.ordinal))
             continue
 
-        submission_status = submission.status
-        if submission_status == Submission.Status.SUBMITTED:
-            counts["received"] += 1
-        elif submission_status in PROCESSING_STATUSES:
-            counts["processing"] += 1
-        elif submission_status == Submission.Status.DONE:
-            counts["completed"] += 1
+        if item_status == "completed":
             grading_status = "grading_pending"
             if (
                 submission.tenant_id == batch.tenant_id
@@ -311,15 +357,6 @@ def _batch_summary(batch: OmrUploadBatch, *, grading_statuses=None) -> dict:
             grading_counts[grading_status or "completed"] += 1
             if grading_status == "subjective_pending":
                 subjective_pending_ordinals.append(int(item.ordinal))
-        elif submission_status == Submission.Status.NEEDS_IDENTIFICATION:
-            counts["needs_identification"] += 1
-        elif submission_status == Submission.Status.SUPERSEDED:
-            counts["superseded"] += 1
-        elif submission_status == Submission.Status.FAILED:
-            counts["failed"] += 1
-            failed_ordinals.append(int(item.ordinal))
-        else:
-            counts["processing"] += 1
 
     terminal = (
         len(items) == int(batch.total_count)
@@ -354,6 +391,7 @@ def _batch_summary(batch: OmrUploadBatch, *, grading_statuses=None) -> dict:
         "failed_ordinals": failed_ordinals,
         "admission_failed_ordinals": admission_failed_ordinals,
         "duplicate_ordinals": duplicate_ordinals,
+        "items": ledger,
         "terminal": terminal,
         "overall_status": overall_status,
         "grading_complete": grading_complete,
@@ -371,6 +409,8 @@ def _batch_summary(batch: OmrUploadBatch, *, grading_statuses=None) -> dict:
 
 
 def _file_validation_error(upload_file) -> tuple[str, str] | None:
+    if upload_file.size <= 0:
+        return "empty_file", "파일이 비어 있습니다. 스캔 파일을 확인한 뒤 다시 선택해 주세요."
     if upload_file.size > MAX_FILE_SIZE:
         return "file_too_large", "파일 크기가 10MB를 초과합니다."
     if upload_file.content_type not in ALLOWED_CONTENT_TYPES:
