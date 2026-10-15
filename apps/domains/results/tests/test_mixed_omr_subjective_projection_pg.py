@@ -2060,7 +2060,12 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
         batch.save(update_fields=["exam_id", "updated_at"])
         response = self._read_batch(batch)
         self.assertFalse(response.data["grading_complete"])
-        self.assertEqual(response.data["grading_counts"]["grading_pending"], 1)
+        self.assertEqual(response.data["grading_counts"]["grading_pending"], 0)
+        self.assertEqual(response.data["counts"]["completed"], 0)
+        self.assertEqual(response.data["counts"]["failed"], 1)
+        self.assertEqual(response.data["items"][0]["failure_code"], "invalid_submission_scope")
+        self.assertIsNone(response.data["items"][0]["submission_id"])
+        self.assertIsNone(response.data["items"][0]["submission_status"])
 
     def test_new_omr_attempt_does_not_reuse_prior_attempt_manual_essay_item(self):
         self.exam.allow_retake = True
