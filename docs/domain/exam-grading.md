@@ -443,6 +443,16 @@ tenant가 없거나 다른 tenant의 시험이면 거부한다. 이미 분리 �
 보존된 1차 snapshot을 두 필드에 사용해 재시험 점수가 1차 결과 목록을 덮지 않는다.
 등수도 이 화면에 표시하는 같은 점수 집합으로 다시 계산한다.
 
+직접 채점 표나 Excel 성적 가져오기에서 1차 점수를 확정·정정하면 같은 1차 attempt의
+`initial_snapshot.total_score`/`max_score`도 갱신한다. snapshot의 최초 출처와 제출 시각은
+유지하고 재시험 attempt는 수정하지 않는다. 따라서 70점을 90점으로 정정한 뒤 재시험이
+대표가 되어도 1차 분석·석차는 90점을 유지한다. 원본 응시나 기존 운영 데이터를 일괄
+재작성하지 않으며 각 쓰기 경로의 잠금·권한·버전 충돌 및 재시도 계약을 그대로 사용한다.
+`test_manual_exam_grading.py`와 `tests/results/test_exam_result_excel_import.py`는 정정 후
+재시험 전환, 최초 출처·시각 보존, 재조회·분석/석차 점수를 검증한다.
+관리자 시험 요약은 현재 대표인 1차 attempt가 아직 `done`이 아니면 그 임시 Result를
+평균·합격/불합격 집계에서 제외한다. 참가자 수는 유지하며 미확정 점수를 확정값으로 세지 않는다.
+
 1차 `ExamAttempt.meta.initial_snapshot`이 없는 과거 행은
 `backfill_initial_snapshot`으로 복구한다. 이 명령은 append-only 1차 attempt의
 `meta.total_score`를 현재 대표 `Result`보다 우선한다. 재응시가 이미 있어도 1차

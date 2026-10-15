@@ -117,6 +117,12 @@ class AdminExamSummaryView(APIView):
                     )
                 )
             )
+            if (
+                not legacy_scored
+                and initial_state is not None
+                and result.attempt_id == initial_state.attempt_id
+            ):
+                continue
             projected = project_initial_exam_score(
                 state=initial_state,
                 fallback_score=result.total_score,
