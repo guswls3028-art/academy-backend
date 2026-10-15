@@ -547,6 +547,9 @@ The synthetic Tools smoke also invokes the public-resource subprocess entrypoint
 `AccountProbeKind=fixed|phone_last4|random`만 받으며 임의 URL·명령·비밀번호 인자는 없다.
 일반 Inspect/Setup/Cleanup은 계정 인자를 기본값으로만 허용한다. 제품 인증 API를
 추가하지 않으며 runtime 문서 수렴·SSM 실행은 후보 release gate 이후 release owner가 한다.
+tenant 조회의 `SELECT FOR UPDATE`와 생성 소유권 확인은 짧은 `transaction.atomic()`
+안에서 수행한다. probe의 실제 HTTP 인증 전에 이 트랜잭션을 끝내 tenant 행 잠금을
+해제하며, 인증 요청이 자신의 외래키 쓰기에 필요한 잠금을 기다리게 하지 않는다.
 
 대상은 해당 disposable tenant의 `qa-account-registration-{tenant code SHA256 앞12자}-`
 이름 prefix 학생과 연결된 동일 tenant 학생/학부모 User·활성 역할 membership이다.
@@ -574,3 +577,6 @@ skip은 release 실패다. 기존 운영 read-only 조건과 실발송 제한은
 기존 공식 CI entry인 `python -B -m unittest scripts.v1.test_frontend_development_qa -v`가
 고정 SSM 계약과 별도 probe 안전성 테스트를 함께 실행한다. probe 단독 확인은
 `python -B -m unittest scripts.v1.test_probe_account_registration_development -v`를 사용한다.
+PostgreSQL 회귀 검사는 `apps/core/tests/test_development_account_probe.py`의
+`TransactionTestCase`가 실제 고정 action의 잠금 조회와 인증 호출 전 트랜잭션 종료를
+검증한다. SQLite 및 암묵적 트랜잭션을 사용하는 일반 `TestCase` 통과로 대체하지 않는다.
