@@ -1,8 +1,8 @@
 # 이동휘원소 과학연구소 — 온보딩 메모
 
-**기준일:** 2026-10-04 KST
+**기준일:** 2026-10-15 KST
 
-**상태:** 운영·대표 계정 최초 비밀번호 변경 확인 완료 · 개인 알림톡 채널 활성화 및 10종 승인·라우팅 확인 완료
+**상태:** 운영·대표 계정 정상 · 전용 알림톡 10종 승인·라우팅 및 통제번호 1건 전송 성공 확인 · 신규 학생/학부모 비밀번호 기본 방식 설정 완료
 
 **운영 도메인:** `movementhui.com`
 
@@ -105,7 +105,9 @@ Cloudflare Pages와 apex/`www` CNAME은 활성화됐고 두 호스트 모두 HTT
 allowed hosts/CORS/CSRF, Program, billing, owner handoff와 approved messaging
 온보딩 검사가 모두 통과했다. 초기 비밀번호 제품 규칙은
 [학부모 계정](../../domain/parent-account.md)의 현재 계약을 따른다.
-학생·학부모의 본인 번호 뒤 4자리 기본값은 새 계정에만 적용한다.
+당시 안내한 본인 번호 뒤 4자리 방식은 2026-10-02 명시 선택 계약의 저장된
+학원 설정을 의미하지 않는다. 2026-10-15 재조회에서 두 역할이 미설정인 것을
+확인하여 아래와 같이 보완했다. 설정 변경은 새 계정에만 적용한다.
 계정 안내 URL은 primary domain인 `https://movementhui.com`이다.
 
 사용자가 제공한 채널은 `https://pf.kakao.com/_xnjixin`,
@@ -117,3 +119,45 @@ APPROVED 0, INSPECTING 10, binding `pending_templates`이다.
 활성화 SSM 실행 ID는 `f6071641-ae32-4a3a-9b7e-5e1b4273819c`,
 독립 readback은 `0f365dcc-e8bf-4771-aefd-4776270ce162`다.
 실제 학생·학부모에게 QA 발송하지 않았다.
+
+## 2026-10-15 사용 준비 재점검과 수정
+
+- 운영 온보딩 감사 16개 항목 통과. tenant `10` / `movementhui`, primary domain
+  `https://movementhui.com`, 대표 계정과 구독 활성, 메시징 사용 중이며 운영 hold 없음.
+- 공급사 실조회에서 전용 채널 검색 ID `동휘원소`와 기존 PFID 끝자리 `Q7tR` 일치.
+  필수 템플릿 `10/10`은 공급사·DB 모두 `APPROVED`, 전달 구조 지문도 공급사·DB와
+  양쪽 채널에서 `10/10` 일치하며 실제 route는 모두 `tenant_verified`다.
+- **수정:** `account_password_policy.student_mode`와 `parent_mode`가 모두 `null`이었다.
+  사용자가 전달한 요청에 따라 정확한 tenant 10의 미설정 두 키만 `phone_last4`로
+  저장했다. 운영 감사 로그를 남겼고 독립 재조회로 영속성을 확인했다.
+  기존 학생·학부모 계정 2개의 비밀번호 hash와 다른 설정은 보존했다.
+  정책 변경은 이후 신규 계정에만 적용하며 실제 등록 최종창에서는 직원이
+  각 역할의 방식을 명시 선택한다. 학생은 학생 본인 번호, 학부모는 학부모 본인
+  번호를 사용한다. 번호가 없거나 두 역할의 번호가 같으면 다른 방식을 선택해야 한다.
+  기존 공유 학부모 계정은 새 자녀를 연결해도 초기화하지 않는다.
+- 승인받은 통제번호에 `send_tenant_alimtalk_channel_test`로 인증번호 양식 1건만
+  발송했다. 고정 요청 키 `movementhui-ready-20261015-01a13eb7`을 사용했으며,
+  17:53 KST 공급사 독립 조회 결과 `COMPLETE`, total/sentSuccess `1/1`,
+  sentFailed/sentPending/sentReplacement `0/0/0`, `ATA`, `statusCode=4000`이다.
+  단말에서 읽었는지 여부는 판정하지 않는다. 학생·학부모에게 테스트 발송하지 않았다.
+- 설정 저장 후 사전검사에서 예약·지연·재시도·미확정·24시간 실패는 모두 0,
+  활성 자동발송 4개 설정의 승인/연결 문제는 0이었다. 학원 발송 단가 0과
+  잔액 0은 기존 값으로 유지했고 현재 발송을 차단하지 않는다. 공용 공급사 잔액은
+  양수임을 확인했으며 충전이나 단가 변경은 하지 않았다.
+- 현재 사이트 버전 `687b84aafb84c5b025659b76e1b3c094d1b0bacc`와
+  [공식 배포 검증](https://github.com/guswls3028-art/academy-frontend/actions/runs/38678689080/attempts/2)
+  의 동일 artifact 증거를 대조했다. 계정 등록/로그인, 학생·학부모 학습/평가,
+  과제·자료·클리닉·공지·Q&A와 데스크톱/모바일 영상 갱신 등을 포함한
+  격리 개발 실사용 30건이 통과했고 실패·skip·flaky는 0, 두 QA tenant/user
+  cleanup도 0이다. 운영 API digest도 이 검증의
+  `sha256:4e63eefb4a28f75682d3e43b3b45d308a890c744f6f30999ff3bc19122c057ee`와 일치했다.
+  이동휘 공개 로그인/가입 화면은 데스크톱 1366px와 모바일 390px에서 진입·취소
+  복귀를 확인했고 가로 넘침과 브라우저 오류는 없었다.
+  이 증거는 공통 제품 경로 검증이며 이동휘 고객 데이터로
+  모든 업무를 새로 수행했다는 뜻은 아니다. 이번 수정은 기존 설정 적용으로
+  애플리케이션 코드 변경이나 재배포가 필요하지 않았다.
+
+계정 안내는 학생 마스터 저장만으로 발송하지 않고 첫 ACTIVE 수강 확정 때 발송한다.
+접속 링크는 현재 primary domain을 사용한다. 등록 선택과 기존 계정 보존 계약은
+[초기 비밀번호 정책](../../ssot/account-initial-password-policy.md), 발송 시점과
+재안내는 [학부모 계정](../../domain/parent-account.md)을 따른다.
