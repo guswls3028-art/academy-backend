@@ -12583,8 +12583,22 @@
             "maxLength": 90,
             "type": "string"
           },
+          "youtube_published_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "youtube_statistics_checked_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
           "youtube_video_id": {
             "type": "string"
+          },
+          "youtube_view_count": {
+            "nullable": true,
+            "type": "integer"
           }
         },
         "required": [
@@ -12596,7 +12610,10 @@
           "source_title",
           "thumbnail_url",
           "title",
-          "youtube_video_id"
+          "youtube_published_at",
+          "youtube_statistics_checked_at",
+          "youtube_video_id",
+          "youtube_view_count"
         ],
         "type": "object"
       },
@@ -35171,10 +35188,47 @@
         "operationId": "public_videos_list",
         "parameters": [
           {
+            "description": "* `landscape` - landscape\n* `vertical` - vertical",
+            "in": "query",
+            "name": "kind",
+            "schema": {
+              "enum": [
+                "landscape",
+                "vertical"
+              ],
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
             "in": "query",
             "name": "page",
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "default": "",
+              "maxLength": 90,
+              "type": "string"
+            }
+          },
+          {
+            "description": "* `latest` - latest\n* `popular` - popular\n* `oldest` - oldest",
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "default": "latest",
+              "enum": [
+                "latest",
+                "popular",
+                "oldest"
+              ],
+              "minLength": 1,
+              "type": "string"
             }
           }
         ],
