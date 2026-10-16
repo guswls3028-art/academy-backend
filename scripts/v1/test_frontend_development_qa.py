@@ -777,7 +777,13 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
             "videos": 0,
             "violated_events": 0,
         }
-        command._exact_tenant_or_fail_on_case_variant.return_value = existing
+        def exact_tenant(code):
+            self.assertEqual(code, tenant)
+            if atomic.depth != 1:
+                raise RuntimeError("select_for_update requires transaction.atomic")
+            return existing
+
+        command._exact_tenant_or_fail_on_case_variant.side_effect = exact_tenant
 
         def owned_residue(subject):
             self.assertIs(subject, existing)
@@ -867,7 +873,11 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
         audit = modules["apps.core.models"].OpsAuditLog.objects
         record = namespace["ownership_payload"](tenant, 72, "a" * 64)
         audit.filter.return_value.values_list.return_value = [record]
-        self.account_probe.run_probe.return_value = {"sanitized": True}
+        def authenticate_without_tenant_lock(*_args):
+            self.assertEqual(atomic.depth, 0, "HTTP authentication must not hold the tenant row lock")
+            return {"sanitized": True}
+
+        self.account_probe.run_probe.side_effect = authenticate_without_tenant_lock
         with patch.dict(sys.modules, modules), patch.dict(os.environ, probe_env, clear=True):
             self.assertEqual(namespace["run"](), {"sanitized": True})
         self.account_probe.run_probe.assert_called_once_with(existing, 23, "verify", "random")
@@ -1429,7 +1439,7 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
                          "187f6ac218435d3b3f938d903153c5785db3529ace89f4e79ea9b6e1bde8ddb6")
         for path, expected in (
             ("iam/trust_frontend_development_qa.json", "aa2c1a60b63ad287c2e8caba7257beaafe5d602df66659c3093f917ad670713a"),
-            ("ssm/frontend_development_qa.json", "7b31c01380611d7fac46e94001641eb3bff48e0135f64a0bdd9d31b46392d8fc"),
+            ("ssm/frontend_development_qa.json", "7ed18de7c587ac7354e8e4f553f1ccf3c950fbf199962c158a77069e690adcb8"),
             ("ssm/frontend_development_api_port.json", "8cade145d0ef8b0e51a983539296ce8252ad2ac896238ebbb466b3074966158a"),
         ):
             with self.subTest(path=path):

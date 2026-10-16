@@ -1,14 +1,24 @@
 """Exercise the candidate probe against real account models and HTTP views."""
+import ast
+import hashlib
+import hmac
 import importlib.util
+import json
+import re
+import shlex
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 from urllib.parse import urlsplit
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase, override_settings
+from django.db import connection, transaction
+from django.db.transaction import TransactionManagementError
+from django.test import TestCase, TransactionTestCase, override_settings, skipUnlessDBFeature
 from rest_framework.test import APIClient
 
-from apps.core.models import Tenant, TenantMembership
+from apps.core.management.commands.setup_ymath_realuse_scenario import Command
+from apps.core.models import OpsAuditLog, Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
 from apps.core.services.account_credentials import remember_account_password
 from apps.domains.parents.models import Parent
@@ -108,3 +118,52 @@ class DevelopmentAccountProbeTests(TestCase):
         self.assertTrue(result["credentials_valid"])
         self.assertTrue(result["token_me_valid"])
         self.assertEqual(result["business_mutations"], 0)
+
+
+class AccountProbeTransactionTests(TransactionTestCase):
+    @skipUnlessDBFeature("has_select_for_update")
+    def test_fixed_action_releases_tenant_lock_before_http_probe(self):
+        # TestCase hides this defect inside its implicit transaction; use real
+        # PostgreSQL autocommit and the AccountProbe branch from the fixed document.
+        self.assertFalse(connection.in_atomic_block)
+        tenant = Tenant.objects.create(code="qa-ymath-realuse-fe-123-1-abcdef123456", name="Probe lock")
+        with self.assertRaises(TransactionManagementError):
+            Command._exact_tenant_or_fail_on_case_variant(tenant.code)
+        document = json.loads((ROOT / "scripts/v1/templates/ssm/frontend_development_qa.json").read_text())
+        shell = shlex.split(document["properties"]["linux"]["commands"], posix=True)[2]
+        source = shell.split("<<'ACADEMY_QA_PY'\n", 1)[1].rsplit("ACADEMY_QA_PY", 1)[0]
+        functions = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+                     and node.name in {"ownership_payload", "assert_cleanup_owner", "run"}]
+        run = next(node for node in functions if node.name == "run")
+        run.body = [next(node for node in run.body if isinstance(node, ast.If) and any(
+            isinstance(item, ast.Call) and isinstance(item.func, ast.Attribute) and item.func.attr == "run_probe"
+            for item in ast.walk(node)
+        ))]
+        namespace = {
+            "hashlib": hashlib, "hmac": hmac, "re": re, "transaction": transaction,
+            "OpsAuditLog": OpsAuditLog, "action": "AccountProbe", "command": Command(),
+            "tenant": tenant.code, "expected_tenant_id": tenant.pk, "capability": "a" * 64,
+            "account_student_id": 23, "account_mode": "verify", "account_kind": "phone_last4",
+        }
+        exec(compile(ast.Module(body=functions, type_ignores=[]), "fixed-account-action", "exec"), namespace)
+        OpsAuditLog.objects.create(
+            action="development.qa.setup", target_tenant=tenant, result="success",
+            payload=namespace["ownership_payload"](tenant.code, tenant.pk, "a" * 64),
+        )
+
+        def authenticate(subject, *_args):
+            self.assertEqual(subject.pk, tenant.pk)
+            self.assertFalse(connection.in_atomic_block, "HTTP authentication must not hold the tenant row lock")
+            return {"sanitized": True}
+
+        probe = SimpleNamespace(run_probe=Mock(side_effect=authenticate))
+        probe_spec = SimpleNamespace(loader=SimpleNamespace(exec_module=Mock()))
+        real_spec = importlib.util.spec_from_file_location
+        real_module = importlib.util.module_from_spec
+        with patch("importlib.util.spec_from_file_location", side_effect=lambda name, path:
+                   probe_spec if str(path).endswith("probe-account-registration-development.py") else real_spec(name, path)), \
+                patch("importlib.util.module_from_spec", side_effect=lambda spec:
+                      probe if spec is probe_spec else real_module(spec)):
+            self.assertEqual(namespace["run"]({}), {"sanitized": True})
+        probe.run_probe.assert_called_once_with(tenant, 23, "verify", "phone_last4")
+        self.assertFalse(connection.in_atomic_block)
