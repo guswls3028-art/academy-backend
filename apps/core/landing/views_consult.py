@@ -10,9 +10,10 @@
 from __future__ import annotations
 
 import logging
-import re as _re
+import unicodedata
 
 from django.core.paginator import Paginator
+from django.db import DatabaseError, transaction
 from django.db.models import Count, Q, Value
 from django.db.models.functions import Coalesce
 from drf_spectacular.utils import extend_schema
@@ -41,6 +42,14 @@ PROMO_CONSENT_SOURCES = frozenset({"promo-demo", "promo-contact"})
 PROMO_PRIVACY_POLICY_VERSION = "1.2"
 
 
+def consult_phone_identity(phone: str) -> str:
+    """Compare formatting variants without rewriting the caller's contact details."""
+    digits = "".join(str(unicodedata.decimal(char)) for char in phone if char.isdecimal())
+    if digits.startswith("82"):
+        digits = "0" + digits[2:].lstrip("0")
+    return digits
+
+
 def validate_consult(data: dict) -> list[str]:
     errs: list[str] = []
     name = str(data.get("name") or "").strip()
@@ -50,8 +59,8 @@ def validate_consult(data: dict) -> list[str]:
     source = str(data.get("source") or "landing").strip()[:40]
     if not name or len(name) > NAME_MAX:
         errs.append(f"이름은 1~{NAME_MAX}자여야 합니다.")
-    digits = _re.sub(r"[^\d]", "", phone)
-    if not digits or len(digits) < 9 or len(digits) > 15:
+    digits = consult_phone_identity(phone)
+    if len(phone) > 20 or not digits or len(digits) < 9 or len(digits) > 15:
         errs.append("올바른 전화번호를 입력해주세요.")
     # P2 audit (2026-05-14): +82 외국인 학부모 prefix 통과.
     elif not (
@@ -90,14 +99,18 @@ def is_rate_limited(tenant, phone: str, limit: int = 5, window_sec: int = 60) ->
     from django.utils import timezone as dj_tz
     from apps.core.models import LandingConsultRequest
     cutoff = dj_tz.now() - timedelta(seconds=window_sec)
-    try:
-        count = LandingConsultRequest.objects.filter(
-            tenant=tenant, phone=phone, created_at__gte=cutoff,
-        ).count()
-        return count >= limit
-    except Exception:
-        logger.exception("CONSULT_RATE_LIMIT_DB_FAIL phone=%s", phone[-4:])
-        return False  # fail-open
+    identity = consult_phone_identity(phone)
+    # Read only the indexed tenant/time window; include older formatting without a data migration.
+    recent_phones = LandingConsultRequest.objects.filter(
+        tenant=tenant, created_at__gte=cutoff,
+    ).order_by().values_list("phone", flat=True).iterator(chunk_size=200)
+    count = 0
+    for recent_phone in recent_phones:
+        if consult_phone_identity(recent_phone) == identity:
+            count += 1
+            if count >= limit:
+                return True
+    return False
 
 
 # ─────────────────────────────────────────────────
@@ -131,36 +144,44 @@ class LandingConsultPublicView(APIView):
     authentication_classes = []  # 인증 없이 작동
 
     def post(self, request):
+        if not isinstance(request.data, dict):
+            return Response({"detail": "상담 내용을 올바른 형식으로 입력해주세요."}, status=400)
         # honeypot — 사람은 안 채우는 hidden field. 채워졌으면 봇 → 201처럼 위장 응답.
         if (request.data or {}).get("website") or (request.data or {}).get("hp"):
             logger.info("CONSULT_HONEYPOT_TRAP ip=%s", client_ip(request))
             return Response({"id": 0, "ok": True}, status=201)
 
-        # rate limit — tenant + phone 기준 (DB-level). phone 없으면 validate 에서 차단.
-        phone_raw = str((request.data or {}).get("phone") or "").strip()
-        if phone_raw and is_rate_limited(request.tenant, phone_raw):
-            return Response({"detail": "너무 빠른 요청입니다. 잠시 후 다시 시도해주세요."}, status=429)
-
         errs = validate_consult(request.data or {})
         if errs:
             return Response({"detail": errs}, status=400)
 
-        from apps.core.models import LandingConsultRequest
+        from apps.core.models import LandingConsultRequest, Tenant
         from django.utils import timezone
 
         source = str(request.data.get("source") or "landing").strip()[:40]
         has_promo_consent = source in PROMO_CONSENT_SOURCES
-        obj = LandingConsultRequest.objects.create(
-            tenant=request.tenant,
-            name=str(request.data.get("name") or "").strip()[:NAME_MAX],
-            phone=str(request.data.get("phone") or "").strip()[:20],
-            interest=str(request.data.get("interest") or "").strip()[:INTEREST_MAX],
-            message=str(request.data.get("message") or "").strip()[:MESSAGE_MAX],
-            source=source,
-            privacy_agreed=has_promo_consent,
-            privacy_policy_version=PROMO_PRIVACY_POLICY_VERSION if has_promo_consent else "",
-            privacy_agreed_at=timezone.now() if has_promo_consent else None,
-        )
+        phone_raw = str(request.data.get("phone") or "").strip()
+        try:
+            with transaction.atomic():
+                # Serialize the short check/create section across API instances, including the first row.
+                # Existing contact records and tenant settings are never rewritten by this lock.
+                tenant = Tenant.objects.select_for_update().get(pk=request.tenant.pk)
+                if is_rate_limited(tenant, phone_raw):
+                    return Response({"detail": "너무 빠른 요청입니다. 잠시 후 다시 시도해주세요."}, status=429)
+                obj = LandingConsultRequest.objects.create(
+                    tenant=tenant,
+                    name=str(request.data.get("name") or "").strip()[:NAME_MAX],
+                    phone=phone_raw,
+                    interest=str(request.data.get("interest") or "").strip()[:INTEREST_MAX],
+                    message=str(request.data.get("message") or "").strip()[:MESSAGE_MAX],
+                    source=source,
+                    privacy_agreed=has_promo_consent,
+                    privacy_policy_version=PROMO_PRIVACY_POLICY_VERSION if has_promo_consent else "",
+                    privacy_agreed_at=timezone.now() if has_promo_consent else None,
+                )
+        except DatabaseError as exc:
+            logger.error("CONSULT_ACCEPT_DB_FAIL tenant_id=%s error=%s", request.tenant.pk, type(exc).__name__)
+            return Response({"detail": "일시적으로 문의를 접수할 수 없습니다. 잠시 후 다시 시도해주세요."}, status=503)
         logger.info("LandingConsultRequest created tenant=%s id=%s ip=%s", request.tenant.id, obj.id, client_ip(request))
         return Response({"id": obj.id, "ok": True}, status=201)
 
