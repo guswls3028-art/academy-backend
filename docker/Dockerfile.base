@@ -97,7 +97,7 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
     util-linux \
     && dpkg -i /tmp/academy-native-security/*.deb \
     && ldconfig \
-    && test "$(dpkg-query -W -f='${Version}' libexpat1)" = '2.8.4+academy1-1' \
+    && test "$(dpkg-query -W -f='${Version}' libexpat1)" = '2.9.0+academy1-1' \
     && test "$(dpkg-query -W -f='${Source}' libexpat1)" = 'expat' \
     && test "$(find /tmp/academy-native-security/python-xml -maxdepth 1 -type f -name '*.so' | wc -l)" -eq 2 \
     && cp /tmp/academy-native-security/python-xml/*.so /usr/local/lib/python3.11/lib-dynload/ \

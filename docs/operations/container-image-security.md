@@ -574,24 +574,25 @@ PBDS binary heap의 `erase_if` 재할당 뒤 entry pointer를 갱신하는 헤�
   그대로 상속한다. 완료 ECR scan은 두 CVE가 어떤 affected digest에도 남아 있으면
   기존 Critical gate에서 계속 실패 폐쇄한다.
 
-## Expat UTF-16 경계와 Python XML 호환성
+## Expat 2.9.0 보안 경계와 Python XML 호환성
 
-`CVE-2026-93990`은 잘못된 UTF-16 surrogate pair를 허용하는 문제다.
-공식 배포35532553325/c2ee의 새 API·AI digest에서 Debian `expat`
-`2.8.3-1~deb13u1` High1이 확인되어 development 이전에 중단됐다.
-2026-09-21 확인 시 [Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-93990)는
-trixie와 sid 모두 미수정으로 표시한다. Expat2.8.4로 버전만 올려도 해결되지 않는다.
+2026-10-17 배포38948995652의 후보는 Expat `2.8.4+academy1-1`의 High6과
+기존 glibc High2로 development 이전에 차단됐다. 공통 base는
+[공식 Expat2.9.0](https://github.com/libexpat/libexpat/releases/tag/R_2_9_0)으로
+교체한다. 이 릴리스는 기존 UTF-16 surrogate pair 수정과
+`CVE-2026-77214`의 `XML_ParseBuffer` 용량 검사,
+`CVE-2026-102633`의 32비트 정수 오버플로 수정을 포함한다.
+원본 tarball은 공식 release asset의 SHA-256
+`1e6371862cc31999b368c3b89b49994f0677e1bab5f1b2b85ae3741f5d803051`로 고정한다.
+패키지 정체성은 `Package: libexpat1`, `Source: expat`,
+실제 빌드 버전 `2.9.0+academy1-1`이다. 이전 임시 수정 patch는 제거한다.
 
-공통 base는 실제 upstream2.8.4와
-[공식 수정0cfd15b](https://github.com/libexpat/libexpat/commit/0cfd15bdf4b2c22d6b0df73610709dfb60921091),
-[공식 회귀28fcfba](https://github.com/libexpat/libexpat/commit/28fcfba540f6933aa8904a1514c4811713d2ab72)를
-`docker/native-security/patches/`에 검증된 바이트로 보관하고 Docker COPY 뒤 SHA-256을
-재검사한다. 빌드 시 GitHub 생성 `.patch`를 다시 내려받지 않아 바이트 드리프트가
-같은 커밋의 재빌드를 중단시키지 않는다. 2.8.4 원본 tarball도 SHA-256으로 고정한다.
-2.8.4에 남은 `FASTCALL`과 맞추기 위해 patch의
-context 한 줄만 정확히 변환하고 fuzz 없는 적용을 요구한다. 패키지 정체성은
-`Package: libexpat1`, `Source: expat`, 실제 backport 버전 `2.8.4+academy1-1`이다.
-아직 발표되지 않은 버전을 주장하거나 scanner에서 패키지를 숨기지 않는다.
+수정 전 실패 증거를 유지하기 위해 2.8.4 원본과
+[공식 회귀28fcfba](https://github.com/libexpat/libexpat/commit/28fcfba540f6933aa8904a1514c4811713d2ab72)는
+빌드 단계의 negative control에만 사용한다. 두 입력 모두 SHA-256으로 검증하고
+회귀 patch는 검증된 저장소 바이트를 fuzz 없이 적용한다. 해당 라이브러리는
+최종 이미지에 복사하지 않는다. `--unpatched-baseline`은 이 실패 재현에만
+사용하며 runtime package/Python/wide 검사와 함께 사용할 수 없다.
 Debian 패키지가 제공하는 `libexpat.so.1`·`libexpatw.so.1` ABI를 모두 보존하고
 원본 라이선스를 포함한다. 빌드 입력·검증의 정본은 `docker/native-security/`다.
 
@@ -607,26 +608,30 @@ SOABI를 확인한 뒤 `pyexpat`·`_elementtree` 두 확장만 함께 재빌드�
 
 - 원본2.8.4에 회귀 테스트만 적용했을 때 normal·`XML_MIN_SIZE` 빌드에서 해당
   테스트만 실패하고, 잘못된 UTF-16 허용을 별도 동작 검사에서도 재현한다.
-- 수정 뒤 normal·`XML_MIN_SIZE` 빌드의 upstream 테스트가 성공한다.
+- 2.9.0 normal 빌드의 upstream 테스트가 성공한다. 2.9.0에서 제거된
+  `XML_MIN_SIZE`는 이전 negative control에만 사용한다. 배포한 두 ABI는 원래
+  이 옵션과 함께 제거된 `XML_ATTR_INFO`를 사용하지 않았다.
   upstream 테스트는 ushort wide ABI를 명시적으로 지원하지 않으므로 wide
   라이브러리는 실제 parser의 정상/비정상 UTF-16 입력 및 한글·emoji의
   16비트 callback 출력 바이트를 검사한다. 테스트를 위해 libc와 호환되지 않는
   `wchar_t` ABI로 바꾸지 않는다. 이 출력 검사도 최종 서비스 이미지에서 실행한다.
   시스템 라이브러리와 Python XML 두 경로에서 UTF-16 LE/BE의 정상 한글·emoji·
   유효 surrogate pair는 허용하고 비정상 pair는 거부한다.
+- 두 실제 native ABI에서 buffer 미확보·용량 초과 요청을 정확한 오류로 거부하고,
+  정상 입력 및 오류 후 재시도가 성공하는지 검사한다. 32비트 전용 정수 경로는
+  upstream 수정 소스로 제공되며 ARM64 실행을 32비트 검증으로 주장하지 않는다.
 - CPython의 pyexpat·ElementTree·C accelerator·minidom·SAX 회귀와 실제로 로드한
   확장의 경로·버전 검증이 성공한다. 검사 파일이나 소스 비교만으로 대체하지 않는다.
 - 공통 base와 API·Video·AI·Tools의 마지막 APT 설치 뒤에도 정확한 package/source와
   실제 Python XML 동작을 재검증한다. Messaging은 검증한 공통 base를 상속한다.
 
 빌드·호환성 실패는 이미지를 중단시키며 운영 데이터의 재처리나 변경을 유발하지
-않는다. 실제 수정과 ECR scan의 판정은 별도 증거다. 이 backport가 동작 검사를
+않는다. 실제 수정과 ECR scan의 판정은 별도 증거다. 새 릴리스가 동작 검사를
 통과해도 새 여섯 digest의 완료 스캔에서 해당 Expat 취약점의 Critical/High 0과
 현재 exact 정책 준수를 확인하기 전에는 배포 가능하다고 판단하지 않는다.
 scanner가 해당 Expat 취약점을 계속 High로 분류하면 실패 상태를 유지하며
 그 항목의 상한·acceptance를 추가하거나 package/source 이름을 바꾸어 넘기지 않는다.
-향후 공식 수정본으로 전환할 때는 이 취약점 수정 포함 여부, 두 ABI·Python CAPI,
-같은 정상/비정상 입력 회귀와 새 완료 scan을 확인하고 임시 backport를 제거한다.
+glibc의 기존 exact 승인 identity·상한·만료일은 이 교체에서 변경하지 않는다.
 전체 배포에는 기존 격리 개발·preprod·운영 연속성·runtime readback 게이트도 적용한다.
 
 첫 검증35534369800/c95e의 x64/QEMU 빌드는 45분 제한으로 종료됐다. 공식 로그에서

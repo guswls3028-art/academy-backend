@@ -219,7 +219,7 @@ def test_historical_acceptance_is_exact_and_time_bounded() -> None:
 
 
 @pytest.mark.parametrize("repository", gate.REPOSITORIES)
-@pytest.mark.parametrize("version", ["2.8.3-1~deb13u1", "2.8.4+academy1-1"])
+@pytest.mark.parametrize("version", ["2.8.3-1~deb13u1", "2.8.4+academy1-1", "2.9.0+academy1-1"])
 def test_expat_backport_does_not_override_actual_high_scan(repository, version):
     policy = Path(__file__).parents[1] / "docs/ssot/ecr-high-risk-baseline.json"
     baselines, known = gate.load_high_baselines(policy, date(2026, 10, 9))
@@ -502,8 +502,8 @@ def test_base_image_backports_new_native_library_fixes_without_acceptance() -> N
     )
     assert "60d74a257d1ccec0475e749cba2f21559e48139efba6ff28224357c7c798dfee" in build_script
     assert "autoreconf --force --install" in build_script
-    assert build_script.count("sha256sum --check") == 3
-    assert build_script.count("download \\") == 8
+    assert build_script.count("sha256sum --check") == 2
+    assert build_script.count("download \\") == 9
     assert "CVE-2026-52490" in build_script
     assert "tiff_version='4.7.2-1+academy1'" in build_script
     assert "c5086d8f7c5ba51ca98241f24a8bd1cb66218c399077aeccbf6a236cf3152acc" in build_script
@@ -511,10 +511,6 @@ def test_base_image_backports_new_native_library_fixes_without_acceptance() -> N
     assert "python /usr/local/bin/verify-tiff.py" in verifier
     assert "COPY docker/native-security/patches/" in dockerfile
     for commit, checksum in (
-        (
-            "0cfd15bdf4b2c22d6b0df73610709dfb60921091",
-            "c17ecebf947aed83a577c708f17f3437e2f3964dbf62954d05882fc9354f29b1",
-        ),
         (
             "28fcfba540f6933aa8904a1514c4811713d2ab72",
             "4d179a59e86668f35fefd2ac0b43b7878e4b597af507f3b4decdac9f680c8a25",
