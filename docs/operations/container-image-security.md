@@ -5,6 +5,52 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-10-16 glibc 두 예외의 명시 승인과 Cyrus 수용 제거
+
+계정 probe의 PostgreSQL transaction 경계를 고친 PR651의 공식 배포
+[run38827165225](https://github.com/guswls3028-art/academy-backend/actions/runs/38827165225)은
+기존 예외 만료 후 후보 보안 검사에서 차단됐다. 개발·preprod·운영 전환은
+실행되지 않았고 공유 배포 잠금 해제는 성공했다. 실패한 배포를 소급 승인하지 않는다.
+
+사용자는 미수정 메모리 손상·장애 위험과 정확한 대상·기한을 전달받은 뒤
+**“해당 범위·기한의 한시 수용 승인”**으로 아래 두 High identity만 명시 승인했다.
+적용 저장소는 `academy-base`, `academy-api`, `academy-video-worker`,
+`academy-messaging-worker`, `academy-ai-worker-cpu`, `academy-tools-worker`다.
+만료는 **2026-10-16 UTC 종료, 즉 10월 17일 09:00 KST**이며 자동 연장은 없다.
+
+| CVE | 정확한 package/version | 현재 vendor 상태 |
+|---|---|---|
+| `CVE-2026-19499` | `glibc / 2.41-12+deb13u4` | [Debian](https://security-tracker.debian.org/tracker/CVE-2026-19499) trixie는 vulnerable, `no-dsa / Minor issue`; stable 수정본 없음 |
+| `CVE-2026-5435` | `glibc / 2.41-12+deb13u4` | [Debian](https://security-tracker.debian.org/tracker/CVE-2026-5435) trixie는 vulnerable, `no-dsa / Minor issue`; stable 수정본 없음 |
+
+10월 16일 09:24 KST 조회한 exact 후보 조합은 API·AI의 새 이미지와 성공 manifest
+`1c61cd287df2a5e4406d85f665f08b64c15cac14`의 base·Video·Messaging·Tools다.
+여섯 COMPLETE scan은 모두 24시간 이내이며 위 High 2건과 Critical 0건이다.
+현재 scan에는 `CVE-2026-107161`이 없어 Cyrus 수용을 제거하고 저장소별 High 상한을
+3에서 2로 낮춘다. [Cyrus vendor](https://security-tracker.debian.org/tracker/CVE-2026-107161)는
+아직 unfixed다. scanner 목록에서 사라진 것을 vendor 수정이나 비도달성 증거로
+해석하지 않으며, 같은 Cyrus High가 다시 나타나도 새 검토 없이 통과하지 않는다.
+
+읽기 전용 SSM `d705d38b-98ef-4c81-bbf1-544919d603ae`는 **현재 성공 runtime**
+`1c61cd287df2a5e4406d85f665f08b64c15cac14`에 대응하는 격리 개발 인스턴스
+`i-009f8d2aa80aaa23d`의 API·AI·Tools exact digest를 확인했다. 실패 후보를 실행한
+검사가 아니다. 세 컨테이너 모두 기존 `verify-sasl.py` hash
+`2676232c220c934c99dff12cd54fe9fe2bbdc8deedd8362a3aec3b5edce9c452`가 일치하고
+EXTERNAL만 있으며 DIGEST-MD5는 `SASL_NOMECH(-4)`로 거부됐다. API 909·AI 1308·
+Tools 863개 ELF에서 `strfmon`, `strfmon_l`, `ns_printrrf`, `ns_printrr`, `fp_nquery`의
+undefined dynamic reference와 검사 오류는 각각 0개였다. `dlsym`, 정적 링크,
+다른 이미지와 미실행 경로는 배제하지 못하므로 잔여 위험은 남는다.
+
+Critical 수용은 비어 있고 새 CVE·package/version 변경·만료는 계속 차단한다.
+기존 native ABI·최종 APT 이후 oracle, 후보 scan, 격리 개발·preprod·임시 인스턴스
+종료·호환 migration·healthy rolling·실사용·cleanup 게이트는 모두 유지한다.
+release owner `account-qa-01a13ee0`가 다음 후보 게시 및 만료 전에 다시 검토하며,
+수정 증거 또는 새로운 정확한 승인이 없으면 만료 차단을 유지한다.
+
+증거는 `_artifacts/sessions/account-qa-01a13ee0/security-expiry-review/`의
+`current-scans.json`(여섯 raw scan의 digest·시각·SHA-256), `native-command.json`,
+`native-result.json`, `decision.json`에 보존한다. 아래 기록은 당시 결정의 이력이다.
+
 ## 2026-10-13 세 예외의 재검토와 제한된 수용
 
 사용자는 기존 세 보안 예외의 필요한 조치를 자율적으로 마무리하도록
