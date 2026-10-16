@@ -76,13 +76,14 @@ def test_wide_output_oracle_requires_utf16_callback_bytes(monkeypatch, valid_abi
 @pytest.mark.parametrize(
     ("version", "source", "valid"),
     [
-        ("2.8.4+academy1-1", "expat", True),
+        ("2.9.0+academy1-1", "expat", True),
+        ("2.8.4+academy1-1", "expat", False),
         ("2.8.3-1~deb13u1", "expat", False),
         ("2.8.5", "expat", False),
-        ("2.8.4+academy1-1", "academy-expat", False),
+        ("2.9.0+academy1-1", "academy-expat", False),
     ],
 )
-def test_package_verifier_requires_exact_backport_and_honest_source(
+def test_package_verifier_requires_exact_release_and_honest_source(
     monkeypatch, version, source, valid
 ):
     queries, libraries = [], []

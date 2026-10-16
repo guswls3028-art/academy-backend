@@ -56,9 +56,8 @@ subprocess.run([
     "pythonSourceSha256": "272179ddd9a2e41a0fc8e42e33dfbdca0b3711aa5abf372d3f2d51543d09b625",
     "soabi": sysconfig.get_config_var("SOABI"),
     "modules": ["pyexpat", "_elementtree"],
-    "expatVersion": "2.8.4",
-    "expatPackageVersion": "2.8.4+academy1-1",
-    "upstreamFix": "0cfd15bdf4b2c22d6b0df73610709dfb60921091",
-    "upstreamRegression": "28fcfba540f6933aa8904a1514c4811713d2ab72",
+    "expatVersion": "2.9.0",
+    "expatPackageVersion": "2.9.0+academy1-1",
+    "expatSourceSha256": "1e6371862cc31999b368c3b89b49994f0677e1bab5f1b2b85ae3741f5d803051",
     "systemExpatLinked": True,
 }, indent=2) + "\n")

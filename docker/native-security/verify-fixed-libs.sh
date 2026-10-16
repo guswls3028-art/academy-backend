@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-test "$(dpkg-query -W -f='${Version}' libexpat1)" = '2.8.4+academy1-1'
+test "$(dpkg-query -W -f='${Version}' libexpat1)" = '2.9.0+academy1-1'
 test "$(dpkg-query -W -f='${Source}' libexpat1)" = 'expat'
 python /usr/local/bin/verify-expat.py --library libexpat.so.1 --python --package
 

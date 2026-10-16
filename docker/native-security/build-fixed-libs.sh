@@ -235,30 +235,30 @@ write_control \
 dpkg-deb --build --root-owner-group \
     "${libxml2_package}" "${output_root}/libxml2-fixed.deb"
 
-# CVE-2026-93990 has no released Expat/Debian fix. Keep the real upstream
-# version and source-package identity; scanner acceptance is a separate gate.
-expat_version='2.8.4+academy1-1'
+# Released Expat 2.9.0 includes the UTF-16 fix and the newer buffer/integer
+# overflow fixes. Keep the unpatched 2.8.4 source only as a negative control.
+expat_version='2.9.0+academy1-1'
 expat_archive="${work_root}/expat.tar.xz"
-expat_fix="${work_root}/expat-fix.patch"
+expat_baseline_archive="${work_root}/expat-baseline.tar.xz"
 expat_tests="${work_root}/expat-tests.patch"
 download \
-    'https://github.com/libexpat/libexpat/releases/download/R_2_8_4/expat-2.8.4.tar.xz' \
+    'https://github.com/libexpat/libexpat/releases/download/R_2_9_0/expat-2.9.0.tar.xz' \
     "${expat_archive}" \
+    '1e6371862cc31999b368c3b89b49994f0677e1bab5f1b2b85ae3741f5d803051'
+download \
+    'https://github.com/libexpat/libexpat/releases/download/R_2_8_4/expat-2.8.4.tar.xz' \
+    "${expat_baseline_archive}" \
     '656ae1cc8da3b4ea513bb4e254f33e6243938084c0ec6239da873376b09985a7'
 # GitHub-generated commit patches can change bytes without changing the commit.
 # Keep the verified upstream patches in the image build context and check their
 # exact bytes before applying them.
-cp /usr/local/share/academy-native-security/0cfd15bdf4b2c22d6b0df73610709dfb60921091.patch "${expat_fix}"
-printf '%s  %s\n' 'c17ecebf947aed83a577c708f17f3437e2f3964dbf62954d05882fc9354f29b1' "${expat_fix}" | sha256sum --check
 cp /usr/local/share/academy-native-security/28fcfba540f6933aa8904a1514c4811713d2ab72.patch "${expat_tests}"
 printf '%s  %s\n' '4d179a59e86668f35fefd2ac0b43b7878e4b597af507f3b4decdac9f680c8a25' "${expat_tests}" | sha256sum --check
 tar -xJf "${expat_archive}" -C "${work_root}"
-expat_source="${work_root}/expat-2.8.4"
-# Only patch context changes: 2.8.4 still has FASTCALL, unlike upstream main.
-test "$(grep -Fxc ' static int checkCharRefNumber(int result);' "${expat_fix}")" -eq 1
-sed 's/^ static int checkCharRefNumber(int result);$/ static int FASTCALL checkCharRefNumber(int result);/' \
-    "${expat_fix}" > "${work_root}/expat-fix-context.patch"
-(cd "${expat_source}" && patch --batch --forward --fuzz=0 -p2 < "${expat_tests}")
+expat_source="${work_root}/expat-2.9.0"
+tar -xJf "${expat_baseline_archive}" -C "${work_root}"
+expat_baseline_source="${work_root}/expat-2.8.4"
+(cd "${expat_baseline_source}" && patch --batch --forward --fuzz=0 -p2 < "${expat_tests}")
 
 for mode in normal min; do
     build="${work_root}/expat-red-${mode}"
@@ -267,7 +267,7 @@ for mode in normal min; do
     if [ "${mode}" = min ]; then flags="${flags} -DXML_MIN_SIZE"; fi
     (
         cd "${build}"
-        CFLAGS="${flags}" "${expat_source}/configure" --disable-static \
+        CFLAGS="${flags}" "${expat_baseline_source}/configure" --disable-static \
             --without-docbook --without-examples --without-xmlwf
         make -j "${jobs}"
         if make check > red.log 2>&1; then
@@ -277,22 +277,21 @@ for mode in normal min; do
         test "$(grep -c '^FAIL \[' tests/runtests.log)" -eq 12
         ! grep '^FAIL \[' tests/runtests.log | grep -v 'test_utf16_surrogate_pairs ('
         result=0
-        python /usr/local/bin/verify-expat.py --library "${build}/lib/.libs/libexpat.so.1" \
+        python /usr/local/bin/verify-expat.py --library "${build}/lib/.libs/libexpat.so.1" --unpatched-baseline \
             > oracle.log 2>&1 || result=$?
         test "${result}" -eq 66
         grep -Fxq 'EXPAT_UTF16_INVALID_ACCEPTED' oracle.log
         printf 'EXPAT_UPSTREAM_RED_PASS mode=%s failures=12\n' "${mode}"
     )
 done
-(cd "${expat_source}" && patch --batch --forward --fuzz=0 -p2 < "${work_root}/expat-fix-context.patch")
 
 expat_package="${work_root}/expat-package"
-for mode in normal min wide; do
+# XML_MIN_SIZE was removed upstream in 2.9.0; neither shipped ABI enabled it.
+for mode in normal wide; do
     build="${work_root}/expat-green-${mode}"
     source="${expat_source}"
     flags='-O2 -fstack-protector-strong -fPIC'
     library_name=libexpat
-    if [ "${mode}" = min ]; then flags="${flags} -DXML_MIN_SIZE"; fi
     if [ "${mode}" = wide ]; then
         # Debian libexpat1 owns both SONAMEs. Follow upstream's documented
         # wide-library build procedure instead of dropping the wide ABI.
@@ -323,18 +322,16 @@ for mode in normal min wide; do
             printf 'EXPAT_UPSTREAM_GREEN_PASS mode=%s\n' "${mode}"
         fi
     )
-    if [ "${mode}" != min ]; then
-        library="$(find "${build}/lib/.libs" -maxdepth 1 -type f -name "${library_name}.so.1.*")"
-        test "$(printf '%s\n' "${library}" | wc -l)" -eq 1
-        test -f "${library}"
-        install -D -m 0644 "${library}" \
-            "${expat_package}/usr/lib/${multiarch}/$(basename "${library}")"
-        ln -s "$(basename "${library}")" "${expat_package}/usr/lib/${multiarch}/${library_name}.so.1"
-    fi
+    library="$(find "${build}/lib/.libs" -maxdepth 1 -type f -name "${library_name}.so.1.*")"
+    test "$(printf '%s\n' "${library}" | wc -l)" -eq 1
+    test -f "${library}"
+    install -D -m 0644 "${library}" \
+        "${expat_package}/usr/lib/${multiarch}/$(basename "${library}")"
+    ln -s "$(basename "${library}")" "${expat_package}/usr/lib/${multiarch}/${library_name}.so.1"
 done
 install -D -m 0644 "${expat_source}/COPYING" "${expat_package}/usr/share/doc/libexpat1/copyright"
 write_control "${expat_package}" 'libexpat1' 'expat' "${expat_version}" 'optional' \
-    'Depends: libc6 (>= 2.36)' 'Expat runtime with the CVE-2026-93990 backport'
+    'Depends: libc6 (>= 2.36)' 'Expat 2.9.0 runtime with upstream security fixes'
 dpkg-deb --build --root-owner-group "${expat_package}" "${output_root}/libexpat1-fixed.deb"
 
 # The pinned Python image embeds Expat 2.7.4. Rebuild its matching XML pair;
