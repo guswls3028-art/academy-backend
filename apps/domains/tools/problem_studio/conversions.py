@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import copy
 import uuid
+from datetime import timedelta
 
 from django.db import transaction
+from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.domains.tools.problem_studio.conversion_question import validate_question as validate_question_content
@@ -14,6 +16,7 @@ from apps.support.tools.ai_dependencies import dispatch_tools_ai_job
 
 LEVELS = {"questions", "explanations", "thorough"}
 ACTIVE = {"PENDING", "RUNNING"}
+UNDISPATCHED_RECOVERY_AFTER = timedelta(minutes=5)
 
 
 def normalize_options(raw):
@@ -119,6 +122,13 @@ def queue_conversion(row, operation):
 
 
 def refresh_failed_job(row):
+    if row.status == "PENDING" and not row.job_id:
+        if row.updated_at <= timezone.now() - UNDISPATCHED_RECOVERY_AFTER:
+            row.status = "FAILED"
+            row.error = (
+                "작업 연결이 완료되지 않았습니다. 저장된 원본에서 이어서 할 수 있습니다."
+            )
+        return row
     if row.status not in ACTIVE or not row.job_id:
         return row
     from academy.adapters.db.django import repositories_ai as ai_repo

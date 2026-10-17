@@ -30,8 +30,12 @@ tenant cleanup removes the exact conversion prefix after worker writes have ende
 The existing AI CPU `problem_studio_transcription` job carries scoped conversion
 identity and a committed operation nonce. Version/nonce checks fence superseded
 workers. Dispatch occurs after commit; rejection leaves a retryable failed row.
-Terminal job failure is reflected on read without a database write; an explicit
-resume/edit persists recovery from worker crashes.
+A pending row with no job ID remains active for five minutes so live dispatch is
+not reclaimed. After that bounded interval, reads expose retryable failure without
+writing, and explicit resume rotates the nonce and dispatches from the saved source.
+A late worker from the abandoned nonce is fenced. Terminal job failure is reflected
+on read without a database write; an explicit resume/edit persists recovery from
+worker crashes.
 
 Extraction reuses the source renderer/structural analyzer. Successful image
 transcriptions are checkpointed by SHA-256. After question extraction, retry reuses
@@ -96,7 +100,15 @@ introduced; retention must be included in future user/tenant deletion procedures
 
 `test_conversions` covers synthetic PDF→conversion→teacher edit→HWPX rebuild→reload,
 tenant/owner isolation, stale versions, proposal-only AI, failed export resume,
-required review and storage-key isolation. Existing Problem Studio tests cover the
+required review and storage-key isolation. It also drops the post-commit dispatch,
+checks the exact five-minute boundary and read-only list/detail failure, resumes
+once with a new nonce, rejects an outdated version and a delayed old worker, then
+checks persisted questions/artifacts and fresh download links. Already linked or
+running jobs are not reclaimed by the undispatched timeout. No migration or source
+rewrite is needed: existing stuck rows gain the same explicit recovery on read.
+The PostgreSQL Quality Gate includes `test_conversions.py` explicitly because its
+location does not match the repository's default pytest discovery pattern.
+Existing Problem Studio tests cover the
 underlying source/HWPX engine. Run model/migration checks, lint and owning CI gates.
 `tests/test_worker_entrypoint_imports.py` also imports conversion processing and AI
 proposal modules with REST framework imports blocked, matching the worker image.
