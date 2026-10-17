@@ -5,7 +5,35 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
-## 2026-10-16 glibc 두 예외의 명시 승인과 Cyrus 수용 제거
+## 2026-10-17 출석 정렬 배포의 glibc 두 예외 재승인
+
+출석 미도착 우선 정렬 후보를 준비하면서 기존 승인이 **10월 17일 09:00 KST**에
+만료되어 `load_high_baselines`가 차단하는 것을 확인했다. 자동 갱신하거나
+만료 기간의 배포를 소급 승인하지 않았다. 사용자는 잔여 메모리 손상·서비스 장애
+위험, Debian stable 수정본 부재, 정확한 두 CVE·패키지·6개 저장소·기한을 전달받고
+**“해당 범위·기한의 한시 수용 승인”**으로 새 승인을 명시했다.
+
+- 대상: `CVE-2026-19499`, `CVE-2026-5435`, 정확히 `glibc 2.41-12+deb13u4`.
+- 저장소: `academy-base`, `academy-api`, `academy-video-worker`,
+  `academy-messaging-worker`, `academy-ai-worker-cpu`, `academy-tools-worker`.
+- 만료: **2026-10-17 UTC 종료, 즉 10월 18일 09:00 KST**. 자동 연장은 없다.
+- 저장소별 High 상한은 2, Critical 수용은 빈 상태를 유지한다. 새 identity,
+  package/version 변경, Critical, 만료와 기존 native·scan·개발·preprod·임시
+  인스턴스 종료·rolling·실사용·cleanup 실패는 계속 차단한다.
+
+현재 성공 manifest의 source는 `ee658e8ff96dd696a84755a4a82b4741a68a3351`,
+공식 배포는 [run38954773713](https://github.com/guswls3028-art/academy-backend/actions/runs/38954773713)이다.
+10월 17일 조회한 여섯 exact digest의 COMPLETE scan은 같은 날 04:37~04:55 KST에
+완료됐으며, 모두 위 High 2건·Critical 0건이다. 이는 기존 배포 이미지의 증거이며
+새 후보의 보안 검사를 대신하지 않는다. 두 Debian tracker의 trixie 패키지는
+여전히 vulnerable/no-dsa이고 stable 수정본은 없다. 아래 10월 16일 native 검사는
+과거 실행 경로 증거로만 보존하며 새 후보의 비도달성을 주장하지 않는다.
+
+release owner `attendance-visible-01a1499b`가 이 기한 안의 새 후보와 실제 scan을
+다시 확인한다. 조회 증거는 `_artifacts/attendance-visible-01a1499b/security-review.json`에
+보존한다. 기존 승인과 검토 근거는 아래 이력에 남긴다.
+
+## 2026-10-16 glibc 두 예외의 명시 승인과 Cyrus 수용 제거 (이력)
 
 계정 probe의 PostgreSQL transaction 경계를 고친 PR651의 공식 배포
 [run38827165225](https://github.com/guswls3028-art/academy-backend/actions/runs/38827165225)은

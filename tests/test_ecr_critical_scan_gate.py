@@ -154,10 +154,10 @@ def test_approved_glibc_review_keeps_exact_service_scope_and_expiry(repository, 
     entries = json.loads(policy.read_text(encoding="utf-8"))["acceptedHighFindings"]
     glibc = [entry for entry in entries if entry["packageName"] == "glibc"]
     assert {entry["cve"] for entry in glibc} == {"CVE-2026-19499", "CVE-2026-5435"}
-    assert all(entry["expiresOn"] == "2026-10-16" for entry in glibc)
+    assert all(entry["expiresOn"] == "2026-10-17" for entry in glibc)
     isolated = tmp_path / "glibc-review.json"
     isolated.write_text(json.dumps(_high_policy_document(*glibc)), encoding="utf-8")
-    baselines, known = gate.load_high_baselines(isolated, date(2026, 10, 16))
+    baselines, known = gate.load_high_baselines(isolated, date(2026, 10, 17))
     for entry in glibc:
         finding = _finding(entry["cve"], "glibc", "2.41-12+deb13u4", "HIGH")
         assert gate.evaluate_high_budget(repository, _scan(finding), baselines, known) == 1
@@ -171,7 +171,7 @@ def test_approved_glibc_review_keeps_exact_service_scope_and_expiry(repository, 
                 _finding(entry["cve"], "glibc", "2.41-12+deb13u4", "CRITICAL"),
             ), {})
     with pytest.raises(gate.GateError, match="High risk acceptance expired"):
-        gate.load_high_baselines(isolated, date(2026, 10, 17))
+        gate.load_high_baselines(isolated, date(2026, 10, 18))
 
 
 @pytest.mark.parametrize(
