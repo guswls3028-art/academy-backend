@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "maximumHighFindings": {
-    "academy-base": 2,
+    "academy-base": 3,
     "academy-api": 3,
     "academy-video-worker": 3,
     "academy-messaging-worker": 3,
@@ -46,6 +46,7 @@
       "packageName": "cyrus-sasl2",
       "packageVersion": "2.1.28+dfsg1-9",
       "repositories": [
+        "academy-base",
         "academy-api",
         "academy-video-worker",
         "academy-messaging-worker",
@@ -54,7 +55,7 @@
       ],
       "expiresOn": "2026-10-18",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-107161",
-      "rationale": "On 2026-10-18 the human task owner explicitly accepted this exact Cyrus High identity only in API/Video/Messaging/AI/Tools until 2026-10-19 09:00 KST (inclusive UTC expiry 2026-10-18), after reviewing the five COMPLETE candidate scans from failed release39072408861. academy-base is excluded. Debian trixie 2.1.28+dfsg1-9 remains vulnerable; the sid fixed version does not establish a compatible stable remediation. DIGEST-MD5 challenge quoting may corrupt client memory or crash; actual runtime reachability has not been established or ruled out. Prior native checks are historical evidence only. Preserve the current native oracle and all release gates; any unexpected mechanism/oracle failure still blocks. No automatic renewal, other identity/version/repository widening or Critical acceptance is permitted. Exact approval and evidence: docs/operations/container-image-security.md, 2026-10-18 section."
+      "rationale": "On 2026-10-18 the human task owner first accepted this exact Cyrus High identity in five service repositories, then explicitly approved adding academy-base at the same deadline after failed release39076470310 refreshed the unchanged base digest and found the same identity. The exact base addition changes only its High maximum from 2 to 3; all six repositories expire at 2026-10-19 09:00 KST (inclusive UTC expiry 2026-10-18). The base scan completed at 2026-10-18 07:54:29 KST with High3/Critical0; its earlier scan had High2, so stale scan evidence was not reused. Debian trixie 2.1.28+dfsg1-9 remains vulnerable; a sid fixed version does not establish compatible stable remediation. DIGEST-MD5 challenge quoting may corrupt client memory or crash; actual runtime reachability has not been established or ruled out. Preserve the current native oracle and all release gates; unexpected mechanism/oracle failure still blocks. No automatic renewal, other identity/version/repository widening or Critical acceptance is permitted. Exact approval and evidence: docs/operations/container-image-security.md, 2026-10-18 base addendum section."
     }
   ]
 }

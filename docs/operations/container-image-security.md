@@ -5,7 +5,33 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
-## 2026-10-18 P2 배포의 Cyrus 한시 수용 및 glibc 재승인
+## 2026-10-18 base addendum: 동일 Cyrus의 academy-base 추가 승인
+
+아래 최초 승인을 반영한 PR659의 [배포39076470310](https://github.com/guswls3028-art/academy-backend/actions/runs/39076470310)은
+`academy-base`의 새 scan에서 동일 Cyrus 항목을 검출해 중단했다. base digest
+`sha256:5691af13d98b2838209669291d105d7b72f4648c957ca1b32ab30bf637be8379`는
+변하지 않았지만, 10월 17일 04:37:50 KST scan의 High 2건과 달리 10월 18일
+07:54:29 KST COMPLETE scan은 High 3건·Critical 0건이다. 같은 이미지의 검출
+결과가 바뀐 사실은 확인했으며 scanner 내부 재분류 원인까지 확인한 것은 아니다.
+다른 다섯 저장소도 승인된 세 identity만 있으며 여섯 scan 모두 COMPLETE·Critical 0이다.
+개발·preprod·운영은 실행되지 않았고 공유 잠금은 반환됐다.
+
+최초 승인은 base를 제외했으므로 자동 확대하지 않았다. 정확한 추가 범위와 잔여
+메모리 손상·장애 위험, 실제 도달성 미확인을 전달한 뒤 사용자가
+**“academy-base도 같은 기한으로 추가 수용 승인”**이라고 명시 승인했다.
+`CVE-2026-107161 / cyrus-sasl2 / 2.1.28+dfsg1-9`의 저장소 목록에
+`academy-base`만 추가하고 그 High 상한만 2에서 3으로 바꾼다.
+기존 서비스 다섯 저장소, glibc 두 항목과 만료 **2026-10-19 09:00 KST**
+(`expiresOn: 2026-10-18` UTC 종료)는 변경하지 않는다. Critical 수용은 비어 있다.
+
+이는 호환 수정본이나 비도달성의 증명이 아니다. 아래 vendor·잔여 위험과 모든
+native·신선한 scan·격리 개발 P2/ACK/cleanup 0·preprod/종료·승인·rolling·운영
+검증 조건을 유지하며 새 정책 source의 공식 배포로 다시 검증한다.
+승인 원문은 `_artifacts/session-closeout-01a14bb1/security-base-addendum-approval-20261018.json`,
+범위 검토와 exact scan은 `_artifacts/sessions/weekly-p2-01a13ee0/`의
+`security-base-addendum-decision.json`, `approved-candidate-security-readback.json`에 보존한다.
+
+## 2026-10-18 P2 배포의 Cyrus 한시 수용 및 glibc 재승인 (이력: base 제외)
 
 PR658의 [배포39072408861](https://github.com/guswls3028-art/academy-backend/actions/runs/39072408861)은
 후보 보안 검사에서 기존 승인에 없는 `CVE-2026-107161`을 검출해 중단했다.
