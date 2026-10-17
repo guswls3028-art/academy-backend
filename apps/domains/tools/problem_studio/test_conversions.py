@@ -5,6 +5,7 @@ import io
 import json
 import tempfile
 import zipfile
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -12,12 +13,13 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.tools.problem_studio.conversion_views import ConversionCollectionView, ConversionDetailView, ConversionActionView
 from apps.domains.tools.problem_studio.conversion_worker import handle_conversion_job
-from apps.domains.tools.problem_studio.conversions import serialize_conversion, validate_question
+from apps.domains.tools.problem_studio.conversions import refresh_failed_job, serialize_conversion, validate_question
 from apps.domains.tools.problem_studio.models import ProblemStudioConversion
 from apps.shared.contracts.ai_job import AIJob
 
@@ -62,7 +64,7 @@ class ConversionJourneyTests(TestCase):
         force_authenticate(request, user=user or self.user)
         return request
 
-    def create(self, title="합성 시험지"):
+    def create(self, title="합성 시험지", *, execute_callbacks=True):
         from reportlab.pdfgen.canvas import Canvas
         output = io.BytesIO()
         canvas = Canvas(output)
@@ -72,13 +74,115 @@ class ConversionJourneyTests(TestCase):
         canvas.drawText(text)
         canvas.save()
         pdf = output.getvalue()
-        with self.captureOnCommitCallbacks(execute=True):
+        with self.captureOnCommitCallbacks(execute=execute_callbacks):
             response = ConversionCollectionView.as_view()(self.request("post", {
                 "payload": json.dumps({"title": title, "options": {"level": "questions", "external_ai_confirmed": True}}),
                 "source_files": SimpleUploadedFile("qa-exam.pdf", pdf, content_type="application/pdf"),
             }, multipart=True))
         self.assertEqual(response.status_code, 202, response.data)
         return ProblemStudioConversion.objects.get(id=response.data["id"])
+
+    def test_stale_undispatched_conversion_can_resume_explicitly(self):
+        with self.captureOnCommitCallbacks(execute=False) as abandoned_callbacks:
+            row = self.create(execute_callbacks=False)
+        original_token = row.operation["token"]
+        self.assertEqual(row.status, "PENDING")
+        self.assertEqual(row.job_id, "")
+        self.assertEqual(self.jobs, [])
+
+        response = ConversionDetailView.as_view()(
+            self.request("get"), conversion_id=row.id
+        )
+        self.assertEqual(response.data["status"], "PENDING")
+        with self.captureOnCommitCallbacks(execute=True):
+            response = ConversionActionView.as_view()(
+                self.request(
+                    "post",
+                    {"version": row.version, "action": "resume"},
+                ),
+                conversion_id=row.id,
+            )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(self.jobs, [])
+
+        ProblemStudioConversion.objects.filter(id=row.id).update(
+            updated_at=timezone.now() - timedelta(minutes=6)
+        )
+        response = ConversionDetailView.as_view()(
+            self.request("get"), conversion_id=row.id
+        )
+        self.assertEqual(response.data["status"], "FAILED")
+        self.assertIn("이어서", response.data["error"])
+        listed = ConversionCollectionView.as_view()(self.request("get"))
+        self.assertEqual(listed.data["conversions"][0]["status"], "FAILED")
+        row.refresh_from_db()
+        self.assertEqual(row.status, "PENDING")
+        self.assertEqual(row.operation["token"], original_token)
+
+        response = ConversionActionView.as_view()(
+            self.request("post", {"version": row.version - 1, "action": "resume"}),
+            conversion_id=row.id,
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.jobs, [])
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = ConversionActionView.as_view()(
+                self.request(
+                    "post",
+                    {"version": row.version, "action": "resume"},
+                ),
+                conversion_id=row.id,
+            )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(len(self.jobs), 1)
+        row.refresh_from_db()
+        self.assertNotEqual(row.operation["token"], original_token)
+        self.assertEqual(row.job_id, self.jobs[-1].id)
+        current_job = self.jobs[-1]
+        with self.captureOnCommitCallbacks(execute=True):
+            response = ConversionActionView.as_view()(
+                self.request("post", {"version": row.version, "action": "resume"}),
+                conversion_id=row.id,
+            )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(len(self.jobs), 1)
+
+        # Simulate a delayed pre-recovery callback and its worker after nonce rotation.
+        self.assertEqual(len(abandoned_callbacks), 1)
+        abandoned_callbacks[0]()
+        self.assertEqual(len(self.jobs), 2)
+        self.assertEqual(handle_conversion_job(self.jobs[-1]).status, "FAILED")
+        row.refresh_from_db()
+        self.assertEqual(row.job_id, current_job.id)
+        self.assertEqual(row.status, "PENDING")
+        self.assertEqual(handle_conversion_job(current_job).status, "DONE")
+        row.refresh_from_db()
+        self.assertEqual(len(row.document["questions"]), 2)
+        self.assertEqual(row.artifact_version, row.version)
+        loaded = ConversionDetailView.as_view()(self.request("get"), conversion_id=row.id)
+        self.assertIn(loaded.data["status"], {"DONE", "REVIEW"})
+        self.assertEqual(set(loaded.data["artifacts"]), {"manuscript", "arranged", "a3"})
+        self.assertIn("url", loaded.data["source_archive"])
+
+    def test_undispatched_timeout_preserves_fresh_running_and_linked_jobs(self):
+        now = timezone.now()
+        for status, job_id, age, expected in (
+            ("PENDING", "", timedelta(minutes=5) - timedelta(microseconds=1), "PENDING"),
+            ("PENDING", "", timedelta(minutes=5), "FAILED"),
+            ("RUNNING", "", timedelta(minutes=6), "RUNNING"),
+            ("PENDING", "linked-job", timedelta(minutes=6), "PENDING"),
+        ):
+            with self.subTest(status=status, job_id=job_id, age=age):
+                row = SimpleNamespace(
+                    status=status, job_id=job_id, updated_at=now - age,
+                    tenant_id=self.tenant.id, error="",
+                )
+                with patch("apps.domains.tools.problem_studio.conversions.timezone.now", return_value=now), patch(
+                    "academy.adapters.db.django.repositories_ai.get_job_model_for_status", return_value=None
+                ):
+                    refresh_failed_job(row)
+                self.assertEqual(row.status, expected)
 
     def test_upload_convert_review_edit_rebuild_reload_and_download(self):
         row = self.create()

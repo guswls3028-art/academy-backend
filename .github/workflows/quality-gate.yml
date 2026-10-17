@@ -330,7 +330,8 @@ jobs:
         if: needs.change-scope.outputs.prose_only != 'true'
         run: |
           python -m pytest -q --tb=short \
-            apps/api apps/billing apps/core apps/shared apps/support apps/domains tests
+            apps/api apps/billing apps/core apps/shared apps/support apps/domains tests \
+            apps/domains/tools/problem_studio/test_conversions.py
       - name: Record unchanged PostgreSQL test scope
         if: needs.change-scope.outputs.prose_only == 'true'
         run: echo "Known Markdown-only diff; no application, test, schema, runtime, dependency or executable policy changes."
