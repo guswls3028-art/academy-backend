@@ -116,6 +116,20 @@ $evidence = [pscustomobject]@{
 $result = Assert-AcademyProductionReleaseBundle -Evidence $evidence
 if (-not $result.Passed) { throw "valid release bundle did not pass" }
 
+# The documented recovery path dispatches the full frontend workflow on main.
+# Exercise all failure boundaries below with that production event as well.
+$evidence.Frontend.Run.event = "workflow_dispatch"
+$dispatchResult = Assert-AcademyProductionReleaseBundle -Evidence $evidence
+if (-not $dispatchResult.Passed) { throw "valid frontend recovery dispatch did not pass" }
+
+$wrongBranch = $evidence | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+$wrongBranch.Frontend.Run.headBranch = "feature/not-production"
+Assert-Throws { Assert-AcademyProductionReleaseBundle -Evidence $wrongBranch } "frontend release run branch is not main"
+
+$wrongSha = $evidence | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+$wrongSha.Frontend.Run.headSha = "3333333333333333333333333333333333333333"
+Assert-Throws { Assert-AcademyProductionReleaseBundle -Evidence $wrongSha } "frontend release run SHA"
+
 $badManifest = $evidence | ConvertTo-Json -Depth 12 | ConvertFrom-Json
 $badManifest.Backend.Manifest.gitSha = "3333333333333333333333333333333333333333"
 $badManifest.Backend.ManifestContainsExpectedSha = $false
