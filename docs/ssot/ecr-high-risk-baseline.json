@@ -2,11 +2,11 @@
   "schemaVersion": 3,
   "maximumHighFindings": {
     "academy-base": 2,
-    "academy-api": 2,
-    "academy-video-worker": 2,
-    "academy-messaging-worker": 2,
-    "academy-ai-worker-cpu": 2,
-    "academy-tools-worker": 2
+    "academy-api": 3,
+    "academy-video-worker": 3,
+    "academy-messaging-worker": 3,
+    "academy-ai-worker-cpu": 3,
+    "academy-tools-worker": 3
   },
   "acceptedHighFindings": [
     {
@@ -21,9 +21,9 @@
         "academy-ai-worker-cpu",
         "academy-tools-worker"
       ],
-      "expiresOn": "2026-10-17",
+      "expiresOn": "2026-10-18",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-19499",
-      "rationale": "On 2026-10-17 the task owner explicitly renewed only these two glibc High identities in the existing six repositories through 2026-10-17 UTC (2026-10-18 09:00 KST) with \"해당 범위·기한의 한시 수용 승인\", after receiving the residual memory-corruption/service-crash risk, missing Debian stable fix, exact package/version, repositories and deadline. The prior approval expired at 2026-10-17 09:00 KST; no automatic or retroactive approval applies. Readback of all six exact digests in successful release 38954773713 (source ee658e8ff96dd696a84755a4a82b4741a68a3351) found COMPLETE scans from 2026-10-17 04:37-04:55 KST with only these two High identities and zero Critical. This existing-runtime evidence does not replace fresh candidate scans or establish unreachability. Keep each repository maximum at 2 and Critical acceptance empty. New identities, changed package/version, any Critical, expiry, native verification failures and all development/preprod/termination/rolling/real-use/cleanup gates remain fail-closed. Review ownership and current evidence: docs/operations/container-image-security.md, 2026-10-17 section."
+      "rationale": "On 2026-10-18 the human task owner explicitly renewed these two exact glibc High identities in the existing six repositories until 2026-10-19 09:00 KST (inclusive UTC expiry 2026-10-18), alongside the separately scoped Cyrus acceptance, to resume PR658. Residual memory-corruption/service-crash risk remains and runtime unreachability is not established. Failed release39072408861 had COMPLETE scans with these two glibc findings in all six repositories, zero Critical, and the additional Cyrus finding only in the five service repositories; no development/preprod/production deployment ran. This does not retroactively approve that failed release or replace fresh candidate scans. No automatic renewal, other identity/version/repository widening or Critical acceptance is permitted. Preserve native, scan, isolated development, preprod/termination, production approval, rolling, real-use and cleanup gates. Exact approval and current evidence: docs/operations/container-image-security.md, 2026-10-18 section."
     },
     {
       "cve": "CVE-2026-5435",
@@ -37,9 +37,24 @@
         "academy-ai-worker-cpu",
         "academy-tools-worker"
       ],
-      "expiresOn": "2026-10-17",
+      "expiresOn": "2026-10-18",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-5435",
-      "rationale": "On 2026-10-17 the task owner explicitly renewed only these two glibc High identities in the existing six repositories through 2026-10-17 UTC (2026-10-18 09:00 KST) with \"해당 범위·기한의 한시 수용 승인\", after receiving the residual memory-corruption/service-crash risk, missing Debian stable fix, exact package/version, repositories and deadline. The prior approval expired at 2026-10-17 09:00 KST; no automatic or retroactive approval applies. Readback of all six exact digests in successful release 38954773713 (source ee658e8ff96dd696a84755a4a82b4741a68a3351) found COMPLETE scans from 2026-10-17 04:37-04:55 KST with only these two High identities and zero Critical. This existing-runtime evidence does not replace fresh candidate scans or establish unreachability. Keep each repository maximum at 2 and Critical acceptance empty. New identities, changed package/version, any Critical, expiry, native verification failures and all development/preprod/termination/rolling/real-use/cleanup gates remain fail-closed. Review ownership and current evidence: docs/operations/container-image-security.md, 2026-10-17 section."
+      "rationale": "On 2026-10-18 the human task owner explicitly renewed these two exact glibc High identities in the existing six repositories until 2026-10-19 09:00 KST (inclusive UTC expiry 2026-10-18), alongside the separately scoped Cyrus acceptance, to resume PR658. Residual memory-corruption/service-crash risk remains and runtime unreachability is not established. Failed release39072408861 had COMPLETE scans with these two glibc findings in all six repositories, zero Critical, and the additional Cyrus finding only in the five service repositories; no development/preprod/production deployment ran. This does not retroactively approve that failed release or replace fresh candidate scans. No automatic renewal, other identity/version/repository widening or Critical acceptance is permitted. Preserve native, scan, isolated development, preprod/termination, production approval, rolling, real-use and cleanup gates. Exact approval and current evidence: docs/operations/container-image-security.md, 2026-10-18 section."
+    },
+    {
+      "cve": "CVE-2026-107161",
+      "packageName": "cyrus-sasl2",
+      "packageVersion": "2.1.28+dfsg1-9",
+      "repositories": [
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ],
+      "expiresOn": "2026-10-18",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-107161",
+      "rationale": "On 2026-10-18 the human task owner explicitly accepted this exact Cyrus High identity only in API/Video/Messaging/AI/Tools until 2026-10-19 09:00 KST (inclusive UTC expiry 2026-10-18), after reviewing the five COMPLETE candidate scans from failed release39072408861. academy-base is excluded. Debian trixie 2.1.28+dfsg1-9 remains vulnerable; the sid fixed version does not establish a compatible stable remediation. DIGEST-MD5 challenge quoting may corrupt client memory or crash; actual runtime reachability has not been established or ruled out. Prior native checks are historical evidence only. Preserve the current native oracle and all release gates; any unexpected mechanism/oracle failure still blocks. No automatic renewal, other identity/version/repository widening or Critical acceptance is permitted. Exact approval and evidence: docs/operations/container-image-security.md, 2026-10-18 section."
     }
   ]
 }
