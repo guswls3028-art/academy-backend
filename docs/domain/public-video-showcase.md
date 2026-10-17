@@ -62,6 +62,46 @@ existing_id만 반환한다. 테넌트 밖 ID는 404 또는 권한 거부로 처
 | POST `manage/<uuid>/publish/`, `unpublish/` | 두 revision 검증 후 공개/비공개 |
 | GET/PATCH `manage/showcase/` | 대표 ID/revision/제목/소개 조회 및 명시된 설정 수정 |
 
+## 탐색과 YouTube 원본 통계
+
+공개 목록은 `kind=landscape|vertical`, `sort=latest|popular|oldest`, `q`(최대 90자)를
+검증한다. kind 생략은 구버전과 같이 모든 형태이며 기본 정렬은 latest다. DRF의 렌더러용
+format 예약어와 구분한다. 공개 스냅샷의 형태/제목/자유 분류와 원본 채널에만 검색을 적용하고,
+전체 결과를 정렬한 뒤 12개씩 나눈다. 초안·타 tenant·비공개·삭제 행은 포함하지 않는다.
+latest/oldest는 원본 업로드일(없으면 홈페이지 공개일), popular는 실제 YouTube 조회수다.
+동률은 날짜/ID로 안정적으로 정렬하며 미확인 조회수는 0이 아닌 null로 마지막에 둔다.
+결과가 있는데 전부 미확인이면 503으로 재시도/최신순 복귀를 안내한다. 빈 검색은 200이다.
+
+`academy/adapters/youtube_statistics.py`는 서버 전용 `YOUTUBE_DATA_API_KEY`로 공식
+`https://www.googleapis.com/youtube/v3/videos`의 snippet/statistics만 조회한다.
+키는 SSM의 환경별 API env에서 주입하고 브라우저·URL·로그에 넣지 않는다. YouTube Data API v3
+전용 제한 키를 쓰며 Gemini 키의 권한을 넓히지 않는다. 개발 API는 배포 publisher가
+`/academy/providers/development/youtube-api-key`의 별도 SecureString을 읽어 주입한다.
+운영 키와 같으면 배포를 중단하며 worker/preprod에는 YouTube 키를 전달하지 않는다.
+개발 deploy OIDC 역할만 이 정확한 원본 parameter 읽기 권한을 추가하며 런타임 SSM 경계는 유지한다.
+API 활성화/약관과 두 키 준비 후 격리 개발 실조회 검증을 통과해야 UI를 승격한다.
+서버는 검증된 ID 최대 50개, 연결/읽기 3/5초, 전체 본문 읽기 12초, 256KiB, redirect 금지를
+적용한다. 타 ID/잘못된 응답은 실패 폐쇄하며 누락 ID는 미확인이다.
+
+`services/video_statistics.py`는 공개 목록 요청 시 tenant 안에서 갱신 대상 최대 50개를
+잠가 선점하고 네트워크 전에 잠금을 푼다. 직접 상세는 해당 공개 영상 한 개만 확인한다.
+정상 확인은 6시간 뒤, 장애는 5분 뒤 재시도한다.
+조회수/원본 날짜/확인·재시도 시각 네 파생 필드만 갱신하며 게시자 revision·문구·공개일을
+바꾸지 않는다. 응답 적용 시 공개 상태/원본 ID를 다시 확인해 비공개/삭제 경합을 보존한다.
+일시 장애는 최근 정상 값을 유지하고 30일을 넘은 값은 노출·정렬에서 제거한다.
+별도 `Public Video Statistics Retention` 일일 workflow가 `expire_public_video_statistics
+--execute`로 모든 tenant/상태의 28일 초과 파생 필드를 비운다. 기본 명령은 계획만 출력하며
+사용자 작성 데이터/영상 행은 삭제하지 않는다. 일일 실패는 Actions에서 복구하고 30일 전에
+같은 명령을 재실행한다. 이는 비활성·비공개 영상도 YouTube의 30일 보관 한도 안에 정리한다.
+
+0014는 nullable 파생 컬럼 네 개만 추가해 기존 API와 공존한다. 백엔드/키 연결을 먼저
+배포하고 프론트엔드를 승격한다. 롤백 시 사용자 데이터는 보존하며 통계 정리 job은 유지한다.
+`test_video_browse`는 전체 정렬/페이지, tenant/공개 스냅샷, 미확인/0/만료, 장애/backoff,
+삭제 경합, 파생 데이터만 갱신/정리 및 고정 공급자 경계를 검증한다.
+
+공식 근거: [videos.list](https://developers.google.com/youtube/v3/docs/videos/list),
+[API 데이터 보관 정책](https://developers.google.com/youtube/terms/developer-policies).
+
 ## 원본 확인·실패 복구
 
 정확한 youtube.com/www/m 호스트의 watch·shorts 및 youtu.be만 허용한다.

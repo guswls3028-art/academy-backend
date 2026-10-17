@@ -97,6 +97,7 @@ function Set-IsolatedPreprodApiValues {
         '^OPENAI_',
         '^ANTHROPIC_',
         '^GEMINI_',
+        '^YOUTUBE_',
         '^AWS_ACCESS_KEY_ID$',
         '^AWS_SECRET_ACCESS_KEY$',
         '^AWS_SESSION_TOKEN$',
@@ -152,6 +153,7 @@ function Set-IsolatedPreprodApiValues {
         OPENAI_API_KEY = ""
         ANTHROPIC_API_KEY = ""
         GEMINI_API_KEY = ""
+        YOUTUBE_DATA_API_KEY = ""
         AWS_ACCESS_KEY_ID = ""
         AWS_SECRET_ACCESS_KEY = ""
         AWS_SESSION_TOKEN = ""
@@ -190,6 +192,7 @@ function Assert-IsolatedPreprodApiValues {
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
         "GEMINI_API_KEY",
+        "YOUTUBE_DATA_API_KEY",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
         "AWS_SESSION_TOKEN"

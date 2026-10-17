@@ -26,6 +26,10 @@ class PublicVideo(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     published_at = models.DateTimeField(null=True, blank=True)
+    youtube_view_count = models.PositiveBigIntegerField(null=True, blank=True)
+    youtube_published_at = models.DateTimeField(null=True, blank=True)
+    youtube_statistics_checked_at = models.DateTimeField(null=True, blank=True)
+    youtube_statistics_retry_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [

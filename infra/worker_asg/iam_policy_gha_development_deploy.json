@@ -94,6 +94,7 @@
         "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/workers/env",
         "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/db-credentials",
         "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/r2/development/credentials",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/providers/development/youtube-api-key",
         "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/env",
         "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/workers/development/env"
       ]
