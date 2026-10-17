@@ -304,7 +304,7 @@ function Assert-AcademyProductionReleaseBundle {
         -Run $frontend.Run `
         -ExpectedSha $frontendSha `
         -ExpectedWorkflow "Frontend Quality Gate" `
-        -AllowedEvents @("push") `
+        -AllowedEvents @("push", "workflow_dispatch") `
         -RequiredJobs @("Deploy to Cloudflare Pages", "Production read-only user flow + tenant availability") `
         -Label "frontend"
 
