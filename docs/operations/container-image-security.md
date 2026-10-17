@@ -5,7 +5,41 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
-## 2026-10-17 출석 정렬 배포의 glibc 두 예외 재승인
+## 2026-10-18 P2 배포의 Cyrus 한시 수용 및 glibc 재승인
+
+PR658의 [배포39072408861](https://github.com/guswls3028-art/academy-backend/actions/runs/39072408861)은
+후보 보안 검사에서 기존 승인에 없는 `CVE-2026-107161`을 검출해 중단했다.
+여섯 scan은 COMPLETE·Critical 0이며 base에는 기존 glibc High 2건,
+서비스 이미지 다섯 개에는 Cyrus를 포함한 High 3건이 있다. 개발·preprod·운영
+교체는 실행되지 않았고 공유 잠금은 반환됐다. 실패 실행을 소급 승인하지 않는다.
+
+사용자는 10월 18일 **“검토안의 대상 범위대로 새 Cyrus 취약점과 기존 glibc 2건을
+10월 19일 오전 9시(KST)까지 한시 수용 승인함. 배포·운영 검증까지 마무리하고
+완료된 세션 정리해줘.”**라고 명시 승인했다.
+
+- `CVE-2026-107161 / cyrus-sasl2 / 2.1.28+dfsg1-9`: `academy-api`,
+  `academy-video-worker`, `academy-messaging-worker`, `academy-ai-worker-cpu`,
+  `academy-tools-worker`만 허용하며 `academy-base`는 제외한다.
+- `CVE-2026-19499`, `CVE-2026-5435 / glibc / 2.41-12+deb13u4`:
+  위 다섯 저장소와 `academy-base`의 기존 범위만 갱신한다.
+- 만료는 **2026-10-19 09:00 KST**, 즉 `expiresOn: 2026-10-18` UTC 종료다.
+  High 상한은 base 2, 나머지 3이며 Critical 수용은 비어 있다. 자동 연장은 없다.
+
+10월 18일 [Debian Cyrus tracker](https://security-tracker.debian.org/tracker/CVE-2026-107161)는
+trixie `2.1.28+dfsg1-9`를 vulnerable, sid `2.1.28+dfsg1-12`를 fixed로 표시한다.
+sid 수정본은 호환 가능한 stable 수정본의 검증을 대신하지 않는다. DIGEST-MD5
+challenge 처리의 heap 손상·장애 위험과 기존 glibc 잔여 위험은 남는다.
+실제 도달 가능성은 입증하거나 배제하지 않았으며, 과거 native 검사를 새 후보의
+비도달성 증거로 쓰지 않는다. 기존 native oracle 및 예상 밖 mechanism 차단을 유지한다.
+
+release owner `weekly-p2-01a13ee0`는 이 정책이 포함된 새 source로 공식 배포를 시작한다.
+새 CVE·package/version·범위 변경·Critical·만료는 계속 실패하며, 신선한 immutable scan,
+격리 개발의 P2 실제 queue/worker/R2 복구 및 cleanup 0, preprod와 임시 인스턴스 종료,
+플랫폼 승인·공유 잠금, 호환 rolling, runtime·영향 동선 검증을 모두 유지한다.
+승인 원문은 `_artifacts/session-closeout-01a14bb1/security-approval-20261018.json`,
+후보 증거는 `_artifacts/sessions/weekly-p2-01a13ee0/candidate-security-readback.json`에 보존한다.
+
+## 2026-10-17 출석 정렬 배포의 glibc 두 예외 재승인 (이력)
 
 출석 미도착 우선 정렬 후보를 준비하면서 기존 승인이 **10월 17일 09:00 KST**에
 만료되어 `load_high_baselines`가 차단하는 것을 확인했다. 자동 갱신하거나
@@ -21,7 +55,7 @@
   package/version 변경, Critical, 만료와 기존 native·scan·개발·preprod·임시
   인스턴스 종료·rolling·실사용·cleanup 실패는 계속 차단한다.
 
-현재 성공 manifest의 source는 `ee658e8ff96dd696a84755a4a82b4741a68a3351`,
+당시 성공 manifest의 source는 `ee658e8ff96dd696a84755a4a82b4741a68a3351`,
 공식 배포는 [run38954773713](https://github.com/guswls3028-art/academy-backend/actions/runs/38954773713)이다.
 10월 17일 조회한 여섯 exact digest의 COMPLETE scan은 같은 날 04:37~04:55 KST에
 완료됐으며, 모두 위 High 2건·Critical 0건이다. 이는 기존 배포 이미지의 증거이며
