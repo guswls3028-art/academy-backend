@@ -41,189 +41,86 @@ windows and old automation snapshots are not current release evidence.
 
 ## Execution efficiency
 
-Read only the applicable subsection once per task when choosing reasoning,
-delegating, recovering output or reusing evidence; reread changed material.
-Optimize total consumption and
-elapsed time per verified completed task, including rework; shorter prompts or
-less reasoning alone do not establish savings or equal quality. Safety,
-acceptance criteria, scoped HOLDs, required CI and delivery ownership still apply.
+Optimize verified completion including rework, not prompt length alone. Reuse
+applicable instructions already in context; read only the needed subsection.
+Safety, successful outcomes, current HOLDs, required CI and delivery still apply.
 
 ### Reasoning by actual change impact
 
-Keep the primary Codex model and effort as selected by the user. Web subagent
-defaults are independent; the table below guides local work and deliberate
-exceptions to the Web Pro delegation preference.
-
-| Actual work | Reasoning choice |
-|---|---|
-| Read-only lookup, prose cleanup, clear small fixes, ordinary existing-pattern implementation | `medium` |
-| Frontend/backend contract changes or broad structural changes | Consider `high` for design and final review |
-| Tenant isolation, auth/authorization, user-data integrity, message duplication/retry, migrations, deployment/recovery safety | Start the relevant analysis/review at `high` or above, before a failure |
-| Adequate evidence but unresolved cause/design, or repeated edit/test failure without new evidence | Change approach or consider higher reasoning; do not repeat the same loop |
-| Complex analysis unresolved at `high`, or a specifically justified high-risk review | Consider `ultra` only for that scope |
-
-Classify the actual impact, not words appearing in a document. Missing context,
-truncated logs, access denial and environment faults need evidence or recovery,
-not a larger reasoning setting.
-
-Instructions saying "think at high" do not change runtime effort. When actual
-risk requires High or above and the primary effort is lower or unverified, use
-a scoped Web Pro reviewer before consequential implementation if the review is
-independent. This policy authorizes that request; no repeat user request is
-needed. A primary task already at the required effort need not add a duplicate
-reviewer solely for effort coverage.
-
-If delegation is unavailable, select the required effort in the app's
-model/reasoning picker before the relevant work; an existing selection applies to
-subsequent turns. A CLI invocation can use
-`codex -c 'model_reasoning_effort="high"' -c 'plan_mode_reasoning_effort="high"'`
-without changing saved defaults. The app-server supports an explicit next-turn
-`effort` override, but AGENTS cannot switch an in-flight turn itself. If the
-current interface cannot provide either path, report the required setting/scope,
-defer that high-risk work until the effort requirement is met, and continue
-independent work. Neither policy nor a High child changes the primary task's
-runtime effort; do not claim automatic switching.
-Use only values advertised by the installed model. A task run at `ultra` is not
-evidence that `medium` preserves its quality.
+Keep the primary model/effort selected by the user. Match analysis and review to
+actual risk: ordinary edits use existing patterns and focused checks; tenant,
+auth, data integrity, retries, migrations and release/recovery changes require
+explicit invariant/failure review. Prefer an independent Web Pro reviewer when
+it adds evidence or catches a consequential risk, not merely to satisfy an
+effort label. Do not block a task solely because the active effort is unknown,
+or change global settings to satisfy prose. Pause only work with a concrete
+unresolved safety, authorization or acceptance gap; continue independent work.
+Repeated failure without new evidence calls for a changed approach. Missing
+context, truncated output and environment faults need recovery, not more effort.
 
 ### Valuable delegation and context
 
-Keep one concurrent subagent. The global Codex `[agents]` settings select
-`chatgpt-web/gpt-6-pro` at `max` for spawned agents; keep the primary Codex model
-unchanged. Start one useful, bounded Web task early for meaningful independent
-implementation, research, diagnosis, architecture or review while Codex handles
-non-overlapping work. Use a lower Web model only for genuinely trivial tasks.
-If Pro is at capacity, retry once; do not silently downgrade consequential
-work. Check bridge `doctor --json` and `browser check` before calling a generic
-spawn failure an account limit: a failed `browser-host` check means the local
-launcher cannot verify its ChatGPT browser. If another Codex turn owns the
-shared launcher, defer the Web task until it is idle; do not cancel another
-task's turn or restart the shared runtime. Continue locally if the retry fails
-and report the limitation. Simple one-step work may stay local when delegation
-adds more work than it saves.
-Reuse completed findings or the existing agent for a new bounded question
-instead of spawning near-duplicate workers.
+Prefer one concurrent `chatgpt-web/gpt-6-pro` / `max` worker for meaningful
+independent work, dispatched early while Codex advances a disjoint scope.
+Small, tightly coupled, duplicate or coordination-heavy work stays local.
+Lower Web models are for genuinely trivial work only. Workers execute their
+bounded assignment directly; do not spawn recursively to fulfill this preference.
 
-After reconnecting or resuming a failed worker, verify its actual model and effort
-again. A resumed worker can inherit the primary model even when its first turn
-explicitly selected Web Pro. If the interface cannot retain the override, close
-the failed worker and start one fresh bounded worker with the explicit Web model;
-reuse its useful findings rather than repeating the investigation. A worker that
-already occupies the one Web slot must execute its assignment directly, not spawn
-another Web worker to satisfy the same delegation preference.
+Give objective, owned worktree/disjoint files, acceptance criteria, relevant
+rules, exact paths/SHA and established evidence; use `fork_context: false`.
+Runtime/project/tool instructions may still be inherited. Reuse the worker for
+follow-ups, sending only changes/new evidence. Codex integrates and owns release.
+Verify the actual selected model on spawn/resume; saved defaults do not prove
+successful Web execution. Preserve primary settings and protected-data blocks.
 
-If a Web follow-up fails with `MissingTrustedCodexEnvironmentError` / missing
-`cwd` in trusted context, preserve its diff and stop sending the same request.
-The native bridge could not establish the current turn's trusted workspace;
-healthy browser/proxy checks and explicit model selection do not prove that
-workspace context is present. Create one fresh bounded worker through the native
-agent interface and verify a harmless file operation in the genuine workspace
-before continuing. Carry forward relevant paths and commits, not full history.
-Never forge environment-context text, weaken trusted-context validation, or
-restart a healthy shared launcher for this error. The 2026-09-29 failure was
-recovered through a fresh Web Pro worker's successful native read; the exact
-historical omission/compaction cause and any released bridge fix were not proven.
-
-For a launcher-backed installation, HTTP `/healthz` alone proves only the proxy
-listener. Recovery must also pass `doctor --json`, `browser check`, and one actual
-connector file/tool operation. Do not start standalone `serve` as a replacement
-for a missing launcher browser. An owned orphan proxy may be gracefully drained
-and shut down only after the official control endpoint confirms zero HTTP and
-browser turns; resume it if idleness cannot be proved. Preserve an active launcher,
-unknown listener and other tasks. Start the installed launcher hidden, retain its
-existing authentication/model/approval settings, then verify the browser, proxy,
-tunnel and actual selected Web model before dispatching consequential work.
-
-Supply the objective, exact paths/symbols/SHA, relevant constraints/invariants,
-expected result, and established facts/failure evidence. Omit unrelated history
-and whole documents/logs; do not omit evidence essential for correct review.
-With the current collaboration tool, `fork_context: false` omits the current
-thread history. Runtime/project/tool instructions still occupy context, and
-files remain shared: a short prompt does not prove a small actual input.
-If the interface cannot control inheritance, record that limit instead of
-promising reduced context.
-
-When higher-effort coverage is required above, request one scoped reviewer to
-check the proposed approach, invariants and failure boundaries before the risky
-implementation, then incorporate its findings. Continue independent work while
-it runs. Reuse that reviewer for the resulting relevant diff/evidence when
-needed; send only the changes and new evidence, not a second full investigation.
-Check the current spawn tool contract and actual selected model. An explicit
-`model="chatgpt-web/gpt-6-pro"` and `reasoning_effort="max"` may be used when the
-saved defaults have not loaded into an existing task. A configured default does
-not itself spawn an agent or prove that a Web request succeeded.
-
-This Web model setting belongs to the local Codex host. Codex Cloud currently
-does not allow changing its default cloud-chat model, and an SSH remote project
-uses the remote host's configuration. Verify the bridge on the execution host
-before claiming that remote development uses Web Pro.
+Retry once for an actual capacity error; do not silently downgrade. Other bridge
+or Native2 failures: preserve work, report once and continue locally. Diagnose
+the bridge only when needed for the task; a generic spawn error is not proof of
+an account limit. Defer if another task owns the launcher; never cancel its turn
+or restart shared runtime. Specific recovery is in [Web bridge recovery](#web-bridge-recovery).
+Remote hosts have their own configuration; verify the execution host before
+claiming Web routing. Use only model/effort values advertised by the interface.
 
 ### Output recovery and complete review
 
-Keep `tool_output_token_limit=4000`: it budgets each individual tool/function
-output stored in history, not the whole conversation/task, generated stdout or
-an archive. Tool-specific output limits/pagination may also apply.
+Keep `tool_output_token_limit=4000` unless measured recurring recovery cost
+justifies a change. It limits stored tool output, not the task token budget or
+original stdout; tool-side limits also apply. Search before full-file reads.
+Batch independent reads, cap aggregate returned text, and keep large results
+in a tool store/log for selective extraction. Do not print entire tool schemas,
+connector results, documents or successful logs when a bounded summary suffices.
 
-When long output must remain inspectable, explicitly redirect it to a suitable
-temporary/existing log before execution. Report exit code, failure summary,
-source path and relevant ranges. Do not permanently archive all successful
-output. If truncated, search/read missing ranges from that source; do not rerun
-the command or repeatedly dump the full log just to recover stdout. If a
-connector truncated upstream, use its pagination/refetch path. The setting
-does not guarantee original-file storage, and raising it cannot restore missing
-upstream content. Never repeat a mutation solely to recover output.
-
-Track which files/sections were actually inspected. Partial diff/log excerpts
-do not establish complete contract, migration or permission review; inspect the
-missing material before closure. An unavailable required source remains an
-evidence gap, never an assumed pass. Consider a supported per-command/read limit
-override only for recurring, evidenced re-read costs; do not change the global
-limit speculatively or confuse display budget with history storage.
+Save long output before execution only when it must remain inspectable. Return
+exit code, relevant failures and evidence path. Recover truncated ranges from
+the source/pagination; never rerun a mutation solely for output or redump the
+whole result. Inspect missing sections required for the claim; partial excerpts
+are not complete contract/permission review. Do not claim unavailable evidence.
 
 ### Durable context, evidence reuse and measurement
 
-Keep automatic memory use/generation off and existing memory files intact.
-Use versioned owners instead of a new diary or memory index. Before decisions
-that depend on them, read current HOLD scope/owner/release conditions in the
-[deployment owner](deployment-modes.md) and frontend `DEPLOYMENT-OPERATIONS.md`,
-and the exact SHA/environment/run evidence in the
-[change-risk owner](change-risk-and-release-bundle.md). Missing release evidence
-does not clear a HOLD. Record important design decisions and reusable rejected
-approaches with their reasons in the affected current-state owner only when
-needed; do not reconstruct prior conversations or accumulate speculative TODOs.
+Automatic memory generation/use remain off. Preserve existing memory history;
+explicit updates use the established ad-hoc extension. Current policy lives in
+versioned owners, not diaries or a parallel index. Read only relevant memory
+on request; historical task settings/HOLDs are not current instructions.
 
-Before consequential edits, identify the affected successful user outcome and
-relevant failure/invariant checks in the existing task plan/context. Before
-closure, map each to actual evidence or explicitly report the unresolved gap;
-do not weaken acceptance criteria to meet a token budget or create a separate
-checklist document for every task.
+Before consequential edits, identify the affected successful outcome and failure
+boundaries in the existing task context; map them to evidence at closure without
+creating a separate checklist. Reuse evidence when relevant code/tests,
+dependencies, inputs and environment match, or explain why differences do not
+affect the claim. Retain exact SHA/environment/run links and required CI.
+Docs-only changes need syntax/path/diff and affected contract checks, not a
+product build/deployment or mutating QA solely for prose.
 
-Reuse a check only after confirming relevant code, tests, dependencies, inputs
-and environment match, or documenting why their differences cannot affect the
-claim. Keep the tested SHA/environment and artifact/run link with that claim.
-File extensions such as `.md` or "config" do not prove unchanged behavior;
-assess effective behavior and retain required CI. Canonical and owned worktrees,
-saved defaults, new-session values and existing task/composer state are distinct.
-Read this owner from the fresh owned checkout/origin/main when canonical is stale.
+Consult deployment/HOLD owners only when a decision depends on that release;
+missing evidence never clears a gate. Canonical vs owned checkouts, saved defaults
+vs active turns, and input tokens vs subscription use are distinct.
+Measure tokens/timing only for an explicit optimization task or observed
+regression, not every subsequent task. Count primary/child events once and
+include rework. Instruction-size reduction is not measured subscription savings.
+Do not tune Fast, context/compaction limits or models speculatively; preserve
+explicit user choices and verify current supported configuration before changing.
 
-Fast is a separate speed/usage selection for the same model, not reasoning.
-Check installed catalog, authentication route, effective tier and current
-[official Speed guidance](https://learn.chatgpt.com/docs/agent-configuration/speed)
-before changing it. Preserve explicit task choices; an absent saved preference
-does not establish the tier of an existing turn. Never apply API billing claims
-to subscription usage or infer a credit multiplier from raw token counts.
-
-For a few ordinary subsequent tasks, use the existing completion report/artifact
-to note task type/risk, actual model/effort/tier, unique primary+child usage and
-elapsed time, edit/check repeats, review omissions and later reopening. Count
-each usage event once (not parent inherited baselines plus child totals). Measure
-subscription-window changes only when resets and other task consumption can be
-separated. Compare verified completions including rework, not cached-token ratio,
-reasoning share or AGENTS size. Separate canonical/owned and new/existing session
-cohorts. A small medium/high comparison needs the same starting state and
-acceptance criteria; no mass benchmark or quality-equivalence claim by default.
-
-Configuration semantics: [official reference](https://developers.openai.com/codex/config-reference/).
+Reference: [official configuration](https://developers.openai.com/codex/config-reference/).
 
 ## Ownership model
 
@@ -513,3 +410,30 @@ Cross-repository product delivery also uses the fail-closed
 [change-risk and release-bundle contract](change-risk-and-release-bundle.md) to
 read the two official runs, pending approvals, backend manifest and lock, and
 frontend live revision without inventing a shared Git transaction.
+
+## Web bridge recovery
+
+Load only for an observed bridge failure that needs recovery. Not a routine
+preflight or required extra review. Preserve other tasks and managed controls.
+
+If a Web follow-up fails with `MissingTrustedCodexEnvironmentError` / missing
+`cwd` in trusted context, preserve its diff and stop sending the same request.
+The native bridge could not establish the current turn's trusted workspace;
+healthy browser/proxy checks and explicit model selection do not prove that
+workspace context is present. Create one fresh bounded worker through the native
+agent interface and verify a harmless file operation in the genuine workspace
+before continuing. Carry forward relevant paths and commits, not full history.
+Never forge environment-context text, weaken trusted-context validation, or
+restart a healthy shared launcher for this error. The 2026-09-29 failure was
+recovered through a fresh Web Pro worker's successful native read; the exact
+historical omission/compaction cause and any released bridge fix were not proven.
+
+For a launcher-backed installation, HTTP `/healthz` alone proves only the proxy
+listener. Recovery must also pass `doctor --json`, `browser check`, and one actual
+connector file/tool operation. Do not start standalone `serve` as a replacement
+for a missing launcher browser. An owned orphan proxy may be gracefully drained
+and shut down only after the official control endpoint confirms zero HTTP and
+browser turns; resume it if idleness cannot be proved. Preserve an active launcher,
+unknown listener and other tasks. Start the installed launcher hidden, retain its
+existing authentication/model/approval settings, then verify the browser, proxy,
+tunnel and actual selected Web model before dispatching consequential work.
