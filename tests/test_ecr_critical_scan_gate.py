@@ -88,11 +88,8 @@ def test_current_candidate_only_accepts_exact_reviewed_high_before_expiry(reposi
         (repo, cve, "glibc", "2.41-12+deb13u4")
         for repo in gate.REPOSITORIES
         for cve in ("CVE-2026-19499", "CVE-2026-5435")
-    } | {
-        (repo, "CVE-2026-107161", "cyrus-sasl2", "2.1.28+dfsg1-9")
-        for repo in gate.REPOSITORIES
     }
-    assert baselines[repository] == 3
+    assert baselines[repository] == 2
     assert gate.evaluate_findings(repository, _scan(), acceptances) == []
     assert gate.evaluate_high_budget(repository, _scan(), baselines, known) == 0
     gcc = _scan(
@@ -108,7 +105,10 @@ def test_current_candidate_only_accepts_exact_reviewed_high_before_expiry(reposi
     assert gate.evaluate_high_budget(repository, reviewed, baselines, known) == 2
     cyrus = _finding("CVE-2026-107161", "cyrus-sasl2", "2.1.28+dfsg1-9", "HIGH")
     combined = _scan(*reviewed["imageScanFindings"]["findings"], cyrus)
-    assert gate.evaluate_high_budget(repository, combined, baselines, known) == 3
+    with pytest.raises(gate.GateError, match="High reviewed policy exceeded"):
+        gate.evaluate_high_budget(repository, combined, baselines, known)
+    with pytest.raises(gate.GateError, match="unreviewed High"):
+        gate.evaluate_high_budget(repository, _scan(cyrus), baselines, known)
     for finding in [
         _finding("CVE-2099-9999", "gcc-14", "14.2.0-19", "HIGH"),
         _finding("CVE-2026-102010", "gcc-14", "14.2.0-20", "HIGH"),
@@ -140,14 +140,12 @@ def test_retired_gcc_exceptions_do_not_block_clean_candidates_after_their_old_ex
                 ), baselines, known)
 
 
-def test_approved_cyrus_base_addendum_keeps_scope_and_expiry() -> None:
+def test_fixed_system_cyrus_has_no_exception_and_glibc_expiry_is_unchanged() -> None:
     policy = Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
     entries = json.loads(policy.read_text(encoding="utf-8"))["acceptedHighFindings"]
     assert not [entry for entry in entries if entry["packageName"] == "gcc-14"]
     cyrus = [entry for entry in entries if entry["packageName"] == "cyrus-sasl2"]
-    assert len(cyrus) == 1
-    assert set(cyrus[0]["repositories"]) == gate.REPOSITORIES
-    assert cyrus[0]["expiresOn"] == "2026-10-18"
+    assert not cyrus
     with pytest.raises(gate.GateError, match="High risk acceptance expired"):
         gate.load_high_baselines(policy, date(2026, 10, 19))
 

@@ -5,7 +5,37 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
-## 2026-10-18 base addendum: 동일 Cyrus의 academy-base 추가 승인
+## 2026-10-18 system Cyrus 공식 수정 패키지 후보
+
+사용자는 한시 수용 만료 전 근본 조치와, 기존 모델 차단에 관련되지 않은 조치의
+선행 완료를 요청했다. [Debian 공식 tracker](https://security-tracker.debian.org/tracker/CVE-2026-107161)는
+10월 16일 공개한 `cyrus-sasl2 2.1.28+dfsg1-12`를 fixed로 기록한다. 이 새 vendor
+패키지 교체는 기존에 차단된 LDAP/SASL 제거·glibc 교체·취약 입력 재현 작업과
+분리하며 그 작업트리와 차단 상태를 보존한다.
+
+공통 base의 `fetch-fixed-sasl.sh`는 Debian 서명으로 검증한 임시 APT 목록에서
+`libsasl2-2`와 `libsasl2-modules-db` 두 패키지만 exact version으로 내려받고,
+arm64/amd64별 SHA-256을 추가 확인한다. sid의 고정된 두 바이너리를 사용하는
+범위 한정 예외이며 base 배포판·glibc·APT 설치 소스는 trixie 그대로 유지한다.
+의존성은 기존 libc6(최소 2.38), libssl3t64, libdb5.3t64로 충족되며 설치 후
+`dpkg --audit`와 `apt-get check`가 실패하면 빌드를 중단한다. Debian 패키지와
+source identity를 그대로 설치하고 자체 버전 표기나 metadata 제거를 하지 않는다.
+core의 기존 공개 심볼을 모두 유지해야 하며 마지막 APT 단계 뒤의 기존 SASL
+검사는 fixed 패키지 쌍과 `EXTERNAL`, DIGEST-MD5 거부를 함께 확인한다.
+추가 인증 플러그인은 설치하지 않는다.
+
+이 후보의 정책은 여섯 저장소에서 Cyrus 수용을 제거하고 High 상한을 3→2로
+낮춘다. 남은 glibc 두 exact identity와 **2026-10-19 09:00 KST** 만료는 유지한다.
+Cyrus가 하나라도 다시 검출되면 미검토 High로 차단한다. 새 후보의 여섯 COMPLETE
+scan, arm64 native 검증, 격리 development DB/TLS·Excel/PPT/R2 실사용과 cleanup 0,
+preprod/임시 인스턴스 종료, 정규 rolling 및 운영 readback 전에 완료로 표시하지 않는다.
+
+적용 범위는 system Debian 패키지다. `psycopg2-binary` wheel의 별도 SASL 구현을
+수정했다고 주장하지 않는다. PyPI 최신 2.9.13 arm64 wheel도 9월 9일 배포되어
+이번 Debian 수정판보다 이르며, 버전 업그레이드만으로 해당 구현의 수정 여부를
+증명할 수 없다. wheel/기존 소스 연결 전환과 glibc 두 건은 별도 미완료 상태로 남는다.
+
+## 2026-10-18 base addendum: 동일 Cyrus의 academy-base 추가 승인 (이력)
 
 아래 최초 승인을 반영한 PR659의 [배포39076470310](https://github.com/guswls3028-art/academy-backend/actions/runs/39076470310)은
 `academy-base`의 새 scan에서 동일 Cyrus 항목을 검출해 중단했다. base digest

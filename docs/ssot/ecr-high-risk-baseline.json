@@ -1,12 +1,12 @@
 {
   "schemaVersion": 3,
   "maximumHighFindings": {
-    "academy-base": 3,
-    "academy-api": 3,
-    "academy-video-worker": 3,
-    "academy-messaging-worker": 3,
-    "academy-ai-worker-cpu": 3,
-    "academy-tools-worker": 3
+    "academy-base": 2,
+    "academy-api": 2,
+    "academy-video-worker": 2,
+    "academy-messaging-worker": 2,
+    "academy-ai-worker-cpu": 2,
+    "academy-tools-worker": 2
   },
   "acceptedHighFindings": [
     {
@@ -40,22 +40,6 @@
       "expiresOn": "2026-10-18",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-5435",
       "rationale": "On 2026-10-18 the human task owner explicitly renewed these two exact glibc High identities in the existing six repositories until 2026-10-19 09:00 KST (inclusive UTC expiry 2026-10-18), alongside the separately scoped Cyrus acceptance, to resume PR658. Residual memory-corruption/service-crash risk remains and runtime unreachability is not established. Failed release39072408861 had COMPLETE scans with these two glibc findings in all six repositories, zero Critical, and the additional Cyrus finding only in the five service repositories; no development/preprod/production deployment ran. This does not retroactively approve that failed release or replace fresh candidate scans. No automatic renewal, other identity/version/repository widening or Critical acceptance is permitted. Preserve native, scan, isolated development, preprod/termination, production approval, rolling, real-use and cleanup gates. Exact approval and current evidence: docs/operations/container-image-security.md, 2026-10-18 section."
-    },
-    {
-      "cve": "CVE-2026-107161",
-      "packageName": "cyrus-sasl2",
-      "packageVersion": "2.1.28+dfsg1-9",
-      "repositories": [
-        "academy-base",
-        "academy-api",
-        "academy-video-worker",
-        "academy-messaging-worker",
-        "academy-ai-worker-cpu",
-        "academy-tools-worker"
-      ],
-      "expiresOn": "2026-10-18",
-      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-107161",
-      "rationale": "On 2026-10-18 the human task owner first accepted this exact Cyrus High identity in five service repositories, then explicitly approved adding academy-base at the same deadline after failed release39076470310 refreshed the unchanged base digest and found the same identity. The exact base addition changes only its High maximum from 2 to 3; all six repositories expire at 2026-10-19 09:00 KST (inclusive UTC expiry 2026-10-18). The base scan completed at 2026-10-18 07:54:29 KST with High3/Critical0; its earlier scan had High2, so stale scan evidence was not reused. Debian trixie 2.1.28+dfsg1-9 remains vulnerable; a sid fixed version does not establish compatible stable remediation. DIGEST-MD5 challenge quoting may corrupt client memory or crash; actual runtime reachability has not been established or ruled out. Preserve the current native oracle and all release gates; unexpected mechanism/oracle failure still blocks. No automatic renewal, other identity/version/repository widening or Critical acceptance is permitted. Exact approval and evidence: docs/operations/container-image-security.md, 2026-10-18 base addendum section."
     }
   ]
 }
