@@ -4,55 +4,46 @@ Self-contained instructions for the backend Git root.
 
 ## Sources and context
 
-- Entry: `docs/README.md`; policy: `docs/ssot/`; current release:
-  `docs/releases/README.md` `CURRENT` (not runtime evidence).
-- Workflows/scripts/settings/migrations/runtime readback outrank code/tests,
-  then SSOT, owning docs, and plans/reports/agent guidance.
-- Read relevant rules/skills once; reopen only changed/missing sections. Use
-  bounded `rg`/targeted reads and concise evidence; keep full logs in artifacts.
-  Reuse unchanged passing checks unless failures/risks remain. Delegate only
-  useful bounded independent work with minimal context; delegation is optional.
-- For risk-based effort, review delegation, truncated-output recovery or evidence
-  reuse, read `docs/operations/concurrent-codex-sessions.md` → Execution efficiency.
-- In this owner's local sessions, use the installed ChatGPT Web bridge for
-  meaningful independent work:
-  `chatgpt-web/gpt-6-pro` at `max` is the default subagent. Start one bounded Web
-  task early; use a lower Web model only for genuinely trivial work. Preserve
-  the primary Codex model, tenant/security boundaries, and Codex ownership of
-  integration, checks, and release. Retry Pro once on capacity errors; do not
-  silently downgrade consequential work. If the bridge is unavailable, continue
-  locally and report that once.
+- Entry: `docs/README.md`; policy: `docs/ssot/`.
+  Current release: `docs/releases/README.md` `CURRENT` (not runtime evidence).
+  Workflows/scripts/settings/migrations/runtime readback outrank code/tests,
+  then SSOT, owning docs and plans/history/agent guidance.
+- Reuse rules already in context; read only relevant changed/missing sections.
+  Use scoped searches and bounded output. Save long logs only when needed for
+  recovery; reuse passing checks on unchanged relevant inputs, retaining CI.
+- Keep the primary model/settings. Prefer one bounded `chatgpt-web/gpt-6-pro`
+  at `max` early when independent work advances the task. Small, coupled or
+  duplicate work stays local. Use a lower Web model only for trivial work.
+  Verify the selected model; retry capacity once, never silently downgrade.
+  Bridge/Native2 failure: continue locally and report once; do not interrupt
+  another task's launcher. Codex owns integration, checks and release.
+- Detailed reasoning, output recovery and evidence policy:
+  `docs/operations/concurrent-codex-sessions.md` → Execution efficiency.
+  Read the needed subsection when these defaults leave a decision unresolved;
+  do not reload it for every task/check.
 
 ## Scope and authority
 
-Diagnosis/explanation/review is read-only unless a change is requested. Unless
-local-only/no-deploy/draft/PR-only/read-only, implementation/change/build and
-release/operations/cleanup authorize their full in-scope workflow: commit, push,
-PR, merge, deployment, production verification, cleanup. No repeated permission
-for these steps. The same user's Academy tasks and owned subagents may coordinate
-scope and hand off non-sensitive paths, SHAs, PR/CI state, and verification
-evidence without per-message approval. External recipients, account
-authentication, secret transfers, and ambiguous destructive targets require
-exact authorization.
+Diagnosis/review is read-only unless changes are requested. Otherwise, unless
+local-only/no-deploy/draft/PR-only, the assignment includes scoped publication,
+merge, deployment, verification and owned cleanup. `모든권한` and equivalents
+persist until narrowed/revoked; finish the earliest assignment without repeated
+permission. Same-user Academy tasks/owned subagents may exchange non-sensitive
+scope, paths, SHAs and CI/verification evidence. External recipients, authentication,
+secret transfers and ambiguous destructive targets need exact authorization.
+Preserve tenant/user data, current HOLDs, release gates, managed permissions and
+higher-priority action-time approvals. Give formal review the exact target,
+impact and user instruction; never work around a denial.
 
-`모든권한`, `모든권한 있음`, `모든권한o`, and equivalents retain that authority
-until narrowed/revoked; finish the earliest assignment first. Never expand scope,
-guess destructive targets, waive data protection/current HOLDs/gates, override
-higher-priority action-time confirmation, or infer platform approval.
-Check ownership and target read-only when needed. Give formal approval review
-the current user instruction and exact impact; never work around a denial.
-These instructions do not override managed session permissions.
+Explicit deployment/release/production/rollout continuation also authorizes that
+exact run's GitHub `production` approval via the official authenticated API.
+Require platform readback before mutation; no protection bypass or unrelated-run
+approval. Rejection/ineligibility is a technical blocker, not a reconfirmation
+request. Owner: `docs/operations/github-governance.md`.
 
-Explicit deploy/release/production/continue instructions authorize that exact
-run's GitHub `production` review via official authenticated API; verify approval
-before mutation. No protection bypass/other-run approval. Rejection/ineligibility
-is a technical blocker, not a reconfirmation request. Owner:
-`docs/operations/github-governance.md`.
-
-Docs/agent-config-only changes need publication, required repository CI, and
-applicable syntax/path/contract/diff checks; never skip or bypass required CI.
-No separate application build/deployment or mutating live QA is needed unless
-an executable contract changes.
+Docs/instruction/local-settings changes require applicable syntax/path/contract/
+diff checks and required CI; no separate product build, deployment or mutating
+QA solely for prose. Executable changes use their owning gates.
 
 ## Product boundaries and evidence
 
@@ -95,8 +86,10 @@ and supporting verification.
 ## Delivery and isolation
 
 Keep canonical `C:\academy\backend` and `C:\academy\frontend` on clean `main`.
-For local Windows work, create/inspect an owned current-`origin/main` worktree
-with `scripts/codex/session-worktree.ps1`. For GitHub Codespace Linux work, use
+For local Windows work, export the lifecycle helper from fresh backend
+`origin/main` as described in the session owner’s `Start a task` section;
+create/inspect an owned current-main worktree. Never bootstrap from a stale
+canonical helper. For GitHub Codespace Linux work, use
 the remote Git worktree procedure in `docs/operations/concurrent-codex-sessions.md`.
 Below 10 GB free on C:, use a Codespace for new installs and builds; local
 `Start` refuses unless explicitly limited to lightweight recovery work.
