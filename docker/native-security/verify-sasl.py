@@ -1,8 +1,8 @@
-"""Verify the system Cyrus SASL runtime has no DIGEST-MD5 client mechanism.
+"""Verify fixed system Cyrus packages and the existing mechanism restriction.
 
 CVE-2026-107161 is in the separately packaged DIGEST-MD5 plugin. This
-check preserves the SASL ABI needed by LDAP/libpq/curl and does not claim
-that upstream Cyrus SASL or unrelated wheel-vendored libraries are fixed.
+check preserves the SASL ABI needed by LDAP/libpq/curl. The official Debian
+fixed package identity does not establish that wheel-vendored libraries are fixed.
 """
 import ctypes
 import ctypes.util
@@ -18,6 +18,10 @@ def check_packages(rows):
     unexpected = [row[0] for row in cyrus if row[0] not in allowed]
     if unexpected:
         raise RuntimeError(f"Unreviewed Cyrus SASL plugin packages: {unexpected}")
+    if {row[0] for row in cyrus} != allowed:
+        raise RuntimeError("The reviewed Cyrus core and DB package pair is required")
+    if any(row[2] != "2.1.28+dfsg1-12" for row in cyrus):
+        raise RuntimeError("System Cyrus packages must match the official fixed version")
     return cyrus
 
 
