@@ -1,6 +1,8 @@
 from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIRequestFactory, force_authenticate
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.results.models.parent_assessment_comment import ParentAssessmentComment
@@ -117,3 +119,114 @@ class ParentAssessmentCommentTests(TestCase):
         homework.meta = {"removed_from_session_at": "2026-10-19T10:00:00Z"}
         homework.save(update_fields=["meta"])
         self.assertEqual(self.parent_read().data["items"], [])
+
+    def test_parent_read_query_count_is_constant_across_sessions_and_assessments(self):
+        Homework = apps.get_model("homework_results", "Homework")
+        HomeworkAssignment = apps.get_model("homework", "HomeworkAssignment")
+
+        def add_comments(index):
+            session = Session.objects.create(lecture=self.lecture, order=index + 2, title=f"Session {index}")
+            SessionEnrollment.objects.create(tenant=self.tenant, session=session, enrollment=self.enrollment)
+            exam = Exam.objects.create(tenant=self.tenant, title=f"Exam {index}")
+            exam.sessions.add(session)
+            homework = Homework.objects.create(tenant=self.tenant, session=session, title=f"Homework {index}")
+            HomeworkAssignment.objects.create(tenant=self.tenant, session=session,
+                                              homework=homework, enrollment=self.enrollment)
+            for kind, assessment in (("exam", exam), ("homework", homework)):
+                ParentAssessmentComment.objects.create(tenant=self.tenant, session=session,
+                    enrollment=self.enrollment, assessment_kind=kind, assessment_id=assessment.pk,
+                    text=f"parent {index} {kind}")
+
+        add_comments(0)
+        self.parent_read()  # Warm the authenticated user's parent-profile relation.
+        with CaptureQueriesContext(connection) as small:
+            self.assertEqual(len(self.parent_read().data["items"]), 2)
+        for index in range(1, 10):
+            add_comments(index)
+        with CaptureQueriesContext(connection) as large:
+            self.assertEqual(len(self.parent_read().data["items"]), 20)
+        self.assertEqual(len(large), len(small))
+        self.assertLessEqual(len(large), 16)
+        # The bulk reader only fetches attendance identity columns, never notes/history.
+        self.assertFalse(any("parentassessmentcommentrevision" in q["sql"].lower() for q in large))
+
+    def test_bulk_read_keeps_attendance_precedence_and_explicit_exam_targets(self):
+        Attendance = apps.get_model("attendance", "Attendance")
+        other_user = get_user_model().objects.create_user(username="feedback-other-student", tenant=self.tenant)
+        other = Student.objects.create(tenant=self.tenant, user=other_user, name="Other", ps_number="FB002", omr_code="00000002")
+        other_enrollment = Enrollment.objects.create(tenant=self.tenant, student=other, lecture=self.lecture)
+        self.write()
+        # Any active attendance roster suppresses the SessionEnrollment fallback,
+        # even when that roster does not contain the selected child.
+        Attendance.objects.create(tenant=self.tenant, session=self.session, enrollment=other_enrollment)
+        self.assertEqual(self.parent_read().data["items"], [])
+        Attendance.objects.create(tenant=self.tenant, session=self.session, enrollment=self.enrollment)
+        self.assertEqual(len(self.parent_read().data["items"]), 1)
+        ExamEnrollment.objects.filter(exam=self.exam).delete()
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=other_enrollment)
+        self.assertEqual(self.parent_read().data["items"], [])
+        ExamEnrollment.objects.all().delete()
+        self.assertEqual(len(self.parent_read().data["items"]), 1)
+        self.exam.is_active = False
+        self.exam.save(update_fields=["is_active"])
+        self.assertEqual(self.parent_read().data["items"], [])
+
+    def test_bulk_read_does_not_publish_corrupt_tenant_session_or_other_child_rows(self):
+        self.write()
+        foreign = Tenant.objects.create(name="Foreign", code="feedback-foreign")
+        lecture = Lecture.objects.create(tenant=foreign, title="Private", name="Private", subject="SCIENCE")
+        session = Session.objects.create(lecture=lecture, order=1, title="Private")
+        ParentAssessmentComment.objects.create(tenant=self.tenant, session=session,
+            enrollment=self.enrollment, assessment_kind="exam", assessment_id=self.exam.pk,
+            text="corrupt session")
+        other_user = get_user_model().objects.create_user(username="feedback-sibling", tenant=self.tenant)
+        sibling = Student.objects.create(tenant=self.tenant, user=other_user, parent=self.parent,
+            name="Sibling", ps_number="FB003", omr_code="00000003")
+        sibling_enrollment = Enrollment.objects.create(tenant=self.tenant, student=sibling, lecture=self.lecture)
+        ParentAssessmentComment.objects.create(tenant=self.tenant, session=self.session,
+            enrollment=sibling_enrollment, assessment_kind="exam", assessment_id=self.exam.pk,
+            text="sibling only")
+        ParentAssessmentComment.objects.create(tenant=foreign, session=self.session,
+            enrollment=self.enrollment, assessment_kind="homework", assessment_id=999999,
+            text="foreign tenant")
+        self.assertEqual([item["text"] for item in self.parent_read().data["items"]], ["학부모 전용"])
+
+    def test_staff_history_queries_are_constant_and_preserve_revision_authors(self):
+        Revision = apps.get_model("results", "ParentAssessmentCommentRevision")
+
+        def add_student(index):
+            user = get_user_model().objects.create_user(username=f"feedback-history-{index}", tenant=self.tenant)
+            student = Student.objects.create(tenant=self.tenant, user=user, name=f"Child {index}",
+                ps_number=f"FH{index}", omr_code=f"FH{index:06d}")
+            enrollment = Enrollment.objects.create(tenant=self.tenant, student=student, lecture=self.lecture)
+            SessionEnrollment.objects.create(tenant=self.tenant, session=self.session, enrollment=enrollment)
+            ExamEnrollment.objects.create(exam=self.exam, enrollment=enrollment)
+            comment = ParentAssessmentComment.objects.create(tenant=self.tenant, session=self.session,
+                enrollment=enrollment, assessment_kind="exam", assessment_id=self.exam.pk,
+                text=f"current {index}", version=2)
+            for version in (1, 2):
+                Revision.objects.create(comment=comment, version=version,
+                    text=f"revision {index} {version}", author=self.staff)
+            return enrollment.pk, index
+
+        def read():
+            request = self.factory.get("/")
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.staff)
+            return AdminParentAssessmentCommentsView.as_view()(request, **self.kwargs)
+
+        expected = dict(add_student(index) for index in range(2))
+        with CaptureQueriesContext(connection) as small:
+            self.assertEqual(read().status_code, 200)
+        expected.update(add_student(index) for index in range(2, 20))
+        with CaptureQueriesContext(connection) as large:
+            response = read()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(large), len(small))
+        self.assertLessEqual(len(large), 16)
+        rows = {row["enrollment_id"]: row for row in response.data["items"]}
+        for enrollment_id, index in expected.items():
+            history = rows[enrollment_id]["history"]
+            self.assertEqual([r["text"] for r in history], [f"revision {index} 2", f"revision {index} 1"])
+            self.assertEqual([r["author_id"] for r in history], [self.staff.pk, self.staff.pk])
+            self.assertTrue(all(r["author_name"] for r in history))

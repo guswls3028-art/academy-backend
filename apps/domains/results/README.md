@@ -389,6 +389,7 @@ existing internal/attendance memos are never copied, migrated or published.
 
 `GET results/admin/sessions/{session_id}/{exam|homework}/{assessment_id}/parent-comments/`
 returns eligible assigned students, current text/version/editor/time and revision history.
+The staff list preloads revisions and authors together, keeping history queries constant as student rows grow; single-save responses retain the same history contents.
 `PUT .../parent-comments/{enrollment_id}/` requires `text` (maximum 2000 characters)
 and current `version` (0 for first save). Empty text clears the visible comment while
 retaining revisions. Enrollment locking serializes first creation and edits; stale
@@ -403,7 +404,16 @@ fields. Tenant, live assessment link, session roster and assessment assignment a
 checked on writes and reads. Staff history/author identifiers are not published to
 parents. No messages are sent. Existing grades and memos remain unchanged.
 
+Parent reads bulk-load current rosters, live assessment titles and target memberships
+for the selected child's stored comments, with session/lecture eager loading. Query
+count does not grow per comment or assessment; there is no cross-request cache, so
+assignment removal and assessment archival apply on the next read. Attendance-first
+roster fallback and explicit exam targets remain identical to staff scope checks.
+Only attendance identity columns are read, never attendance notes or revision history.
+
 Verification owner: `tests/test_parent_assessment_comments.py` covers persistence,
 history, stale edits, clearing, assignment removal, student denial, invalid child,
-cross-tenant staff denial and maximum length. Frontend owner: score menu feedback
-panel and parent-only GradesHomeTab component in the sibling frontend repository.
+cross-tenant staff denial, maximum length, bounded query count across sessions and
+attendance/explicit-target precedence. Frontend owner: score menu feedback
+panel and `src/app_student/domains/grades/components/ParentAssessmentComments.tsx`
+with `GradesPage.tsx` in the sibling frontend repository.

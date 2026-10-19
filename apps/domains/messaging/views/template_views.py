@@ -3,7 +3,8 @@
 import re
 
 from django.db import transaction
-from rest_framework import status
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -146,22 +147,36 @@ class MessageTemplateDetailView(APIView):
 
 
 class MessageTemplateSetDefaultView(APIView):
-    """POST: tenant+category당 사용자 기본 문구 하나를 토글한다."""
+    """POST: tenant+category 기본을 명시 지정한다. 상태 누락 시 기존 토글을 유지한다."""
 
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(
+        request=inline_serializer(name="MessageTemplateDefaultRequest", fields={
+            "is_user_default": serializers.BooleanField(required=False),
+        }),
+        responses={200: MessageTemplateSerializer, 400: None, 404: None},
+    )
     @transaction.atomic
     def post(self, request, pk):
+        if not isinstance(request.data, dict):
+            return Response({"detail": "JSON object여야 합니다."}, status=status.HTTP_400_BAD_REQUEST)
+        explicit = "is_user_default" in request.data
+        desired = request.data.get("is_user_default")
+        if explicit and not isinstance(desired, bool):
+            return Response({"is_user_default": "JSON boolean 값이어야 합니다."}, status=status.HTTP_400_BAD_REQUEST)
         Tenant.objects.select_for_update().get(pk=request.tenant.pk)
         template = MessageTemplate.objects.filter(tenant=request.tenant, pk=pk).first()
         if not template:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        MessageTemplate.objects.filter(
-            tenant=request.tenant,
-            category=template.category,
-            is_user_default=True,
-        ).exclude(pk=pk).update(is_user_default=False)
-        template.is_user_default = not template.is_user_default
+        next_default = desired if explicit else not template.is_user_default
+        if next_default:
+            MessageTemplate.objects.filter(
+                tenant=request.tenant,
+                category=template.category,
+                is_user_default=True,
+            ).exclude(pk=pk).update(is_user_default=False)
+        template.is_user_default = next_default
         template.save(update_fields=["is_user_default"])
         return Response(MessageTemplateSerializer(
             template,

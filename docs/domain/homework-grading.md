@@ -107,6 +107,21 @@ null 미채점은 유지하며, 실제 만점은 아래 과제 정본 규칙을 
 합격↔미달·미제출, 복수/레거시/제거 과제, 만점·합격선 변경, 원점수·제출 증거 보존과
 트랜잭션 취소를 검증한다.
 
+빠른 입력·기존 점수 수정·워크북 문항 채점·클리닉 과제 재채점은 차시 편집 범위를
+먼저 잠그고 과제 본체, 배정·점수 또는 클리닉 링크 순서로 처리하여 채점 방식·만점
+변경과 직렬화한다. 과제 본체는 `FOR NO KEY UPDATE`로 잠가 방식 변경과는 충돌하되
+다른 증거·재시도 행의 FK KEY SHARE를 막지 않는다. question-grading GET은 transaction을
+추가하지 않는다. 클리닉에 기존 점수 없이 첫 기록이 생성되는 경우도 같은 경계를
+따르며, 통과형의 클리닉 입력·수정은 0/1과 만점1을 유지한다. 최초 점수가 먼저 저장되면
+이후 방식 변경은 기존 결과 보존 규칙으로 거절한다. 방식 변경이 먼저 완료되면
+후속 채점은 새 방식·만점을 읽어 검증하고, 통과형에 85점 같은 기존 점수형 입력은
+400으로 거절하며 새 점수 행도 남기지 않는다. 사용자는 새 설정을 재조회한 뒤
+올바른 값으로 입력할 수 있다. tenant·배정·편집 lease·잠금 권한은 유지한다.
+PostgreSQL TransactionTestCase 회귀는 두 실제 API가 같은 과제 행에서 대기하는
+것과 quick·클리닉 최초 기록의 두 실행 순서별 최종 mode/score/max 일치를 검증한다.
+과제 잠금을 유지한 동안 별도 FK 자식 행이 실제 commit되는지도 검사한다. SQLite에서는 해당
+행 잠금 회귀만 명시적으로 skip하며 일반 저장·설정 회귀는 계속 실행한다.
+
 ## 두 설정의 소유 범위
 
 | 설정 | 범위 | 저장·응답 계약 |
@@ -379,7 +394,16 @@ PostgreSQL barrier 회귀는
 | GET/PATCH | `/homeworks/{id}/question-grading/` | 배정 학생×워크북 문항 채점표 조회와 O/X/복습 저장 |
 | GET/PATCH | `/homework/policies/` | 개별 기준 없는 기존 과제의 차시 기본 정책 |
 | PATCH | `/homework/scores/quick/` | 성적표 셀 점수 저장. 서버 만점을 정본으로 사용 |
+| GET/PATCH | `/homework/scores/{id}/` | 1차 점수 조회 및 편집 lease·배정·채점 정책을 거치는 단건 수정 |
 | GET | `/results/session-scores/` | 성적표 과제 메타와 각 셀에 과제별 만점 반환 |
+
+`/homework/scores/`의 일반 POST와 단건 PUT/DELETE는 지원하지 않으며 405를
+반환한다. 자동 상속된 쓰기는 편집 lease·채점 정책을 우회하거나 점수 이력을
+삭제할 수 있어 제거했다. 생성·수정은 기존 `quick` PATCH 또는 단건 PATCH를
+사용한다. 기존 점수·이력은 변경하거나 삭제하지 않으며 데이터 이관도 없다.
+과제 자체의 `/homeworks/{id}/` PUT도 기존 결과의 채점 방식 보호·만점 동기화를
+우회하므로 405로 거부한다. 동일한 편집은 정책을 적용하는 PATCH로 제공하며,
+과제 생성 POST·보관 DELETE·기존 개별 액션은 유지한다.
 
 `/homeworks/` 응답은 원시 오버라이드와 함께 `effective_cutline_mode`,
 `effective_cutline_value`, `effective_round_unit_percent`,

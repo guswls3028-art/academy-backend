@@ -1,7 +1,7 @@
 """Parent-only feedback API, separate from student results and attendance notes."""
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from django.db import transaction
-from django.http import Http404
+from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404
 from rest_framework import serializers
 from rest_framework.exceptions import NotFound, PermissionDenied
@@ -28,6 +28,7 @@ from apps.support.results.parent_comment_dependencies import (
     Enrollment, SessionEnrollment, ExamEnrollment, HomeworkAssignment, Homework, Session,
     get_request_student, is_request_parent, learning_history_enrollments_for_student,
     session_score_enrollment_ids, get_exam_target_enrollment_pairs_for_session,
+    parent_comment_titles,
 )
 from apps.domains.results.models.parent_assessment_comment import (
     ParentAssessmentComment, ParentAssessmentCommentRevision,
@@ -73,10 +74,13 @@ def payload(comment, enrollment_id, *, history=False):
             "updated_at": comment.updated_at if comment else None,
             "updated_by": comment.updated_by_id if comment else None}
     if history:
+        revisions = getattr(comment, "loaded_revisions", None) if comment else []
+        if revisions is None:
+            revisions = comment.revisions.select_related("author").all()
         data["history"] = [{"version": r.version, "text": r.text, "author_id": r.author_id,
                             "author_name": (getattr(r.author, "name", "") or r.author.get_full_name() or "직원") if r.author else "삭제된 계정",
                             "created_at": r.created_at}
-                           for r in comment.revisions.select_related("author").all()] if comment else []
+                           for r in revisions]
     return data
 
 
@@ -93,7 +97,10 @@ class AdminParentAssessmentCommentsView(APIView):
         _, enrollments = assessment_scope(request.tenant, session_id, kind, assessment_id)
         comments = {c.enrollment_id: c for c in ParentAssessmentComment.objects.filter(
             tenant=request.tenant, session_id=session_id, assessment_kind=kind,
-            assessment_id=assessment_id, enrollment__in=enrollments).prefetch_related("revisions")}
+            assessment_id=assessment_id, enrollment__in=enrollments).prefetch_related(Prefetch(
+                "revisions", queryset=ParentAssessmentCommentRevision.objects.select_related("author"),
+                to_attr="loaded_revisions",
+            ))}
         return Response({"items": [dict(payload(comments.get(e.id), e.id, history=True),
                                         student_id=e.student_id, student_name=e.student.name)
                                    for e in enrollments.select_related("student").order_by("student__name", "id")]})
@@ -148,23 +155,19 @@ class ParentAssessmentCommentsView(APIView):
         student = get_request_student(request)
         if student is None:
             raise PermissionDenied("자녀를 선택해 주세요.")
-        comments = ParentAssessmentComment.objects.filter(
-            tenant=request.tenant, enrollment__tenant=request.tenant, enrollment__student=student, enrollment__student__tenant=request.tenant).exclude(text="")
+        comments = list(ParentAssessmentComment.objects.filter(
+            tenant=request.tenant, enrollment__tenant=request.tenant, enrollment__student=student,
+            enrollment__student__tenant=request.tenant,
+        ).exclude(text="").select_related("session__lecture").order_by("session_id", "assessment_kind", "assessment_id"))
+        titles = parent_comment_titles(tenant=request.tenant, student=student, comments=comments)
         items = []
         # Revalidate live assignment before publishing any stored feedback.
-        for comment in comments.order_by("session_id", "assessment_kind", "assessment_id"):
-            try:
-                session, enrollments = assessment_scope(request.tenant, comment.session_id,
-                                                  comment.assessment_kind, comment.assessment_id, student=student)
-            except (NotFound, Http404):
+        for comment in comments:
+            if comment.pk not in titles:
                 continue
-            if not enrollments.filter(id=comment.enrollment_id).exists():
-                continue
-            assessment_title = (get_exams_for_session(session).filter(id=comment.assessment_id).values_list("title", flat=True).first()
-                                if comment.assessment_kind == "exam" else
-                                Homework.objects.filter(tenant=request.tenant, id=comment.assessment_id).values_list("title", flat=True).first())
+            session = comment.session
             items.append({"session_id": comment.session_id, "session_title": session.title,
-                          "lecture_title": session.lecture.title, "assessment_title": assessment_title,
+                          "lecture_title": session.lecture.title, "assessment_title": titles[comment.pk],
                           "assessment_kind": comment.assessment_kind,
                           "assessment_id": comment.assessment_id, "text": comment.text,
                           "version": comment.version, "updated_at": comment.updated_at})
