@@ -61,6 +61,28 @@ class SessionMessageContextTests(TestCase):
         self.assertEqual(result["alimtalk_extra_vars"]["날짜"], "2026-10-20")
         self.assertEqual(result["alimtalk_extra_vars"]["강의날짜"], "2026-10-19")
 
+    def test_attendance_roster_recipient_without_session_enrollment_can_preview(self):
+        User = apps.get_model("core", "User")
+        Student = apps.get_model("students", "Student")
+        Enrollment = apps.get_model("enrollment", "Enrollment")
+        Attendance = apps.get_model("attendance", "Attendance")
+        user = User.objects.create_user(username="message-roster-student", tenant=self.tenant)
+        student = Student.objects.create(tenant=self.tenant, user=user, name="수업 학생", ps_number="MS001")
+        enrollment = Enrollment.objects.create(tenant=self.tenant, student=student, lecture=self.lecture, status="ACTIVE")
+        attendance = Attendance.objects.create(tenant=self.tenant, enrollment=enrollment, session=self.current, status="PRESENT")
+        data = {**self.data, "student_ids": [student.id]}
+        resolved = resolve_session_message_data(tenant=self.tenant, data=data)
+        self.assertEqual(resolved["alimtalk_extra_vars"]["다음차시명"], "도형 복습")
+        enrollment.status = "INACTIVE"
+        enrollment.save(update_fields=["status"])
+        with self.assertRaisesRegex(SessionMessageContextError, "등록되지 않은 학생"):
+            resolve_session_message_data(tenant=self.tenant, data=data)
+        enrollment.status = "ACTIVE"
+        enrollment.save(update_fields=["status"])
+        attendance.delete()
+        with self.assertRaisesRegex(SessionMessageContextError, "등록되지 않은 학생"):
+            resolve_session_message_data(tenant=self.tenant, data=data)
+
     def test_preflight_reports_recovery_and_send_path_denies_missing_date(self):
         from types import SimpleNamespace
         from apps.domains.messaging.services.preflight import build_send_preflight

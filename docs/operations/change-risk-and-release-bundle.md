@@ -66,7 +66,9 @@ frontend E2E·deployment contract를 유지한다. 담당 작업은 실제 실�
 분류한다. SSOT 경로에 있다는 이유로 이 파일들을 문서 검증만으로 통과시키지 않는다.
 worker 위험은 `ai`, `queue`,
 `worker` 등의 정확한 경로 segment로만 판정한다. frontend의 `tsconfig*.json`과
-`eslint.config.*`는 runtime/build 설정으로 라우팅한다. 그 밖의 변경은 알려진
+`eslint.config.*`와 생성 API 타입의 고정 정본인
+`scripts/openapi-backend-source.json`은 runtime/build 설정으로 라우팅하며
+frontend core·E2E 검증을 유지한다. 그 밖의 변경은 알려진
 제품/runtime/build/governance 범주에 반드시 속해야 하며, 새 비문서 경로가 어느
 범주에도 속하지 않으면 diff-check만으로 통과시키지 않고 계획 생성을 거부한다.
 

@@ -4,7 +4,8 @@ from copy import deepcopy
 from django.db.models import Q
 from django.utils import timezone
 from apps.domains.lectures.models import Session
-from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+from apps.domains.enrollment.models import Enrollment
+from apps.support.results.progress_read_dependencies import session_score_enrollment_ids
 
 TOKEN = re.compile(r"#\{(현재차시명|현재차시날짜|다음차시명|다음차시날짜|[1-9]\d?차시후명|[1-9]\d?차시후날짜)\}")
 
@@ -45,7 +46,7 @@ def resolve_session_message_data(*, tenant, data):
     allowed_ids = set(Enrollment.objects.filter(
         tenant=tenant, lecture=session.lecture, status="ACTIVE", student_id__in=student_ids,
         student__tenant=tenant, student__deleted_at__isnull=True,
-        id__in=SessionEnrollment.objects.filter(tenant=tenant, session=session).values("enrollment_id"),
+        id__in=session_score_enrollment_ids(tenant=tenant, session=session),
     ).values_list("student_id", flat=True))
     if student_ids - allowed_ids:
         raise SessionMessageContextError("선택한 수업에 등록되지 않은 학생이 있습니다. 발송 대상을 다시 선택해 주세요.")
