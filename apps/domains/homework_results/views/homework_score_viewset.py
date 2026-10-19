@@ -261,6 +261,13 @@ class HomeworkScoreViewSet(ModelViewSet):
         obj: HomeworkScore = self.get_object()
 
         validate_enrollment_belongs_to_tenant(obj.enrollment_id, request.tenant)
+        # Lease locks Session scope first; Homework then precedes assignment/score.
+        require_homework_score_edit_lease(
+            request, session_id=obj.session_id, enrollment_id=obj.enrollment_id,
+            homework_id=obj.homework_id,
+        )
+        get_object_or_404(Homework.objects.select_for_update(of=("self",), no_key=True),
+                          pk=obj.homework_id, tenant=request.tenant, session_id=obj.session_id)
         assignment = lock_homework_review_target(
             tenant=request.tenant,
             session_id=obj.session_id,
@@ -272,12 +279,6 @@ class HomeworkScoreViewSet(ModelViewSet):
                 {"enrollment_id": "이 과제의 배정 대상 수강생만 점수를 입력할 수 있습니다."},
                 status=drf_status.HTTP_400_BAD_REQUEST,
             )
-        require_homework_score_edit_lease(
-            request,
-            session_id=obj.session_id,
-            enrollment_id=obj.enrollment_id,
-            homework_id=obj.homework_id,
-        )
         obj = self.get_queryset().select_for_update(of=("self",)).get(pk=obj.pk)
 
         if getattr(obj, "is_locked", False):
@@ -422,6 +423,15 @@ class HomeworkScoreViewSet(ModelViewSet):
                     {"session_id": "과제의 차시와 요청 차시가 일치하지 않습니다."},
                     status=drf_status.HTTP_400_BAD_REQUEST,
                 )
+            require_homework_score_edit_lease(
+                request, session_id=session.id, enrollment_id=enrollment_id, homework_id=homework_id,
+            )
+            # Re-read policy under the parent lock after the Session scope lock.
+            # NO KEY UPDATE remains compatible with concurrent child FK checks.
+            homework = get_object_or_404(
+                Homework.objects.select_for_update(of=("self",), no_key=True).select_related("session"),
+                id=homework_id, tenant=request.tenant, session_id=session.id,
+            )
             assignment = lock_homework_review_target(
                 tenant=request.tenant,
                 session_id=session.id,
@@ -434,7 +444,7 @@ class HomeworkScoreViewSet(ModelViewSet):
                 # 계속 노출된다. 새 미배정 점수 생성은 거부하되, 이미 존재하는
                 # 정확한 1차 점수행은 그 행 자체를 잠근 뒤 수정할 수 있게 한다.
                 legacy_score = (
-                    HomeworkScore.objects.select_for_update()
+                    HomeworkScore.objects.select_for_update(of=("self",))
                     .filter(
                         homework=homework,
                         session=session,
@@ -449,18 +459,11 @@ class HomeworkScoreViewSet(ModelViewSet):
                         {"enrollment_id": "이 과제의 배정 대상 수강생만 점수를 입력할 수 있습니다."},
                         status=drf_status.HTTP_400_BAD_REQUEST,
                     )
-            require_homework_score_edit_lease(
-                request,
-                session_id=session.id,
-                enrollment_id=enrollment_id,
-                homework_id=homework_id,
-            )
-
             with transaction.atomic():
                 obj = legacy_score
                 if obj is None:
                     obj = (
-                        HomeworkScore.objects.select_for_update()
+                        HomeworkScore.objects.select_for_update(of=("self",))
                         .filter(
                             homework_id=homework_id,
                             session=session,

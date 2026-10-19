@@ -39,6 +39,30 @@ from apps.support.progress.clinic_remediation_dependencies import (
 logger = logging.getLogger(__name__)
 
 
+def _lock_homework_retake_target(clinic_link_id):
+    """Session scope -> Homework -> ClinicLink; never lock joined parent rows implicitly."""
+    from apps.support.results.progress_read_dependencies import lock_score_edit_scope_for_session
+
+    _, Homework = get_homework_retake_models()
+    identity = ClinicLink.objects.filter(id=clinic_link_id).values(
+        "tenant_id", "session_id", "source_type", "source_id",
+    ).first()
+    if identity is None:
+        raise ClinicLink.DoesNotExist(f"ClinicLink {clinic_link_id}를 찾을 수 없습니다.")
+    if identity["source_type"] != "homework":
+        raise ValueError(f"ClinicLink {clinic_link_id}는 과제 유형이 아닙니다 (source_type={identity['source_type']})")
+    lock_score_edit_scope_for_session(session_id=identity["session_id"], tenant=identity["tenant_id"])
+    homework = Homework.objects.select_for_update(of=("self",), no_key=True).get(
+        id=identity["source_id"], tenant_id=identity["tenant_id"], session_id=identity["session_id"],
+    )
+    link = ClinicLink.objects.select_for_update(of=("self",), no_key=True).select_related(
+        "session", "session__lecture", "session__lecture__tenant",
+    ).get(id=clinic_link_id)
+    if any(getattr(link, key) != value for key, value in identity.items()):
+        raise ValueError("ClinicLink 대상이 변경되었습니다. 다시 조회한 뒤 입력해 주세요.")
+    return link, homework
+
+
 @dataclass
 class RetakeResult:
     """재시도 결과"""
@@ -214,17 +238,7 @@ class ClinicRemediationService:
         5. 합격 시 ClinicLink 해소
         """
         HomeworkScore, Homework = get_homework_retake_models()
-
-        # 1. ClinicLink 조회 (session→lecture→tenant 프리로드) — resolved 분리 검사
-        link = (
-            ClinicLink.objects
-            .select_for_update()
-            .select_related("session", "session__lecture", "session__lecture__tenant")
-            .filter(id=clinic_link_id)
-            .first()
-        )
-        if link is None:
-            raise ClinicLink.DoesNotExist(f"ClinicLink {clinic_link_id}를 찾을 수 없습니다.")
+        link, homework = _lock_homework_retake_target(clinic_link_id)
         if link.resolved_at is not None:
             raise ValueError(
                 f"ClinicLink {clinic_link_id}는 이미 해소된 상태입니다 "
@@ -235,8 +249,11 @@ class ClinicRemediationService:
         if link.source_type != "homework":
             raise ValueError(f"ClinicLink {clinic_link_id}는 과제 유형이 아닙니다 (source_type={link.source_type})")
 
-        homework = Homework.objects.get(id=link.source_id, tenant_id=link.tenant_id)
         session = link.session
+        if homework.grading_mode == Homework.GradingMode.COMPLETION:
+            if score not in (0, 1):
+                raise ValueError("통과형 과제는 미통과(0) 또는 통과(1)만 저장할 수 있습니다.")
+            max_score = 1.0
 
         # max_score 결정: 전달받은 값 > 1차 HomeworkScore.max_score > 100
         if max_score is None:
@@ -461,17 +478,7 @@ class ClinicRemediationService:
         if attempt_index < 2:
             raise ValueError("1차 시도는 이 API로 수정할 수 없습니다. 성적표 편집을 사용하세요.")
 
-        link = (
-            ClinicLink.objects
-            .select_for_update()
-            .select_related("session", "session__lecture", "session__lecture__tenant")
-            .get(id=clinic_link_id)
-        )
-
-        if link.source_type != "homework":
-            raise ValueError(f"ClinicLink {clinic_link_id}는 과제 유형이 아닙니다")
-
-        homework = Homework.objects.get(id=link.source_id, tenant_id=link.tenant_id)
+        link, homework = _lock_homework_retake_target(clinic_link_id)
         session = link.session
 
         hs = HomeworkScore.objects.select_for_update().get(
@@ -481,7 +488,11 @@ class ClinicRemediationService:
             attempt_index=attempt_index,
         )
 
-        if max_score is None:
+        if homework.grading_mode == Homework.GradingMode.COMPLETION:
+            if score not in (0, 1):
+                raise ValueError("통과형 과제는 미통과(0) 또는 통과(1)만 저장할 수 있습니다.")
+            max_score = 1.0
+        elif max_score is None:
             max_score = float(hs.max_score or 100)
 
         passed, _, _ = calc_homework_passed_and_clinic(

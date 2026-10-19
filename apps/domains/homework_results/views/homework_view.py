@@ -206,7 +206,22 @@ class HomeworkViewSet(ModelViewSet):
         url_path="question-grading",
     )
     def question_grading(self, request, pk=None):
+        if request.method == "PATCH":
+            with transaction.atomic():
+                return self._question_grading(request, pk)
+        return self._question_grading(request, pk)
+
+    def _question_grading(self, request, pk):
         homework = get_object_or_404(self.get_queryset(), pk=pk)
+        if request.method == "PATCH":
+            from apps.support.results.progress_read_dependencies import lock_score_edit_scope_for_session
+
+            if homework.session_id is not None:
+                lock_score_edit_scope_for_session(session_id=homework.session_id, tenant=request.tenant)
+            homework = get_object_or_404(
+                self.get_queryset().select_for_update(of=("self",), no_key=True),
+                pk=pk, session_id=homework.session_id,
+            )
         source_exam = homework.source_exam
         if not workbook_source_is_ready(source_exam):
             return Response(
