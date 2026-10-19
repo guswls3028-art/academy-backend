@@ -403,7 +403,15 @@ fields. Tenant, live assessment link, session roster and assessment assignment a
 checked on writes and reads. Staff history/author identifiers are not published to
 parents. No messages are sent. Existing grades and memos remain unchanged.
 
+Parent reads bulk-load current rosters, live assessment titles and target memberships
+for the selected child's stored comments, with session/lecture eager loading. Query
+count does not grow per comment or assessment; there is no cross-request cache, so
+assignment removal and assessment archival apply on the next read. Attendance-first
+roster fallback and explicit exam targets remain identical to staff scope checks.
+Only attendance identity columns are read, never attendance notes or revision history.
+
 Verification owner: `tests/test_parent_assessment_comments.py` covers persistence,
 history, stale edits, clearing, assignment removal, student denial, invalid child,
-cross-tenant staff denial and maximum length. Frontend owner: score menu feedback
+cross-tenant staff denial, maximum length, bounded query count across sessions and
+attendance/explicit-target precedence. Frontend owner: score menu feedback
 panel and parent-only GradesHomeTab component in the sibling frontend repository.
