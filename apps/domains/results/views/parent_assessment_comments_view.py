@@ -1,6 +1,7 @@
 """Parent-only feedback API, separate from student results and attendance notes."""
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from django.db import transaction
+from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404
 from rest_framework import serializers
 from rest_framework.exceptions import NotFound, PermissionDenied
@@ -73,10 +74,13 @@ def payload(comment, enrollment_id, *, history=False):
             "updated_at": comment.updated_at if comment else None,
             "updated_by": comment.updated_by_id if comment else None}
     if history:
+        revisions = getattr(comment, "loaded_revisions", None) if comment else []
+        if revisions is None:
+            revisions = comment.revisions.select_related("author").all()
         data["history"] = [{"version": r.version, "text": r.text, "author_id": r.author_id,
                             "author_name": (getattr(r.author, "name", "") or r.author.get_full_name() or "직원") if r.author else "삭제된 계정",
                             "created_at": r.created_at}
-                           for r in comment.revisions.select_related("author").all()] if comment else []
+                           for r in revisions]
     return data
 
 
@@ -93,7 +97,10 @@ class AdminParentAssessmentCommentsView(APIView):
         _, enrollments = assessment_scope(request.tenant, session_id, kind, assessment_id)
         comments = {c.enrollment_id: c for c in ParentAssessmentComment.objects.filter(
             tenant=request.tenant, session_id=session_id, assessment_kind=kind,
-            assessment_id=assessment_id, enrollment__in=enrollments).prefetch_related("revisions")}
+            assessment_id=assessment_id, enrollment__in=enrollments).prefetch_related(Prefetch(
+                "revisions", queryset=ParentAssessmentCommentRevision.objects.select_related("author"),
+                to_attr="loaded_revisions",
+            ))}
         return Response({"items": [dict(payload(comments.get(e.id), e.id, history=True),
                                         student_id=e.student_id, student_name=e.student.name)
                                    for e in enrollments.select_related("student").order_by("student__name", "id")]})

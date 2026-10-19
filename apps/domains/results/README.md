@@ -389,6 +389,7 @@ existing internal/attendance memos are never copied, migrated or published.
 
 `GET results/admin/sessions/{session_id}/{exam|homework}/{assessment_id}/parent-comments/`
 returns eligible assigned students, current text/version/editor/time and revision history.
+The staff list preloads revisions and authors together, keeping history queries constant as student rows grow; single-save responses retain the same history contents.
 `PUT .../parent-comments/{enrollment_id}/` requires `text` (maximum 2000 characters)
 and current `version` (0 for first save). Empty text clears the visible comment while
 retaining revisions. Enrollment locking serializes first creation and edits; stale
@@ -414,4 +415,5 @@ Verification owner: `tests/test_parent_assessment_comments.py` covers persistenc
 history, stale edits, clearing, assignment removal, student denial, invalid child,
 cross-tenant staff denial, maximum length, bounded query count across sessions and
 attendance/explicit-target precedence. Frontend owner: score menu feedback
-panel and parent-only GradesHomeTab component in the sibling frontend repository.
+panel and `src/app_student/domains/grades/components/ParentAssessmentComments.tsx`
+with `GradesPage.tsx` in the sibling frontend repository.

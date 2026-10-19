@@ -190,3 +190,43 @@ class ParentAssessmentCommentTests(TestCase):
             enrollment=self.enrollment, assessment_kind="homework", assessment_id=999999,
             text="foreign tenant")
         self.assertEqual([item["text"] for item in self.parent_read().data["items"]], ["학부모 전용"])
+
+    def test_staff_history_queries_are_constant_and_preserve_revision_authors(self):
+        Revision = apps.get_model("results", "ParentAssessmentCommentRevision")
+
+        def add_student(index):
+            user = get_user_model().objects.create_user(username=f"feedback-history-{index}", tenant=self.tenant)
+            student = Student.objects.create(tenant=self.tenant, user=user, name=f"Child {index}",
+                ps_number=f"FH{index}", omr_code=f"FH{index:06d}")
+            enrollment = Enrollment.objects.create(tenant=self.tenant, student=student, lecture=self.lecture)
+            SessionEnrollment.objects.create(tenant=self.tenant, session=self.session, enrollment=enrollment)
+            ExamEnrollment.objects.create(exam=self.exam, enrollment=enrollment)
+            comment = ParentAssessmentComment.objects.create(tenant=self.tenant, session=self.session,
+                enrollment=enrollment, assessment_kind="exam", assessment_id=self.exam.pk,
+                text=f"current {index}", version=2)
+            for version in (1, 2):
+                Revision.objects.create(comment=comment, version=version,
+                    text=f"revision {index} {version}", author=self.staff)
+            return enrollment.pk, index
+
+        def read():
+            request = self.factory.get("/")
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.staff)
+            return AdminParentAssessmentCommentsView.as_view()(request, **self.kwargs)
+
+        expected = dict(add_student(index) for index in range(2))
+        with CaptureQueriesContext(connection) as small:
+            self.assertEqual(read().status_code, 200)
+        expected.update(add_student(index) for index in range(2, 20))
+        with CaptureQueriesContext(connection) as large:
+            response = read()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(large), len(small))
+        self.assertLessEqual(len(large), 16)
+        rows = {row["enrollment_id"]: row for row in response.data["items"]}
+        for enrollment_id, index in expected.items():
+            history = rows[enrollment_id]["history"]
+            self.assertEqual([r["text"] for r in history], [f"revision {index} 2", f"revision {index} 1"])
+            self.assertEqual([r["author_id"] for r in history], [self.staff.pk, self.staff.pk])
+            self.assertTrue(all(r["author_name"] for r in history))
