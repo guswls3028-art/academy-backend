@@ -53,6 +53,8 @@ from apps.support.homework_results.homework_view_dependencies import (
 
 
 class HomeworkViewSet(ModelViewSet):
+    # Full replacement bypasses partial_update's mode/history and score-sync policy.
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
     permission_classes = [
         IsAuthenticated,
         TenantResolvedAndMember,

@@ -9,6 +9,7 @@ from django.contrib.auth import get_user_model
 from django.apps import apps
 from django.db import close_old_connections, connection, transaction
 from django.test import TestCase, TransactionTestCase
+from django.urls import resolve, reverse
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -147,6 +148,51 @@ class HomeworkQuickPatchScopeTests(TestCase):
                 enrollment=self.unassigned_enrollment,
             ).exists()
         )
+
+    def test_router_disallows_generic_score_writes_and_preserves_completion_history(self):
+        self.homework.grading_mode = "COMPLETION"
+        self.homework.save(update_fields=["grading_mode"])
+        score = HomeworkScore.objects.create(
+            homework=self.homework, session=self.session,
+            enrollment=self.assigned_enrollment, attempt_index=1,
+            score=1, max_score=1, passed=True, clinic_required=False,
+        )
+        before = HomeworkScore.objects.filter(pk=score.pk).values().get()
+        detail = reverse("homework-scores-detail", kwargs={"pk": score.pk})
+        listing = reverse("homework-scores-list")
+        for method, url in (("put", detail), ("post", listing), ("delete", detail)):
+            with self.subTest(method=method):
+                request = getattr(self.factory, method)(
+                    url, {"score": 85, "max_score": 100}, format="json",
+                )
+                request.tenant = self.tenant
+                force_authenticate(request, user=self.admin)
+                match = resolve(url)
+                response = match.func(request, **match.kwargs)
+                self.assertEqual(response.status_code, 405, response.data)
+                self.assertEqual(HomeworkScore.objects.filter(pk=score.pk).values().get(), before)
+                self.assertEqual(HomeworkScore.objects.count(), 1)
+
+    def test_router_disallows_homework_put_mode_change_with_existing_results(self):
+        score = HomeworkScore.objects.create(
+            homework=self.homework, session=self.session,
+            enrollment=self.assigned_enrollment, attempt_index=1,
+            score=85, max_score=100, passed=True, clinic_required=False,
+        )
+        before_homework = Homework.objects.filter(pk=self.homework.pk).values().get()
+        before_score = HomeworkScore.objects.filter(pk=score.pk).values().get()
+        url = reverse("homeworks-detail", kwargs={"pk": self.homework.pk})
+        request = self.factory.put(url, {
+            "title": self.homework.title, "session": self.session.pk,
+            "homework_type": "regular", "grading_mode": "COMPLETION", "max_score": 1,
+        }, format="json")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        match = resolve(url)
+        response = match.func(request, **match.kwargs)
+        self.assertEqual(response.status_code, 405, response.data)
+        self.assertEqual(Homework.objects.filter(pk=self.homework.pk).values().get(), before_homework)
+        self.assertEqual(HomeworkScore.objects.filter(pk=score.pk).values().get(), before_score)
 
     def test_score_inputs_reject_nonfinite_boolean_and_negative_without_changes(self):
         score = HomeworkScore.objects.create(

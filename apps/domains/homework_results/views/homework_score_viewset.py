@@ -218,6 +218,8 @@ class HomeworkScoreViewSet(ModelViewSet):
 
     serializer_class = HomeworkScoreSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    # All score writes must use the lease/policy-aware PATCH handlers below.
+    http_method_names = ["get", "patch", "head", "options"]
 
     def get_queryset(self) -> QuerySet[HomeworkScore]:
         return (

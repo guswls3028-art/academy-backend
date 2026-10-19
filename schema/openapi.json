@@ -4583,31 +4583,6 @@
         ],
         "type": "object"
       },
-      "HomeworkScoreRequest": {
-        "properties": {
-          "max_score": {
-            "format": "double",
-            "minimum": 0,
-            "nullable": true,
-            "type": "number"
-          },
-          "score": {
-            "format": "double",
-            "minimum": 0,
-            "nullable": true,
-            "type": "number"
-          },
-          "status": {
-            "nullable": true,
-            "type": "string",
-            "writeOnly": true
-          },
-          "teacher_approved": {
-            "type": "boolean"
-          }
-        },
-        "type": "object"
-      },
       "HomeworkTypeEnum": {
         "description": "* `template` - 템플릿\n* `regular` - 일반",
         "enum": [
@@ -32563,52 +32538,6 @@
         "tags": [
           "homework"
         ]
-      },
-      "post": {
-        "description": "HomeworkScore 관리 ViewSet",
-        "operationId": "homework_scores_create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkScoreRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkScoreRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkScoreRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HomeworkScore"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "homework"
-        ]
       }
     },
     "/api/v1/homework/scores/quick/": {
@@ -32660,36 +32589,6 @@
       }
     },
     "/api/v1/homework/scores/{id}/": {
-      "delete": {
-        "description": "HomeworkScore 관리 ViewSet",
-        "operationId": "homework_scores_destroy",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "No response body"
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "homework"
-        ]
-      },
       "get": {
         "description": "HomeworkScore 관리 ViewSet",
         "operationId": "homework_scores_retrieve",
@@ -32755,62 +32654,6 @@
             "multipart/form-data": {
               "schema": {
                 "$ref": "#/components/schemas/PatchedHomeworkScoreRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HomeworkScore"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "homework"
-        ]
-      },
-      "put": {
-        "description": "HomeworkScore 관리 ViewSet",
-        "operationId": "homework_scores_update",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkScoreRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkScoreRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkScoreRequest"
               }
             }
           }
@@ -33097,63 +32940,6 @@
               }
             }
           }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Homework"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "homeworks"
-        ]
-      },
-      "put": {
-        "operationId": "homeworks_update",
-        "parameters": [
-          {
-            "description": "homework을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkRequest"
-              }
-            }
-          },
-          "required": true
         },
         "responses": {
           "200": {

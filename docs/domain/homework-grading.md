@@ -394,7 +394,16 @@ PostgreSQL barrier 회귀는
 | GET/PATCH | `/homeworks/{id}/question-grading/` | 배정 학생×워크북 문항 채점표 조회와 O/X/복습 저장 |
 | GET/PATCH | `/homework/policies/` | 개별 기준 없는 기존 과제의 차시 기본 정책 |
 | PATCH | `/homework/scores/quick/` | 성적표 셀 점수 저장. 서버 만점을 정본으로 사용 |
+| GET/PATCH | `/homework/scores/{id}/` | 1차 점수 조회 및 편집 lease·배정·채점 정책을 거치는 단건 수정 |
 | GET | `/results/session-scores/` | 성적표 과제 메타와 각 셀에 과제별 만점 반환 |
+
+`/homework/scores/`의 일반 POST와 단건 PUT/DELETE는 지원하지 않으며 405를
+반환한다. 자동 상속된 쓰기는 편집 lease·채점 정책을 우회하거나 점수 이력을
+삭제할 수 있어 제거했다. 생성·수정은 기존 `quick` PATCH 또는 단건 PATCH를
+사용한다. 기존 점수·이력은 변경하거나 삭제하지 않으며 데이터 이관도 없다.
+과제 자체의 `/homeworks/{id}/` PUT도 기존 결과의 채점 방식 보호·만점 동기화를
+우회하므로 405로 거부한다. 동일한 편집은 정책을 적용하는 PATCH로 제공하며,
+과제 생성 POST·보관 DELETE·기존 개별 액션은 유지한다.
 
 `/homeworks/` 응답은 원시 오버라이드와 함께 `effective_cutline_mode`,
 `effective_cutline_value`, `effective_round_unit_percent`,
