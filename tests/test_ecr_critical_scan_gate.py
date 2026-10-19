@@ -81,7 +81,7 @@ def test_current_candidate_only_accepts_exact_reviewed_high_before_expiry(reposi
         policy_dir / "ecr-critical-risk-acceptance.json", datetime.now(timezone.utc).date()
     )
     baselines, known = gate.load_high_baselines(
-        policy_dir / "ecr-high-risk-baseline.json", date(2026, 10, 18)
+        policy_dir / "ecr-high-risk-baseline.json", date(2026, 10, 19)
     )
     assert not acceptances
     assert known == {
@@ -140,14 +140,14 @@ def test_retired_gcc_exceptions_do_not_block_clean_candidates_after_their_old_ex
                 ), baselines, known)
 
 
-def test_fixed_system_cyrus_has_no_exception_and_glibc_expiry_is_unchanged() -> None:
+def test_fixed_system_cyrus_has_no_exception_and_renewed_glibc_expiry_is_enforced() -> None:
     policy = Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
     entries = json.loads(policy.read_text(encoding="utf-8"))["acceptedHighFindings"]
     assert not [entry for entry in entries if entry["packageName"] == "gcc-14"]
     cyrus = [entry for entry in entries if entry["packageName"] == "cyrus-sasl2"]
     assert not cyrus
     with pytest.raises(gate.GateError, match="High risk acceptance expired"):
-        gate.load_high_baselines(policy, date(2026, 10, 19))
+        gate.load_high_baselines(policy, date(2026, 10, 20))
 
 
 @pytest.mark.parametrize("repository", gate.REPOSITORIES)
@@ -156,10 +156,10 @@ def test_approved_glibc_review_keeps_exact_service_scope_and_expiry(repository, 
     entries = json.loads(policy.read_text(encoding="utf-8"))["acceptedHighFindings"]
     glibc = [entry for entry in entries if entry["packageName"] == "glibc"]
     assert {entry["cve"] for entry in glibc} == {"CVE-2026-19499", "CVE-2026-5435"}
-    assert all(entry["expiresOn"] == "2026-10-18" for entry in glibc)
+    assert all(entry["expiresOn"] == "2026-10-19" for entry in glibc)
     isolated = tmp_path / "glibc-review.json"
     isolated.write_text(json.dumps(_high_policy_document(*glibc)), encoding="utf-8")
-    baselines, known = gate.load_high_baselines(isolated, date(2026, 10, 18))
+    baselines, known = gate.load_high_baselines(isolated, date(2026, 10, 19))
     for entry in glibc:
         finding = _finding(entry["cve"], "glibc", "2.41-12+deb13u4", "HIGH")
         assert gate.evaluate_high_budget(repository, _scan(finding), baselines, known) == 1
@@ -173,7 +173,7 @@ def test_approved_glibc_review_keeps_exact_service_scope_and_expiry(repository, 
                 _finding(entry["cve"], "glibc", "2.41-12+deb13u4", "CRITICAL"),
             ), {})
     with pytest.raises(gate.GateError, match="High risk acceptance expired"):
-        gate.load_high_baselines(isolated, date(2026, 10, 19))
+        gate.load_high_baselines(isolated, date(2026, 10, 20))
 
 
 @pytest.mark.parametrize(
