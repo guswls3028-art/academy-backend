@@ -2,10 +2,12 @@ from unittest.mock import patch
 
 from django.test import TestCase
 from django.utils import timezone
+from rest_framework.test import force_authenticate
 
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, ScheduledNotification, NotificationPreviewToken
 from apps.domains.messaging.notification_dispatch import build_student_list_preview
 from apps.domains.messaging.serializers import MessageTemplateSerializer
+from apps.domains.messaging.views.template_views import MessageTemplateSetDefaultView
 from apps.domains.messaging.tests import test_notification_preview_views as fixtures
 
 Student = fixtures.Student
@@ -67,6 +69,71 @@ class AlimtalkJourneyBoundaryTests(TestCase):
         self.assertEqual(MessageTemplate.objects.filter(
             tenant=self.tenant, category="attendance", is_user_default=True,
         ).count(), 1)
+
+
+class TemplateDefaultIntentTests(TestCase):
+    setUp = fixtures.NotificationPreviewViewValidationTests.setUp
+
+    def _set_default(self, template, payload):
+        request = self.factory.post("/", payload, format="json")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        return MessageTemplateSetDefaultView.as_view()(request, pk=template.id)
+
+    def test_explicit_retry_is_idempotent_for_user_and_system_templates(self):
+        other_category = MessageTemplate.objects.create(
+            tenant=self.tenant, category="attendance", name="출결 기본", body="보존", is_user_default=True,
+        )
+        other_tenant = fixtures.Tenant.objects.create(code="default-other", name="Other", is_active=True)
+        foreign = MessageTemplate.objects.create(
+            tenant=other_tenant, category="grades", name="다른 학원 기본", body="보존", is_user_default=True,
+        )
+        for system in (False, True):
+            with self.subTest(system=system):
+                previous = MessageTemplate.objects.create(
+                    tenant=self.tenant, category="grades", name="이전 기본", body="원문", is_user_default=True,
+                )
+                selected = MessageTemplate.objects.create(
+                    tenant=self.tenant, category="grades", name="새 기본", body="선택 원문", is_system=system,
+                )
+                self.assertFalse(self._set_default(selected, {"is_user_default": False}).data["is_user_default"])
+                previous.refresh_from_db()
+                self.assertTrue(previous.is_user_default, "unsetting a non-default must preserve another selected default")
+                # Discard the first committed response, then replay the same desired state.
+                self.assertEqual(self._set_default(selected, {"is_user_default": True}).status_code, 200)
+                retry = self._set_default(selected, {"is_user_default": True})
+                self.assertEqual(retry.status_code, 200)
+                self.assertTrue(retry.data["is_user_default"])
+                previous.refresh_from_db()
+                self.assertFalse(previous.is_user_default)
+                self.assertEqual(MessageTemplate.objects.filter(tenant=self.tenant, category="grades", is_user_default=True).count(), 1)
+                for _ in range(2):
+                    self.assertFalse(self._set_default(selected, {"is_user_default": False}).data["is_user_default"])
+                selected.refresh_from_db()
+                self.assertEqual(selected.body, "선택 원문")
+        other_category.refresh_from_db()
+        foreign.refresh_from_db()
+        self.assertTrue(other_category.is_user_default)
+        self.assertTrue(foreign.is_user_default)
+        self.assertEqual(self._set_default(foreign, {"is_user_default": False}).status_code, 404)
+
+    def test_omitted_state_preserves_legacy_toggle(self):
+        template = MessageTemplate.objects.create(tenant=self.tenant, name="Legacy", body="본문")
+        self.assertTrue(self._set_default(template, {}).data["is_user_default"])
+        self.assertFalse(self._set_default(template, {}).data["is_user_default"])
+
+    def test_explicit_state_rejects_non_boolean_without_mutation(self):
+        template = MessageTemplate.objects.create(tenant=self.tenant, name="기존", body="본문", is_user_default=True)
+        for value in (None, "true", "false", 0, 1, [], {}):
+            with self.subTest(value=value):
+                response = self._set_default(template, {"is_user_default": value})
+                self.assertEqual(response.status_code, 400)
+                template.refresh_from_db()
+                self.assertTrue(template.is_user_default)
+        for payload in ([], [True], True):
+            self.assertEqual(self._set_default(template, payload).status_code, 400)
+            template.refresh_from_db()
+            self.assertTrue(template.is_user_default)
 
 
 class ConfirmationRecoveryTests(TestCase):

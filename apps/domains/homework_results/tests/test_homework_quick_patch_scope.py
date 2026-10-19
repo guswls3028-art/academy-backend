@@ -18,8 +18,10 @@ from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.homework_results.views.homework_score_viewset import HomeworkScoreViewSet
 from apps.domains.homework_results.views.homework_view import HomeworkViewSet
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.progress.models import ClinicLink
-from apps.domains.progress.services.clinic_remediation_service import ClinicRemediationService
+from apps.domains.progress.test_support import (
+    create_homework_clinic_link_fixture,
+    submit_homework_retake_fixture,
+)
 from apps.domains.students.models import Student
 from apps.support.submissions.dependencies import homework_submission_revisions
 
@@ -583,16 +585,16 @@ class HomeworkQuickPatchScopeTests(TestCase):
         self.homework.cutline_mode = "COUNT"
         self.homework.cutline_value = 1
         self.homework.save()
-        link = ClinicLink.objects.create(
+        link = create_homework_clinic_link_fixture(
             tenant=self.tenant, session=self.session, enrollment=self.assigned_enrollment,
-            source_type="homework", source_id=self.homework.id, reason="AUTO_FAILED",
+            source_id=self.homework.id,
         )
         with self.assertRaises(ValueError):
-            ClinicRemediationService.submit_homework_retake(
+            submit_homework_retake_fixture(
                 clinic_link_id=link.id, score=85, graded_by_user_id=self.admin.id,
             )
         self.assertFalse(HomeworkScore.objects.filter(homework=self.homework).exists())
-        result = ClinicRemediationService.submit_homework_retake(
+        result = submit_homework_retake_fixture(
             clinic_link_id=link.id, score=1, max_score=100, graded_by_user_id=self.admin.id,
         )
         self.assertEqual((result.attempt_index, result.score, result.max_score), (1, 1, 1))
@@ -727,9 +729,9 @@ class HomeworkQuickPatchCreateRaceTests(TransactionTestCase):
         table = Homework._meta.db_table
         clinic_link = None
         if clinic:
-            clinic_link = ClinicLink.objects.create(
+            clinic_link = create_homework_clinic_link_fixture(
                 tenant=self.tenant, session=self.session, enrollment=self.enrollment,
-                source_type="homework", source_id=self.homework.id, reason="AUTO_FAILED",
+                source_id=self.homework.id,
             )
 
         def invoke(label, first):
@@ -760,7 +762,7 @@ class HomeworkQuickPatchCreateRaceTests(TransactionTestCase):
                         return self._mode_request()
                     if clinic:
                         try:
-                            result = ClinicRemediationService.submit_homework_retake(
+                            result = submit_homework_retake_fixture(
                                 clinic_link_id=clinic_link.id, score=85, graded_by_user_id=self.admin.id,
                             )
                             return 200, {"score": result.score, "max_score": result.max_score}
