@@ -5,7 +5,41 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
-## 2026-10-18 system Cyrus 공식 수정 패키지 후보
+## 2026-10-19 민원 기능 배포의 glibc 두 예외 재승인
+
+민원 기능 PR663의 [배포39269386805](https://github.com/guswls3028-art/academy-backend/actions/runs/39269386805)는
+기존 glibc 예외가 **10월 19일 09:00 KST**에 만료되어 후보 보안 게이트에서
+중단했다. 격리 development·preprod·운영 교체는 실행되지 않았으며 공유 잠금은
+반환됐다. 실패한 실행을 소급 승인하지 않고 새 정책 source로 공식 배포한다.
+
+사용자는 기존 여섯 이미지의 두 High 항목, 잔여 메모리 손상·서비스 장애 위험과
+실제 도달성 미확인을 전달받은 뒤 **“10월 20일 오전 9시까지 위 두 항목 한시 수용”**이라고
+명시 승인했다. 이번 민원 기능 배포에 한해 다음 범위만 갱신한다.
+
+- `CVE-2026-19499`, `CVE-2026-5435 / glibc / 2.41-12+deb13u4`.
+- `academy-base`, `academy-api`, `academy-video-worker`,
+  `academy-messaging-worker`, `academy-ai-worker-cpu`, `academy-tools-worker`.
+- 만료 **2026-10-20 09:00 KST**, 즉 `expiresOn: 2026-10-19` UTC 종료.
+  각 저장소 High 상한은 2이며 Critical 수용은 비어 있다. 자동 연장은 없다.
+
+10월 19일 23:35–23:42 KST의 여섯 COMPLETE scan에서 정확히 위 두 High만
+검출됐고 Critical은 0이다. 서비스 다섯 이미지는 실패 실행의 immutable 후보
+태그 `sha-2677ba90e5195bb3d75a65001c0eb3d09b48568e-run-39269386805-1`,
+base는 재사용 digest `sha256:fb6c6defc3d6c7b34043a40576462004ef37cda8e1cdc797bb6e7e09386c0d5b`를
+새로 검사했다. [Debian CVE-2026-19499](https://security-tracker.debian.org/tracker/CVE-2026-19499)와
+[CVE-2026-5435](https://security-tracker.debian.org/tracker/CVE-2026-5435) tracker는
+당일 trixie의 해당 버전을 vulnerable로 기록하며 stable 수정본은 확인되지 않았다.
+이 승인은 수정이나 비도달성의 증명이 아니다.
+
+새 identity·package/version·저장소 확대·Critical·만료는 계속 차단한다.
+기존 native·신선한 scan·격리 development·preprod/임시 인스턴스 종료·플랫폼 승인·
+rolling·영향 동선 실사용·cleanup 0 게이트와 기존 glibc 교체/취약 입력 재현의
+차단 범위도 유지한다. 승인 원문과 여섯 exact digest/scan 요약은
+`_artifacts/sessions/assessment-security-01a15422/security-approval-20261019.json`과
+`candidate-security-readback.json`, 원본 scan은
+`_artifacts/sessions/assessment-feedback-01a15422/scan-*.json`에 보존한다.
+
+## 2026-10-18 system Cyrus 공식 수정 패키지 후보 (이력)
 
 사용자는 한시 수용 만료 전 근본 조치와, 기존 모델 차단에 관련되지 않은 조치의
 선행 완료를 요청했다. [Debian 공식 tracker](https://security-tracker.debian.org/tracker/CVE-2026-107161)는
@@ -25,7 +59,8 @@ core의 기존 공개 심볼을 모두 유지해야 하며 마지막 APT 단계 
 추가 인증 플러그인은 설치하지 않는다.
 
 이 후보의 정책은 여섯 저장소에서 Cyrus 수용을 제거하고 High 상한을 3→2로
-낮춘다. 남은 glibc 두 exact identity와 **2026-10-19 09:00 KST** 만료는 유지한다.
+낮췄다. 당시 glibc 두 exact identity와 **2026-10-19 09:00 KST** 만료를 유지했으며,
+현재 만료는 위 10월 19일 명시 승인에 따른다.
 Cyrus가 하나라도 다시 검출되면 미검토 High로 차단한다. 새 후보의 여섯 COMPLETE
 scan, arm64 native 검증, 격리 development DB/TLS·Excel/PPT/R2 실사용과 cleanup 0,
 preprod/임시 인스턴스 종료, 정규 rolling 및 운영 readback 전에 완료로 표시하지 않는다.
