@@ -633,7 +633,8 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
     return {
         "exams": exam_list,
         "homeworks": homework_list,
-        "session_totals": student_session_totals(tenant=tenant, exam_rows=exam_list, homework_rows=homework_list),
+        "session_totals": student_session_totals(tenant=tenant, exam_rows=exam_list, homework_rows=homework_list,
+                                                absent_learning_pairs=absent_learning_pairs),
         "exam_trend": exam_trend,
         "exam_summary": exam_summary,
         "lecture_options": lecture_options,

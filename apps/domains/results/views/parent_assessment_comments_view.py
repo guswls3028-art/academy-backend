@@ -1,4 +1,5 @@
 """Parent-only feedback API, separate from student results and attendance notes."""
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from django.db import transaction
 from django.http import Http404
 from django.shortcuts import get_object_or_404
@@ -9,6 +10,20 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.domains.results.serializers.assessment_feedback import (
+    AssessmentDetailErrorSerializer,
+    AdminParentCommentListResponseSerializer,
+    AdminParentCommentResponseSerializer,
+    ParentCommentConflictSerializer,
+    ParentAssessmentCommentsResponseSerializer,
+)
+
+ASSESSMENT_KIND_PARAMETER = OpenApiParameter(
+    name="kind", location=OpenApiParameter.PATH, required=True,
+    type=OpenApiTypes.STR, enum=["exam", "homework"],
+    description="The exact session-linked assessment type.",
+)
+
 from apps.support.results.parent_comment_dependencies import (
     Enrollment, SessionEnrollment, ExamEnrollment, HomeworkAssignment, Homework, Session,
     get_request_student, is_request_parent, learning_history_enrollments_for_student,
@@ -68,6 +83,12 @@ def payload(comment, enrollment_id, *, history=False):
 class AdminParentAssessmentCommentsView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(
+        operation_id="results_admin_parent_assessment_comments_list",
+        parameters=[ASSESSMENT_KIND_PARAMETER],
+        responses={200: AdminParentCommentListResponseSerializer, 403: AssessmentDetailErrorSerializer, 404: AssessmentDetailErrorSerializer},
+        description="Staff-only assigned student rows and explicit parent-facing comment edit history, scoped to the request tenant and live session assessment.",
+    )
     def get(self, request, session_id, kind, assessment_id):
         _, enrollments = assessment_scope(request.tenant, session_id, kind, assessment_id)
         comments = {c.enrollment_id: c for c in ParentAssessmentComment.objects.filter(
@@ -81,6 +102,13 @@ class AdminParentAssessmentCommentsView(APIView):
 class AdminParentAssessmentCommentView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(
+        operation_id="results_admin_parent_assessment_comment_update",
+        parameters=[ASSESSMENT_KIND_PARAMETER],
+        request=CommentWriteSerializer,
+        responses={200: AdminParentCommentResponseSerializer, 400: OpenApiTypes.OBJECT, 403: AssessmentDetailErrorSerializer, 404: AssessmentDetailErrorSerializer, 409: ParentCommentConflictSerializer},
+        description="Atomically save parent-facing text and a revision. Version 0 creates the first comment; a stale version returns current state with 409. Blank/whitespace-only text clears publication without deleting history.",
+    )
     @transaction.atomic
     def put(self, request, session_id, kind, assessment_id, enrollment_id):
         serializer = CommentWriteSerializer(data=request.data)
@@ -108,6 +136,12 @@ class AdminParentAssessmentCommentView(APIView):
 class ParentAssessmentCommentsView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        operation_id="results_parent_assessment_comments_list",
+        parameters=[OpenApiParameter(name="X-Student-Id", location=OpenApiParameter.HEADER, required=True, type=OpenApiTypes.INT, description="Explicitly selected active child owned by the authenticated parent in the request tenant.")],
+        responses={200: ParentAssessmentCommentsResponseSerializer, 403: AssessmentDetailErrorSerializer},
+        description="Parent-only read projection for the selected child, including unscored assessment titles. Student accounts are denied. Internal memos and edit history are never included.",
+    )
     def get(self, request):
         if not is_request_parent(request):
             raise PermissionDenied("학부모 전용 정보입니다.")

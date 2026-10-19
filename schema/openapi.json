@@ -441,6 +441,109 @@
         ],
         "type": "object"
       },
+      "AdminParentCommentListItem": {
+        "properties": {
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/ParentCommentRevision"
+            },
+            "type": "array"
+          },
+          "student_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "student_name": {
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_by": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "history",
+          "student_id",
+          "student_name",
+          "text",
+          "updated_at",
+          "updated_by",
+          "version"
+        ],
+        "type": "object"
+      },
+      "AdminParentCommentListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AdminParentCommentListItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "AdminParentCommentResponse": {
+        "properties": {
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/ParentCommentRevision"
+            },
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_by": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "history",
+          "text",
+          "updated_at",
+          "updated_by",
+          "version"
+        ],
+        "type": "object"
+      },
       "AnswerKey": {
         "properties": {
           "answers": {
@@ -518,6 +621,17 @@
         },
         "required": [
           "session_id"
+        ],
+        "type": "object"
+      },
+      "AssessmentDetailError": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
         ],
         "type": "object"
       },
@@ -2440,6 +2554,23 @@
           "self_registration_disabled"
         ],
         "type": "string"
+      },
+      "CommentWriteRequest": {
+        "properties": {
+          "text": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "version": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "text",
+          "version"
+        ],
+        "type": "object"
       },
       "CorrectionStatusEnum": {
         "description": "* `PENDING` - PENDING\n* `COMPLETED` - COMPLETED\n* `NOT_REQUIRED` - NOT_REQUIRED",
@@ -8646,6 +8777,148 @@
         ],
         "type": "object"
       },
+      "ParentAssessmentCommentItem": {
+        "properties": {
+          "assessment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "assessment_kind": {
+            "$ref": "#/components/schemas/TypeEnum"
+          },
+          "assessment_title": {
+            "nullable": true,
+            "type": "string"
+          },
+          "lecture_title": {
+            "type": "string"
+          },
+          "session_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "session_title": {
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "assessment_id",
+          "assessment_kind",
+          "assessment_title",
+          "lecture_title",
+          "session_id",
+          "session_title",
+          "text",
+          "updated_at",
+          "version"
+        ],
+        "type": "object"
+      },
+      "ParentAssessmentCommentsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ParentAssessmentCommentItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ParentCommentConflict": {
+        "properties": {
+          "current": {
+            "$ref": "#/components/schemas/ParentCommentSnapshot"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "current",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "ParentCommentRevision": {
+        "properties": {
+          "author_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "author_name": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "author_id",
+          "author_name",
+          "created_at",
+          "text",
+          "version"
+        ],
+        "type": "object"
+      },
+      "ParentCommentSnapshot": {
+        "properties": {
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "text": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_by": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "text",
+          "updated_at",
+          "updated_by",
+          "version"
+        ],
+        "type": "object"
+      },
       "ParentInitialPasswordChoiceRequest": {
         "properties": {
           "parent_initial_password": {
@@ -13865,6 +14138,50 @@
         ],
         "type": "object"
       },
+      "ScoreTotalConfigResponse": {
+        "properties": {
+          "exam_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "exam_order": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "homework_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "homework_order": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "version": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "exam_ids",
+          "exam_order",
+          "homework_ids",
+          "homework_order",
+          "version"
+        ],
+        "type": "object"
+      },
       "SealedVideo": {
         "description": "✅ FINAL SEALED VERSION (SaaS production)\n\n- DB 저장 필드와 API 노출 필드 분리\n- CDN 기반 URL 동적 생성\n- Cache-busting 지원\n- Legacy 경로 normalize",
         "properties": {
@@ -14636,6 +14953,11 @@
             ],
             "default": "parent",
             "description": "학생/학부모 번호로 보낼지"
+          },
+          "session_id": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
           },
           "staff_ids": {
             "description": "legacy field. 직원 대상 범용 발송은 비활성화됨.",
@@ -19519,6 +19841,52 @@
           "detail",
           "mustChangePassword",
           "userId"
+        ],
+        "type": "object"
+      },
+      "TotalConfigRequest": {
+        "properties": {
+          "exam_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "exam_order": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "expected_version": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "homework_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "homework_order": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 500,
+            "type": "array"
+          }
+        },
+        "required": [
+          "exam_ids",
+          "expected_version",
+          "homework_ids"
         ],
         "type": "object"
       },
@@ -44794,6 +45162,372 @@
         ]
       }
     },
+    "/api/v1/results/admin/sessions/{session_id}/total-config/": {
+      "get": {
+        "description": "Staff-only tenant-scoped selected assessments and session-local column order. Newly linked assessments append to order; removed assessments disappear.",
+        "operationId": "results_admin_session_total_config_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreTotalConfigResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      },
+      "put": {
+        "description": "Atomically replace numeric-assessment selection and optional complete session-local order using expected_version. Completion-only homework is excluded from sums. Stale versions return 409; validation failure preserves the previous configuration.",
+        "operationId": "results_admin_session_total_config_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotalConfigRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/TotalConfigRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/TotalConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreTotalConfigResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/sessions/{session_id}/{kind}/{assessment_id}/parent-comments/": {
+      "get": {
+        "description": "Staff-only assigned student rows and explicit parent-facing comment edit history, scoped to the request tenant and live session assessment.",
+        "operationId": "results_admin_parent_assessment_comments_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assessment_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The exact session-linked assessment type.",
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "exam",
+                "homework"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminParentCommentListResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/sessions/{session_id}/{kind}/{assessment_id}/parent-comments/{enrollment_id}/": {
+      "put": {
+        "description": "Atomically save parent-facing text and a revision. Version 0 creates the first comment; a stale version returns current state with 409. Blank/whitespace-only text clears publication without deleting history.",
+        "operationId": "results_admin_parent_assessment_comment_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assessment_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "enrollment_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The exact session-linked assessment type.",
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "exam",
+                "homework"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentWriteRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentWriteRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminParentCommentResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentCommentConflict"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
     "/api/v1/results/admin/student-grades/": {
       "get": {
         "description": "학생 개인 시험 + 과제 성적 요약 (admin/teacher 공용).\nQuery params: student_id (required)",
@@ -45003,6 +45737,56 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/parent/assessment-comments/": {
+      "get": {
+        "description": "Parent-only read projection for the selected child, including unscored assessment titles. Student accounts are denied. Internal memos and edit history are never included.",
+        "operationId": "results_parent_assessment_comments_list",
+        "parameters": [
+          {
+            "description": "Explicitly selected active child owned by the authenticated parent in the request tenant.",
+            "in": "header",
+            "name": "X-Student-Id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentAssessmentCommentsResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

@@ -121,21 +121,39 @@ class TotalConfigTests(TestCase):
         homework = apps.get_model("homework_results", "Homework").objects.create(
             tenant=self.tenant, session=self.session, title="Homework", meta={"default_max_score": 20},
         )
+        student = apps.get_model("students", "Student").objects.create(
+            user=apps.get_model("core", "User").objects.create_user(username="total-child", tenant=self.tenant),
+            tenant=self.tenant, name="Total Child", ps_number="TOTAL001", omr_code="00000123", parent_phone="01012345678",
+        )
+        enrollment = apps.get_model("enrollment", "Enrollment").objects.create(
+            tenant=self.tenant, student=student, lecture=self.lecture,
+        )
+        assignment = apps.get_model("homework", "HomeworkAssignment").objects.create(
+            tenant=self.tenant, session=self.session, homework=homework, enrollment=enrollment,
+        )
         # The caller supplies only authorized first-attempt rows; an assigned
         # exam with no row must still keep the shared total incomplete.
-        exams = [{"exam_id": self.exam.id, "enrollment_id": 987,
+        exams = [{"exam_id": self.exam.id, "enrollment_id": enrollment.id,
                   "session_id": self.session.id, "total_score": 80}]
-        homeworks = [{"homework_id": homework.id, "enrollment_id": 987,
+        homeworks = [{"homework_id": homework.id, "enrollment_id": enrollment.id,
                       "session_id": self.session.id, "score": 0, "submission_state": "GRADED"}]
         summary = student_session_totals(tenant=self.tenant, exam_rows=exams, homework_rows=homeworks)[0]
         self.assertEqual(summary["exam_total"]["selected_count"], 2)
         self.assertFalse(summary["exam_total"]["complete"])
         self.assertEqual(summary["homework_total"]["score"], 0)
         self.assertTrue(summary["homework_total"]["complete"])
+        absent_summary = student_session_totals(tenant=self.tenant, exam_rows=exams, homework_rows=homeworks,
+                                                absent_learning_pairs={(enrollment.id, self.session.id)})[0]
+        self.assertEqual(absent_summary["exam_total"]["selected_count"], 1)
+        self.assertTrue(absent_summary["exam_total"]["complete"])
         save_total_config(session_id=self.session.id, tenant=self.tenant, payload={**self.payload, "homework_ids": [homework.id]})
         summary = student_session_totals(tenant=self.tenant, exam_rows=exams, homework_rows=homeworks)[0]
         self.assertEqual(summary["exam_total"]["score"], 80)
         self.assertTrue(summary["exam_total"]["complete"])
+        assignment.delete()
+        removed_summary = student_session_totals(tenant=self.tenant, exam_rows=exams, homework_rows=homeworks)[0]
+        self.assertEqual(removed_summary["homework_total"]["selected_count"], 0)
+        self.assertEqual(homeworks[0]["score"], 0)  # Preserved historical display row.
 
     def test_shared_exam_order_is_session_local_and_new_deleted_items_converge(self):
         Exam = apps.get_model("exams", "Exam")

@@ -60,15 +60,21 @@ def save_total_config(*, session_id, tenant, payload):
     return total_config(session, exams, homeworks)
 
 
-def student_session_totals(*, tenant, exam_rows, homework_rows):
+def student_session_totals(*, tenant, exam_rows, homework_rows, absent_learning_pairs=frozenset()):
     """Summarize the same first-attempt values already authorized for this child."""
     from apps.domains.results.services.assessment_totals import row_totals
     from apps.support.progress.session_calculator_dependencies import get_exam_target_enrollment_pairs_for_session
+    from apps.domains.homework.models import HomeworkAssignment
 
     pairs = {(int(row["session_id"]), int(row["enrollment_id"]))
              for row in [*exam_rows, *homework_rows] if row.get("session_id") is not None}
     sessions = Session.objects.filter(id__in={pair[0] for pair in pairs}, lecture__tenant=tenant).select_related("lecture").order_by("-order", "-id")
     exam_lookup = {(row["enrollment_id"], row["exam_id"]): row for row in exam_rows}
+    homework_targets = set(HomeworkAssignment.objects.filter(
+        tenant=tenant, session_id__in={pair[0] for pair in pairs},
+        enrollment_id__in={pair[1] for pair in pairs}, enrollment__tenant=tenant,
+        homework__tenant=tenant,
+    ).values_list("session_id", "enrollment_id", "homework_id"))
     summaries = []
     for session in sessions:
         exams, homeworks = assessment_options(session, tenant)
@@ -80,17 +86,22 @@ def student_session_totals(*, tenant, exam_rows, homework_rows):
             exam_entries = []
             for exam in exams:
                 result = exam_lookup.get((enrollment_id, exam["exam_id"]))
-                if (enrollment_id, exam["exam_id"]) not in targets and result is None:
+                if (enrollment_id, exam["exam_id"]) not in targets:
+                    continue
+                if result is None and (enrollment_id, session.id) in absent_learning_pairs:
                     continue
                 exam_entries.append({"exam_id": exam["exam_id"], "block": {
                     "score": result.get("total_score") if result else None,
                     "grading_status": result.get("grading_status") if result else None,
                     "is_provisional": result.get("is_provisional", False) if result else False,
+                    "meta": {"status": result.get("meta_status")} if result else {},
                 }})
             homework_entries = [{"homework_id": row["homework_id"], "block": {
                 "score": row.get("score"),
                 "meta": {"status": "NOT_SUBMITTED" if row.get("submission_state") == "NOT_SUBMITTED" else ""},
-            }} for row in homework_rows if row.get("session_id") == session.id and row["enrollment_id"] == enrollment_id]
+            }} for row in homework_rows
+                if row.get("session_id") == session.id and row["enrollment_id"] == enrollment_id
+                and (session.id, enrollment_id, row["homework_id"]) in homework_targets]
             summaries.append({
                 "session_id": session.id, "lecture_id": session.lecture_id,
                 "session_title": session.title or session.display_label, "lecture_title": session.lecture.title,
