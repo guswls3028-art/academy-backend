@@ -120,6 +120,8 @@ class HomeworkScoreBlockSerializer(serializers.Serializer):
 
 
 class SessionScoreRowSerializer(serializers.Serializer):
+    exam_total = serializers.DictField(required=False)
+    homework_total = serializers.DictField(required=False)
     enrollment_id = serializers.IntegerField()
     student_id = serializers.IntegerField(allow_null=True)
     student_name = serializers.CharField(allow_blank=True)

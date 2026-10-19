@@ -286,7 +286,7 @@ def build_manual_replacements(
         "클리닉수정자": ["클리닉수정자", "clinic_modifier"],
         "강의명": ["강의명", "lecture_name"],
         "차시명": ["차시명", "session_name"],
-        "강의날짜": ["날짜", "강의날짜", "date"],
+        "강의날짜": ["강의날짜", "date", "날짜"],
         "강의시간": ["시간", "강의시간", "time"],
         "날짜": ["날짜", "date"],
         "시간": ["시간", "time"],

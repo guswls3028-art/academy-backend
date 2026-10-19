@@ -73,6 +73,7 @@ PERMANENT_DELETE_ENROLLMENT_TENANT_PATHS = {
     "progress.LectureProgress": (("lecture__tenant_id", False),),
     "progress.RiskLog": (("session__lecture__tenant_id", True),),
     "progress.SessionProgress": (("session__lecture__tenant_id", False),),
+    "results.ParentAssessmentComment": (("tenant_id", False), ("session__lecture__tenant_id", False)),
     "results.ExamAttempt": (("exam__tenant_id", False),),
     "results.Result": (("attempt__exam__tenant_id", True),),
     "results.ResultFact": (("attempt__exam__tenant_id", True),),
@@ -1119,6 +1120,12 @@ def _permanently_delete_selected_students(
                 ).delete()
 
         if enrollment_ids:
+            # Raw enrollment deletion does not run Django's CASCADE collector.
+            # Scope validation above covers both comment tenant and session tenant;
+            # ORM deletion here also removes every immutable edit revision.
+            apps.get_model("results", "ParentAssessmentComment")._base_manager.filter(
+                tenant=tenant, enrollment_id__in=enrollment_ids,
+            ).delete()
             enrollment_id_clause, enrollment_id_params = _in_clause(enrollment_ids)
             for tbl, where_template in [
                 ("lectures_sectionassignment", "enrollment_id IN {enrollment_ids}"),

@@ -90,6 +90,13 @@ Assert-Contains $backendReadiness.Gates "frontend-e2e" "backend readiness must r
 Assert-Contains $backendReadiness.Gates "frontend-deployment-contracts" "backend readiness must retain deployment contracts"
 Assert-True (-not $backendReadiness.DocsOnly) "executable readiness is not documentation-only"
 
+$apiSourcePin = Get-AcademyChangeRiskPlan -BackendPaths @() `
+    -FrontendPaths @("scripts/openapi-backend-source.json")
+Assert-Contains $apiSourcePin.Risks "frontend-runtime-build" "API source pin is a generated build contract"
+Assert-Contains $apiSourcePin.Gates "frontend-core" "API source pin changes must retain type/lint/build gates"
+Assert-Contains $apiSourcePin.Gates "frontend-e2e" "API source pin changes must retain consumer E2E gates"
+Assert-True (-not $apiSourcePin.DocsOnly) "API source pin must not be treated as prose"
+
 $crossRepository = Get-AcademyChangeRiskPlan `
     -BackendPaths @("apps/domains/enrollment/services.py") `
     -FrontendPaths @("src/app_admin/domains/students/api.ts")

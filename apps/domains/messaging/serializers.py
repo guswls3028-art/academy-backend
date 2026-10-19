@@ -242,6 +242,7 @@ class ManualSendRecipientScopeField(serializers.ChoiceField):
 
 class SendMessageRequestSerializer(serializers.Serializer):
     """알림톡 발송 요청: 학생/학부모 수신자 + 직접 입력 본문 또는 템플릿 ID."""
+    session_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     client_request_id = serializers.UUIDField(
         required=False,
         help_text="동일 발송 내용의 재시도와 학생/학부모 부분 요청에서 유지하는 UUID.",

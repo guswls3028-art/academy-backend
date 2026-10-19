@@ -1573,3 +1573,124 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertEqual(response.data["exam_trend"], [])
         self.assertEqual(response.data["exam_summary"]["scored_count"], 0)
         self.assertEqual(response.data["lecture_options"], [])
+
+
+    def test_shared_exam_totals_keep_each_enrollment_while_history_stays_deduplicated(self):
+        SessionEnrollment = django_apps.get_model("enrollment", "SessionEnrollment")
+        other_lecture = Lecture.objects.create(tenant=self.tenant, name="Shared second", title="Shared second", subject="MATH")
+        other_session = Session.objects.create(lecture=other_lecture, order=1, title="Other session")
+        other_enrollment = Enrollment.objects.create(tenant=self.tenant, student=self.student, lecture=other_lecture, status="ACTIVE")
+        for session, enrollment in ((self.session, self.enrollment), (other_session, other_enrollment)):
+            SessionEnrollment.objects.create(tenant=self.tenant, session=session, enrollment=enrollment)
+        shared = self.Exam.objects.create(tenant=self.tenant, title="Shared real exam", exam_type="regular",
+                                          max_score=100, pass_score=60, student_results_published=True)
+        shared.sessions.add(self.session, other_session)
+        for enrollment, score in ((self.enrollment, 80), (other_enrollment, 40)):
+            self.ExamEnrollment.objects.create(exam=shared, enrollment=enrollment)
+            self.Result.objects.create(target_type="exam", target_id=shared.id, enrollment=enrollment,
+                                       total_score=score, max_score=100)
+        response = self._call()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len([row for row in response.data["exams"] if row["exam_id"] == shared.id]), 1)
+        totals = {row["session_id"]: row["exam_total"] for row in response.data["session_totals"]}
+        self.assertEqual(totals[self.session.id], {"score": 80.0, "max_score": 100.0, "selected_count": 1, "scored_count": 1, "complete": True})
+        self.assertEqual(totals[other_session.id]["score"], 40.0)
+        self.assertTrue(totals[other_session.id]["complete"])
+        hidden = self.Exam.objects.create(tenant=self.tenant, title="Unpublished result", exam_type="regular",
+                                          max_score=100, pass_score=60, student_results_published=False)
+        hidden.sessions.add(self.session)
+        self.ExamEnrollment.objects.create(exam=hidden, enrollment=self.enrollment)
+        self.Result.objects.create(target_type="exam", target_id=hidden.id, enrollment=self.enrollment,
+                                   total_score=99, max_score=100)
+        protected = self._call().data
+        self.assertNotIn(hidden.id, [row["exam_id"] for row in protected["exams"]])
+        self.assertEqual(next(row for row in protected["session_totals"] if row["session_id"] == self.session.id)["exam_total"]["score"], 80.0)
+
+    def test_absent_exam_activity_matches_admin_pending_denominator(self):
+        from django.urls import resolve
+        SessionEnrollment = django_apps.get_model("enrollment", "SessionEnrollment")
+        Attendance = django_apps.get_model("attendance", "Attendance")
+        SessionEnrollment.objects.create(tenant=self.tenant, session=self.session, enrollment=self.enrollment)
+        Attendance.objects.create(tenant=self.tenant, session=self.session, enrollment=self.enrollment, status="ABSENT")
+        graded = self.Exam.objects.create(tenant=self.tenant, title="Known grade", exam_type="regular", max_score=100, pass_score=60, student_results_published=True)
+        pending = self.Exam.objects.create(tenant=self.tenant, title="No grade yet", exam_type="regular", max_score=100, pass_score=60, student_results_published=True)
+        for exam in (graded, pending):
+            exam.sessions.add(self.session)
+            self.ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        self.Result.objects.create(target_type="exam", target_id=graded.id, enrollment=self.enrollment, total_score=80, max_score=100)
+        staff = User.objects.create_user(username="absent-total-reader", tenant=self.tenant, is_staff=True)
+        TenantMembership.ensure_active(tenant=self.tenant, user=staff, role="admin")
+        def assert_matches(count):
+            parent_total = self._call().data["session_totals"][0]["exam_total"]
+            request = self.factory.get("/")
+            request.tenant = self.tenant
+            force_authenticate(request, user=staff)
+            response = resolve(f"/api/v1/results/admin/sessions/{self.session.id}/scores/").func(request, session_id=self.session.id)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(parent_total, response.data["rows"][0]["exam_total"])
+            self.assertEqual(parent_total["selected_count"], count)
+            self.assertEqual(parent_total["complete"], count == 1)
+        assert_matches(1)
+        submission = Submission.objects.create(tenant=self.tenant, user=self.user, enrollment=self.enrollment,
+            target_type="exam", target_id=pending.id, source="online", status="submitted")
+        assert_matches(2)
+        submission.delete()
+        assert_matches(1)
+        attempt = self.ExamAttempt.objects.create(exam=pending, enrollment=self.enrollment, attempt_index=1, status="pending")
+        assert_matches(2)
+        attempt.delete()
+        assert_matches(1)
+        correction = self.AssessmentCorrection.objects.create(tenant=self.tenant, enrollment=self.enrollment,
+            session=self.session, source_type="exam", source_id=pending.id, completed=False, note="Review pending")
+        assert_matches(2)
+        correction.delete()
+        assert_matches(1)
+
+    def test_unscored_exam_only_session_uses_authorized_roster_and_targets(self):
+        SessionEnrollment = django_apps.get_model("enrollment", "SessionEnrollment")
+        Attendance = django_apps.get_model("attendance", "Attendance")
+        SessionEnrollment.objects.create(tenant=self.tenant, session=self.session, enrollment=self.enrollment)
+        exam = self.Exam.objects.create(tenant=self.tenant, title="Awaiting first score", exam_type="regular",
+            max_score=100, pass_score=60, student_results_published=True)
+        exam.sessions.add(self.session)
+        expected = {"score": None, "max_score": 100.0, "selected_count": 1, "scored_count": 0, "complete": False}
+        data = self._call().data
+        self.assertEqual(data["exams"], [])
+        self.assertEqual(data["session_totals"][0]["exam_total"], expected)
+        # Explicit assignment to someone else removes the default roster target.
+        other_user = User.objects.create_user(username="unscored-other-child", tenant=self.tenant)
+        other_student = Student.objects.create(tenant=self.tenant, user=other_user, name="Other child")
+        other = Enrollment.objects.create(tenant=self.tenant, student=other_student, lecture=self.lecture, status="ACTIVE")
+        target = self.ExamEnrollment.objects.create(exam=exam, enrollment=other)
+        self.assertEqual(self._call().data["session_totals"], [])
+        target.delete()
+        Attendance.objects.create(tenant=self.tenant, session=self.session, enrollment=self.enrollment, status="ABSENT")
+        self.assertEqual(self._call().data["session_totals"][0]["exam_total"]["selected_count"], 0)
+        Submission.objects.create(tenant=self.tenant, user=self.user, enrollment=self.enrollment,
+            target_type="exam", target_id=exam.id, source="online", status="submitted")
+        self.assertEqual(self._call().data["session_totals"][0]["exam_total"], expected)
+        self.enrollment.status = "INACTIVE"
+        self.enrollment.save(update_fields=["status"])
+        self.assertEqual(self._call().data.get("session_totals", []), [])
+
+    def test_shared_exam_second_enrollment_absence_is_not_lost_to_display_dedup(self):
+        SessionEnrollment = django_apps.get_model("enrollment", "SessionEnrollment")
+        Attendance = django_apps.get_model("attendance", "Attendance")
+        lecture = Lecture.objects.create(tenant=self.tenant, name="Second absent", title="Second absent", subject="MATH")
+        session = Session.objects.create(lecture=lecture, order=1, title="Second absent session")
+        enrollment = Enrollment.objects.create(tenant=self.tenant, student=self.student, lecture=lecture, status="ACTIVE")
+        shared = self.Exam.objects.create(tenant=self.tenant, title="Shared scored", exam_type="regular",
+            max_score=100, pass_score=60, student_results_published=True)
+        shared.sessions.add(self.session, session)
+        for current_session, current_enrollment in ((self.session, self.enrollment), (session, enrollment)):
+            SessionEnrollment.objects.create(tenant=self.tenant, session=current_session, enrollment=current_enrollment)
+            self.ExamEnrollment.objects.create(exam=shared, enrollment=current_enrollment)
+            self.Result.objects.create(target_type="exam", target_id=shared.id, enrollment=current_enrollment, total_score=40, max_score=100)
+        pending = self.Exam.objects.create(tenant=self.tenant, title="Absent no activity", exam_type="regular",
+            max_score=100, pass_score=60, student_results_published=True)
+        pending.sessions.add(session)
+        Attendance.objects.create(tenant=self.tenant, session=session, enrollment=enrollment, status="ABSENT")
+        data = self._call().data
+        self.assertEqual(len(data["exams"]), 1)
+        total = next(row["exam_total"] for row in data["session_totals"] if row["session_id"] == session.id)
+        self.assertEqual(total, {"score": 40.0, "max_score": 100.0, "selected_count": 1, "scored_count": 1, "complete": True})

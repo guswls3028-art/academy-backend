@@ -21,3 +21,5 @@ __all__ = [
     "ScoreEditDraft",
     "StudentReportedScore",
 ]
+
+from .parent_assessment_comment import ParentAssessmentComment, ParentAssessmentCommentRevision

@@ -126,6 +126,11 @@ SSOT: `permanently_delete_students(tenant=..., student_ids=[...])`
 정리 범위:
 
 - enrollment 및 enrollment child
+  - 학부모 공개 평가 코멘트(`ParentAssessmentComment`)와 모든 수정 이력은
+    삭제 대상 수강에 한해 함께 삭제한다. 직접 SQL로 수강을 삭제하기 전에
+    ORM cascade로 코멘트와 revision을 정리하며 작성자 계정은 삭제하지 않는다.
+    코멘트 tenant 또는 연결 차시의 강의 tenant가 다르면 기존 그래프 검증에서
+    `409 cross_tenant_reference`로 전체 작업을 중단하고 원본과 이력을 보존한다.
 - lecture section assignment
 - fees: `StudentFee`, `StudentInvoice`, `InvoiceItem`, `FeePayment`
 - submissions/results/homework/progress/video/clinic/community의 학생 참조
