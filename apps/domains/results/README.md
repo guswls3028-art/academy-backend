@@ -380,3 +380,30 @@ Change Rules
 - 레거시 import나 죽은 serializer/view/service를 되살리지 않는다.
 - 배점, tenant scope, submission scope, representative attempt, manual score 합산을 바꾸는 변경은 focused test와 운영 검증 대상이다.
 - "이미 완성" 같은 선언보다 재현 가능한 검증 결과를 우선한다.
+
+## Parent-only assessment comments
+
+Staff use the score table assessment menu to list and edit explicit parent-facing
+feedback per session, exam/homework and enrolled student. This is separate storage:
+existing internal/attendance memos are never copied, migrated or published.
+
+`GET results/admin/sessions/{session_id}/{exam|homework}/{assessment_id}/parent-comments/`
+returns eligible assigned students, current text/version/editor/time and revision history.
+`PUT .../parent-comments/{enrollment_id}/` requires `text` (maximum 2000 characters)
+and current `version` (0 for first save). Empty text clears the visible comment while
+retaining revisions. Enrollment locking serializes first creation and edits; stale
+versions return 409 with current state. Retry after reviewing current text preserves
+the draft. Each successful write appends author/time/text/version history atomically.
+
+`GET results/parent/assessment-comments/` requires the active tenant parent role
+and an explicitly selected owned active child (`X-Student-Id`). It returns only
+nonempty comments on currently live, assigned assessments and active session/lecture
+enrollments. Student accounts receive 403; student grades payloads contain no comment
+fields. Tenant, live assessment link, session roster and assessment assignment are
+checked on writes and reads. Staff history/author identifiers are not published to
+parents. No messages are sent. Existing grades and memos remain unchanged.
+
+Verification owner: `tests/test_parent_assessment_comments.py` covers persistence,
+history, stale edits, clearing, assignment removal, student denial, invalid child,
+cross-tenant staff denial and maximum length. Frontend owner: score menu feedback
+panel and parent-only GradesHomeTab component in the sibling frontend repository.

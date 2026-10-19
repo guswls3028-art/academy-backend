@@ -28,6 +28,7 @@ from apps.support.results.student_grade_history import (
     build_student_exam_history,
     empty_exam_summary,
 )
+from apps.support.results.score_total_dependencies import student_session_totals
 from apps.support.submissions.dependencies import homework_submission_revisions
 from apps.support.attendance.learning_todo_eligibility import actual_absent_learning_todo_pairs
 from apps.support.student_app.learning_todo_policy import (
@@ -632,6 +633,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
     return {
         "exams": exam_list,
         "homeworks": homework_list,
+        "session_totals": student_session_totals(tenant=tenant, exam_rows=exam_list, homework_rows=homework_list),
         "exam_trend": exam_trend,
         "exam_summary": exam_summary,
         "lecture_options": lecture_options,

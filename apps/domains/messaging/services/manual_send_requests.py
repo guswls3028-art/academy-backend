@@ -47,6 +47,8 @@ def _payload_fingerprint(data: dict) -> str:
             for key, values in (data.get("alimtalk_extra_vars_per_student") or {}).items()
         },
     }
+    if data.get("session_id") is not None:
+        canonical["session_id"] = data["session_id"]
     encoded = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
 

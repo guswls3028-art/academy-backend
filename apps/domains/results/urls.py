@@ -36,6 +36,7 @@ from apps.domains.results.views.session_scores_view import (
 )
 from apps.domains.results.views.score_draft_view import ScoreDraftView, ScoreDraftCommitView
 from apps.domains.results.views.session_reorder_view import SessionReorderView
+from apps.domains.results.views.session_total_config_view import SessionTotalConfigView
 
 from apps.domains.results.views.admin_result_fact_view import AdminResultFactView
 from apps.domains.results.views.admin_student_grades_view import AdminStudentGradesView
@@ -71,6 +72,7 @@ from apps.domains.results.views.admin_attempt_history_view import AdminAttemptHi
 from apps.support.results.clinic_route_dependencies import AdminClinicBookingViewSet
 
 urlpatterns = [
+    path("admin/sessions/<int:session_id>/total-config/", SessionTotalConfigView.as_view(), name="session-total-config"),
     path("me/exams/<int:exam_id>/", MyExamResultView.as_view(), name="my-exam-result"),
     path("me/exams/<int:exam_id>/attempts/", MyExamAttemptsView.as_view(), name="my-exam-attempts"),
     path("admin/exams/<int:exam_id>/summary/", AdminExamSummaryView.as_view(), name="admin-exam-summary"),
@@ -218,3 +220,12 @@ router = DefaultRouter()
 router.register("exam-attempts", ExamAttemptViewSet, basename="exam-attempts")
 router.register("admin/clinic-bookings", AdminClinicBookingViewSet, basename="admin-clinic-bookings")
 urlpatterns += router.urls
+
+from apps.domains.results.views.parent_assessment_comments_view import (
+    AdminParentAssessmentCommentsView, AdminParentAssessmentCommentView, ParentAssessmentCommentsView,
+)
+urlpatterns += [
+    path("admin/sessions/<int:session_id>/<str:kind>/<int:assessment_id>/parent-comments/", AdminParentAssessmentCommentsView.as_view()),
+    path("admin/sessions/<int:session_id>/<str:kind>/<int:assessment_id>/parent-comments/<int:enrollment_id>/", AdminParentAssessmentCommentView.as_view()),
+    path("parent/assessment-comments/", ParentAssessmentCommentsView.as_view()),
+]
