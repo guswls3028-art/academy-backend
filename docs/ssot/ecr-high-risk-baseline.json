@@ -21,9 +21,9 @@
         "academy-ai-worker-cpu",
         "academy-tools-worker"
       ],
-      "expiresOn": "2026-10-19",
+      "expiresOn": "2026-10-20",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-19499",
-      "rationale": "On 2026-10-19 the human task owner explicitly renewed only these two exact glibc High identities in the existing six repositories until 2026-10-20 09:00 KST (inclusive UTC expiry 2026-10-19) for the assessment-feedback complaint feature release. Residual memory-corruption/service-crash risk remains and runtime unreachability is not established. Fresh COMPLETE scans of all six exact failed-release39269386805 candidate/base digests showed only these two High identities and zero Critical; isolated development, preprod and production deployment did not run, and the shared lock was released. This does not retroactively approve that failed release or replace fresh candidate scans. No automatic renewal, other identity/version/repository widening or Critical acceptance is permitted. Preserve native, scan, isolated development, preprod/termination, production approval, rolling, real-use and cleanup gates. Exact approval and current evidence: docs/operations/container-image-security.md, 2026-10-19 section."
+      "rationale": "On 2026-10-20 the human task owner explicitly renewed only these two exact glibc High identities in the existing six repositories until 2026-10-21 09:00 KST (inclusive UTC expiry 2026-10-20) for the assessment-feedback ONLINE-total and retake correction release. Residual memory-corruption/service-crash risk remains and runtime unreachability is not established. Readback of all six exact current successful-release39334061045 image scans was COMPLETE with only these two High identities and zero Critical. This existing-image evidence does not replace fresh candidate scans: the new candidate must remain within the same exact scope. No automatic renewal, other identity/version/repository widening or Critical acceptance is permitted. Preserve native, scan, isolated development, preprod/termination, production approval, rolling, real-use and cleanup gates, and the existing glibc replacement/vulnerability-reproduction HOLD. Exact approval and evidence: docs/operations/container-image-security.md, 2026-10-20 section."
     },
     {
       "cve": "CVE-2026-5435",
@@ -37,9 +37,9 @@
         "academy-ai-worker-cpu",
         "academy-tools-worker"
       ],
-      "expiresOn": "2026-10-19",
+      "expiresOn": "2026-10-20",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-5435",
-      "rationale": "On 2026-10-19 the human task owner explicitly renewed only these two exact glibc High identities in the existing six repositories until 2026-10-20 09:00 KST (inclusive UTC expiry 2026-10-19) for the assessment-feedback complaint feature release. Residual memory-corruption/service-crash risk remains and runtime unreachability is not established. Fresh COMPLETE scans of all six exact failed-release39269386805 candidate/base digests showed only these two High identities and zero Critical; isolated development, preprod and production deployment did not run, and the shared lock was released. This does not retroactively approve that failed release or replace fresh candidate scans. No automatic renewal, other identity/version/repository widening or Critical acceptance is permitted. Preserve native, scan, isolated development, preprod/termination, production approval, rolling, real-use and cleanup gates. Exact approval and current evidence: docs/operations/container-image-security.md, 2026-10-19 section."
+      "rationale": "On 2026-10-20 the human task owner explicitly renewed only these two exact glibc High identities in the existing six repositories until 2026-10-21 09:00 KST (inclusive UTC expiry 2026-10-20) for the assessment-feedback ONLINE-total and retake correction release. Residual memory-corruption/service-crash risk remains and runtime unreachability is not established. Readback of all six exact current successful-release39334061045 image scans was COMPLETE with only these two High identities and zero Critical. This existing-image evidence does not replace fresh candidate scans: the new candidate must remain within the same exact scope. No automatic renewal, other identity/version/repository widening or Critical acceptance is permitted. Preserve native, scan, isolated development, preprod/termination, production approval, rolling, real-use and cleanup gates, and the existing glibc replacement/vulnerability-reproduction HOLD. Exact approval and evidence: docs/operations/container-image-security.md, 2026-10-20 section."
     }
   ]
 }
