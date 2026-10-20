@@ -13,7 +13,7 @@
   · FAIL: 1차 불합격 + 미해소
   · NOT_SUBMITTED: 미응시(+미해소)
   · None: pass_score=0 등 판정 기준 없음
-- is_provisional: ExamResult.status ≠ FINAL → 채점 미확정
+- is_provisional: legacy FINAL 또는 완전 자동 채점된 ONLINE 완료 근거가 없으면 미확정
 
 여러 뷰에서 공통 사용해 드리프트 재발 방지.
 """
@@ -25,6 +25,7 @@ from apps.domains.results.models import ExamResult, ExamAttempt, Result
 from apps.domains.results.services.omr_subjective_completion import (
     pending_omr_result_ids,
 )
+from apps.domains.results.services.online_grading_completion import completed_online_result_pairs
 from apps.domains.results.utils.initial_exam_score import (
     load_initial_exam_scores,
     project_initial_exam_score,
@@ -262,15 +263,18 @@ def compute_exam_achievement_bulk(
     meta_status_by_attempt: dict[int, str | None] = {}
     submission_by_attempt: dict[int, int] = {}
     pair_by_attempt: dict[int, tuple[int, int]] = {}
+    completed_attempt_pairs: set[tuple[int, int, int]] = set()
     if attempt_ids:
         for a in ExamAttempt.objects.filter(id__in=attempt_ids).only(
-            "id", "meta", "submission_id", "exam_id", "enrollment_id",
+            "id", "meta", "submission_id", "exam_id", "enrollment_id", "status",
         ):
             m = a.meta if isinstance(a.meta, dict) else {}
             meta_status_by_attempt[int(a.id)] = m.get("status")
             pair_by_attempt[int(a.id)] = (int(a.enrollment_id), int(a.exam_id))
             if a.submission_id:
                 submission_by_attempt[int(a.id)] = int(a.submission_id)
+                if a.status == "done":
+                    completed_attempt_pairs.add((int(a.submission_id), int(a.enrollment_id), int(a.exam_id)))
 
     result_rows = list(
         Result.objects.filter(
@@ -290,21 +294,32 @@ def compute_exam_achievement_bulk(
 
     # 3) ExamResult.status bulk (is_provisional 판정)
     er_status_by_pair: dict[tuple[int, int, int], str] = {}
+    completed_online_pairs = set()
     if submission_by_attempt:
         sub_ids = set(submission_by_attempt.values())
-        for er in ExamResult.objects.filter(
+        legacy_rows = list(ExamResult.objects.filter(
             submission_id__in=sub_ids,
             exam_id__in=exam_ids,
             submission__tenant=tenant,
             submission__enrollment__tenant=tenant,
             submission__target_type="exam",
         ).values(
+            "id",
             "submission_id",
             "submission__enrollment_id",
             "submission__target_id",
+            "submission__source",
+            "submission__status",
             "exam_id",
             "status",
-        ):
+        ))
+        completed_online_pairs = completed_online_result_pairs(
+            legacy_rows=legacy_rows,
+            completed_attempt_pairs=completed_attempt_pairs,
+            canonical_pairs={(int(row.enrollment_id), int(row.target_id)) for row in result_rows},
+            tenant_id=int(tenant.id),
+        )
+        for er in legacy_rows:
             enrollment_id = er["submission__enrollment_id"]
             target_exam_id = er["submission__target_id"]
             exam_id = er["exam_id"]
@@ -381,7 +396,10 @@ def compute_exam_achievement_bulk(
                 e_id,
                 x_id,
             ))
-            is_provisional = bool(er_status and er_status != ExamResult.Status.FINAL)
+            is_provisional = bool(
+                er_status and er_status != ExamResult.Status.FINAL
+                and (submission_by_attempt[a_id], e_id, x_id) not in completed_online_pairs
+            )
 
         # First-attempt scoring remains the achievement SSOT, but a newer
         # representative OMR result can still be awaiting essay grading. In

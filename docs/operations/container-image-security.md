@@ -5,7 +5,36 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
-## 2026-10-19 민원 기능 배포의 glibc 두 예외 재승인
+## 2026-10-20 온라인 시험 총점·재응시 수정 배포의 glibc 두 예외 재승인
+
+민원 기능의 실제 화면 검증에서 온라인 자동 채점 점수가 선택 총점에 미확정으로
+남는 문제와 재응시 후 최초 점수의 확정 판정 문제가 확인됐다.
+[PR666](https://github.com/guswls3028-art/academy-backend/pull/666)은 과거 점수를
+변경하지 않는 조회 호환 수정이며, 종전 예외는 **10월 20일 09:00 KST**에 만료됐다.
+사용자는 정확한 두 항목과 잔여 메모리 손상·서비스 장애 위험, 실제 도달성 미확인을
+전달받고 **“10월 21일 오전 9시까지 위 두 항목만 한시 수용”**이라고 명시 승인했다.
+
+- `CVE-2026-19499`, `CVE-2026-5435 / glibc / 2.41-12+deb13u4`만 해당한다.
+- 기존 `academy-base`, `academy-api`, `academy-video-worker`,
+  `academy-messaging-worker`, `academy-ai-worker-cpu`, `academy-tools-worker`만 유지한다.
+- 만료는 **2026-10-21 09:00 KST**, 즉 `expiresOn: 2026-10-20` UTC 종료다.
+  각 저장소 High 상한 2와 Critical 수용 없음은 변경하지 않는다.
+
+현재 성공 릴리스39334061045의 여섯 exact digest를 재조회한 결과는 모두 COMPLETE,
+High 2·Critical 0이다. base scan은 10월 19일 23:42 KST, 서비스 다섯 scan은
+10월 20일 07:25–07:26 KST에 완료됐다. 이는 기존 이미지의 관측이며 **새 후보의
+신선한 scan을 대체하지 않는다**. 새 후보에서도 동일 exact 범위만 허용한다.
+10월 20일 [Debian CVE-2026-19499](https://security-tracker.debian.org/tracker/CVE-2026-19499)와
+[CVE-2026-5435](https://security-tracker.debian.org/tracker/CVE-2026-5435)는 trixie의
+해당 버전을 vulnerable로 유지하고 stable 수정본은 확인되지 않았다.
+이 승인은 수정이나 비도달성의 증명이 아니며 자동 연장도 허용하지 않는다.
+
+기존 glibc 교체·취약 입력 재현 HOLD, native·scan·격리 development·preprod와
+임시 인스턴스 종료·플랫폼 승인·rolling·실사용·cleanup 0 조건을 모두 유지한다.
+승인 원문, exact digest와 scan 원본은
+`_artifacts/sessions/assessment-feedback-01a15422/featureArtifacts/security-readback-20261020/`에 보존한다.
+
+## 2026-10-19 민원 기능 배포의 glibc 두 예외 재승인 (이력)
 
 민원 기능 PR663의 [배포39269386805](https://github.com/guswls3028-art/academy-backend/actions/runs/39269386805)는
 기존 glibc 예외가 **10월 19일 09:00 KST**에 만료되어 후보 보안 게이트에서
