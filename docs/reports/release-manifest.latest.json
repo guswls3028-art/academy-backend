@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "status": "successful",
   "complete": true,
-  "generatedAt": "2026-10-19T22:26:30+00:00",
-  "gitSha": "e19e17efca5cba44413f5ae4c2276c3ded0f30ae",
-  "releaseImageTag": "sha-e19e17efca5cba44413f5ae4c2276c3ded0f30ae-run-39334061045-1",
+  "generatedAt": "2026-10-20T00:55:13+00:00",
+  "gitSha": "0e425d7353737ade0f1f49801ce937d3a114f2d0",
+  "releaseImageTag": "sha-0e425d7353737ade0f1f49801ce937d3a114f2d0-run-39349708509-1",
   "images": {
     "academy-base": {
       "digest": "sha256:fb6c6defc3d6c7b34043a40576462004ef37cda8e1cdc797bb6e7e09386c0d5b",
@@ -12,30 +12,30 @@
       "source": "prior-success"
     },
     "academy-api": {
-      "digest": "sha256:de56d010c1917abfb8bbb651c9b7df2ca2ce900e0d10236bda852eaf356dd2d3",
-      "tag": "sha-e19e17efca5cba44413f5ae4c2276c3ded0f30ae-run-39334061045-1",
+      "digest": "sha256:1cf49e7287c15ee6cad09889c97f0f0742afdc04723eee809021db496e4a4ee9",
+      "tag": "sha-0e425d7353737ade0f1f49801ce937d3a114f2d0-run-39349708509-1",
       "source": "built"
     },
     "academy-video-worker": {
       "digest": "sha256:1921d8cde46948534edfc5c04e326bdde30b898fa44ce78e2ec1c285571efe4c",
       "tag": "sha-e19e17efca5cba44413f5ae4c2276c3ded0f30ae-run-39334061045-1",
-      "source": "built"
+      "source": "prior-success"
     },
     "academy-messaging-worker": {
       "digest": "sha256:8cd058c4b60387f0eaac85a3a8aaecb68bb0ca3a5ac51f7abfbe8d249ee69704",
       "tag": "sha-e19e17efca5cba44413f5ae4c2276c3ded0f30ae-run-39334061045-1",
-      "source": "built"
+      "source": "prior-success"
     },
     "academy-ai-worker-cpu": {
-      "digest": "sha256:7396e7935771203173f17c8fd0cc293f28c05a4aed8403ef9340a56e2842986a",
-      "tag": "sha-e19e17efca5cba44413f5ae4c2276c3ded0f30ae-run-39334061045-1",
+      "digest": "sha256:963dd5f4e0af55aa20294ba7817faf765840e65397a6c3e13e6779a1fce85b60",
+      "tag": "sha-0e425d7353737ade0f1f49801ce937d3a114f2d0-run-39349708509-1",
       "source": "built"
     },
     "academy-tools-worker": {
       "digest": "sha256:24e8b736262745c901a5d5415edc6e0102da58689e2435efcc1bd20368a919fe",
       "tag": "sha-e19e17efca5cba44413f5ae4c2276c3ded0f30ae-run-39334061045-1",
-      "source": "built"
+      "source": "prior-success"
     }
   },
-  "verifiedAt": "2026-10-19T22:51:46+00:00"
+  "verifiedAt": "2026-10-20T01:43:31+00:00"
 }
