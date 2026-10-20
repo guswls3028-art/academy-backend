@@ -6454,6 +6454,25 @@
         ],
         "type": "string"
       },
+      "MessageTemplateConflictResponse": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "current_template": {
+            "$ref": "#/components/schemas/MessageTemplate"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "current_template",
+          "detail"
+        ],
+        "type": "object"
+      },
       "MessageTemplateDefaultRequestRequest": {
         "properties": {
           "is_user_default": {
@@ -9965,6 +9984,39 @@
           },
           "title": {
             "maxLength": 255,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedMessageTemplateRequest": {
+        "properties": {
+          "body": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "category": {
+            "$ref": "#/components/schemas/MessageTemplateCategoryEnum"
+          },
+          "expected_updated_at": {
+            "format": "date-time",
+            "type": "string",
+            "writeOnly": true
+          },
+          "is_user_default": {
+            "description": "사용자가 해당 카테고리에서 기본 양식으로 지정한 템플릿. tenant+category당 1개만.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "템플릿 이름",
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "subject": {
+            "description": "제목(선택)",
+            "maxLength": 200,
             "type": "string"
           }
         },
@@ -41807,9 +41859,54 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedMessageTemplateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedMessageTemplateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedMessageTemplateRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageTemplate"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
             "description": "No response body"
+          },
+          "403": {
+            "description": "No response body"
+          },
+          "404": {
+            "description": "No response body"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageTemplateConflictResponse"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

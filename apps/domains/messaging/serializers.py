@@ -3,6 +3,7 @@ import json
 
 from django.utils import timezone
 from rest_framework import serializers
+from rest_framework.exceptions import APIException
 from drf_spectacular.utils import extend_schema_field
 
 from apps.core.models import Tenant
@@ -115,7 +116,24 @@ class NotificationLogSerializer(serializers.Serializer):
     target_name = serializers.CharField()
 
 
+class MessageTemplateConflict(APIException):
+    status_code = 409
+    default_detail = "다른 선생님이 문구를 변경했습니다. 최신 문구를 확인해 주세요."
+    default_code = "template_conflict"
+
+    def __init__(self, template):
+        self.template = template
+        super().__init__()
+
+
 class MessageTemplateSerializer(serializers.ModelSerializer):
+    expected_updated_at = serializers.DateTimeField(required=False, write_only=True)
+
+    def validate(self, attrs):
+        if self.instance is None and "expected_updated_at" in attrs:
+            raise serializers.ValidationError({"expected_updated_at": "기존 문구 수정에만 사용할 수 있습니다."})
+        return attrs
+
     def create(self, validated_data):
         from django.db import transaction
 
@@ -132,11 +150,20 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         from django.db import transaction
 
+        expected = validated_data.pop("expected_updated_at", None)
         with transaction.atomic():
             Tenant.objects.select_for_update().get(pk=instance.tenant_id)
             # Re-read after the shared tenant lock; another editor may have
             # changed the default or category while this request was validating.
             instance = MessageTemplate.objects.get(pk=instance.pk, tenant_id=instance.tenant_id)
+            # A committed response may have been lost. An identical conditional
+            # retry succeeds without rewriting the row or bumping updated_at.
+            unchanged = all(getattr(instance, key) == value for key, value in validated_data.items())
+            if expected is not None:
+                if unchanged:
+                    return instance
+                if expected != instance.updated_at:
+                    raise MessageTemplateConflict(instance)
             if validated_data.get("is_user_default", instance.is_user_default):
                 MessageTemplate.objects.filter(
                     tenant=instance.tenant,
@@ -174,6 +201,7 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
             "delete_block_reason",
             "created_at",
             "updated_at",
+            "expected_updated_at",
         ]
         read_only_fields = [
             "id",

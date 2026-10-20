@@ -15,7 +15,7 @@ from apps.domains.messaging.default_templates import default_template_key_for_na
 from apps.domains.messaging.models import DefaultTemplateSuppression, MessageTemplate
 from apps.domains.messaging.permissions import can_manage_messaging_settings
 from apps.domains.messaging.serializers import (
-    MessageTemplateSerializer, template_delete_block_reason,
+    MessageTemplateConflict, MessageTemplateSerializer, template_delete_block_reason,
 )
 
 
@@ -77,6 +77,20 @@ class MessageTemplateDetailView(APIView):
             context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
         ).data)
 
+    @extend_schema(
+        request=MessageTemplateSerializer,
+        responses={
+            200: MessageTemplateSerializer,
+            400: None,
+            403: None,
+            404: None,
+            409: inline_serializer(name="MessageTemplateConflictResponse", fields={
+                "code": serializers.CharField(),
+                "detail": serializers.CharField(),
+                "current_template": MessageTemplateSerializer(),
+            }),
+        },
+    )
     def patch(self, request, pk):
         template = self._get_template(request, pk)
         if not template:
@@ -91,7 +105,16 @@ class MessageTemplateDetailView(APIView):
             context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
         )
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        try:
+            serializer.save()
+        except MessageTemplateConflict as conflict:
+            return Response({
+                "code": "template_conflict",
+                "detail": str(conflict.detail),
+                "current_template": MessageTemplateSerializer(
+                    conflict.template, context=serializer.context,
+                ).data,
+            }, status=status.HTTP_409_CONFLICT)
         data = serializer.data
         used_variables = set(re.findall(r"#\{([^}]+)\}", serializer.instance.body or ""))
         known_variables = {
