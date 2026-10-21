@@ -59,7 +59,13 @@ class OmrSubjectiveCompletionState:
 
     @property
     def pending(self) -> bool:
-        return bool((self.is_omr or self.is_online) and not self.projection_ready)
+        # A corrupt ONLINE reference to another tenant/student must not change
+        # the status of this canonical result. The existing paper safety policy
+        # remains fail-closed, and finalization still rejects invalid scopes.
+        return bool(
+            (self.is_omr or (self.is_online and self.scope_valid))
+            and not self.projection_ready
+        )
 
 
 @dataclass(frozen=True)

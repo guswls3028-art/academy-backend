@@ -430,7 +430,7 @@ class SubmissionScopeGuardTests(TestCase):
         self.assertEqual(float(result.total_score), 95.0)
         self.assertEqual(float(result.max_score), 100.0)
 
-    def test_sync_preserves_manual_subjective_score_and_skips_essay_result_items(self):
+    def test_sync_preserves_manual_subjective_score_and_pending_online_answer(self):
         exam, choice, essay = self._create_mixed_exam()
         submission = self._submission_for_exam(exam, choice, answer="1")
 
@@ -439,16 +439,18 @@ class SubmissionScopeGuardTests(TestCase):
         self.assertEqual(float(result.total_score), 80.0)
         self.assertEqual(float(result.max_score), 100.0)
         self.assertTrue(ResultItem.objects.filter(result=result, question=choice).exists())
-        self.assertFalse(ResultItem.objects.filter(result=result, question=essay).exists())
+        pending = ResultItem.objects.get(result=result, question=essay)
+        self.assertEqual(pending.source, "online_pending")
+        self.assertEqual(pending.answer, "")
+        self.assertEqual(pending.score, 0)
 
-        ResultItem.objects.create(
+        ResultItem.objects.update_or_create(
             result=result,
             question=essay,
-            answer="manual",
-            is_correct=True,
-            score=15.0,
-            max_score=20.0,
-            source="manual",
+            defaults={
+                "answer": "manual", "is_correct": True, "score": 15.0,
+                "max_score": 20.0, "source": "manual",
+            },
         )
         result.total_score = 95.0
         result.objective_score = 80.0
