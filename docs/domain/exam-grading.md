@@ -1084,3 +1084,31 @@ ID이고 `total`은 해당 필터 전체 건수다. 식별되지 않은 답안, 
 여러 묶음을 조회할 때 `include_unbound=0`으로 중복 합산을 피한다.
 `focus_id`는 성적표에서 특정 미해결 답안으로 이동할 때 사용한다. 잘못된
 필터는 400으로 실패하며 목록 조회 실패는 성적표 출력을 잠근다.
+
+### 온라인 제출의 준비 검사·재시도·서술형 채점
+
+학생과 선택 자녀의 온라인 제출은 기존 tenant·시험 배정·활성 수강 권한을
+확인한 뒤 자동채점할 모든 문항의 정답을 검사한다. 정답지가 없거나 선택형
+정답이 일부 누락되면 409와 교사 확인 안내를 반환하며 제출이나 0점 성적을
+만들지 않는다. 일반 서술형은 교사가 채점하므로 정답값이 없어도 된다.
+숫자 단답은 기존 판별 계약을 유지하며 정답 `0`도 유효하다.
+
+동기 채점 오류는 답안 payload를 보존한 `failed` 제출로 기록한다. 과거 장애로
+`submitted`에 남은 온라인 행은 30분 이상 지났고 연결된 ExamAttempt가 없는
+경우 같은 시험·수강의 명시적 재제출에서만 실패로 전환한다. 최근 처리 중인
+제출과 채점된 시도는 보호한다. 재응시는 성공한 뒤 이전 `done` 제출을 대체하므로
+새 채점 실패로 기존 성적을 무효화하지 않는다. 목록·상세의 attempt_count는
+응시 이력의 attempt_index를 사용하며 전송 실패 횟수는 포함하지 않는다.
+
+일반 서술형은 4,000자까지 받고 원문을 SubmissionAnswer와 ResultItem에 유지한다.
+채점 전 source는 `online_pending`이며 교직원 상세와 직접 채점 표에는 원문과
+null 점수·정오를 반환한다. DB의 임시 0은 확정 점수가 아니다. 학생 결과·성적표·
+집계는 완료 전 `subjective_pending`으로 보류한다. 교사는 기존 직접 채점 API에서
+명시적 0점 또는 부분점수를 저장하며 모든 필수 서술형이 채점되면 공개 가능
+상태로 전환한다. 동일 시도 재채점은 교사 점수와 원문을 보존한다. 기존 결과를
+일괄 덮어쓰는 데이터 변경은 없다.
+
+검증: `test_online_submission_recovery`, `test_online_assessment_totals`,
+`test_parent_exam_child_selection`, `test_manual_exam_grading`.
+화면·격리 실사용은 frontend `STUDENT-PARENT-APP-CONTRACT.md`와
+`GRADING-WRONG-NOTE-WORKFLOW.md`가 소유한다.

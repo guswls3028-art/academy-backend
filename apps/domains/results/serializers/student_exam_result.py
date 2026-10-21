@@ -11,6 +11,12 @@ class ResultItemSerializer(serializers.ModelSerializer):
     """
     question_id = serializers.IntegerField(read_only=True)
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if instance.source == "online_pending":
+            data.update(score=None, is_correct=None, grading_status="pending")
+        return data
+
     class Meta:
         model = ResultItem
         fields = [

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
-from django.db.models import F, Q, Subquery, Value
+from django.db.models import F, Max, Q, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -174,9 +174,10 @@ def submission_status_map_for_student_exams(*, tenant, student, exams, current_c
             int(target_id),
             {"has_result": False, "attempt_count": 0, "submission_pending": False},
         )
-        entry["attempt_count"] = int(entry["attempt_count"]) + 1
         if sub_status == Submission.Status.DONE:
             entry["has_result"] = True
+            # Legacy completed submissions may predate canonical attempts.
+            entry["attempt_count"] = max(int(entry["attempt_count"]), 1)
         if sub_status in {
             Submission.Status.SUBMITTED,
             Submission.Status.DISPATCHED,
@@ -185,6 +186,20 @@ def submission_status_map_for_student_exams(*, tenant, student, exams, current_c
             Submission.Status.GRADING,
         }:
             entry["submission_pending"] = True
+    from apps.domains.results.models import ExamAttempt
+
+    for row in ExamAttempt.objects.filter(
+        exam_id__in=exam_ids,
+        enrollment_id__in=enrollment_ids,
+        enrollment__tenant=tenant,
+    ).filter(
+        Q(meta__status__isnull=True) | ~Q(meta__status="NOT_SUBMITTED"),
+    ).values("exam_id").annotate(attempt_count=Max("attempt_index")):
+        entry = submission_status_map.setdefault(
+            int(row["exam_id"]),
+            {"has_result": False, "attempt_count": 0, "submission_pending": False},
+        )
+        entry["attempt_count"] = max(int(entry["attempt_count"]), int(row["attempt_count"]))
     return submission_status_map
 
 
@@ -257,6 +272,10 @@ def normalize_student_exam_answers(*, exam, answers) -> list[dict[str, int | str
         seen_question_ids.add(question_id)
 
         answer = str(raw_answer.get("answer", "")).strip()
+        if question["question_kind"] == "essay" and len(answer) > 4000:
+            raise StudentExamSubmitError(
+                f"{question['number']}번 서술형 답은 4,000자 이내로 입력해 주세요.", 400,
+            )
         if question["answer_format"] == NUMERIC_SHORT_ANSWER_FORMAT:
             answer = normalize_numeric_short_answer(answer)
             if answer is None:
@@ -331,9 +350,10 @@ def create_online_exam_submission(
     from apps.domains.submissions.models import Submission
     from apps.domains.submissions.services.lifecycle import (
         IN_PROGRESS_STATUSES,
-        supersede_done_submissions,
+        fail_submission,
     )
 
+    validate_online_exam_readiness(exam)
     try:
         with transaction.atomic():
             ExamEnrollment.objects.select_for_update().only("id").get(
@@ -353,6 +373,22 @@ def create_online_exam_submission(
                     status__in=[*IN_PROGRESS_STATUSES, Submission.Status.DONE],
                 )
             )
+            # Older synchronous dispatch failures rolled back to SUBMITTED.
+            # An explicit retry may retire only this student's stale, ungraded
+            # ONLINE record, preserving its payload and every scored attempt.
+            stale_before = timezone.now() - timedelta(minutes=30)
+            for previous in prev_submissions:
+                if (
+                    previous.source == Submission.Source.ONLINE
+                    and previous.status == Submission.Status.SUBMITTED
+                    and previous.updated_at < stale_before
+                    and not ExamAttempt.objects.filter(submission_id=previous.id).exists()
+                ):
+                    fail_submission(
+                        previous,
+                        error_message="이전 답안의 처리가 완료되지 않아 다시 제출했습니다.",
+                        actor="student.exam_submit.stale_online_retry",
+                    )
             in_progress = [s for s in prev_submissions if s.status in IN_PROGRESS_STATUSES]
             done_submissions = [s for s in prev_submissions if s.status == Submission.Status.DONE]
 
@@ -365,10 +401,6 @@ def create_online_exam_submission(
                 attempt_count = max(attempt_indexes, default=len(done_submissions))
                 if not allow_retake or attempt_count >= max_attempts:
                     raise StudentExamSubmitError("재응시가 허용되지 않는 시험입니다.", 409)
-                supersede_done_submissions(
-                    Submission.objects.filter(id__in=[s.id for s in done_submissions]),
-                    actor="student.exam_submit.retake",
-                )
 
             submission_user = request_student.user if request_student.user_id else request_user
             submission_meta = None
@@ -392,6 +424,48 @@ def create_online_exam_submission(
 
 
 def dispatch_student_exam_submission(submission) -> None:
-    from apps.domains.submissions.services.dispatcher import dispatch_submission
+    from django.db import transaction
 
-    dispatch_submission(submission)
+    from apps.domains.submissions.models import Submission
+    from apps.domains.submissions.services.dispatcher import dispatch_submission
+    from apps.domains.submissions.services.lifecycle import supersede_done_submissions
+
+    with transaction.atomic():
+        dispatch_submission(submission)
+        submission.refresh_from_db(fields=["status"])
+        if submission.status == Submission.Status.DONE:
+            supersede_done_submissions(
+                Submission.objects.filter(
+                    tenant_id=submission.tenant_id,
+                    enrollment_id=submission.enrollment_id,
+                    target_type=submission.target_type,
+                    target_id=submission.target_id,
+                ).exclude(pk=submission.pk),
+                actor="student.exam_submit.retake",
+            )
+
+
+def validate_online_exam_readiness(exam) -> None:
+    """Missing automatic keys are setup errors, never student zero scores."""
+    from django.core.exceptions import ValidationError
+
+    from apps.domains.results.guards.grading_contract import GradingContractGuard
+
+    try:
+        GradingContractGuard.validate_exam_for_grading(exam, require_online_answers=True)
+    except ValidationError as exc:
+        raise StudentExamSubmitError(
+            "시험의 문항·정답 준비가 완료되지 않았습니다. 선생님 확인 후 다시 제출해 주세요.",
+            409,
+        ) from exc
+
+
+def fail_student_exam_submission(submission) -> None:
+    from apps.support.submissions.failure import mark_submission_failed
+
+    mark_submission_failed(
+        int(submission.id),
+        tenant_id=int(submission.tenant_id),
+        error_message="답안 채점 처리에 실패했습니다. 다시 제출해 주세요.",
+        actor="student.exam_submit.dispatch_failed",
+    )

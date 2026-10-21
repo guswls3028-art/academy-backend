@@ -911,7 +911,8 @@ def _item_cell_payload(
     method: str,
 ) -> dict[str, Any]:
     state = None
-    if item is not None:
+    pending = item is not None and item.source == "online_pending"
+    if item is not None and not pending:
         if bool(item.is_correct) and bool(item.include_in_wrong_note):
             state = "review"
         elif bool(item.is_correct):
@@ -922,7 +923,9 @@ def _item_cell_payload(
         "editable": editable,
         "entry_method": method if editable else "omr",
         "state": state,
-        "score": float(item.score or 0.0) if item is not None else None,
+        "score": float(item.score or 0.0) if item is not None and not pending else None,
+        "answer": str(item.answer or "") if item is not None else "",
+        "grading_status": "pending" if pending else "graded" if item is not None else None,
         "include_in_wrong_note": (
             bool(item.include_in_wrong_note) if item is not None else False
         ),
