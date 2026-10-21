@@ -111,6 +111,7 @@ class ParentExamChildSelectionTests(TestCase):
         ExamEnrollment.objects.create(exam=exam, enrollment=enrollment)
         sheet = Sheet.objects.create(exam=exam, name="MAIN", total_questions=1)
         question = ExamQuestion.objects.create(sheet=sheet, number=1, score=10)
+        AnswerKey.objects.create(exam=exam, answers={str(question.id): "1"})
         return exam, enrollment, question
 
     def _request(self, path: str, *, student: Student):
@@ -575,9 +576,9 @@ class ParentExamChildSelectionTests(TestCase):
         sheet.choice_count = 0
         sheet.essay_count = 1
         sheet.save(update_fields=["choice_count", "essay_count", "updated_at"])
-        AnswerKey.objects.create(
+        AnswerKey.objects.update_or_create(
             exam=self.exam_a,
-            answers={str(self.question_a.id): "7"},
+            defaults={"answers": {str(self.question_a.id): "7"}},
         )
 
         questions_response = StudentExamQuestionsView.as_view()(
@@ -622,8 +623,7 @@ class ParentExamChildSelectionTests(TestCase):
         self.assertEqual(submission.payload["answers"][0]["answer"], "7")
         mock_dispatch.assert_called_once()
 
-        # A persisted submission is an attempt before the grading worker finishes.
-        # Both student and selected-child reads drive the dashboard's remaining work.
+        # Pending work hides the submission CTA without consuming a graded attempt.
         student_request = self.factory.get("/student/exams/")
         force_authenticate(student_request, user=self.student_a.user)
         student_request.tenant = self.tenant
@@ -634,7 +634,7 @@ class ParentExamChildSelectionTests(TestCase):
             refreshed = StudentExamListView.as_view()(request)
             self.assertEqual(refreshed.status_code, 200, refreshed.data)
             row = next(item for item in refreshed.data["items"] if item["id"] == self.exam_a.id)
-            self.assertEqual(row["attempt_count"], 1)
+            self.assertEqual(row["attempt_count"], 0)
             self.assertFalse(row["has_result"])
             self.assertTrue(row["submission_pending"])
         other_child = StudentExamListView.as_view()(
@@ -695,6 +695,7 @@ class ParentExamChildSelectionTests(TestCase):
         sheet = Sheet.objects.create(exam=exam, name="MAIN", total_questions=1)
         question = ExamQuestion.objects.create(sheet=sheet, number=1, score=10)
         view = StudentExamSubmitView.as_view()
+        AnswerKey.objects.create(exam=exam, answers={str(question.id): "1"})
 
         response_a = view(
             self._post_request(

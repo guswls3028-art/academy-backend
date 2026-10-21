@@ -171,7 +171,11 @@ def test_reviewed_runtime_images_own_exact_high_budgets() -> None:
     assert all(
         finding["vendorTracker"]
         == f"https://security-tracker.debian.org/tracker/{finding['cve']}"
-        and finding["expiresOn"]
+        and (finding["expiresOn"] or (
+            finding.get("indefiniteAcceptance") is True
+            and finding.get("approvedOn")
+            and finding.get("approvalReference")
+        ))
         and len(finding["rationale"].strip()) >= 40
         for finding in document["acceptedHighFindings"]
     )

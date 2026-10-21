@@ -18,6 +18,8 @@ from apps.domains.results.services.manual_subjective_score import (
     latest_subjective_grading_facts,
 )
 from apps.support.omr.score_shape import get_exam_score_shape
+from apps.support.exams.numeric_short_answer import math_numeric_short_answer_question_ids
+from apps.support.results.admin_exam_result_detail_dependencies import get_answer_key_answers
 from apps.support.results.exam_policy_dependencies import effective_exam_pass_score
 from apps.support.results.omr_subjective_completion_dependencies import (
     enrollments_by_id,
@@ -36,6 +38,7 @@ class OmrSubjectiveCompletionState:
     required_question_ids: frozenset[int]
     completed_question_ids: frozenset[int]
     aggregate_score_recorded: bool
+    is_online: bool = False
 
     @property
     def subjective_complete(self) -> bool:
@@ -48,7 +51,7 @@ class OmrSubjectiveCompletionState:
     @property
     def projection_ready(self) -> bool:
         return bool(
-            self.is_omr
+            (self.is_omr or self.is_online)
             and self.scope_valid
             and not self.manual_review_required
             and self.subjective_complete
@@ -56,7 +59,13 @@ class OmrSubjectiveCompletionState:
 
     @property
     def pending(self) -> bool:
-        return bool(self.is_omr and not self.projection_ready)
+        # A corrupt ONLINE reference to another tenant/student must not change
+        # the status of this canonical result. The existing paper safety policy
+        # remains fail-closed, and finalization still rejects invalid scopes.
+        return bool(
+            (self.is_omr or (self.is_online and self.scope_valid))
+            and not self.projection_ready
+        )
 
 
 @dataclass(frozen=True)
@@ -95,7 +104,11 @@ def _attempt_has_aggregate_subjective_score(attempt: ExamAttempt) -> bool:
 def omr_subjective_completion_states(
     results: Iterable[Result],
 ) -> dict[int, OmrSubjectiveCompletionState]:
-    """Return fail-closed projection readiness for canonical result snapshots."""
+    """Read grading readiness for paper OMR and ONLINE teacher-owned essays.
+
+    Public helper names retain OMR compatibility; both submission sources use
+    the same teacher completion policy, with ONLINE numeric essays automatic.
+    """
 
     result_rows = [result for result in results if result and result.id]
     if not result_rows:
@@ -120,7 +133,7 @@ def omr_subjective_completion_states(
             (attempt := attempts.get(int(result.attempt_id or 0))) is not None
             and (submission := submissions.get(int(attempt.submission_id or 0)))
             is not None
-            and submission.source == "omr_scan"
+            and submission.source in {"omr_scan", "online"}
         )
     }
     omr_exam_ids = {
@@ -144,12 +157,19 @@ def omr_subjective_completion_states(
         completed_by_result[int(result_id)].add(int(question_id))
 
     required_by_exam: dict[int, frozenset[int]] = {}
+    numeric_by_exam: dict[int, set[int]] = {}
     for exam_id, exam in exams.items():
         score_shape = get_exam_score_shape(exam)
         required_by_exam[int(exam_id)] = frozenset(
             int(question_id)
             for question_id, kind in score_shape.question_kind_by_id.items()
             if kind == "essay" and score_shape.subjective_max_score > 0
+        )
+        numeric_by_exam[int(exam_id)] = math_numeric_short_answer_question_ids(
+            exam=exam,
+            question_ids=score_shape.question_kind_by_id,
+            question_kind=score_shape.question_kind,
+            answers=get_answer_key_answers(template_exam_id=score_shape.template_exam_id),
         )
 
     latest_facts = latest_subjective_grading_facts(
@@ -171,8 +191,9 @@ def omr_subjective_completion_states(
             submission is not None
             and submission.source == "omr_scan"
         )
+        is_online = bool(submission is not None and submission.source == "online")
         scope_valid = bool(
-            is_omr
+            (is_omr or is_online)
             and result.target_type == "exam"
             and attempt is not None
             and exam is not None
@@ -206,11 +227,13 @@ def omr_subjective_completion_states(
             result_id=int(result.id),
             submission_id=int(submission.id) if submission is not None else None,
             is_omr=is_omr,
+            is_online=is_online,
             scope_valid=scope_valid,
             manual_review_required=bool(manual_review.get("required") is True),
             required_question_ids=(
                 required_by_exam.get(int(result.target_id), frozenset())
-                if is_omr
+                - (numeric_by_exam.get(int(result.target_id), set()) if is_online else set())
+                if is_omr or is_online
                 else frozenset()
             ),
             completed_question_ids=frozenset(
@@ -283,7 +306,7 @@ def finalize_omr_result_if_ready(*, result_id: int) -> OmrFinalizationDecision:
     if result.attempt_id:
         ExamAttempt.objects.select_for_update().get(id=int(result.attempt_id))
     state = omr_subjective_completion_states([result])[int(result.id)]
-    if not state.is_omr:
+    if not state.is_omr and not state.is_online:
         return OmrFinalizationDecision(projection_ready=True, transitioned=False)
     if not state.scope_valid:
         return OmrFinalizationDecision(

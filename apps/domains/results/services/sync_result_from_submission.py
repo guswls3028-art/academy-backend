@@ -494,6 +494,30 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
                 "source": item["source"],
             },
         )
+    if submission.source == "online":
+        # Preserve the written response independently of its teacher-owned
+        # score. Do not create a grading fact or overwrite this attempt's
+        # explicit manual marks when an automatic regrade runs later.
+        for q in questions:
+            qid = int(q.id)
+            if qid not in essay_question_ids or qid in numeric_short_answer_ids:
+                continue
+            if preserve_existing_subjective and ResultItem.objects.filter(
+                result=result, question_id=qid, source__in=["manual", "manual_grid"],
+            ).exists():
+                continue
+            ResultItem.objects.update_or_create(
+                result=result,
+                question_id=qid,
+                defaults={
+                    "answer": answers_map.get(qid, ""),
+                    "is_correct": False,
+                    "include_in_wrong_note": False,
+                    "score": 0.0,
+                    "max_score": float(score_shape.question_max_score(qid, q.score)),
+                    "source": "online_pending",
+                },
+            )
     result.total_score = result_total
     result.max_score = result_max_score
     result.objective_score = total  # 자동채점 문항 합산 = objective score
