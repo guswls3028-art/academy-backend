@@ -3,6 +3,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.apps import apps
+from django.db import OperationalError
 from django.test import TestCase
 from django.urls import resolve
 from django.utils import timezone
@@ -83,6 +84,8 @@ class OnlineSubmissionRecoveryTests(TestCase):
         self.assertEqual(pending.payload, {"answers": []})
 
     def test_failed_records_do_not_consume_retakes_and_limit_still_applies(self):
+        from apps.support.submissions.dependencies import grade_submission_objective
+
         self.exam.allow_retake = True
         self.exam.max_attempts = 2
         self.exam.save(update_fields=["allow_retake", "max_attempts"])
@@ -92,11 +95,26 @@ class OnlineSubmissionRecoveryTests(TestCase):
         result = self.call(f"/api/v1/student/results/me/exams/{self.exam.pk}/")
         self.assertEqual(detail.data["attempt_count"], 1)
         self.assertTrue(result.data["can_retake"])
-        with patch("apps.domains.submissions.services.dispatcher.dispatch_submission",
-                   side_effect=RuntimeError("injected retake failure")):
+        original_items = list(ResultItem.objects.filter(result=self.result).order_by("pk").values())
+
+        def fail_after_grading(submission_id):
+            grade_submission_objective(submission_id)
+            raise OperationalError("injected database failure after retake grading")
+
+        with patch("apps.domains.submissions.services.dispatcher.grade_submission_objective",
+                   side_effect=fail_after_grading):
             self.assertEqual(self.submit().status_code, 500)
         self.submission.refresh_from_db()
         self.assertEqual(self.submission.status, "done")
+        self.assertEqual(
+            list(ResultItem.objects.filter(result=self.result).order_by("pk").values()),
+            original_items,
+        )
+        failed = type(self.submission).objects.filter(status="failed").latest("id")
+        self.assertEqual(failed.payload["answers"], [
+            {"exam_question_id": q.pk, "answer": str(q.number)} for q in self.questions
+        ])
+        self.assertEqual(self.call(f"/api/v1/student/exams/{self.exam.pk}/").data["attempt_count"], 1)
         self.assertEqual(self.call(f"/api/v1/student/results/me/exams/{self.exam.pk}/").data["total_score"], 60)
         self.assertEqual(self.submit().status_code, 201)
         self.assertEqual(self.call(f"/api/v1/student/exams/{self.exam.pk}/").data["attempt_count"], 2)
