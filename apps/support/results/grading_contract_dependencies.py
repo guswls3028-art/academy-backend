@@ -7,7 +7,7 @@ from typing import Any
 from django.core.exceptions import ValidationError
 
 
-def validate_exam_grading_contract(exam: Any) -> tuple[Any, Any]:
+def validate_exam_grading_contract(exam: Any, *, require_online_answers: bool = False) -> tuple[Any, Any]:
     from apps.domains.exams.models import Exam
     from apps.domains.exams.models.answer_key import AnswerKey
     from apps.domains.exams.models.sheet import Sheet
@@ -48,5 +48,29 @@ def validate_exam_grading_contract(exam: Any) -> tuple[Any, Any]:
 
     if unknown_key_ids:
         raise ValidationError("answer_key contains unknown question ids")
+
+    if require_online_answers:
+        from apps.support.omr.score_shape import get_exam_score_shape
+        from apps.support.exams.numeric_short_answer import math_numeric_short_answer_question_ids
+
+        shape = get_exam_score_shape(exam)
+        numeric_ids = math_numeric_short_answer_question_ids(
+            exam=exam,
+            question_ids=question_ids,
+            question_kind=shape.question_kind,
+            answers=answer_key.answers,
+        )
+
+        def online_answer_present(value: Any) -> bool:
+            if isinstance(value, list):
+                return any(online_answer_present(item) for item in value)
+            return value is not None and bool(str(value).strip())
+
+        if not question_ids or any(
+            (shape.question_kind(question_id) != "essay" or question_id in numeric_ids)
+            and not online_answer_present(answer_key.answers.get(str(question_id), answer_key.answers.get(question_id)))
+            for question_id in question_ids
+        ):
+            raise ValidationError("online automatic questions require complete answer keys")
 
     return sheet, answer_key

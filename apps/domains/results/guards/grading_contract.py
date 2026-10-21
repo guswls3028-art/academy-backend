@@ -17,5 +17,5 @@ class GradingContractGuard:
     """
 
     @staticmethod
-    def validate_exam_for_grading(exam: Any) -> tuple[Any, Any]:
-        return validate_exam_grading_contract(exam)
+    def validate_exam_for_grading(exam: Any, *, require_online_answers: bool = False) -> tuple[Any, Any]:
+        return validate_exam_grading_contract(exam, require_online_answers=require_online_answers)
