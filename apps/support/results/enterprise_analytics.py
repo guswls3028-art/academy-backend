@@ -718,7 +718,10 @@ def build_student_enterprise_analytics(*, tenant: Any, student: Any, days: int =
 
     graded_homeworks = [h for h in homeworks if h.get("score") is not None]
     homework_score_pcts = [
-        pct for pct in (_score_pct(h.get("score"), h.get("max_score")) for h in graded_homeworks) if pct is not None
+        pct for pct in (
+            _score_pct(h.get("score"), h.get("max_score"))
+            for h in graded_homeworks if h.get("grading_mode") != "COMPLETION"
+        ) if pct is not None
     ]
     homework_pass_count = sum(1 for h in graded_homeworks if h.get("achievement") in ("PASS", "REMEDIATED") or h.get("passed"))
 

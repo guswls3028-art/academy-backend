@@ -348,6 +348,10 @@ Aggregation
 학생/학부모용 `GET /student/grades/analytics/`이며, 학생/학부모는 선택된 학생 1명만 조회한다.
 학생/학부모 분석의 `date_range.days`는 시험 수·득점률·합격률·미응시·오답·과제
 지표 전체에 동일하게 적용되며, 기간을 판정할 기록 시각이 없는 행은 기간 분석에서 제외한다.
+과제 `avg_score_pct`는 SCORE의 실제 입력 점수만 평균하며 0점도 포함한다.
+COMPLETION의 내부 O/X 저장 값 0/1은 숫자 평균에서 제외하고 점수형 입력이 없으면
+평균은 null이다. `assigned_count`, `graded_count`, `pass_rate_pct`는 기존대로
+합불형도 포함하며 교사 처리·미판정 정책과 원본 성적은 변경하지 않는다.
 
 학생별 누적 시험 추이는 관리자·선생 공용 BFF
 `GET /results/admin/student-grades/?student_id=<id>`와 학생·학부모 공용 BFF

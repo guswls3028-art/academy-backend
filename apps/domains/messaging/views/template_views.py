@@ -15,6 +15,7 @@ from apps.domains.messaging.default_templates import default_template_key_for_na
 from apps.domains.messaging.models import DefaultTemplateSuppression, MessageTemplate
 from apps.domains.messaging.permissions import can_manage_messaging_settings
 from apps.domains.messaging.serializers import (
+    MessageTemplateConflict, MessageTemplateCreateConflict, MessageTemplateCreateResponseSerializer,
     MessageTemplateSerializer, template_delete_block_reason,
 )
 
@@ -23,6 +24,16 @@ COPY_PREFIX = "복사 - "
 COPY_PREFIX_RE = re.compile(r"^(?:복사\s*-\s*)+")
 LEGACY_COPY_SUFFIX_RE = re.compile(r"(?:\s*\(복사본\))+$")
 MAX_TEMPLATE_NAME_LENGTH = 120
+
+# Reuse the existing template schema so its category enum has one owner.
+_TEMPLATE_CREATE_RESPONSE = {
+    "allOf": [
+        {"$ref": "#/components/schemas/MessageTemplate"},
+        {"type": "object", "properties": {
+            "creation_content_changed": {"type": "boolean", "readOnly": True},
+        }, "required": ["creation_content_changed"]},
+    ],
+}
 
 
 def build_duplicate_template_name(source_name: str) -> str:
@@ -49,14 +60,33 @@ class MessageTemplateListCreateView(APIView):
             context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
         ).data)
 
+    @extend_schema(
+        request=MessageTemplateSerializer,
+        responses={
+            200: _TEMPLATE_CREATE_RESPONSE,
+            201: _TEMPLATE_CREATE_RESPONSE,
+            400: None,
+            409: inline_serializer(name="MessageTemplateCreateConflictResponse", fields={
+                "code": serializers.CharField(), "detail": serializers.CharField(),
+            }),
+        },
+    )
     def post(self, request):
         serializer = MessageTemplateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save(tenant=request.tenant, is_system=False)
-        return Response(MessageTemplateSerializer(
+        try:
+            serializer.save(tenant=request.tenant, is_system=False)
+        except MessageTemplateCreateConflict as conflict:
+            return Response({"code": conflict.code, "detail": str(conflict.detail)},
+                            status=status.HTTP_409_CONFLICT)
+        return Response(MessageTemplateCreateResponseSerializer(
             serializer.instance,
-            context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
-        ).data, status=status.HTTP_201_CREATED)
+            context={
+                "can_manage_system": can_manage_messaging_settings(request, request.tenant),
+                "creation_content_changed": getattr(serializer, "creation_content_changed", False),
+            },
+        ).data, status=status.HTTP_200_OK if getattr(serializer, "creation_replayed", False)
+            else status.HTTP_201_CREATED)
 
 
 class MessageTemplateDetailView(APIView):
@@ -77,6 +107,20 @@ class MessageTemplateDetailView(APIView):
             context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
         ).data)
 
+    @extend_schema(
+        request=MessageTemplateSerializer,
+        responses={
+            200: MessageTemplateSerializer,
+            400: None,
+            403: None,
+            404: None,
+            409: inline_serializer(name="MessageTemplateConflictResponse", fields={
+                "code": serializers.CharField(),
+                "detail": serializers.CharField(),
+                "current_template": MessageTemplateSerializer(),
+            }),
+        },
+    )
     def patch(self, request, pk):
         template = self._get_template(request, pk)
         if not template:
@@ -91,7 +135,16 @@ class MessageTemplateDetailView(APIView):
             context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
         )
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        try:
+            serializer.save()
+        except MessageTemplateConflict as conflict:
+            return Response({
+                "code": "template_conflict",
+                "detail": str(conflict.detail),
+                "current_template": MessageTemplateSerializer(
+                    conflict.template, context=serializer.context,
+                ).data,
+            }, status=status.HTTP_409_CONFLICT)
         data = serializer.data
         used_variables = set(re.findall(r"#\{([^}]+)\}", serializer.instance.body or ""))
         known_variables = {

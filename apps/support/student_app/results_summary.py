@@ -269,6 +269,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         exam
         for exam in exam_list
         if exam.get("grading_status") != "subjective_pending"
+        and not exam.get("is_provisional")
     ]
     exam_ids = [int(exam["exam_id"]) for exam in ready_exams]
     result_ids = [int(exam["_result_id"]) for exam in ready_exams]
@@ -331,7 +332,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         exam_id = int(exam["exam_id"])
         enrollment_id = int(exam["enrollment_id"])
         exam["submission_pending"] = (enrollment_id, exam_id) in pending_exam_keys
-        if exam.get("grading_status") == "subjective_pending":
+        if exam.get("grading_status") == "subjective_pending" or exam.get("is_provisional"):
             exam.update({
                 "rank": None,
                 "percentile": None,

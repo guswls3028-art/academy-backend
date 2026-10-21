@@ -6454,12 +6454,88 @@
         ],
         "type": "string"
       },
+      "MessageTemplateConflictResponse": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "current_template": {
+            "$ref": "#/components/schemas/MessageTemplate"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "current_template",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "MessageTemplateCreateConflictResponse": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "detail"
+        ],
+        "type": "object"
+      },
       "MessageTemplateDefaultRequestRequest": {
         "properties": {
           "is_user_default": {
             "type": "boolean"
           }
         },
+        "type": "object"
+      },
+      "MessageTemplateRequest": {
+        "properties": {
+          "body": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "category": {
+            "$ref": "#/components/schemas/MessageTemplateCategoryEnum"
+          },
+          "client_request_id": {
+            "format": "uuid",
+            "type": "string",
+            "writeOnly": true
+          },
+          "expected_updated_at": {
+            "format": "date-time",
+            "type": "string",
+            "writeOnly": true
+          },
+          "is_user_default": {
+            "description": "사용자가 해당 카테고리에서 기본 양식으로 지정한 템플릿. tenant+category당 1개만.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "템플릿 이름",
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "subject": {
+            "description": "제목(선택)",
+            "maxLength": 200,
+            "type": "string"
+          }
+        },
+        "required": [
+          "body",
+          "name"
+        ],
         "type": "object"
       },
       "MessagingInfo": {
@@ -9965,6 +10041,44 @@
           },
           "title": {
             "maxLength": 255,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedMessageTemplateRequest": {
+        "properties": {
+          "body": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "category": {
+            "$ref": "#/components/schemas/MessageTemplateCategoryEnum"
+          },
+          "client_request_id": {
+            "format": "uuid",
+            "type": "string",
+            "writeOnly": true
+          },
+          "expected_updated_at": {
+            "format": "date-time",
+            "type": "string",
+            "writeOnly": true
+          },
+          "is_user_default": {
+            "description": "사용자가 해당 카테고리에서 기본 양식으로 지정한 템플릿. tenant+category당 1개만.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "템플릿 이름",
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "subject": {
+            "description": "제목(선택)",
+            "maxLength": 200,
             "type": "string"
           }
         },
@@ -32293,36 +32407,6 @@
       }
     },
     "/api/v1/homework/policies/{id}/": {
-      "delete": {
-        "operationId": "homework_policies_destroy",
-        "parameters": [
-          {
-            "description": "homework policy을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "No response body"
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "homework"
-        ]
-      },
       "get": {
         "operationId": "homework_policies_retrieve",
         "parameters": [
@@ -32388,62 +32472,6 @@
             "multipart/form-data": {
               "schema": {
                 "$ref": "#/components/schemas/PatchedHomeworkPolicyRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HomeworkPolicy"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "homework"
-        ]
-      },
-      "put": {
-        "operationId": "homework_policies_update",
-        "parameters": [
-          {
-            "description": "homework policy을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkPolicyRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkPolicyRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkPolicyRequest"
               }
             }
           }
@@ -41693,9 +41721,91 @@
       "post": {
         "description": "GET: 문구 목록. POST: 사용자 문구 생성.",
         "operationId": "messaging_templates_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageTemplateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageTemplateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageTemplateRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/MessageTemplate"
+                    },
+                    {
+                      "properties": {
+                        "creation_content_changed": {
+                          "readOnly": true,
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "creation_content_changed"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/MessageTemplate"
+                    },
+                    {
+                      "properties": {
+                        "creation_content_changed": {
+                          "readOnly": true,
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "creation_content_changed"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
             "description": "No response body"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageTemplateCreateConflictResponse"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -41807,9 +41917,54 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedMessageTemplateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedMessageTemplateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedMessageTemplateRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageTemplate"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
             "description": "No response body"
+          },
+          "403": {
+            "description": "No response body"
+          },
+          "404": {
+            "description": "No response body"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageTemplateConflictResponse"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
