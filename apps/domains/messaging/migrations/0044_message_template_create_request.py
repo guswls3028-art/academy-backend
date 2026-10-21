@@ -6,6 +6,62 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
+def install_receipt_delete_actions(apps, schema_editor):
+    """Old app collectors do not know this new table during a rolling upgrade."""
+    receipt = apps.get_model("messaging", "MessageTemplateCreateRequest")
+    table = receipt._meta.db_table
+    quote = schema_editor.quote_name
+    actions = (("template", "SET NULL"), ("tenant", "CASCADE"))
+    if schema_editor.connection.vendor == "postgresql":
+        # This migration creates only the receipt table. Django defers its FKs
+        # and indexes until schema-editor exit; materialize them before reading
+        # and replacing the two FK actions, rather than adding duplicate FKs.
+        pending = schema_editor.deferred_sql
+        schema_editor.deferred_sql = []
+        for statement in pending:
+            schema_editor.execute(statement)
+        with schema_editor.connection.cursor() as cursor:
+            constraints = schema_editor.connection.introspection.get_constraints(cursor, table)
+        for field_name, action in actions:
+            field = receipt._meta.get_field(field_name)
+            parent = field.remote_field.model._meta
+            names = [name for name, constraint in constraints.items()
+                     if constraint.get("foreign_key") == (parent.db_table, parent.pk.column)
+                     and constraint.get("columns") == [field.column]]
+            if len(names) != 1:
+                raise RuntimeError("Expected one receipt foreign key per owned relation")
+            name = names[0]
+            schema_editor.execute(f"ALTER TABLE {quote(table)} DROP CONSTRAINT {quote(name)}")
+            schema_editor.execute(
+                f"ALTER TABLE {quote(table)} ADD CONSTRAINT {quote(name)} "
+                f"FOREIGN KEY ({quote(field.column)}) REFERENCES {quote(parent.db_table)} "
+                f"({quote(parent.pk.column)}) ON DELETE {action} DEFERRABLE INITIALLY DEFERRED"
+            )
+    elif schema_editor.connection.vendor == "sqlite":
+        # SQLite cannot ALTER an existing FK action. Keep Django's FK checks and
+        # apply the same actions before their deferred/immediate check completes.
+        for field_name, action in actions:
+            field = receipt._meta.get_field(field_name)
+            parent = field.remote_field.model._meta
+            trigger = quote(f"{table}_{field_name}_delete")
+            statement = (f"UPDATE {quote(table)} SET {quote(field.column)} = NULL"
+                         if action == "SET NULL" else f"DELETE FROM {quote(table)}")
+            schema_editor.execute(
+                f"CREATE TRIGGER {trigger} AFTER DELETE ON {quote(parent.db_table)} "
+                f"BEGIN {statement} WHERE {quote(field.column)} = OLD.{quote(parent.pk.column)}; END"
+            )
+    else:
+        raise RuntimeError("Receipt rolling-delete contract requires PostgreSQL or SQLite")
+
+
+def remove_receipt_delete_actions(apps, schema_editor):
+    if schema_editor.connection.vendor == "sqlite":
+        table = apps.get_model("messaging", "MessageTemplateCreateRequest")._meta.db_table
+        for field_name in ("template", "tenant"):
+            schema_editor.execute(f"DROP TRIGGER IF EXISTS {schema_editor.quote_name(f'{table}_{field_name}_delete')}")
+    # PostgreSQL constraints disappear with this migration's new receipt table.
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -28,4 +84,5 @@ class Migration(migrations.Migration):
                 'constraints': [models.UniqueConstraint(fields=('tenant', 'client_request_id'), name='uniq_template_create_request')],
             },
         ),
+        migrations.RunPython(install_receipt_delete_actions, remove_receipt_delete_actions),
     ]

@@ -41832,7 +41832,23 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MessageTemplate"
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/MessageTemplate"
+                    },
+                    {
+                      "properties": {
+                        "creation_content_changed": {
+                          "readOnly": true,
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "creation_content_changed"
+                      ],
+                      "type": "object"
+                    }
+                  ]
                 }
               }
             },
@@ -41842,7 +41858,23 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MessageTemplate"
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/MessageTemplate"
+                    },
+                    {
+                      "properties": {
+                        "creation_content_changed": {
+                          "readOnly": true,
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "creation_content_changed"
+                      ],
+                      "type": "object"
+                    }
+                  ]
                 }
               }
             },

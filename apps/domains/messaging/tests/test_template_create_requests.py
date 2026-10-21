@@ -46,6 +46,45 @@ class MessageTemplateCreateRequestTests(TemplateCreateFixture, TestCase):
         self.assertEqual(retry.data["updated_at"], first.data["updated_at"])
         self.assertEqual(MessageTemplate.objects.filter(tenant=self.tenant).count(), 1)
 
+    def test_normalized_creation_and_replay_report_no_content_change(self):
+        payload = {**self.payload, "name": "  One save intent  ", "body": "  Saved body\n", "subject": " Subject ", "category": "student"}
+        first = self.call("post", payload)
+        self.assertEqual(first.status_code, 201)
+        self.assertFalse(first.data["creation_content_changed"])
+        self.assertEqual(first.data["name"], "One save intent")
+        self.assertEqual(first.data["body"], "Saved body")
+        self.assertEqual(first.data["subject"], "Subject")
+        self.assertEqual(first.data["category"], "default")
+        retry = self.call("post", payload)
+        self.assertEqual(retry.status_code, 200)
+        self.assertFalse(retry.data["creation_content_changed"])
+        self.assertEqual(retry.data["id"], first.data["id"])
+        self.assertEqual(retry.data["updated_at"], first.data["updated_at"])
+
+    def test_replay_reports_content_changes_for_each_authored_field(self):
+        for field, value in {"name": "Later name", "subject": "Later subject", "body": "Later body", "category": "attendance"}.items():
+            with self.subTest(field=field):
+                payload = {**self.payload, "client_request_id": str(uuid.uuid4())}
+                created = self.call("post", payload)
+                self.assertEqual(created.status_code, 201)
+                detail_path = reverse("messaging-template-detail", kwargs={"pk": created.data["id"]})
+                changed = self.call("patch", {field: value}, path=detail_path)
+                self.assertEqual(changed.status_code, 200)
+                retry = self.call("post", payload)
+                self.assertEqual(retry.status_code, 200)
+                self.assertTrue(retry.data["creation_content_changed"])
+                self.assertEqual(retry.data[field], value)
+                self.assertEqual(retry.data["updated_at"], changed.data["updated_at"])
+
+    def test_default_flag_alone_is_not_a_content_change(self):
+        created = self.call("post", self.payload)
+        default_path = reverse("messaging-template-set-default", kwargs={"pk": created.data["id"]})
+        self.assertEqual(self.call("post", {"is_user_default": True}, path=default_path).status_code, 200)
+        retry = self.call("post", self.payload)
+        self.assertEqual(retry.status_code, 200)
+        self.assertTrue(retry.data["is_user_default"])
+        self.assertFalse(retry.data["creation_content_changed"])
+
     def test_same_key_different_payload_conflicts_without_mutating_saved_template(self):
         first = self.call("post", self.payload)
         self.assertEqual(first.status_code, 201)
@@ -228,3 +267,45 @@ class MessageTemplateCreateRequestMigrationTests(TransactionTestCase):
         legacy = OldTemplate.objects.create(tenant=tenant, name="Old writer after expand", body="Legacy body")
         self.assertEqual(NewTemplate.objects.get(pk=legacy.pk).body, "Legacy body")
         self.assertFalse(Receipt.objects.exists())
+    def _old_model_receipt_fixture(self, code):
+        executor = MigrationExecutor(connection)
+        before = ("messaging", "0043_manualsendrequest")
+        after = ("messaging", "0044_message_template_create_request")
+        if after not in executor.loader.graph.nodes:
+            self.skipTest("Requires the real migration graph, not --nomigrations")
+        old_apps = executor.loader.project_state([before]).apps
+        new_apps = executor.loader.project_state([after]).apps
+        OldTenant = old_apps.get_model("core", "Tenant")
+        OldTemplate = old_apps.get_model("messaging", "MessageTemplate")
+        Receipt = new_apps.get_model("messaging", "MessageTemplateCreateRequest")
+        tenant = OldTenant.objects.create(code=code, name="Historical delete fixture")
+        template = OldTemplate.objects.create(tenant=tenant, name="Created after expand", body="Keep deletion supported")
+        receipt = Receipt.objects.create(tenant_id=tenant.pk, template_id=template.pk,
+            client_request_id=uuid.uuid4(), payload_fingerprint="a" * 64)
+        return tenant, template, receipt
+
+    def test_old_orm_can_delete_a_template_with_new_receipt(self):
+        tenant, template, receipt = self._old_model_receipt_fixture("old-template-delete")
+        template.delete()
+        receipt.refresh_from_db()
+        self.assertIsNone(receipt.template_id)
+        self.assertTrue(type(tenant).objects.filter(pk=tenant.pk).exists())
+
+    def test_old_orm_tenant_cleanup_cascades_new_receipts_only_for_owned_tenant(self):
+        tenant, _, receipt = self._old_model_receipt_fixture("old-tenant-delete")
+        other_tenant, other_template, other_receipt = self._old_model_receipt_fixture("old-tenant-preserve")
+        tenant.delete()
+        self.assertFalse(type(receipt).objects.filter(pk=receipt.pk).exists())
+        self.assertTrue(type(other_receipt).objects.filter(pk=other_receipt.pk, template_id=other_template.pk).exists())
+        self.assertTrue(type(other_tenant).objects.filter(pk=other_tenant.pk).exists())
+
+    def test_sql_deletes_apply_set_null_then_tenant_cascade(self):
+        tenant, template, receipt = self._old_model_receipt_fixture("sql-receipt-delete")
+        quote = connection.ops.quote_name
+        with connection.cursor() as cursor:
+            cursor.execute(f"DELETE FROM {quote(template._meta.db_table)} WHERE id = %s", [template.pk])
+        receipt.refresh_from_db()
+        self.assertIsNone(receipt.template_id)
+        with connection.cursor() as cursor:
+            cursor.execute(f"DELETE FROM {quote(tenant._meta.db_table)} WHERE id = %s", [tenant.pk])
+        self.assertFalse(type(receipt).objects.filter(pk=receipt.pk).exists())

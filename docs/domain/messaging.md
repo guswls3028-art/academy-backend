@@ -51,6 +51,10 @@
 receipt에 저장하지 않는다. 첫 생성은 201, 같은 key/최초 payload 재시도는 같은
 문구 ID의 **현재 저장 상태**를 200으로 반환한다. 그 사이 다른 직원이 수정한
 본문·분류·기본 지정은 원래 생성 payload로 되돌리지 않으며 수정 시각도 바꾸지 않는다.
+POST 응답의 `creation_content_changed`는 최초 생성 시 false이며, replay에서는 최초
+정규화된 name/subject/body/category와 현재 문구가 다를 때만 true다. 앞뒤 공백 제거·분류
+alias 정상화와 기본 지정 flag만의 변화는 내용 충돌이 아니다. 편집기는 이 서버 판정을
+사용해 true일 때 원래 초안과 최신 문구를 비교하고 자동 기본 지정을 보류한다.
 
 같은 key의 다른 payload는 `409 template_request_conflict`이며, 문구가 명시적으로
 삭제됐다면 receipt의 연결만 null로 남겨 `409 template_create_deleted`로 응답한다.
@@ -61,7 +65,11 @@ receipt에 저장하지 않는다. 첫 생성은 201, 같은 key/최초 payload 
 
 0044 expand migration은 receipt 표와 tenant/key 유일 제약만 추가한다. 기존 문구를
 변경하거나 과거 요청을 추정하지 않으며 이전 앱은 새 표 없이 기존 계약으로 동작한다.
-문구 삭제는 receipt tombstone을 남기고 학원 삭제는 receipt도 제거한다. 새 코드를
+문구 삭제는 receipt tombstone을 남기고 학원 삭제는 receipt도 제거한다. rolling 중
+receipt 모델을 모르는 구버전 collector/SQL 삭제도 지원하도록 PostgreSQL의 새 표 FK는
+DB 수준 `ON DELETE SET NULL`/`CASCADE`를 사용한다. SQLite 검증 DB는 기존 FK를
+유지하며 동일 동작의 삭제 trigger를 설치한다. 현재 ORM collector에도 같은 삭제
+정책을 유지한다. migration 역방향은 trigger를 제거한 뒤 새 표만 제거한다. 새 코드를
 쓰기 전 migration을 적용하고 코드 rollback 시 새 표는 보존한다. 이 migration을
 되돌리면 새 요청 재시도 증거가 사라지므로 제품 rollback의 필수 단계가 아니다.
 회귀는 commit 후 동일 재시도·이후 편집/기본 지정 보존·다른 payload 409·삭제 뒤

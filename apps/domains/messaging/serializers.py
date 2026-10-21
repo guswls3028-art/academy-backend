@@ -184,6 +184,10 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
                     if receipt.template.tenant_id != validated_data["tenant"].pk:
                         raise MessageTemplateCreateConflict()
                     self.creation_replayed = True
+                    self.creation_content_changed = any(
+                        getattr(receipt.template, key) != payload[key]
+                        for key in ("name", "subject", "body", "category")
+                    )
                     return receipt.template
             if validated_data.get("is_user_default", False):
                 MessageTemplate.objects.filter(
@@ -319,6 +323,16 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
 )
 class ManualSendRecipientScopeField(serializers.ChoiceField):
     """Document supported scopes while preserving the legacy staff rejection."""
+
+
+class MessageTemplateCreateResponseSerializer(MessageTemplateSerializer):
+    creation_content_changed = serializers.SerializerMethodField()
+
+    class Meta(MessageTemplateSerializer.Meta):
+        fields = [*MessageTemplateSerializer.Meta.fields, "creation_content_changed"]
+
+    def get_creation_content_changed(self, _obj) -> bool:
+        return bool(self.context.get("creation_content_changed", False))
 
 
 class SendMessageRequestSerializer(serializers.Serializer):
