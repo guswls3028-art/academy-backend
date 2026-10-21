@@ -81,6 +81,103 @@ class OnlineAssessmentTotalsTests(TestCase):
     def _score_row(self):
         return next(row for row in self._score_rows() if row["enrollment_id"] == self.enrollment.pk)
 
+    def _published_grades(self, *, parent=False):
+        user = self.user
+        if parent:
+            user = get_user_model().objects.create_user(username="online-total-parent", tenant=self.tenant)
+            TenantMembership.ensure_active(tenant=self.tenant, user=user, role="parent")
+            parent_row = apps.get_model("parents", "Parent").objects.create(
+                tenant=self.tenant, user=user, name="Parent", phone="01011112222")
+            self.student.parent = parent_row
+            self.student.save(update_fields=["parent"])
+        request = self.factory.get("/api/v1/student/grades/", HTTP_X_STUDENT_ID=str(self.student.pk))
+        request.tenant = self.tenant
+        force_authenticate(request, user=user)
+        match = resolve("/api/v1/student/grades/")
+        response = match.func(request, **match.kwargs)
+        self.assertEqual(response.status_code, 200, response.data)
+        return response.data
+
+    def test_published_incomplete_online_is_scoreless_for_student_and_parent_then_recovers(self):
+        self._submit_online()
+        self.exam.student_results_published = False
+        self.exam.save(update_fields=["student_results_published"])
+        self.assertEqual(self._published_grades()["exams"], [])
+        self.exam.student_results_published = True
+        self.exam.save(update_fields=["student_results_published"])
+        complete_breakdown = self.legacy.breakdown.copy()
+        self.legacy.breakdown.pop(next(iter(self.legacy.breakdown)))
+        self.legacy.save(update_fields=["breakdown"])
+        self.assertTrue(self._achievement()["is_provisional"])
+        result_before = Result.objects.filter(pk=self.result.pk).values().get()
+        legacy_before = ExamResult.objects.filter(pk=self.legacy.pk).values().get()
+        staff_request = self.factory.get("/api/v1/results/admin/student-grades/", {"student_id": self.student.pk})
+        staff_request.tenant = self.tenant
+        force_authenticate(staff_request, user=self.staff)
+        staff_match = resolve("/api/v1/results/admin/student-grades/")
+        staff_response = staff_match.func(staff_request, **staff_match.kwargs)
+        self.assertEqual(staff_response.status_code, 200, staff_response.data)
+        self.assertEqual(staff_response.data["exams"][0]["total_score"], 60)
+        self.assertEqual(staff_response.data["exam_summary"]["scored_count"], 1)
+        self.assertEqual(staff_response.data["exam_summary"]["average_score_pct"], 60)
+        self.assertEqual(len(staff_response.data["exam_trend"]), 1)
+        for parent in (False, True):
+            with self.subTest(parent=parent):
+                payload = self._published_grades(parent=parent)
+                exam = payload["exams"][0]
+                self.assertTrue(exam["is_provisional"])
+                self.assertIsNone(exam["total_score"])
+                self.assertIsNone(exam["is_pass"])
+                self.assertIsNone(exam["achievement"])
+                self.assertIsNone(exam["rank"])
+                self.assertEqual(exam["total_questions"], 0)
+                self.assertEqual(exam["wrong_question_numbers"], [])
+                self.assertEqual(payload["exam_summary"]["scored_count"], 0)
+                self.assertEqual(payload["exam_trend"], [])
+        self.assertEqual(Result.objects.filter(pk=self.result.pk).values().get(), result_before)
+        self.assertEqual(ExamResult.objects.filter(pk=self.legacy.pk).values().get(), legacy_before)
+        self.legacy.breakdown = complete_breakdown
+        self.legacy.save(update_fields=["breakdown"])
+        payload = self._published_grades()
+        self.assertFalse(payload["exams"][0]["is_provisional"])
+        self.assertEqual(payload["exams"][0]["total_score"], 60)
+        self.assertEqual(payload["exam_summary"]["scored_count"], 1)
+        self.result.refresh_from_db()
+        self.legacy.refresh_from_db()
+        self.assertEqual(self.result.total_score, 60)
+        self.assertEqual(self.legacy.status, "DRAFT")
+
+    def test_final_manual_grade_remains_published_without_online_snapshot_requirements(self):
+        self._submit_online()
+        self.exam.student_results_published = True
+        self.exam.save(update_fields=["student_results_published"])
+        self.submission.source = "omr_manual"
+        self.submission.save(update_fields=["source"])
+        self.legacy.status = "FINAL"
+        self.legacy.breakdown = {}
+        self.legacy.save(update_fields=["status", "breakdown"])
+        exam = self._published_grades()["exams"][0]
+        self.assertFalse(exam["is_provisional"])
+        self.assertEqual(exam["total_score"], 60)
+        self.assertTrue(exam["is_pass"])
+
+    def test_completed_retake_does_not_publish_incomplete_first_attempt_score(self):
+        self.exam.allow_retake = True
+        self.exam.max_attempts = 2
+        self.exam.student_results_published = True
+        self.exam.save(update_fields=["allow_retake", "max_attempts", "student_results_published"])
+        self._submit_online()
+        first_legacy = self.legacy
+        first_legacy.breakdown.pop(next(iter(first_legacy.breakdown)))
+        first_legacy.save(update_fields=["breakdown"])
+        self._submit_online(answers=["1", "2", "3", "4", "5"], expected_score=100)
+        self.assertTrue(self._achievement()["is_provisional"])
+        payload = self._published_grades()
+        self.assertTrue(payload["exams"][0]["is_provisional"])
+        self.assertIsNone(payload["exams"][0]["total_score"])
+        self.assertEqual(payload["exam_summary"]["scored_count"], 0)
+        self.assertFalse(self._score_row()["exam_total"]["complete"])
+
     def test_online_objective_legacy_draft_is_ready_without_rewriting_history(self):
         self._submit_online()
         before_legacy = ExamResult.objects.filter(pk=self.legacy.pk).values().get()
@@ -118,6 +215,11 @@ class OnlineAssessmentTotalsTests(TestCase):
         total = self._score_row()["exam_total"]
         self.assertFalse(total["complete"])
         self.assertIsNone(total["score"])
+        self.exam.student_results_published = True
+        self.exam.save(update_fields=["student_results_published"])
+        projected = self._published_grades()["exams"][0]
+        self.assertTrue(projected["is_provisional"])
+        self.assertIsNone(projected["total_score"])
 
     def test_incomplete_legacy_breakdown_remains_provisional(self):
         self._submit_online()
@@ -180,6 +282,12 @@ class OnlineAssessmentTotalsTests(TestCase):
         self.assertTrue(total["complete"])
         self.assertEqual(total["score"], 0)
         self.assertEqual(total["scored_count"], 1)
+        self.exam.student_results_published = True
+        self.exam.save(update_fields=["student_results_published"])
+        payload = self._published_grades()
+        self.assertFalse(payload["exams"][0]["is_provisional"])
+        self.assertEqual(payload["exams"][0]["total_score"], 0)
+        self.assertEqual(payload["exam_summary"]["scored_count"], 1)
 
     def test_later_online_attempt_does_not_replace_initial_total(self):
         self.exam.allow_retake = True
@@ -196,6 +304,9 @@ class OnlineAssessmentTotalsTests(TestCase):
         self.assertEqual(ExamResult.objects.get(pk=first_legacy_id).status, "DRAFT")
         self.result.refresh_from_db()
         self.assertEqual(self.result.total_score, 100)
+        self.exam.student_results_published = True
+        self.exam.save(update_fields=["student_results_published"])
+        self.assertEqual(self._published_grades()["exams"][0]["total_score"], 60)
 
     def test_online_session_total_queries_do_not_grow_from_two_to_twenty_students(self):
         self._submit_online()

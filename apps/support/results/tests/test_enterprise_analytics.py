@@ -4,6 +4,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
@@ -117,6 +118,58 @@ class EnterpriseAnalyticsTests(TestCase):
             source="manual",
         )
         return exam, enrollment, result
+
+    def test_student_homework_analytics_averages_scored_mode_only(self):
+        student = self._student(self.tenant, "mixed-homework")
+        lecture = Lecture.objects.create(tenant=self.tenant, title="Mixed homework", name="Mixed homework", subject="MATH")
+        session = Session.objects.create(lecture=lecture, order=1, title="1차시")
+        enrollment = Enrollment.objects.create(tenant=self.tenant, student=student, lecture=lecture, status="ACTIVE")
+        Homework = apps.get_model("homework_results", "Homework")
+        HomeworkScore = apps.get_model("homework_results", "HomeworkScore")
+        Assignment = apps.get_model("homework", "HomeworkAssignment")
+        score_rows = []
+        for title, mode, score, maximum, passed in [
+            ("점수형", "SCORE", 92, 100, True),
+            ("통과형 O", "COMPLETION", 1, 1, True),
+            ("통과형 X", "COMPLETION", 0, 1, False),
+        ]:
+            homework = Homework.objects.create(tenant=self.tenant, session=session, title=title, grading_mode=mode, meta={"default_max_score": maximum})
+            Assignment.objects.create(tenant=self.tenant, session=session, homework=homework, enrollment=enrollment)
+            score_rows.append(HomeworkScore.objects.create(homework=homework, session=session, enrollment=enrollment,
+                score=score, max_score=maximum, passed=passed))
+
+        def get_homework_metrics():
+            request = self.factory.get("/api/v1/student/grades/analytics/")
+            request.tenant = self.tenant
+            force_authenticate(request, user=student.user)
+            response = MyGradesAnalyticsView.as_view()(request)
+            self.assertEqual(response.status_code, 200, response.data)
+            return response.data["homework"]
+
+        with self.subTest(state="mixed"):
+            self.assertEqual(get_homework_metrics(), {
+                "assigned_count": 3, "graded_count": 3, "avg_score_pct": 92.0, "pass_rate_pct": 66.7,
+            })
+        score_rows[0].score = 0
+        score_rows[0].passed = False
+        score_rows[0].save(update_fields=["score", "passed", "updated_at"])
+        with self.subTest(state="real-zero"):
+            self.assertEqual(get_homework_metrics(), {
+                "assigned_count": 3, "graded_count": 3, "avg_score_pct": 0.0, "pass_rate_pct": 33.3,
+            })
+        # Remove only the numeric score, preserving its actual assignment as pending.
+        score_rows[0].score = None
+        score_rows[0].passed = False
+        score_rows[0].save(update_fields=["score", "passed", "updated_at"])
+        with self.subTest(state="completion-only-graded"):
+            self.assertEqual(get_homework_metrics(), {
+                "assigned_count": 3, "graded_count": 2, "avg_score_pct": None, "pass_rate_pct": 50.0,
+            })
+        score_rows[0].homework.delete()
+        with self.subTest(state="only-completion-assigned"):
+            self.assertEqual(get_homework_metrics(), {
+                "assigned_count": 2, "graded_count": 2, "avg_score_pct": None, "pass_rate_pct": 50.0,
+            })
 
     def test_normalize_analytics_days_clamps_public_input(self):
         self.assertEqual(normalize_analytics_days("1"), 30)
