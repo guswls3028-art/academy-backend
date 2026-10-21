@@ -20,7 +20,7 @@ from django.db import IntegrityError, connection, transaction
 from django.test import TransactionTestCase
 
 from apps.core.models import Tenant
-from apps.domains.exams.models import Exam, ExamEnrollment
+from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.students.models import Student
@@ -28,6 +28,7 @@ from apps.domains.results.models import ExamAttempt, Result
 from apps.support.student_app.exam_dependencies import (
     StudentExamSubmitError,
     create_online_exam_submission,
+    dispatch_student_exam_submission,
 )
 from apps.support.results.admin_exam_dependencies import dispatch_progress_pipeline
 from apps.support.submissions.dependencies import regrade_exam_submissions
@@ -72,9 +73,13 @@ class TestP0ConcurrencyPG(TransactionTestCase):
 
     def test_concurrent_legal_retake_creates_one_active_submission(self):
         tenant, enrollment, exam = self._setup_data()
+        exam.exam_type = Exam.ExamType.REGULAR
         exam.allow_retake = True
         exam.max_attempts = 2
-        exam.save(update_fields=["allow_retake", "max_attempts", "updated_at"])
+        exam.save(update_fields=["exam_type", "allow_retake", "max_attempts", "updated_at"])
+        sheet = Sheet.objects.create(exam=exam, name="MAIN", total_questions=1, choice_count=1)
+        question = ExamQuestion.objects.create(sheet=sheet, number=1, score=100)
+        AnswerKey.objects.create(exam=exam, answers={str(question.pk): "1"})
         first = Submission.objects.create(
             tenant=tenant,
             user=enrollment.student.user,
@@ -104,7 +109,7 @@ class TestP0ConcurrencyPG(TransactionTestCase):
                     tenant=tenant,
                     exam=exam,
                     enrollment=enrollment,
-                    answers=[{"exam_question_id": 1, "answer": "1"}],
+                    answers=[{"exam_question_id": question.pk, "answer": "1"}],
                 )
                 results["created"] += 1
             except StudentExamSubmitError as exc:
@@ -125,7 +130,7 @@ class TestP0ConcurrencyPG(TransactionTestCase):
 
         self.assertEqual(results, {"created": 1, "conflict": 1, "errors": []})
         first.refresh_from_db()
-        self.assertEqual(first.status, Submission.Status.SUPERSEDED)
+        self.assertEqual(first.status, Submission.Status.DONE)
         self.assertEqual(
             Submission.objects.filter(
                 enrollment=enrollment,
@@ -135,6 +140,16 @@ class TestP0ConcurrencyPG(TransactionTestCase):
             ).count(),
             1,
         )
+        accepted = Submission.objects.get(
+            enrollment=enrollment, target_type="exam", target_id=exam.id, status="submitted",
+        )
+        with patch("apps.domains.results.services.grading_service.dispatch_progress_pipeline"):
+            dispatch_student_exam_submission(accepted)
+        first.refresh_from_db()
+        accepted.refresh_from_db()
+        self.assertEqual(first.status, Submission.Status.SUPERSEDED)
+        self.assertEqual(accepted.status, Submission.Status.DONE)
+        self.assertEqual(Result.objects.get(enrollment=enrollment, target_id=exam.id).total_score, 100)
 
     def test_concurrent_regrade_then_absent_confirmation_finishes_absent(self):
         tenant, enrollment, exam = self._setup_data()
