@@ -10,6 +10,7 @@ Run:
 from __future__ import annotations
 
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -150,6 +151,115 @@ class TestP0ConcurrencyPG(TransactionTestCase):
         self.assertEqual(first.status, Submission.Status.SUPERSEDED)
         self.assertEqual(accepted.status, Submission.Status.DONE)
         self.assertEqual(Result.objects.get(enrollment=enrollment, target_id=exam.id).total_score, 100)
+
+    def test_duplicate_retake_during_grading_finishes_without_deadlock(self):
+        from apps.domains.submissions.services.dispatcher import grade_submission_objective
+
+        tenant, enrollment, exam = self._setup_data()
+        exam.exam_type = Exam.ExamType.REGULAR
+        exam.allow_retake = True
+        exam.max_attempts = 2
+        exam.save(update_fields=["exam_type", "allow_retake", "max_attempts"])
+        sheet = Sheet.objects.create(exam=exam, name="MAIN", total_questions=1, choice_count=1)
+        question = ExamQuestion.objects.create(sheet=sheet, number=1, score=100)
+        AnswerKey.objects.create(exam=exam, answers={str(question.pk): "1"})
+
+        def create_submission(answer):
+            return create_online_exam_submission(
+                request_user=enrollment.student.user,
+                request_student=enrollment.student,
+                tenant=tenant,
+                exam=exam,
+                enrollment=enrollment,
+                answers=[{"exam_question_id": question.pk, "answer": answer}],
+            )
+
+        first = create_submission("1")
+        with patch("apps.domains.results.services.grading_service.dispatch_progress_pipeline"):
+            dispatch_student_exam_submission(first)
+        accepted = create_submission("2")
+        grading_started = threading.Event()
+        finish_grading = threading.Event()
+        duplicate_connected = threading.Event()
+        duplicate_pid = []
+        outcomes = []
+        errors = []
+
+        def pause_then_grade(submission_id):
+            grading_started.set()
+            if not finish_grading.wait(10):
+                raise AssertionError("duplicate request did not reach the lock")
+            return grade_submission_objective(submission_id)
+
+        def grade_retake():
+            try:
+                connection.close()
+                dispatch_student_exam_submission(accepted)
+                outcomes.append("graded")
+            except Exception as exc:
+                errors.append(f"grade: {type(exc).__name__}: {exc}")
+            finally:
+                connection.close()
+
+        def duplicate_retake():
+            try:
+                connection.close()
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_backend_pid()")
+                    duplicate_pid.append(cursor.fetchone()[0])
+                duplicate_connected.set()
+                create_submission("2")
+                outcomes.append("unexpected extra attempt")
+            except StudentExamSubmitError as exc:
+                outcomes.append(f"conflict:{exc.status_code}")
+            except Exception as exc:
+                errors.append(f"duplicate: {type(exc).__name__}: {exc}")
+            finally:
+                connection.close()
+
+        grader = threading.Thread(target=grade_retake)
+        duplicate = threading.Thread(target=duplicate_retake)
+        observed_wait = False
+        with patch(
+            "apps.domains.submissions.services.dispatcher.grade_submission_objective",
+            side_effect=pause_then_grade,
+        ), patch("apps.domains.results.services.grading_service.dispatch_progress_pipeline"):
+            grader.start()
+            try:
+                self.assertTrue(grading_started.wait(5))
+                duplicate.start()
+                self.assertTrue(duplicate_connected.wait(5))
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s",
+                            [duplicate_pid[0]],
+                        )
+                        row = cursor.fetchone()
+                    if row and row[0] == "Lock":
+                        observed_wait = True
+                        break
+                    time.sleep(0.02)
+            finally:
+                finish_grading.set()
+                grader.join(15)
+                if duplicate.ident is not None:
+                    duplicate.join(15)
+
+        self.assertFalse(grader.is_alive())
+        self.assertFalse(duplicate.is_alive())
+        self.assertTrue(observed_wait, "duplicate must overlap the uncommitted grade")
+        self.assertEqual(errors, [])
+        self.assertCountEqual(outcomes, ["graded", "conflict:409"])
+        first.refresh_from_db()
+        accepted.refresh_from_db()
+        self.assertEqual(first.status, Submission.Status.SUPERSEDED)
+        self.assertEqual(accepted.status, Submission.Status.DONE)
+        self.assertEqual(ExamAttempt.objects.filter(exam=exam, enrollment=enrollment).count(), 2)
+        result = Result.objects.get(enrollment=enrollment, target_id=exam.id)
+        self.assertEqual(result.total_score, 0)
+        self.assertEqual(result.attempt.submission_id, accepted.id)
 
     def test_concurrent_regrade_then_absent_confirmation_finishes_absent(self):
         tenant, enrollment, exam = self._setup_data()
