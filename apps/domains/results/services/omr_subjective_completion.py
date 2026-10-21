@@ -296,8 +296,10 @@ def pending_omr_enrollment_ids_for_exams(
 
 
 @transaction.atomic
-def finalize_omr_result_if_ready(*, result_id: int) -> OmrFinalizationDecision:
-    """Finalize one OMR snapshot only after every required grading component exists."""
+def finalize_omr_result_if_ready(
+    *, result_id: int, online_subjective_only: bool = False,
+) -> OmrFinalizationDecision:
+    """Finalize a grading snapshot after every required component exists."""
 
     result = (
         Result.objects.select_for_update()
@@ -314,6 +316,10 @@ def finalize_omr_result_if_ready(*, result_id: int) -> OmrFinalizationDecision:
             transitioned=False,
             pending_reason="invalid_omr_scope",
         )
+    if state.is_online and online_subjective_only and not state.required_question_ids:
+        # Fully automatic ONLINE results retain their readable DRAFT contract.
+        # Only teacher-owned essays need FINAL restored after automatic regrade.
+        return OmrFinalizationDecision(projection_ready=True, transitioned=False)
     legacy = (
         ExamResult.objects.select_for_update()
         .filter(
