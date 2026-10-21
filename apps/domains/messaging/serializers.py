@@ -1,4 +1,5 @@
 # apps/support/messaging/serializers.py
+import hashlib
 import json
 
 from django.utils import timezone
@@ -12,6 +13,7 @@ from apps.domains.messaging.models import (
     MAX_MESSAGE_TEMPLATE_BODY_LENGTH,
     AutoSendConfig,
     MessageTemplate,
+    MessageTemplateCreateRequest,
     ScheduledNotification,
 )
 
@@ -126,10 +128,29 @@ class MessageTemplateConflict(APIException):
         super().__init__()
 
 
+class MessageTemplateCreateConflict(APIException):
+    status_code = 409
+    default_detail = "같은 생성 요청으로 다른 문구를 저장할 수 없습니다. 새 저장 요청으로 다시 시도해 주세요."
+    default_code = "template_request_conflict"
+
+    def __init__(self, *, deleted=False):
+        self.code = "template_create_deleted" if deleted else self.default_code
+        detail = "이 저장 요청으로 만든 문구는 삭제되었습니다. 새 문구로 명시적으로 저장해 주세요." if deleted else self.default_detail
+        super().__init__(detail)
+
+
 class MessageTemplateSerializer(serializers.ModelSerializer):
     expected_updated_at = serializers.DateTimeField(required=False, write_only=True)
+    client_request_id = serializers.UUIDField(required=False, write_only=True)
+
+    def validate_client_request_id(self, value):
+        if not isinstance(self.initial_data.get("client_request_id"), str):
+            raise serializers.ValidationError("UUID 문자열이어야 합니다.")
+        return value
 
     def validate(self, attrs):
+        if self.instance is not None and "client_request_id" in attrs:
+            raise serializers.ValidationError({"client_request_id": "새 문구 생성에만 사용할 수 있습니다."})
         if self.instance is None and "expected_updated_at" in attrs:
             raise serializers.ValidationError({"expected_updated_at": "기존 문구 수정에만 사용할 수 있습니다."})
         return attrs
@@ -137,15 +158,46 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         from django.db import transaction
 
+        request_id = validated_data.pop("client_request_id", None)
+        fingerprint = ""
+        if request_id is not None:
+            # Compare the original normalized creation intent, never the current
+            # template body: later legitimate edits must survive a create retry.
+            payload = {
+                key: validated_data.get(key, MessageTemplate._meta.get_field(key).get_default())
+                for key in ("name", "subject", "body", "category", "is_user_default")
+            }
+            fingerprint = hashlib.sha256(json.dumps(
+                payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+            ).encode("utf-8")).hexdigest()
         with transaction.atomic():
             Tenant.objects.select_for_update().get(pk=validated_data["tenant"].pk)
+            if request_id is not None:
+                receipt = MessageTemplateCreateRequest.objects.select_related("template").filter(
+                    tenant=validated_data["tenant"], client_request_id=request_id,
+                ).first()
+                if receipt is not None:
+                    if receipt.payload_fingerprint != fingerprint:
+                        raise MessageTemplateCreateConflict()
+                    if receipt.template_id is None:
+                        raise MessageTemplateCreateConflict(deleted=True)
+                    if receipt.template.tenant_id != validated_data["tenant"].pk:
+                        raise MessageTemplateCreateConflict()
+                    self.creation_replayed = True
+                    return receipt.template
             if validated_data.get("is_user_default", False):
                 MessageTemplate.objects.filter(
                     tenant=validated_data["tenant"],
                     category=validated_data.get("category", MessageTemplate.Category.DEFAULT),
                     is_user_default=True,
                 ).update(is_user_default=False)
-            return super().create(validated_data)
+            template = super().create(validated_data)
+            if request_id is not None:
+                MessageTemplateCreateRequest.objects.create(
+                    tenant=validated_data["tenant"], client_request_id=request_id,
+                    payload_fingerprint=fingerprint, template=template,
+                )
+            return template
 
     def update(self, instance, validated_data):
         from django.db import transaction
@@ -202,6 +254,7 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
             "expected_updated_at",
+            "client_request_id",
         ]
         read_only_fields = [
             "id",

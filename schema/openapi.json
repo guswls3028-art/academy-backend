@@ -6473,12 +6473,69 @@
         ],
         "type": "object"
       },
+      "MessageTemplateCreateConflictResponse": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "detail"
+        ],
+        "type": "object"
+      },
       "MessageTemplateDefaultRequestRequest": {
         "properties": {
           "is_user_default": {
             "type": "boolean"
           }
         },
+        "type": "object"
+      },
+      "MessageTemplateRequest": {
+        "properties": {
+          "body": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "category": {
+            "$ref": "#/components/schemas/MessageTemplateCategoryEnum"
+          },
+          "client_request_id": {
+            "format": "uuid",
+            "type": "string",
+            "writeOnly": true
+          },
+          "expected_updated_at": {
+            "format": "date-time",
+            "type": "string",
+            "writeOnly": true
+          },
+          "is_user_default": {
+            "description": "사용자가 해당 카테고리에서 기본 양식으로 지정한 템플릿. tenant+category당 1개만.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "템플릿 이름",
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "subject": {
+            "description": "제목(선택)",
+            "maxLength": 200,
+            "type": "string"
+          }
+        },
+        "required": [
+          "body",
+          "name"
+        ],
         "type": "object"
       },
       "MessagingInfo": {
@@ -9998,6 +10055,11 @@
           },
           "category": {
             "$ref": "#/components/schemas/MessageTemplateCategoryEnum"
+          },
+          "client_request_id": {
+            "format": "uuid",
+            "type": "string",
+            "writeOnly": true
           },
           "expected_updated_at": {
             "format": "date-time",
@@ -41745,9 +41807,59 @@
       "post": {
         "description": "GET: 문구 목록. POST: 사용자 문구 생성.",
         "operationId": "messaging_templates_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageTemplateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageTemplateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageTemplateRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageTemplate"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageTemplate"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
             "description": "No response body"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageTemplateCreateConflictResponse"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

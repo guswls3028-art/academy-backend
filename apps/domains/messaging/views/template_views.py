@@ -15,7 +15,7 @@ from apps.domains.messaging.default_templates import default_template_key_for_na
 from apps.domains.messaging.models import DefaultTemplateSuppression, MessageTemplate
 from apps.domains.messaging.permissions import can_manage_messaging_settings
 from apps.domains.messaging.serializers import (
-    MessageTemplateConflict, MessageTemplateSerializer, template_delete_block_reason,
+    MessageTemplateConflict, MessageTemplateCreateConflict, MessageTemplateSerializer, template_delete_block_reason,
 )
 
 
@@ -49,14 +49,30 @@ class MessageTemplateListCreateView(APIView):
             context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
         ).data)
 
+    @extend_schema(
+        request=MessageTemplateSerializer,
+        responses={
+            200: MessageTemplateSerializer,
+            201: MessageTemplateSerializer,
+            400: None,
+            409: inline_serializer(name="MessageTemplateCreateConflictResponse", fields={
+                "code": serializers.CharField(), "detail": serializers.CharField(),
+            }),
+        },
+    )
     def post(self, request):
         serializer = MessageTemplateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save(tenant=request.tenant, is_system=False)
+        try:
+            serializer.save(tenant=request.tenant, is_system=False)
+        except MessageTemplateCreateConflict as conflict:
+            return Response({"code": conflict.code, "detail": str(conflict.detail)},
+                            status=status.HTTP_409_CONFLICT)
         return Response(MessageTemplateSerializer(
             serializer.instance,
             context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
-        ).data, status=status.HTTP_201_CREATED)
+        ).data, status=status.HTTP_200_OK if getattr(serializer, "creation_replayed", False)
+            else status.HTTP_201_CREATED)
 
 
 class MessageTemplateDetailView(APIView):

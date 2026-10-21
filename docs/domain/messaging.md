@@ -41,6 +41,33 @@
 
 검증은 삭제→재조회→일반 프로비저닝 후 부재, 선택 키 하나만 복원, 기존 선택 문구·타 테넌트 불변, 참조 중/공급사 문구 삭제 거절, 사용자 문구 복제·수정과 실제 발송의 승인 봉투 경계를 각각 확인한다. UI 흐름은 프런트엔드 메시징 소유 문서를 따른다.
 
+### 새 문구 생성의 응답 유실 복구
+
+`POST /messaging/templates/`는 선택적 UUID 문자열 `client_request_id`를 받는다.
+한 번의 저장 의도에는 같은 key와 같은 본문·제목·이름·분류·기본 지정 payload를
+재사용한다. 학원 행 잠금 안에서 최초 정규화 payload의 SHA-256과 생성 문구를
+`MessageTemplateCreateRequest`에 함께 기록한다. key는 학원 범위이며 같은 학원의
+허용된 직원에게만 기존과 같은 문구 읽기/생성 권한으로 적용한다. 원문·인증정보는
+receipt에 저장하지 않는다. 첫 생성은 201, 같은 key/최초 payload 재시도는 같은
+문구 ID의 **현재 저장 상태**를 200으로 반환한다. 그 사이 다른 직원이 수정한
+본문·분류·기본 지정은 원래 생성 payload로 되돌리지 않으며 수정 시각도 바꾸지 않는다.
+
+같은 key의 다른 payload는 `409 template_request_conflict`이며, 문구가 명시적으로
+삭제됐다면 receipt의 연결만 null로 남겨 `409 template_create_deleted`로 응답한다.
+삭제된 문구를 자동 재생성하지 않는다. 편집기는 입력을 보존하고 사용자에게 새 저장
+의도를 명시적으로 시작하게 해야 한다. 새 이름/본문만으로 기존 문구를 자동 중복
+제거하지 않으며 다른 key는 별도 생성이다. key 없는 기존 POST·복제는 그대로다.
+잘못된/null UUID는 400이고 PATCH에서 생성 key를 바꾸는 요청도 400이다.
+
+0044 expand migration은 receipt 표와 tenant/key 유일 제약만 추가한다. 기존 문구를
+변경하거나 과거 요청을 추정하지 않으며 이전 앱은 새 표 없이 기존 계약으로 동작한다.
+문구 삭제는 receipt tombstone을 남기고 학원 삭제는 receipt도 제거한다. 새 코드를
+쓰기 전 migration을 적용하고 코드 rollback 시 새 표는 보존한다. 이 migration을
+되돌리면 새 요청 재시도 증거가 사라지므로 제품 rollback의 필수 단계가 아니다.
+회귀는 commit 후 동일 재시도·이후 편집/기본 지정 보존·다른 payload 409·삭제 뒤
+재시도·tenant/role 격리·원자적 rollback·legacy 생성을 검증하며 PostgreSQL에서는
+동일 key의 동시 생성이 단일 문구와 receipt로 수렴하는지 확인한다. 외부 발송은 없다.
+
 ### 공유 문구의 동시 편집과 재시도
 
 학원 직원이 기존 사용자 문구를 `PATCH /messaging/templates/{id}/`로 수정할 때,
