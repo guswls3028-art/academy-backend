@@ -338,3 +338,85 @@ class OnlineAssessmentTotalsTests(TestCase):
         for row in [*first_rows, *final_rows]:
             self.assertEqual(row["exam_total"], {"score": 60.0, "max_score": 100.0,
                 "selected_count": 1, "scored_count": 1, "complete": True})
+
+    def test_online_essay_teacher_zero_restores_published_totals_and_survives_regrade(self):
+        self._assert_online_essay_published_roundtrip(teacher_score=0)
+
+    def test_online_essay_teacher_partial_restores_published_totals_and_survives_regrade(self):
+        self._assert_online_essay_published_roundtrip(teacher_score=15)
+
+    def _assert_online_essay_published_roundtrip(self, *, teacher_score):
+        self.sheet.choice_count = 4
+        self.sheet.essay_count = 1
+        self.sheet.save(update_fields=["choice_count", "essay_count"])
+        self.exam.grading_mode = "mixed"
+        self.exam.choice_question_count = 4
+        self.exam.manual_grading_method = "score"
+        self.exam.student_results_published = True
+        self.exam.save(update_fields=["grading_mode", "choice_question_count", "manual_grading_method", "student_results_published"])
+        essay = self.questions[-1]
+        self.answer_key.answers.pop(str(essay.pk))
+        self.answer_key.save(update_fields=["answers"])
+        answer = "교사가 확인할 실제 온라인 서술형 답안"
+        self._submit_online(answers=["1", "2", "3", "4", answer], expected_score=80)
+        # Create the authorized selected-child parent once, then use the same
+        # identity before grading, after grading and after automatic regrade.
+        self._published_grades(parent=True)
+        parent_user = self.student.parent.user
+
+        def summary(user):
+            path = "/api/v1/student/grades/"
+            request = self.factory.get(path, HTTP_X_STUDENT_ID=str(self.student.pk))
+            request.tenant = self.tenant
+            force_authenticate(request, user=user)
+            match = resolve(path)
+            response = match.func(request, **match.kwargs)
+            self.assertEqual(response.status_code, 200, response.data)
+            return response.data
+
+        for user in (self.user, parent_user):
+            with self.subTest(phase="pending", role=user.pk):
+                payload = summary(user)
+                self.assertTrue(payload["exams"][0]["is_provisional"])
+                self.assertIsNone(payload["exams"][0]["total_score"])
+                self.assertEqual(payload["exam_summary"]["scored_count"], 0)
+                self.assertFalse(payload["session_totals"][0]["exam_total"]["complete"])
+        self.assertFalse(self._score_row()["exam_total"]["complete"])
+        grid_path = f"/api/v1/results/admin/exams/{self.exam.pk}/manual-grading/"
+        match = resolve(grid_path)
+        request = self.factory.get(grid_path)
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.staff)
+        grid = match.func(request, **match.kwargs)
+        self.assertEqual(grid.status_code, 200, grid.data)
+        row = next(row for row in grid.data["rows"] if row["enrollment_id"] == self.enrollment.pk)
+        self.assertEqual(row["cells"][str(essay.pk)]["answer"], answer)
+        self.assertIsNone(row["cells"][str(essay.pk)]["score"])
+        request = self.factory.post(grid_path, {"apply": True, "rows": [{
+            "enrollment_id": self.enrollment.pk, "expected_version": row["expected_version"],
+            "attendance": "present", "cells": {str(essay.pk): {"score": teacher_score}},
+        }]}, format="json")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.staff)
+        saved = match.func(request, **match.kwargs)
+        self.assertEqual(saved.status_code, 200, saved.data)
+        expected_total = {"score": float(80 + teacher_score), "max_score": 100.0,
+                          "selected_count": 1, "scored_count": 1, "complete": True}
+        for phase in ("teacher-saved", "automatic-regrade"):
+            if phase == "automatic-regrade":
+                from apps.domains.results.services.grading_service import grade_submission
+                type(self.submission).objects.filter(pk=self.submission.pk).update(status="answers_ready")
+                with patch("apps.domains.results.services.grading_service.dispatch_progress_pipeline"):
+                    grade_submission(self.submission.pk, force_regrade=True)
+            for user in (self.user, parent_user):
+                with self.subTest(phase=phase, role=user.pk, teacher_score=teacher_score):
+                    payload = summary(user)
+                    self.assertFalse(payload["exams"][0]["is_provisional"])
+                    self.assertEqual(payload["exams"][0]["total_score"], 80 + teacher_score)
+                    self.assertEqual(payload["exam_summary"]["scored_count"], 1)
+                    self.assertEqual(payload["exam_summary"]["average_score_pct"], 80 + teacher_score)
+                    self.assertEqual(payload["session_totals"][0]["exam_total"], expected_total)
+            self.assertEqual(self._score_row()["exam_total"], expected_total)
+            item = ResultItem.objects.get(result=self.result, question_id=essay.pk)
+            self.assertEqual(item.answer, answer)
+            self.assertEqual(item.score, teacher_score)
