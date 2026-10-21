@@ -23,6 +23,9 @@ from apps.support.homework.view_dependencies import (
 class HomeworkPolicyViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     serializer_class = HomeworkPolicySerializer
+    # Full replacement/deletion skips the validated snapshot/clinic recalculation.
+    # Keep explicit creation and PATCH as the supported policy-write contract.
+    http_method_names = ["get", "post", "patch", "head", "options"]
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)

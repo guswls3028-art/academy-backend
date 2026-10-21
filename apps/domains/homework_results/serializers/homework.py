@@ -62,6 +62,16 @@ class HomeworkSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
+        if self.instance is not None:
+            for field in ("session", "homework_type", "template_homework"):
+                if field not in attrs:
+                    continue
+                candidate = attrs[field]
+                current = getattr(self.instance, field)
+                if getattr(candidate, "pk", candidate) != getattr(current, "pk", current):
+                    raise serializers.ValidationError({
+                        field: "기존 과제의 차시·유형·원본 템플릿은 변경할 수 없습니다. 새 과제나 복제 기능을 이용해 주세요."
+                    })
         explicit_max_score = attrs.pop("default_max_score", None)
         if explicit_max_score is not None:
             meta = dict(attrs.get("meta", getattr(self.instance, "meta", None)) or {})

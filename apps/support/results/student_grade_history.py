@@ -298,6 +298,7 @@ def build_student_exam_history(
         enrollment_id = result["enrollment_id"]
         achievement = achievements.get((int(enrollment_id), int(exam_id)), {})
         subjective_pending = bool(row["subjective_pending"])
+        is_provisional = subjective_pending or bool(achievement.get("is_provisional"))
         is_not_submitted = (
             not subjective_pending
             and achievement.get("meta_status") == "NOT_SUBMITTED"
@@ -315,15 +316,15 @@ def build_student_exam_history(
             "title": row["info"]["title"],
             "total_score": (
                 None
-                if is_not_submitted or subjective_pending
+                if is_not_submitted or is_provisional
                 else row["initial_score"].total_score
             ),
             "max_score": row["initial_score"].max_score,
-            "is_pass": None if subjective_pending else achievement.get("is_pass"),
-            "achievement": None if subjective_pending else achievement.get("achievement"),
+            "is_pass": None if is_provisional else achievement.get("is_pass"),
+            "achievement": None if is_provisional else achievement.get("achievement"),
             "meta_status": None if subjective_pending else achievement.get("meta_status"),
             "grading_status": "subjective_pending" if subjective_pending else None,
-            "is_provisional": subjective_pending,
+            "is_provisional": is_provisional,
             "retake_count": retake_counts.get((enrollment_id, exam_id), 1),
             "session_id": row["session_id"],
             "session_title": row["session_title"],
