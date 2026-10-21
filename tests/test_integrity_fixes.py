@@ -5,7 +5,9 @@ Tests verifying that the Critical/High fixes from the domain audit are effective
 
 Run: pytest tests/test_integrity_fixes.py -v
 """
-from unittest.mock import MagicMock
+from contextlib import ExitStack, contextmanager
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from django.db import IntegrityError
 from django.test import TestCase
@@ -216,10 +218,97 @@ class TestPerformCreateTenantInjection(TestCase):
 class TestResultSyncAllSources(TestCase):
     """H11: grade_submission must sync Result for all sources, not just ONLINE."""
 
-    def test_grade_submission_calls_sync_for_all_sources(self):
-        """Verify grading_service.py no longer checks source == ONLINE."""
-        import inspect
+    @contextmanager
+    def _grading_orchestration(self, *, source, not_submitted=False, review_required=False, status=None):
         from apps.domains.results.services import grading_service
-        source = inspect.getsource(grading_service.grade_submission)
-        self.assertNotIn("Source.ONLINE", source,
-                         "grade_submission should sync Result for ALL sources, not just ONLINE")
+        from apps.domains.submissions.models import Submission
+
+        submission = SimpleNamespace(
+            id=17, target_type="exam", target_id=23, tenant_id=31,
+            source=source, status=status or Submission.Status.DONE,
+            Source=Submission.Source, Status=Submission.Status,
+        )
+        # Keep the public atomic orchestrator real; replace only collaborators
+        # that own persistence, source eligibility and downstream side effects.
+        with ExitStack() as stack:
+            def replace(name, **kwargs):
+                return stack.enter_context(patch.object(grading_service, name, **kwargs))
+
+            replace("get_submission_for_grading", return_value=submission)
+            scope_lock = replace("lock_score_edit_scope_before_submission_grading")
+            replace("lock_exam_submission_regrade_state", return_value=(submission, None, not_submitted))
+            exam = object()
+            replace("get_exam_for_result_sync", return_value=exam)
+            validate = replace("validate_exam_submission_scope")
+            complete = replace("complete_submission_after_auto_grade")
+            retained = MagicMock(name="retained_legacy")
+            stack.enter_context(patch.object(grading_service.ExamResult.objects, "get", return_value=retained))
+            service = replace("ExamGradingService").return_value
+            legacy = MagicMock(name="graded_legacy")
+            service.auto_grade_objective.return_value = legacy
+            replace("is_omr_manual_review_required", return_value=review_required)
+            sync = replace("sync_result_from_exam_submission", return_value=SimpleNamespace(id=41))
+            finalize = replace("finalize_omr_result_if_ready", return_value=SimpleNamespace(projection_ready=True))
+            dispatch = replace("dispatch_progress_pipeline")
+            calls = MagicMock()
+            for name, mock in (("grade", service.auto_grade_objective), ("sync", sync),
+                               ("finalize", finalize), ("dispatch", dispatch)):
+                calls.attach_mock(mock, name)
+            yield SimpleNamespace(
+                module=grading_service, submission=submission, scope_lock=scope_lock,
+                validate=validate, exam=exam, complete=complete, retained=retained,
+                service=service, legacy=legacy, sync=sync, finalize=finalize,
+                dispatch=dispatch, calls=calls,
+            )
+
+    def test_grade_submission_calls_sync_for_all_sources(self):
+        from apps.domains.submissions.models import Submission
+
+        for source in Submission.Source.values:
+            for force_regrade in (False, True):
+                with self.subTest(source=source, force_regrade=force_regrade):
+                    with self._grading_orchestration(source=source) as flow:
+                        result = flow.module.grade_submission(17, force_regrade=force_regrade)
+                        self.assertIs(result, flow.legacy)
+                        flow.scope_lock.assert_called_once_with(submission=flow.submission)
+                        flow.service.auto_grade_objective.assert_called_once_with(
+                            submission_id=17, force_regrade=force_regrade,
+                        )
+                        flow.sync.assert_called_once_with(17)
+                        flow.dispatch.assert_called_once_with(submission_id=17)
+                        expected_calls = ["grade", "sync"]
+                        if source in (Submission.Source.OMR_SCAN, Submission.Source.ONLINE):
+                            flow.finalize.assert_called_once_with(result_id=41, online_subjective_only=True)
+                            expected_calls.append("finalize")
+                        else:
+                            flow.finalize.assert_not_called()
+                        self.assertEqual([call[0] for call in flow.calls.mock_calls], expected_calls + ["dispatch"])
+
+    def test_review_required_omr_keeps_draft_without_canonical_sync_or_dispatch(self):
+        from apps.domains.submissions.models import Submission
+
+        with self._grading_orchestration(source=Submission.Source.OMR_SCAN, review_required=True) as flow:
+            self.assertIs(flow.module.grade_submission(17), flow.legacy)
+            flow.service.auto_grade_objective.assert_called_once_with(submission_id=17, force_regrade=False)
+            flow.sync.assert_not_called()
+            flow.finalize.assert_not_called()
+            flow.dispatch.assert_not_called()
+
+    def test_teacher_cancelled_attempt_is_retained_without_regrading_or_republication(self):
+        from apps.domains.submissions.models import Submission
+
+        for status in (Submission.Status.DONE, Submission.Status.ANSWERS_READY):
+            with self.subTest(status=status):
+                with self._grading_orchestration(
+                    source=Submission.Source.ONLINE, not_submitted=True, status=status,
+                ) as flow:
+                    self.assertIs(flow.module.grade_submission(17, force_regrade=True), flow.retained)
+                    flow.validate.assert_called_once_with(submission=flow.submission, exam=flow.exam)
+                    flow.service.auto_grade_objective.assert_not_called()
+                    flow.sync.assert_not_called()
+                    flow.finalize.assert_not_called()
+                    flow.dispatch.assert_not_called()
+                    if status == Submission.Status.DONE:
+                        flow.complete.assert_not_called()
+                    else:
+                        flow.complete.assert_called_once_with(flow.submission, actor="grader.absence_preserved")
