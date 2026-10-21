@@ -21,9 +21,12 @@
         "academy-ai-worker-cpu",
         "academy-tools-worker"
       ],
-      "expiresOn": "2026-10-20",
+      "expiresOn": null,
+      "indefiniteAcceptance": true,
+      "approvedOn": "2026-10-21",
+      "approvalReference": "docs/operations/container-image-security.md#glibc-approval-20261021",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-19499",
-      "rationale": "On 2026-10-20 the human task owner explicitly renewed only these two exact glibc High identities in the existing six repositories until 2026-10-21 09:00 KST (inclusive UTC expiry 2026-10-20) for the assessment-feedback ONLINE-total and retake correction release. Residual memory-corruption/service-crash risk remains and runtime unreachability is not established. Readback of all six exact current successful-release39334061045 image scans was COMPLETE with only these two High identities and zero Critical. This existing-image evidence does not replace fresh candidate scans: the new candidate must remain within the same exact scope. No automatic renewal, other identity/version/repository widening or Critical acceptance is permitted. Preserve native, scan, isolated development, preprod/termination, production approval, rolling, real-use and cleanup gates, and the existing glibc replacement/vulnerability-reproduction HOLD. Exact approval and evidence: docs/operations/container-image-security.md, 2026-10-20 section."
+      "rationale": "On 2026-10-21 the human task owner explicitly approved indefinite acceptance of these two exact glibc High identities in the existing six repositories while authorizing completion of the online-submission correction release. Residual memory-corruption/service-crash risk remains and runtime unreachability is not established. All six exact candidate scans from failed release39552635486 were COMPLETE with only these two High identities and zero Critical; fresh scans remain mandatory for every new candidate. This approval does not cover other identities, packages, versions, repositories or Critical findings. Preserve native, scan, isolated development, preprod/termination, production approval, rolling, real-use and cleanup gates, and the existing glibc replacement/vulnerability-reproduction HOLD. Exact human approval and evidence: docs/operations/container-image-security.md#glibc-approval-20261021."
     },
     {
       "cve": "CVE-2026-5435",
@@ -37,9 +40,12 @@
         "academy-ai-worker-cpu",
         "academy-tools-worker"
       ],
-      "expiresOn": "2026-10-20",
+      "expiresOn": null,
+      "indefiniteAcceptance": true,
+      "approvedOn": "2026-10-21",
+      "approvalReference": "docs/operations/container-image-security.md#glibc-approval-20261021",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-5435",
-      "rationale": "On 2026-10-20 the human task owner explicitly renewed only these two exact glibc High identities in the existing six repositories until 2026-10-21 09:00 KST (inclusive UTC expiry 2026-10-20) for the assessment-feedback ONLINE-total and retake correction release. Residual memory-corruption/service-crash risk remains and runtime unreachability is not established. Readback of all six exact current successful-release39334061045 image scans was COMPLETE with only these two High identities and zero Critical. This existing-image evidence does not replace fresh candidate scans: the new candidate must remain within the same exact scope. No automatic renewal, other identity/version/repository widening or Critical acceptance is permitted. Preserve native, scan, isolated development, preprod/termination, production approval, rolling, real-use and cleanup gates, and the existing glibc replacement/vulnerability-reproduction HOLD. Exact approval and evidence: docs/operations/container-image-security.md, 2026-10-20 section."
+      "rationale": "On 2026-10-21 the human task owner explicitly approved indefinite acceptance of these two exact glibc High identities in the existing six repositories while authorizing completion of the online-submission correction release. Residual memory-corruption/service-crash risk remains and runtime unreachability is not established. All six exact candidate scans from failed release39552635486 were COMPLETE with only these two High identities and zero Critical; fresh scans remain mandatory for every new candidate. This approval does not cover other identities, packages, versions, repositories or Critical findings. Preserve native, scan, isolated development, preprod/termination, production approval, rolling, real-use and cleanup gates, and the existing glibc replacement/vulnerability-reproduction HOLD. Exact human approval and evidence: docs/operations/container-image-security.md#glibc-approval-20261021."
     }
   ]
 }

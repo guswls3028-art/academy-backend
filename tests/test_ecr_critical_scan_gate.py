@@ -75,7 +75,7 @@ def _high_policy_document(*entries: dict[str, object]) -> dict[str, object]:
 
 
 @pytest.mark.parametrize("repository", gate.REPOSITORIES)
-def test_current_candidate_only_accepts_exact_reviewed_high_before_expiry(repository: str) -> None:
+def test_current_candidate_only_accepts_exact_reviewed_high(repository: str) -> None:
     policy_dir = Path(__file__).parents[1] / "docs" / "ssot"
     acceptances = gate.load_acceptances(
         policy_dir / "ecr-critical-risk-acceptance.json", datetime.now(timezone.utc).date()
@@ -140,26 +140,26 @@ def test_retired_gcc_exceptions_do_not_block_clean_candidates_after_their_old_ex
                 ), baselines, known)
 
 
-def test_fixed_system_cyrus_has_no_exception_and_renewed_glibc_expiry_is_enforced() -> None:
+def test_fixed_system_cyrus_has_no_exception_and_glibc_has_explicit_indefinite_approval() -> None:
     policy = Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
     entries = json.loads(policy.read_text(encoding="utf-8"))["acceptedHighFindings"]
     assert not [entry for entry in entries if entry["packageName"] == "gcc-14"]
     cyrus = [entry for entry in entries if entry["packageName"] == "cyrus-sasl2"]
     assert not cyrus
-    with pytest.raises(gate.GateError, match="High risk acceptance expired"):
-        gate.load_high_baselines(policy, date(2026, 10, 21))
+    assert all(entry["indefiniteAcceptance"] is True for entry in entries)
+    gate.load_high_baselines(policy, date(2100, 1, 1))
 
 
 @pytest.mark.parametrize("repository", gate.REPOSITORIES)
-def test_approved_glibc_review_keeps_exact_service_scope_and_expiry(repository, tmp_path) -> None:
+def test_approved_glibc_review_keeps_exact_service_scope_without_expiry(repository, tmp_path) -> None:
     policy = Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
     entries = json.loads(policy.read_text(encoding="utf-8"))["acceptedHighFindings"]
     glibc = [entry for entry in entries if entry["packageName"] == "glibc"]
     assert {entry["cve"] for entry in glibc} == {"CVE-2026-19499", "CVE-2026-5435"}
-    assert all(entry["expiresOn"] == "2026-10-20" for entry in glibc)
+    assert all(entry["expiresOn"] is None and entry["indefiniteAcceptance"] is True for entry in glibc)
     isolated = tmp_path / "glibc-review.json"
     isolated.write_text(json.dumps(_high_policy_document(*glibc)), encoding="utf-8")
-    baselines, known = gate.load_high_baselines(isolated, date(2026, 10, 20))
+    baselines, known = gate.load_high_baselines(isolated, date(2100, 1, 1))
     for entry in glibc:
         finding = _finding(entry["cve"], "glibc", "2.41-12+deb13u4", "HIGH")
         assert gate.evaluate_high_budget(repository, _scan(finding), baselines, known) == 1
@@ -172,8 +172,41 @@ def test_approved_glibc_review_keeps_exact_service_scope_and_expiry(repository, 
             gate.evaluate_findings(repository, _scan(
                 _finding(entry["cve"], "glibc", "2.41-12+deb13u4", "CRITICAL"),
             ), {})
+
+
+@pytest.mark.parametrize("overrides", [
+    {"indefiniteAcceptance": False},
+    {"indefiniteAcceptance": "true"},
+    {"indefiniteAcceptance": 1},
+    {"expiresOn": "2099-12-31"},
+    {"approvedOn": None},
+    {"approvedOn": "invalid"},
+    {"approvalReference": None},
+    {"approvalReference": "unrecorded approval"},
+])
+def test_indefinite_high_acceptance_requires_unambiguous_record(tmp_path, overrides) -> None:
+    entry = _high_policy_entry(
+        expiresOn=None, indefiniteAcceptance=True, approvedOn="2026-10-21",
+        approvalReference="docs/operations/container-image-security.md#glibc-approval-20261021",
+    )
+    entry.update(overrides)
+    policy = tmp_path / "indefinite.json"
+    policy.write_text(json.dumps(_high_policy_document(entry)), encoding="utf-8")
+    with pytest.raises(gate.GateError):
+        gate.load_high_baselines(policy, date(2100, 1, 1))
+
+
+def test_finite_high_expiry_and_critical_expiry_still_fail_closed(tmp_path) -> None:
+    entry = _high_policy_entry(expiresOn="2026-10-20")
+    policy = tmp_path / "finite.json"
+    policy.write_text(json.dumps(_high_policy_document(entry)), encoding="utf-8")
     with pytest.raises(gate.GateError, match="High risk acceptance expired"):
-        gate.load_high_baselines(isolated, date(2026, 10, 21))
+        gate.load_high_baselines(policy, date(2026, 10, 21))
+    entry.update(expiresOn=None, indefiniteAcceptance=True, approvedOn="2026-10-21",
+                 approvalReference="docs/operations/container-image-security.md#glibc-approval-20261021")
+    policy.write_text(json.dumps({"schemaVersion": 1, "acceptedFindings": [entry]}), encoding="utf-8")
+    with pytest.raises(gate.GateError, match="invalid expiresOn"):
+        gate.load_acceptances(policy, date(2026, 10, 21))
 
 
 @pytest.mark.parametrize(
