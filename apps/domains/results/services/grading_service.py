@@ -69,13 +69,15 @@ def grade_submission(submission_id: int, *, force_regrade: bool = False) -> Exam
         )
         raise
 
-    # A fully recognized OMR submission has no remaining teacher-owned grading
-    # step. Publish its compatibility snapshot before progress/analytics read it.
-    # OMR rows explicitly marked for manual review remain DRAFT above.
-    if submission.source == submission.Source.OMR_SCAN:
+    # Publish completed OMR grading and restore completed ONLINE essays after
+    # regrade, before progress/analytics read their compatibility snapshots.
+    # Fully automatic ONLINE results keep their existing DRAFT contract.
+    if submission.source in (submission.Source.OMR_SCAN, submission.Source.ONLINE):
         if canonical_result is None:
             return result
-        decision = finalize_omr_result_if_ready(result_id=int(canonical_result.id))
+        decision = finalize_omr_result_if_ready(
+            result_id=int(canonical_result.id), online_subjective_only=True,
+        )
         if decision.projection_ready:
             result.refresh_from_db()
 
