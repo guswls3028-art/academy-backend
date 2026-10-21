@@ -141,12 +141,25 @@ def load_high_baselines(
             f"https://security-tracker.debian.org/tracker/{cve}"
         ):
             raise GateError(f"{label}[{index}] needs the exact Debian tracker URL")
-        try:
-            expires_on = date.fromisoformat(expires_raw)
-        except (TypeError, ValueError) as exc:
-            raise GateError(f"{label}[{index}] has an invalid expiresOn") from exc
-        if today > expires_on:
-            raise GateError(f"High risk acceptance expired: {cve} expired {expires_on}")
+        if "indefiniteAcceptance" in entry:
+            if entry["indefiniteAcceptance"] is not True:
+                raise GateError(f"{label}[{index}] has an invalid indefiniteAcceptance")
+            if "expiresOn" not in entry or expires_raw is not None:
+                raise GateError(f"{label}[{index}] indefinite acceptance requires expiresOn null")
+            try:
+                date.fromisoformat(entry.get("approvedOn"))
+            except (TypeError, ValueError) as exc:
+                raise GateError(f"{label}[{index}] needs an explicit approval date") from exc
+            reference = entry.get("approvalReference")
+            if not isinstance(reference, str) or not reference.startswith("docs/operations/") or "#" not in reference:
+                raise GateError(f"{label}[{index}] needs a durable approval reference")
+        else:
+            try:
+                expires_on = date.fromisoformat(expires_raw)
+            except (TypeError, ValueError) as exc:
+                raise GateError(f"{label}[{index}] has an invalid expiresOn") from exc
+            if today > expires_on:
+                raise GateError(f"High risk acceptance expired: {cve} expired {expires_on}")
 
         for repository in repositories:
             if not isinstance(repository, str) or repository not in REPOSITORIES:

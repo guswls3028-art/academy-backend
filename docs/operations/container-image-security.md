@@ -5,7 +5,47 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
-## 2026-10-20 온라인 시험 총점·재응시 수정 배포의 glibc 두 예외 재승인
+<a id="glibc-approval-20261021"></a>
+
+## 2026-10-21 온라인 제출 수정 배포의 glibc 두 예외 무기한 승인
+
+[온라인 제출 수정 PR669](https://github.com/guswls3028-art/academy-backend/pull/669)의
+[배포39552635486](https://github.com/guswls3028-art/academy-backend/actions/runs/39552635486)은
+기존 예외 만료로 후보 scan 게이트에서 중단됐다. 격리 development·preprod·운영
+교체는 실행되지 않았으며 공유 잠금 반환을 확인했다.
+
+사용자는 기존 여섯 저장소의 `CVE-2026-19499`, `CVE-2026-5435`,
+`glibc / 2.41-12+deb13u4`에 대한 메모리 손상·서비스 장애 위험과 실제 서비스의
+악용 가능성 미확인을 전달받고 **“전부 수용 무제한”**이라고 명시 승인했다.
+이는 바로 위 두 exact identity와 기존 여섯 저장소의 **기한 제한 없는 위험 수용**이다.
+미래 CVE, 다른 패키지·버전·저장소, Critical 수용까지 확대하지 않는다.
+
+정본 `docs/ssot/ecr-high-risk-baseline.json`의 두 항목은 `expiresOn: null`,
+`indefiniteAcceptance: true`, 승인일 `approvedOn`과 이 절의 `approvalReference`로
+기록한다. schemaVersion 3의 명시적 무기한 형식이며, 이 표시가 없는 항목은
+계속 유효한 만료일을 요구한다. 누락된 승인 기록, 잘못된 표시와 날짜·무기한의
+충돌은 차단한다. Critical 정책은 변경하지 않으며 각 저장소 High 상한은 2다.
+이는 사용자의 새 승인 반영이지 자동 갱신이 아니다. 새 후보는 계속 신선한
+COMPLETE scan과 exact identity 검사를 통과해야 한다.
+
+10월 21일 15:37–15:45 KST 여섯 후보 digest의 scan은 모두 COMPLETE,
+High 2·Critical 0이었다. 서비스 이미지는 실패 실행의 immutable 태그
+`sha-00ec3fc204f40d9f71518efced294af8317b577d-run-39552635486-1`, base는
+`sha256:fb6c6defc3d6c7b34043a40576462004ef37cda8e1cdc797bb6e7e09386c0d5b`의
+재검사다. 이는 다음 후보의 검사를 대체하지 않는다.
+[Debian CVE-2026-19499](https://security-tracker.debian.org/tracker/CVE-2026-19499)와
+[CVE-2026-5435](https://security-tracker.debian.org/tracker/CVE-2026-5435)는 당일
+해당 trixie 버전을 vulnerable로 유지하며 stable 수정본은 확인되지 않았다.
+이 승인은 취약점 수정이나 비도달성의 증명이 아니다.
+
+기존 glibc 교체·취약 입력 재현 HOLD와 native·scan·격리 development·preprod,
+임시 인스턴스 종료·플랫폼 승인·rolling·실사용·cleanup 0 조건은 그대로 유지한다.
+승인 원문과 digest/scan 증거는
+`_artifacts/online-submit-fix-01a15c9f/security-approval-20261021.json`과
+`candidate-scan-readback.json`에 보존한다. 실패 실행은 소급 변경하지 않고 새
+정책을 포함한 main source로 정규 배포한다.
+
+## 2026-10-20 온라인 시험 총점·재응시 수정 배포의 glibc 두 예외 재승인 (이력)
 
 민원 기능의 실제 화면 검증에서 온라인 자동 채점 점수가 선택 총점에 미확정으로
 남는 문제와 재응시 후 최초 점수의 확정 판정 문제가 확인됐다.
