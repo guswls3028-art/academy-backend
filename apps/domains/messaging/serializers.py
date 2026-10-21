@@ -4,7 +4,7 @@ import json
 
 from django.utils import timezone
 from rest_framework import serializers
-from rest_framework.exceptions import APIException
+from rest_framework.exceptions import APIException, NotFound
 from drf_spectacular.utils import extend_schema_field
 
 from apps.core.models import Tenant
@@ -211,7 +211,10 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
             Tenant.objects.select_for_update().get(pk=instance.tenant_id)
             # Re-read after the shared tenant lock; another editor may have
             # changed the default or category while this request was validating.
-            instance = MessageTemplate.objects.get(pk=instance.pk, tenant_id=instance.tenant_id)
+            try:
+                instance = MessageTemplate.objects.get(pk=instance.pk, tenant_id=instance.tenant_id)
+            except MessageTemplate.DoesNotExist:
+                raise NotFound("문구가 삭제되었거나 더 이상 사용할 수 없습니다.") from None
             # A committed response may have been lost. An identical conditional
             # retry succeeds without rewriting the row or bumping updated_at.
             unchanged = all(getattr(instance, key) == value for key, value in validated_data.items())

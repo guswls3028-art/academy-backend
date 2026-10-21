@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import resolve, reverse
@@ -162,3 +164,24 @@ class MessageTemplateConcurrencyTests(TestCase):
         self.assertEqual(retry.status_code, 200)
         self.assertEqual(retry.data["subject"], "A later subject")
         self.assertEqual(retry.data["updated_at"], newer.data["updated_at"])
+
+    def test_delete_between_initial_lookup_and_locked_update_returns_404(self):
+        from apps.domains.messaging.serializers import MessageTemplateSerializer
+
+        observed = self.read()
+        original_update = MessageTemplateSerializer.update
+        template_id = self.template.pk
+
+        def delete_before_locked_reread(serializer, instance, validated_data):
+            # The view already found and authorized this instance. Model the
+            # completed concurrent DELETE before update takes the tenant lock.
+            MessageTemplate.objects.filter(pk=template_id).delete()
+            return original_update(serializer, instance, validated_data)
+
+        with patch.object(MessageTemplateSerializer, "update", delete_before_locked_reread):
+            response = self.request("patch", {
+                "body": "Must not resurrect", "expected_updated_at": observed["updated_at"],
+            })
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn("current_template", response.data)
+        self.assertFalse(MessageTemplate.objects.filter(pk=template_id).exists())

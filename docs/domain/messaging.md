@@ -80,6 +80,7 @@ DB 수준 `ON DELETE SET NULL`/`CASCADE`를 사용한다. SQLite 검증 DB는 �
 
 학원 직원이 기존 사용자 문구를 `PATCH /messaging/templates/{id}/`로 수정할 때,
 읽은 응답의 `updated_at`을 선택 필드 `expected_updated_at`으로 보낼 수 있다.
+최초 조회 뒤 다른 직원이 문구를 삭제한 경우 잠금 후 재조회도 `404`로 응답하며, 삭제된 문구를 재생성하지 않는다.
 서버는 기존 학원 행 잠금 안에서 현재 문구를 다시 읽고 비교한다. 다른 직원의
 수정이 먼저 저장됐으면 `409 template_conflict`와 현재 tenant/권한 범위의
 `current_template`을 반환하며 본문·분류·기본 지정은 변경하지 않는다. 편집기는
