@@ -153,7 +153,7 @@ class TestP0ConcurrencyPG(TransactionTestCase):
         self.assertEqual(Result.objects.get(enrollment=enrollment, target_id=exam.id).total_score, 100)
 
     def test_duplicate_retake_during_grading_finishes_without_deadlock(self):
-        from apps.domains.submissions.services.dispatcher import grade_submission_objective
+        from apps.support.submissions.dependencies import grade_submission_objective
 
         tenant, enrollment, exam = self._setup_data()
         exam.exam_type = Exam.ExamType.REGULAR

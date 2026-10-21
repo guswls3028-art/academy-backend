@@ -352,10 +352,19 @@ def create_online_exam_submission(
         IN_PROGRESS_STATUSES,
         fail_submission,
     )
+    from apps.support.results.grading_dependencies import (
+        lock_exam_and_score_edit_scope_for_grading,
+    )
 
     validate_online_exam_readiness(exam)
     try:
         with transaction.atomic():
+            # Share grading's outer lock before touching attempts/submissions.
+            # A duplicate retake must not hold the prior attempt while waiting
+            # for the new submission that is currently grading.
+            lock_exam_and_score_edit_scope_for_grading(
+                exam_id=int(exam.id), tenant_id=int(tenant.id),
+            )
             ExamEnrollment.objects.select_for_update().only("id").get(
                 exam_id=int(exam.id),
                 enrollment_id=enrollment.id,
