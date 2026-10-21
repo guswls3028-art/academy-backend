@@ -1107,6 +1107,13 @@ ID이고 `total`은 해당 필터 전체 건수다. 식별되지 않은 답안, 
 새 채점 실패로 기존 성적을 무효화하지 않는다. 목록·상세의 attempt_count는
 응시 이력의 attempt_index를 사용하며 전송 실패 횟수는 포함하지 않는다.
 
+온라인 접수와 동기 채점은 교사 채점과 같은 `Exam → Session` 잠금을 먼저 잡은
+뒤 제출·응시 이력을 처리한다. 재응시 채점 중 중복 제출이 도착해도 앞선 응시와
+새 제출의 역순 잠금으로 서로 대기하지 않는다. 선행 채점이 완료된 뒤 완료한
+응시 횟수를 다시 확인하고 한도를 소진한 중복 요청은 기존 409 안내를 반환한다.
+답안·점수·응시 횟수는 완료한 채점 결과만 반영하며 DB 스키마·과거 데이터는
+변경하지 않는다.
+
 일반 서술형은 4,000자까지 받고 원문을 SubmissionAnswer와 ResultItem에 유지한다.
 채점 전 source는 `online_pending`이며 교직원 상세와 직접 채점 표에는 원문과
 null 점수·정오를 반환한다. DB의 임시 0은 확정 점수가 아니다. 학생 결과·성적표·
@@ -1120,5 +1127,7 @@ null 점수·정오를 반환한다. DB의 임시 0은 확정 점수가 아니�
 
 검증: `test_online_submission_recovery`, `test_online_assessment_totals`,
 `test_parent_exam_child_selection`, `test_manual_exam_grading`.
+`test_p0_concurrency_pg`는 PostgreSQL의 실제 잠금 대기를 확인한 뒤 진행 중인
+재응시 채점을 재개하여 완료·중복 409·응시 횟수·대표 점수의 정합성을 검증한다.
 화면·격리 실사용은 frontend `STUDENT-PARENT-APP-CONTRACT.md`와
 `GRADING-WRONG-NOTE-WORKFLOW.md`가 소유한다.
