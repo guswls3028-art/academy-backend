@@ -8,7 +8,7 @@ from django.urls import resolve
 from django.utils import timezone
 from rest_framework.test import force_authenticate
 
-from apps.domains.results.models import Result, ResultItem
+from apps.domains.results.models import ExamResult, Result, ResultItem
 from apps.domains.results.tests import test_online_assessment_totals as fixtures
 
 
@@ -153,6 +153,7 @@ class OnlineSubmissionRecoveryTests(TestCase):
             "attendance": "present", "cells": {str(essay.pk): {"score": score}},
         }]})
         self.assertEqual(saved.status_code, 200, saved.data)
+        self.assertEqual(ExamResult.objects.get(submission=self.submission).status, "FINAL")
         for _ in range(2):
             published = self.call(result_url)
             self.assertEqual(published.status_code, 200, published.data)
@@ -165,4 +166,6 @@ class OnlineSubmissionRecoveryTests(TestCase):
         with patch("apps.domains.results.services.grading_service.dispatch_progress_pipeline"):
             grade_submission(self.submission.id, force_regrade=True)
         self.assertEqual(self.call(result_url).data["total_score"], 80 + score)
+        self.assertEqual(ExamResult.objects.get(submission=self.submission).status, "FINAL")
         self.assertEqual(ResultItem.objects.get(result=self.result, question_id=essay.pk).answer, answer)
+        self.assertEqual(ResultItem.objects.get(result=self.result, question_id=essay.pk).score, score)
