@@ -13,9 +13,11 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.db import connection, close_old_connections
 from django.test import SimpleTestCase, TestCase, TransactionTestCase
+from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIRequestFactory, force_authenticate
 
+from academy.adapters.youtube_statistics import StatisticsUnavailable
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.landing_public.api.views import video_views as views
 from apps.domains.landing_public.models import PublicResourceBoardAccess, PublicVideo, PublicVideoEvent, PublicVideoShowcase
@@ -67,6 +69,20 @@ class PublicVideoTests(TestCase):
         return self.call(views.ManageVideoPublishView, "post", {
             "expected_revision": row["revision"], "expected_showcase_revision": showcase_revision, "set_as_hero": hero,
         }, user=self.two, pk=row["id"])
+
+    @patch.dict("os.environ", {"YOUTUBE_DATA_API_KEY": "qa-test-only"})
+    @patch("apps.domains.landing_public.services.video_statistics.fetch_youtube_statistics")
+    def test_publication_refreshes_statistics_and_provider_outage_preserves_publication(self, fetch):
+        row = self.create()
+        fetch.return_value = {"xgjL2HyrdFM": {"view_count": 123, "published_at": timezone.now()}}
+        published = self.publish(row)
+        self.assertEqual(published.status_code, 200)
+        self.assertEqual(self.call(views.PublicVideoDetailView, pk=row["id"]).data["youtube_view_count"], 123)
+        self.assertEqual(PublicVideo.objects.get(pk=row["id"]).revision, published.data["video"]["revision"])
+        fetch.side_effect = StatisticsUnavailable()
+        second = self.create("https://youtube.com/shorts/Q70aZV1TH1Y")
+        self.assertEqual(self.publish(second).status_code, 200)
+        self.assertEqual(self.call(views.PublicVideoDetailView, pk=second["id"]).status_code, 200)
 
     def test_complete_two_publisher_journey_and_public_snapshot(self):
         row = self.create()

@@ -1,5 +1,5 @@
 from django.db import transaction
-from django.db.models import F, Q
+from django.db.models import BigIntegerField, Case, DateTimeField, F, Q, When
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -14,7 +14,7 @@ from apps.core.permissions import TenantResolved
 from apps.domains.landing_public.models.video import PublicVideo, PublicVideoEvent, PublicVideoShowcase
 from apps.domains.landing_public.services.publishing import can_publish, require_publisher
 from apps.domains.landing_public.services.youtube import YouTubeUnavailable, normalize_youtube_url, resolve_youtube
-from apps.domains.landing_public.services.video_statistics import public_statistics, refresh_video_statistics
+from apps.domains.landing_public.services.video_statistics import STATISTICS_MAX_AGE, public_statistics, refresh_video_statistics
 
 
 class VideoConflict(APIException):
@@ -209,7 +209,6 @@ class PublicVideoListView(VideoAPIView):
                    parameters=[OpenApiParameter("page", type=int), VideoBrowseSerializer])
     def get(self, request):
         filters = validated(VideoBrowseSerializer, request.query_params)
-        refresh_video_statistics(request.tenant)
         rows = self.published(request)
         if filters.get("kind"):
             rows = rows.filter(published_content__format=filters["kind"])
@@ -217,11 +216,18 @@ class PublicVideoListView(VideoAPIView):
             rows = rows.filter(Q(published_content__title__icontains=filters["q"])
                                | Q(published_content__category_label__icontains=filters["q"])
                                | Q(channel_title__icontains=filters["q"]))
-        rows = rows.annotate(sort_date=Coalesce("youtube_published_at", "published_at"))
+        fresh = Q(youtube_statistics_checked_at__gte=timezone.now() - STATISTICS_MAX_AGE)
+        rows = rows.annotate(
+            sort_count=Case(When(fresh, then=F("youtube_view_count")), output_field=BigIntegerField()),
+            sort_date=Coalesce(
+                Case(When(fresh, then=F("youtube_published_at")), output_field=DateTimeField()),
+                "published_at",
+            ),
+        )
         if filters["sort"] == "popular":
-            if rows.exists() and not rows.filter(youtube_view_count__isnull=False).exists():
+            if rows.exists() and not rows.filter(sort_count__isnull=False).exists():
                 raise YouTubeUnavailable("조회수를 확인하지 못했습니다. 잠시 후 다시 시도하거나 최신순으로 영상을 확인해주세요.")
-            rows = rows.order_by(F("youtube_view_count").desc(nulls_last=True), "-sort_date", "id")
+            rows = rows.order_by(F("sort_count").desc(nulls_last=True), "-sort_date", "id")
         else:
             rows = rows.order_by("sort_date" if filters["sort"] == "oldest" else "-sort_date", "id")
         paginator = VideoPage()
@@ -232,8 +238,6 @@ class PublicVideoListView(VideoAPIView):
 class PublicVideoDetailView(VideoAPIView):
     @extend_schema(auth=[], operation_id="public_videos_detail", responses=PublicVideoSerializer)
     def get(self, request, pk):
-        get_object_or_404(self.published(request), pk=pk)
-        refresh_video_statistics(request.tenant, video_id=pk)
         return Response(public_video(get_object_or_404(self.published(request), pk=pk)))
 
 
@@ -386,7 +390,9 @@ class ManageVideoPublishView(VideoAPIView):
             elif showcase.hero_video_id == video.id:
                 update_hero(request, showcase, None)
             record_event(request, "publish", video)
-            return Response({"video": managed_video(video), "showcase_revision": showcase.revision})
+        # Publication is committed before provider I/O. Public GET/HEAD never write.
+        refresh_video_statistics(request.tenant, video_id=pk)
+        return Response({"video": managed_video(video), "showcase_revision": showcase.revision})
 
 
 class ManageVideoUnpublishView(VideoAPIView):
