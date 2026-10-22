@@ -1,4 +1,6 @@
 from django.db import transaction
+from django.db.models import F, Q
+from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
@@ -12,6 +14,7 @@ from apps.core.permissions import TenantResolved
 from apps.domains.landing_public.models.video import PublicVideo, PublicVideoEvent, PublicVideoShowcase
 from apps.domains.landing_public.services.publishing import can_publish, require_publisher
 from apps.domains.landing_public.services.youtube import YouTubeUnavailable, normalize_youtube_url, resolve_youtube
+from apps.domains.landing_public.services.video_statistics import public_statistics, refresh_video_statistics
 
 
 class VideoConflict(APIException):
@@ -66,6 +69,15 @@ class VideoSourceSerializer(serializers.Serializer):
 class PublicVideoSerializer(VideoContentSerializer, VideoSourceSerializer):
     id = serializers.UUIDField()
     published_at = serializers.DateTimeField()
+    youtube_view_count = serializers.IntegerField(allow_null=True)
+    youtube_published_at = serializers.DateTimeField(allow_null=True)
+    youtube_statistics_checked_at = serializers.DateTimeField(allow_null=True)
+
+
+class VideoBrowseSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=["landscape", "vertical"], required=False)
+    sort = serializers.ChoiceField(choices=["latest", "popular", "oldest"], default="latest")
+    q = serializers.CharField(max_length=90, allow_blank=True, default="")
 
 
 class ManagedVideoSerializer(VideoSourceSerializer):
@@ -114,7 +126,7 @@ def public_video(video):
         "id": str(video.id), "youtube_video_id": video.youtube_video_id,
         "canonical_url": video.canonical_url, "source_title": video.source_title,
         "channel_title": video.channel_title, "thumbnail_url": video.thumbnail_url,
-        "published_at": video.published_at, **video.published_content,
+        "published_at": video.published_at, **video.published_content, **public_statistics(video),
     }
 
 
@@ -194,9 +206,24 @@ class VideoAPIView(APIView):
 
 class PublicVideoListView(VideoAPIView):
     @extend_schema(auth=[], operation_id="public_videos_list", responses=PublicVideoPageSerializer,
-                   parameters=[OpenApiParameter("page", type=int)])
+                   parameters=[OpenApiParameter("page", type=int), VideoBrowseSerializer])
     def get(self, request):
-        rows = self.published(request).order_by("-published_at", "id")
+        filters = validated(VideoBrowseSerializer, request.query_params)
+        refresh_video_statistics(request.tenant)
+        rows = self.published(request)
+        if filters.get("kind"):
+            rows = rows.filter(published_content__format=filters["kind"])
+        if filters["q"]:
+            rows = rows.filter(Q(published_content__title__icontains=filters["q"])
+                               | Q(published_content__category_label__icontains=filters["q"])
+                               | Q(channel_title__icontains=filters["q"]))
+        rows = rows.annotate(sort_date=Coalesce("youtube_published_at", "published_at"))
+        if filters["sort"] == "popular":
+            if rows.exists() and not rows.filter(youtube_view_count__isnull=False).exists():
+                raise YouTubeUnavailable("조회수를 확인하지 못했습니다. 잠시 후 다시 시도하거나 최신순으로 영상을 확인해주세요.")
+            rows = rows.order_by(F("youtube_view_count").desc(nulls_last=True), "-sort_date", "id")
+        else:
+            rows = rows.order_by("sort_date" if filters["sort"] == "oldest" else "-sort_date", "id")
         paginator = VideoPage()
         page = paginator.paginate_queryset(rows, request)
         return paginator.get_paginated_response([public_video(row) for row in page])
@@ -205,6 +232,8 @@ class PublicVideoListView(VideoAPIView):
 class PublicVideoDetailView(VideoAPIView):
     @extend_schema(auth=[], operation_id="public_videos_detail", responses=PublicVideoSerializer)
     def get(self, request, pk):
+        get_object_or_404(self.published(request), pk=pk)
+        refresh_video_statistics(request.tenant, video_id=pk)
         return Response(public_video(get_object_or_404(self.published(request), pk=pk)))
 
 

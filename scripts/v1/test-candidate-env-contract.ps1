@@ -21,6 +21,7 @@ $source = [pscustomobject]@{
     OPENAI_API_KEY = "external-ai-secret"
     ANTHROPIC_API_KEY = "external-ai-secret"
     GEMINI_API_KEY = "production-gemini-secret"
+    YOUTUBE_DATA_API_KEY = "production-youtube-secret"
     AWS_ACCESS_KEY_ID = "static-key"
     AWS_SECRET_ACCESS_KEY = "static-secret"
     SECRET_KEY = "production-django-secret"
@@ -58,7 +59,7 @@ if (
 if (
     [string]$source.SECRET_KEY -eq "production-django-secret" -or
     [string]$source.MESSAGING_TENANT_BINDING_KEY -eq "production-binding-secret" -or
-    [string]$source.GEMINI_API_KEY
+    [string]$source.GEMINI_API_KEY -or [string]$source.YOUTUBE_DATA_API_KEY
 ) {
     throw "Preprod sanitizer must replace production signing secrets and remove Gemini."
 }
@@ -91,10 +92,13 @@ $script:ApiDevelopmentCdnSigningSecret = "development-signing-test-secret"
 $script:ApiDevelopmentAiQueueName = "academy-development-ai"
 $script:ApiDevelopmentToolsQueueName = "academy-development-tools"
 $script:ApiDevelopmentMessagingQueueName = "academy-development-messaging"
+$developmentYoutubeKey = "isolated-youtube-test-key"
 foreach ($settings in @("apps.api.config.settings.development", "apps.api.config.settings.worker")) {
     $target = [pscustomobject]@{
         GEMINI_API_KEY = "approved-existing-provider-test-key"
         GEMINI_OTHER_SECRET = "must-not-be-retained"
+        YOUTUBE_DATA_API_KEY = "production-youtube-secret"
+        YOUTUBE_OTHER_SECRET = "must-not-be-retained"
         OPENAI_API_KEY = "must-not-be-retained"
         AWS_ACCESS_KEY_ID = "must-not-be-retained"
         DB_NAME = "production"
@@ -106,8 +110,10 @@ foreach ($settings in @("apps.api.config.settings.development", "apps.api.config
     $expectedKey = if ($settings -eq "apps.api.config.settings.worker") {
         "approved-existing-provider-test-key"
     } else { "" }
+    $expectedYoutubeKey = if ($settings -eq "apps.api.config.settings.development") { $developmentYoutubeKey } else { "" }
     if (
         [string]$target.GEMINI_API_KEY -ne $expectedKey -or
+        [string]$target.YOUTUBE_DATA_API_KEY -cne $expectedYoutubeKey -or [string]$target.YOUTUBE_OTHER_SECRET -or
         [string]$target.GEMINI_OTHER_SECRET -or [string]$target.OPENAI_API_KEY -or
         [string]$target.AWS_ACCESS_KEY_ID -or
         [string]$target.DB_NAME -ne $developmentDatabaseName -or

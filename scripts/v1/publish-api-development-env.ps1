@@ -65,6 +65,13 @@ try {
 }
 
 $productionDatabaseName = [string]$production.DB_NAME
+$developmentYoutubeKey = ""
+if ([string]$production.YOUTUBE_DATA_API_KEY) {
+    $developmentYoutubeKey = (Get-RequiredSecureParameterValue -Name "/academy/providers/development/youtube-api-key").Trim()
+    if (-not $developmentYoutubeKey -or $developmentYoutubeKey -ceq [string]$production.YOUTUBE_DATA_API_KEY) {
+        throw "YouTube development verification requires a distinct dedicated provider key."
+    }
+}
 $productionDatabaseUser = [string]$production.DB_USER
 $developmentDatabaseName = [string]$script:ApiDevelopmentDatabaseName
 $developmentDatabaseUser = [string]$script:ApiDevelopmentDatabaseUser
@@ -182,6 +189,7 @@ function Set-IsolatedDevelopmentValues {
         '^OPENAI_',
         '^ANTHROPIC_',
         '^GEMINI_',
+        '^YOUTUBE_',
         '^AWS_ACCESS_KEY_ID$',
         '^AWS_SECRET_ACCESS_KEY$',
         '^AWS_SESSION_TOKEN$',
@@ -252,6 +260,9 @@ function Set-IsolatedDevelopmentValues {
     foreach ($entry in $values.GetEnumerator()) {
         $Target | Add-Member -NotePropertyName $entry.Key -NotePropertyValue $entry.Value -Force
     }
+    if ($SettingsModule -eq "apps.api.config.settings.development") {
+        $Target | Add-Member -NotePropertyName YOUTUBE_DATA_API_KEY -NotePropertyValue $developmentYoutubeKey -Force
+    }
     $Target.PSObject.Properties.Remove("ACADEMY_PREPROD_RELEASE_ID")
 }
 
@@ -315,6 +326,7 @@ if (
     [string]$actual.DB_PASSWORD -ne $credentialPassword -or
     [string]$actual.DJANGO_SETTINGS_MODULE -ne "apps.api.config.settings.development" -or
     [string]$actual.ACADEMY_RUNTIME_ENV -ne "development" -or
+    [string]$actual.YOUTUBE_DATA_API_KEY -cne $developmentYoutubeKey -or
     [string]$actual.CDN_HLS_BASE_URL -ne "https://cdn.hakwonplus.com" -or
     [string]$actual.CDN_HLS_SIGNING_SECRET -ne $script:ApiDevelopmentCdnSigningSecret -or
     [string]$actual.CDN_HLS_SIGNING_KEY_ID -ne "v1" -or
@@ -351,6 +363,7 @@ if (
     [string]$actualWorkers.DB_NAME -ne $developmentDatabaseName -or
     [string]$actualWorkers.DB_USER -ne $developmentDatabaseUser -or
     [string]$actualWorkers.DJANGO_SETTINGS_MODULE -ne "apps.api.config.settings.worker" -or
+    [string]$actualWorkers.YOUTUBE_DATA_API_KEY -or
     [string]$actualWorkers.CDN_HLS_BASE_URL -ne "https://cdn.hakwonplus.com" -or
     [string]$actualWorkers.CDN_HLS_SIGNING_SECRET -ne $script:ApiDevelopmentCdnSigningSecret -or
     [string]$actualWorkers.CDN_HLS_SIGNING_KEY_ID -ne "v1" -or

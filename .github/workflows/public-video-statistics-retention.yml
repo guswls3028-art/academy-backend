@@ -1,0 +1,64 @@
+name: Public Video Statistics Retention
+
+on:
+  schedule:
+    - cron: "45 18 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Count expired YouTube statistics without clearing them"
+        required: true
+        type: boolean
+        default: true
+
+concurrency:
+  group: public-video-statistics-retention
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-2
+
+jobs:
+  expire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Require production main ref
+        run: test "$GITHUB_REF" = refs/heads/main
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
+
+      - name: Clear expired provider statistics on one healthy API instance
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          INSTANCE=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names academy-v1-api-asg --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService` && HealthStatus==`Healthy`].InstanceId | [0]' --output text)
+          test -n "$INSTANCE" && test "$INSTANCE" != None
+          EXECUTE="--execute"
+          if [ "$EVENT_NAME" = workflow_dispatch ] && [ "${DRY_RUN:-true}" = true ]; then EXECUTE=""; fi
+          PARAMS=$(jq -n --arg cmd "set -eu; docker exec academy-api python manage.py expire_public_video_statistics $EXECUTE" '{commands: [$cmd]}')
+          COMMAND=$(aws ssm send-command --instance-ids "$INSTANCE" --document-name AWS-RunShellScript --parameters "$PARAMS" --timeout-seconds 600 --query Command.CommandId --output text)
+          for attempt in $(seq 1 60); do
+            STATUS=$(aws ssm get-command-invocation --command-id "$COMMAND" --instance-id "$INSTANCE" --query Status --output text 2>/dev/null || echo Pending)
+            case "$STATUS" in
+              Success)
+                aws ssm get-command-invocation --command-id "$COMMAND" --instance-id "$INSTANCE" --query StandardOutputContent --output text
+                exit 0
+                ;;
+              Pending|InProgress|Delayed) sleep 8 ;;
+              *) echo "::error::Statistics retention failed: $STATUS"; exit 1 ;;
+            esac
+          done
+          echo "::error::Statistics retention timed out"
+          exit 1
