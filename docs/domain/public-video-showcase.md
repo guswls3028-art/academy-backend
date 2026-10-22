@@ -83,21 +83,30 @@ API 활성화/약관과 두 키 준비 후 격리 개발 실조회 검증을 통
 서버는 검증된 ID 최대 50개, 연결/읽기 3/5초, 전체 본문 읽기 12초, 256KiB, redirect 금지를
 적용한다. 타 ID/잘못된 응답은 실패 폐쇄하며 누락 ID는 미확인이다.
 
-`services/video_statistics.py`는 공개 목록 요청 시 tenant 안에서 갱신 대상 최대 50개를
-잠가 선점하고 네트워크 전에 잠금을 푼다. 직접 상세는 해당 공개 영상 한 개만 확인한다.
-정상 확인은 6시간 뒤, 장애는 5분 뒤 재시도한다.
+공개 목록·상세·대표의 GET/HEAD/OPTIONS는 DB와 공급자에 쓰기 없이 저장된 통계만 읽는다.
+30일 초과 값은 SQL 정렬과 응답에서 제외하되 읽기 요청으로 지우지 않는다. 운영의
+`SafeMethodDatabaseWriteMiddleware`를 우회하거나 끄지 않는다. 이전 요청 중 갱신 방식은
+이 보호 규칙과 충돌해 500을 일으켰으므로 공개 POST와 별도 정기 작업으로 대체했다.
+`services/video_statistics.py`는 영상 공개 POST가 커밋된 뒤 해당 영상만 갱신한다.
+별도 `Public Video Statistics Maintenance` workflow는 15분 간격으로
+`refresh_public_video_statistics --execute`를 실행한다. 활성 tenant별 공개 대상 최대 50개를
+잠가 선점하고 네트워크 전에 잠금을 푼다. 정상 확인은 6시간 뒤, 장애는 최소 5분 뒤부터
+다음 정기 실행에서 재시도한다. 원본 확인 실패에도 완료된 공개와 최근 정상 값은 유지한다.
 조회수/원본 날짜/확인·재시도 시각 네 파생 필드만 갱신하며 게시자 revision·문구·공개일을
 바꾸지 않는다. 응답 적용 시 공개 상태/원본 ID를 다시 확인해 비공개/삭제 경합을 보존한다.
 일시 장애는 최근 정상 값을 유지하고 30일을 넘은 값은 노출·정렬에서 제거한다.
-별도 `Public Video Statistics Retention` 일일 workflow가 `expire_public_video_statistics
---execute`로 모든 tenant/상태의 28일 초과 파생 필드를 비운다. 기본 명령은 계획만 출력하며
-사용자 작성 데이터/영상 행은 삭제하지 않는다. 일일 실패는 Actions에서 복구하고 30일 전에
-같은 명령을 재실행한다. 이는 비활성·비공개 영상도 YouTube의 30일 보관 한도 안에 정리한다.
+같은 workflow가 `expire_public_video_statistics --execute`로 모든 tenant/상태의
+28일 초과 파생 필드를 비운다. 기본 명령은 계획만 출력하며 사용자 작성 데이터/영상 행은
+삭제하지 않는다. 실패는 Actions에서 복구하고 30일 전에 같은 명령을 재실행한다.
+이는 비활성·비공개 영상도 YouTube의 30일 보관 한도 안에 정리한다. 최초 배포 뒤에는
+정기 작업을 명시적으로 실행해 기존 공개 영상 통계를 채운 뒤 인기순을 확인한다.
 
 0014는 nullable 파생 컬럼 네 개만 추가해 기존 API와 공존한다. 백엔드/키 연결을 먼저
 배포하고 프론트엔드를 승격한다. 롤백 시 사용자 데이터는 보존하며 통계 정리 job은 유지한다.
 `test_video_browse`는 전체 정렬/페이지, tenant/공개 스냅샷, 미확인/0/만료, 장애/backoff,
 삭제 경합, 파생 데이터만 갱신/정리 및 고정 공급자 경계를 검증한다.
+공개 탐색 검사는 실제 APIClient·tenant middleware·safe-method guard를 거쳐 실행하며,
+GET/HEAD/OPTIONS의 DB 상태 불변과 공급자 호출 0회, 별도 정기 갱신 후 인기순 반영을 검증한다.
 
 공식 근거: [videos.list](https://developers.google.com/youtube/v3/docs/videos/list),
 [API 데이터 보관 정책](https://developers.google.com/youtube/terms/developer-policies).

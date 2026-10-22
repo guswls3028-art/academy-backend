@@ -4,22 +4,28 @@ from io import StringIO
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
+from django.conf import settings
+from django.core.cache import cache
 from django.test import SimpleTestCase, TestCase
 from django.core.management import call_command
 from django.utils import timezone
-from rest_framework.test import APIRequestFactory
+from rest_framework.test import APIClient
 
 from academy.adapters.youtube_statistics import StatisticsUnavailable, fetch_youtube_statistics
-from apps.core.models import Tenant
-from apps.domains.landing_public.api.views.video_views import PublicVideoDetailView, PublicVideoListView
+from apps.core.models import Tenant, TenantDomain
 from apps.domains.landing_public.models.video import PublicVideo
 from apps.domains.landing_public.services.video_statistics import public_statistics, refresh_video_statistics
 
 
 class VideoBrowseTests(TestCase):
     def setUp(self):
+        cache.clear()
+        self.assertIn("apps.core.middleware.safe_method_write.SafeMethodDatabaseWriteMiddleware", settings.MIDDLEWARE)
         self.tenant = Tenant.objects.create(name="qa-browse", code="qa-browse", is_active=True)
         self.other = Tenant.objects.create(name="qa-browse-other", code="qa-browse-other", is_active=True)
+        self.host = "qa-browse.example.com"
+        TenantDomain.objects.update_or_create(tenant=self.tenant, defaults={"host": self.host, "is_primary": True, "is_active": True})
+        self.client = APIClient()
         self.now = timezone.now()
         self.environment = patch.dict("os.environ", {"YOUTUBE_DATA_API_KEY": ""})
         self.environment.start()
@@ -36,9 +42,7 @@ class VideoBrowseTests(TestCase):
         })
 
     def browse(self, params=None):
-        request = APIRequestFactory().get("/api/v1/landing-public/videos/", params or {})
-        request.tenant = self.tenant
-        return PublicVideoListView.as_view()(request)
+        return self.client.get("/api/v1/landing-public/videos/", params or {}, HTTP_HOST=self.host)
 
     def test_global_format_sort_and_pagination_keep_tenant_and_public_snapshot(self):
         rows = [self.video(i) for i in range(30)]
@@ -71,7 +75,7 @@ class VideoBrowseTests(TestCase):
         self.assertEqual(result.data["results"][0]["id"], str(known.pk))
         self.assertTrue(all(row["youtube_view_count"] is None for row in result.data["results"][1:]))
         expired.refresh_from_db()
-        self.assertIsNone(expired.youtube_view_count)
+        self.assertEqual(expired.youtube_view_count, 999999)  # Reads mask stale data without deleting it.
         self.assertIsNone(public_statistics(unknown)["youtube_view_count"])
         self.assertEqual(self.browse({"sort": "popular", "q": "없는 제목"}).status_code, 200)
 
@@ -99,16 +103,51 @@ class VideoBrowseTests(TestCase):
 
     @patch.dict("os.environ", {"YOUTUBE_DATA_API_KEY": "qa-test-only"})
     @patch("apps.domains.landing_public.services.video_statistics.fetch_youtube_statistics")
-    def test_direct_detail_refreshes_only_the_visible_target_and_returns_current_statistics(self, fetch):
+    def test_direct_detail_reads_statistics_without_provider_or_database_writes(self, fetch):
         row = self.video(0, youtube_view_count=None, youtube_statistics_checked_at=None)
         self.video(1)
         fetch.return_value = {row.youtube_video_id: {"view_count": 123, "published_at": self.now}}
-        request = APIRequestFactory().get(f"/api/v1/landing-public/videos/{row.pk}/")
-        request.tenant = self.tenant
-        result = PublicVideoDetailView.as_view()(request, pk=row.pk)
+        path = f"/api/v1/landing-public/videos/{row.pk}/"
+        self.assertIsNone(self.client.get(path, HTTP_HOST=self.host).data["youtube_view_count"])
+        fetch.assert_not_called()
+        refresh_video_statistics(self.tenant, video_id=row.pk)
+        result = self.client.get(path, HTTP_HOST=self.host)
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.data["youtube_view_count"], 123)
         fetch.assert_called_once_with([row.youtube_video_id], "qa-test-only")
+
+    @patch.dict("os.environ", {"YOUTUBE_DATA_API_KEY": "qa-test-only"})
+    @patch("apps.domains.landing_public.services.video_statistics.fetch_youtube_statistics")
+    def test_get_head_options_keep_guard_enabled_and_never_refresh(self, fetch):
+        row = self.video(0, youtube_statistics_checked_at=self.now - timedelta(days=31))
+        before = PublicVideo.objects.values().get(pk=row.pk)
+        for path in ("/api/v1/landing-public/videos/", f"/api/v1/landing-public/videos/{row.pk}/",
+                     "/api/v1/landing-public/videos/showcase/"):
+            for method in ("get", "head", "options"):
+                with self.subTest(path=path, method=method):
+                    result = getattr(self.client, method)(path, HTTP_HOST=self.host)
+                    self.assertEqual(result.status_code, 200)
+        fetch.assert_not_called()
+        self.assertEqual(PublicVideo.objects.values().get(pk=row.pk), before)
+
+    @patch.dict("os.environ", {"YOUTUBE_DATA_API_KEY": "qa-test-only"})
+    @patch("apps.domains.landing_public.services.video_statistics.fetch_youtube_statistics")
+    def test_explicit_maintenance_is_tenant_scoped_and_preserves_authored_data(self, fetch):
+        row = self.video(0, youtube_view_count=None, youtube_statistics_checked_at=None)
+        foreign = self.video(1, tenant=self.other)
+        hidden = self.video(2, status="unpublished")
+        fetch.return_value = {row.youtube_video_id: {"view_count": 456, "published_at": self.now}}
+        call_command("refresh_public_video_statistics", tenant_code=self.tenant.code, stdout=StringIO())
+        fetch.assert_not_called()
+        call_command("refresh_public_video_statistics", tenant_code=self.tenant.code, execute=True, stdout=StringIO())
+        fetch.assert_called_once_with([row.youtube_video_id], "qa-test-only")
+        row.refresh_from_db(); foreign.refresh_from_db(); hidden.refresh_from_db()
+        self.assertEqual(row.youtube_view_count, 456)
+        self.assertEqual(row.revision, 1)
+        self.assertEqual(row.draft_content["title"], "공개되지 않은 초안")
+        self.assertEqual(foreign.youtube_view_count, 10)
+        self.assertEqual(hidden.youtube_view_count, 20)
+        self.assertEqual(self.browse({"sort": "popular"}).data["results"][0]["youtube_view_count"], 456)
 
     @patch.dict("os.environ", {"YOUTUBE_DATA_API_KEY": "qa-test-only"})
     @patch("apps.domains.landing_public.services.video_statistics.fetch_youtube_statistics")
