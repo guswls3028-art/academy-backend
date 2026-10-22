@@ -441,6 +441,109 @@
         ],
         "type": "object"
       },
+      "AdminParentCommentListItem": {
+        "properties": {
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/ParentCommentRevision"
+            },
+            "type": "array"
+          },
+          "student_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "student_name": {
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_by": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "history",
+          "student_id",
+          "student_name",
+          "text",
+          "updated_at",
+          "updated_by",
+          "version"
+        ],
+        "type": "object"
+      },
+      "AdminParentCommentListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AdminParentCommentListItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "AdminParentCommentResponse": {
+        "properties": {
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/ParentCommentRevision"
+            },
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_by": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "history",
+          "text",
+          "updated_at",
+          "updated_by",
+          "version"
+        ],
+        "type": "object"
+      },
       "AnswerKey": {
         "properties": {
           "answers": {
@@ -518,6 +621,17 @@
         },
         "required": [
           "session_id"
+        ],
+        "type": "object"
+      },
+      "AssessmentDetailError": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
         ],
         "type": "object"
       },
@@ -2440,6 +2554,23 @@
           "self_registration_disabled"
         ],
         "type": "string"
+      },
+      "CommentWriteRequest": {
+        "properties": {
+          "text": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "version": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "text",
+          "version"
+        ],
+        "type": "object"
       },
       "CorrectionStatusEnum": {
         "description": "* `PENDING` - PENDING\n* `COMPLETED` - COMPLETED\n* `NOT_REQUIRED` - NOT_REQUIRED",
@@ -4452,31 +4583,6 @@
         ],
         "type": "object"
       },
-      "HomeworkScoreRequest": {
-        "properties": {
-          "max_score": {
-            "format": "double",
-            "minimum": 0,
-            "nullable": true,
-            "type": "number"
-          },
-          "score": {
-            "format": "double",
-            "minimum": 0,
-            "nullable": true,
-            "type": "number"
-          },
-          "status": {
-            "nullable": true,
-            "type": "string",
-            "writeOnly": true
-          },
-          "teacher_approved": {
-            "type": "boolean"
-          }
-        },
-        "type": "object"
-      },
       "HomeworkTypeEnum": {
         "description": "* `template` - 템플릿\n* `regular` - 일반",
         "enum": [
@@ -6233,6 +6339,205 @@
         ],
         "type": "string"
       },
+      "MessageTemplate": {
+        "properties": {
+          "alimtalk_envelope_type": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "alimtalk_readiness": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "body": {
+            "maxLength": 5000,
+            "type": "string"
+          },
+          "can_delete": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "category": {
+            "$ref": "#/components/schemas/MessageTemplateCategoryEnum"
+          },
+          "created_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "delete_block_reason": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "has_content_var": {
+            "description": "본문에 #{공지내용} 또는 #{내용} 변수가 있는지 — 자유양식 발송 가능 여부",
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "is_system": {
+            "description": "시스템 기본 양식 여부. True이면 사용자 수정/삭제 불가.",
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "is_user_default": {
+            "description": "사용자가 해당 카테고리에서 기본 양식으로 지정한 템플릿. tenant+category당 1개만.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "템플릿 이름",
+            "maxLength": 120,
+            "type": "string"
+          },
+          "solapi_status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SolapiStatusEnum"
+              },
+              {
+                "$ref": "#/components/schemas/BlankEnum"
+              }
+            ],
+            "readOnly": true
+          },
+          "solapi_template_id": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "subject": {
+            "description": "제목(선택)",
+            "maxLength": 200,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "alimtalk_envelope_type",
+          "alimtalk_readiness",
+          "body",
+          "can_delete",
+          "created_at",
+          "delete_block_reason",
+          "has_content_var",
+          "id",
+          "is_system",
+          "name",
+          "solapi_status",
+          "solapi_template_id",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "MessageTemplateCategoryEnum": {
+        "description": "* `default` - 기본\n* `signup` - 가입/등록\n* `attendance` - 출결\n* `lecture` - 강의\n* `exam` - 시험\n* `assignment` - 과제\n* `grades` - 성적\n* `clinic` - 클리닉\n* `payment` - 결제\n* `notice` - 운영공지\n* `community` - 커뮤니티\n* `staff` - 직원\n* `student` - 학생",
+        "enum": [
+          "default",
+          "signup",
+          "attendance",
+          "lecture",
+          "exam",
+          "assignment",
+          "grades",
+          "clinic",
+          "payment",
+          "notice",
+          "community",
+          "staff",
+          "student"
+        ],
+        "type": "string"
+      },
+      "MessageTemplateConflictResponse": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "current_template": {
+            "$ref": "#/components/schemas/MessageTemplate"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "current_template",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "MessageTemplateCreateConflictResponse": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "MessageTemplateDefaultRequestRequest": {
+        "properties": {
+          "is_user_default": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "MessageTemplateRequest": {
+        "properties": {
+          "body": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "category": {
+            "$ref": "#/components/schemas/MessageTemplateCategoryEnum"
+          },
+          "client_request_id": {
+            "format": "uuid",
+            "type": "string",
+            "writeOnly": true
+          },
+          "expected_updated_at": {
+            "format": "date-time",
+            "type": "string",
+            "writeOnly": true
+          },
+          "is_user_default": {
+            "description": "사용자가 해당 카테고리에서 기본 양식으로 지정한 템플릿. tenant+category당 1개만.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "템플릿 이름",
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "subject": {
+            "description": "제목(선택)",
+            "maxLength": 200,
+            "type": "string"
+          }
+        },
+        "required": [
+          "body",
+          "name"
+        ],
+        "type": "object"
+      },
       "MessagingInfo": {
         "description": "GET/PATCH 응답: 테넌트 메시징 정보",
         "properties": {
@@ -6520,6 +6825,54 @@
         ],
         "type": "object"
       },
+      "OmrUploadBatchItemSummary": {
+        "properties": {
+          "admission_status": {
+            "type": "string"
+          },
+          "failure_code": {
+            "nullable": true,
+            "type": "string"
+          },
+          "failure_message": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "identifier_status": {
+            "nullable": true,
+            "type": "string"
+          },
+          "ordinal": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "submission_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "submission_status": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "admission_status",
+          "failure_code",
+          "failure_message",
+          "id",
+          "identifier_status",
+          "ordinal",
+          "status",
+          "submission_id",
+          "submission_status"
+        ],
+        "type": "object"
+      },
       "OmrUploadBatchRetryRequestRequest": {
         "properties": {
           "item_ordinals": {
@@ -6588,6 +6941,12 @@
             "format": "uuid",
             "type": "string"
           },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OmrUploadBatchItemSummary"
+            },
+            "type": "array"
+          },
           "lecture_id": {
             "nullable": true,
             "type": "integer"
@@ -6652,6 +7011,7 @@
           "grading_counts",
           "grading_status",
           "id",
+          "items",
           "lecture_id",
           "overall_status",
           "pending_admission_ordinals",
@@ -6718,6 +7078,12 @@
             "format": "uuid",
             "type": "string"
           },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OmrUploadBatchItemSummary"
+            },
+            "type": "array"
+          },
           "lecture_id": {
             "nullable": true,
             "type": "integer"
@@ -6764,6 +7130,7 @@
           "grading_counts",
           "grading_status",
           "id",
+          "items",
           "lecture_id",
           "overall_status",
           "pending_admission_ordinals",
@@ -6830,6 +7197,12 @@
             "format": "uuid",
             "type": "string"
           },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OmrUploadBatchItemSummary"
+            },
+            "type": "array"
+          },
           "lecture_id": {
             "nullable": true,
             "type": "integer"
@@ -6883,6 +7256,7 @@
           "grading_counts",
           "grading_status",
           "id",
+          "items",
           "lecture_id",
           "overall_status",
           "pending_admission_ordinals",
@@ -8577,6 +8951,148 @@
         ],
         "type": "object"
       },
+      "ParentAssessmentCommentItem": {
+        "properties": {
+          "assessment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "assessment_kind": {
+            "$ref": "#/components/schemas/TypeEnum"
+          },
+          "assessment_title": {
+            "nullable": true,
+            "type": "string"
+          },
+          "lecture_title": {
+            "type": "string"
+          },
+          "session_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "session_title": {
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "assessment_id",
+          "assessment_kind",
+          "assessment_title",
+          "lecture_title",
+          "session_id",
+          "session_title",
+          "text",
+          "updated_at",
+          "version"
+        ],
+        "type": "object"
+      },
+      "ParentAssessmentCommentsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ParentAssessmentCommentItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ParentCommentConflict": {
+        "properties": {
+          "current": {
+            "$ref": "#/components/schemas/ParentCommentSnapshot"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "current",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "ParentCommentRevision": {
+        "properties": {
+          "author_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "author_name": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "author_id",
+          "author_name",
+          "created_at",
+          "text",
+          "version"
+        ],
+        "type": "object"
+      },
+      "ParentCommentSnapshot": {
+        "properties": {
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "text": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_by": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "text",
+          "updated_at",
+          "updated_by",
+          "version"
+        ],
+        "type": "object"
+      },
       "ParentInitialPasswordChoiceRequest": {
         "properties": {
           "parent_initial_password": {
@@ -9525,6 +10041,44 @@
           },
           "title": {
             "maxLength": 255,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedMessageTemplateRequest": {
+        "properties": {
+          "body": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "category": {
+            "$ref": "#/components/schemas/MessageTemplateCategoryEnum"
+          },
+          "client_request_id": {
+            "format": "uuid",
+            "type": "string",
+            "writeOnly": true
+          },
+          "expected_updated_at": {
+            "format": "date-time",
+            "type": "string",
+            "writeOnly": true
+          },
+          "is_user_default": {
+            "description": "사용자가 해당 카테고리에서 기본 양식으로 지정한 템플릿. tenant+category당 1개만.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "템플릿 이름",
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "subject": {
+            "description": "제목(선택)",
+            "maxLength": 200,
             "type": "string"
           }
         },
@@ -13813,6 +14367,50 @@
         ],
         "type": "object"
       },
+      "ScoreTotalConfigResponse": {
+        "properties": {
+          "exam_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "exam_order": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "homework_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "homework_order": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "version": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "exam_ids",
+          "exam_order",
+          "homework_ids",
+          "homework_order",
+          "version"
+        ],
+        "type": "object"
+      },
       "SealedVideo": {
         "description": "✅ FINAL SEALED VERSION (SaaS production)\n\n- DB 저장 필드와 API 노출 필드 분리\n- CDN 기반 URL 동적 생성\n- Cache-busting 지원\n- Legacy 경로 normalize",
         "properties": {
@@ -14585,6 +15183,11 @@
             "default": "parent",
             "description": "학생/학부모 번호로 보낼지"
           },
+          "session_id": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
           "staff_ids": {
             "description": "legacy field. 직원 대상 범용 발송은 비활성화됨.",
             "items": {
@@ -15009,6 +15612,15 @@
           }
         },
         "type": "object"
+      },
+      "SolapiStatusEnum": {
+        "description": "* `` - 미신청\n* `PENDING` - 검수 대기\n* `APPROVED` - 승인\n* `REJECTED` - 반려",
+        "enum": [
+          "PENDING",
+          "APPROVED",
+          "REJECTED"
+        ],
+        "type": "string"
       },
       "SourceB3bEnum": {
         "description": "* `omr_scan` - OMR Scan\n* `omr_manual` - OMR Manual Input\n* `online` - Online\n* `homework_image` - Homework Image\n* `homework_video` - Homework Video\n* `ai_match` - AI Image Match",
@@ -19467,6 +20079,52 @@
           "detail",
           "mustChangePassword",
           "userId"
+        ],
+        "type": "object"
+      },
+      "TotalConfigRequest": {
+        "properties": {
+          "exam_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "exam_order": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "expected_version": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "homework_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "homework_order": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 500,
+            "type": "array"
+          }
+        },
+        "required": [
+          "exam_ids",
+          "expected_version",
+          "homework_ids"
         ],
         "type": "object"
       },
@@ -31766,36 +32424,6 @@
       }
     },
     "/api/v1/homework/policies/{id}/": {
-      "delete": {
-        "operationId": "homework_policies_destroy",
-        "parameters": [
-          {
-            "description": "homework policy을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "No response body"
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "homework"
-        ]
-      },
       "get": {
         "operationId": "homework_policies_retrieve",
         "parameters": [
@@ -31861,62 +32489,6 @@
             "multipart/form-data": {
               "schema": {
                 "$ref": "#/components/schemas/PatchedHomeworkPolicyRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HomeworkPolicy"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "homework"
-        ]
-      },
-      "put": {
-        "operationId": "homework_policies_update",
-        "parameters": [
-          {
-            "description": "homework policy을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkPolicyRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkPolicyRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkPolicyRequest"
               }
             }
           }
@@ -32011,52 +32583,6 @@
         "tags": [
           "homework"
         ]
-      },
-      "post": {
-        "description": "HomeworkScore 관리 ViewSet",
-        "operationId": "homework_scores_create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkScoreRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkScoreRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkScoreRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HomeworkScore"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "homework"
-        ]
       }
     },
     "/api/v1/homework/scores/quick/": {
@@ -32108,36 +32634,6 @@
       }
     },
     "/api/v1/homework/scores/{id}/": {
-      "delete": {
-        "description": "HomeworkScore 관리 ViewSet",
-        "operationId": "homework_scores_destroy",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "No response body"
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "homework"
-        ]
-      },
       "get": {
         "description": "HomeworkScore 관리 ViewSet",
         "operationId": "homework_scores_retrieve",
@@ -32203,62 +32699,6 @@
             "multipart/form-data": {
               "schema": {
                 "$ref": "#/components/schemas/PatchedHomeworkScoreRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HomeworkScore"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "homework"
-        ]
-      },
-      "put": {
-        "description": "HomeworkScore 관리 ViewSet",
-        "operationId": "homework_scores_update",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkScoreRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkScoreRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkScoreRequest"
               }
             }
           }
@@ -32545,63 +32985,6 @@
               }
             }
           }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Homework"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "homeworks"
-        ]
-      },
-      "put": {
-        "operationId": "homeworks_update",
-        "parameters": [
-          {
-            "description": "homework을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeworkRequest"
-              }
-            }
-          },
-          "required": true
         },
         "responses": {
           "200": {
@@ -41392,9 +41775,91 @@
       "post": {
         "description": "GET: 문구 목록. POST: 사용자 문구 생성.",
         "operationId": "messaging_templates_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageTemplateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageTemplateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageTemplateRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/MessageTemplate"
+                    },
+                    {
+                      "properties": {
+                        "creation_content_changed": {
+                          "readOnly": true,
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "creation_content_changed"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/MessageTemplate"
+                    },
+                    {
+                      "properties": {
+                        "creation_content_changed": {
+                          "readOnly": true,
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "creation_content_changed"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
             "description": "No response body"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageTemplateCreateConflictResponse"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -41506,9 +41971,54 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedMessageTemplateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedMessageTemplateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedMessageTemplateRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageTemplate"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
             "description": "No response body"
+          },
+          "403": {
+            "description": "No response body"
+          },
+          "404": {
+            "description": "No response body"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageTemplateConflictResponse"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -41558,7 +42068,7 @@
     },
     "/api/v1/messaging/templates/{id}/set-default/": {
       "post": {
-        "description": "POST: tenant+category당 사용자 기본 문구 하나를 토글한다.",
+        "description": "POST: tenant+category 기본을 명시 지정한다. 상태 누락 시 기존 토글을 유지한다.",
         "operationId": "messaging_templates_set_default_create",
         "parameters": [
           {
@@ -41570,8 +42080,40 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageTemplateDefaultRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageTemplateDefaultRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageTemplateDefaultRequestRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageTemplate"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "No response body"
+          },
+          "404": {
             "description": "No response body"
           }
         },
@@ -44779,6 +45321,372 @@
         ]
       }
     },
+    "/api/v1/results/admin/sessions/{session_id}/total-config/": {
+      "get": {
+        "description": "Staff-only tenant-scoped selected assessments and session-local column order. Newly linked assessments append to order; removed assessments disappear.",
+        "operationId": "results_admin_session_total_config_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreTotalConfigResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      },
+      "put": {
+        "description": "Atomically replace numeric-assessment selection and optional complete session-local order using expected_version. Completion-only homework is excluded from sums. Stale versions return 409; validation failure preserves the previous configuration.",
+        "operationId": "results_admin_session_total_config_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotalConfigRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/TotalConfigRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/TotalConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreTotalConfigResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/sessions/{session_id}/{kind}/{assessment_id}/parent-comments/": {
+      "get": {
+        "description": "Staff-only assigned student rows and explicit parent-facing comment edit history, scoped to the request tenant and live session assessment.",
+        "operationId": "results_admin_parent_assessment_comments_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assessment_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The exact session-linked assessment type.",
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "exam",
+                "homework"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminParentCommentListResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/sessions/{session_id}/{kind}/{assessment_id}/parent-comments/{enrollment_id}/": {
+      "put": {
+        "description": "Atomically save parent-facing text and a revision. Version 0 creates the first comment; a stale version returns current state with 409. Blank/whitespace-only text clears publication without deleting history.",
+        "operationId": "results_admin_parent_assessment_comment_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assessment_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "enrollment_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The exact session-linked assessment type.",
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "exam",
+                "homework"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentWriteRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentWriteRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminParentCommentResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentCommentConflict"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
     "/api/v1/results/admin/student-grades/": {
       "get": {
         "description": "학생 개인 시험 + 과제 성적 요약 (admin/teacher 공용).\nQuery params: student_id (required)",
@@ -44988,6 +45896,56 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/parent/assessment-comments/": {
+      "get": {
+        "description": "Parent-only read projection for the selected child, including unscored assessment titles. Student accounts are denied. Internal memos and edit history are never included.",
+        "operationId": "results_parent_assessment_comments_list",
+        "parameters": [
+          {
+            "description": "Explicitly selected active child owned by the authenticated parent in the request tenant.",
+            "in": "header",
+            "name": "X-Student-Id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentAssessmentCommentsResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

@@ -3,7 +3,8 @@
 import re
 
 from django.db import transaction
-from rest_framework import status
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -14,6 +15,7 @@ from apps.domains.messaging.default_templates import default_template_key_for_na
 from apps.domains.messaging.models import DefaultTemplateSuppression, MessageTemplate
 from apps.domains.messaging.permissions import can_manage_messaging_settings
 from apps.domains.messaging.serializers import (
+    MessageTemplateConflict, MessageTemplateCreateConflict, MessageTemplateCreateResponseSerializer,
     MessageTemplateSerializer, template_delete_block_reason,
 )
 
@@ -22,6 +24,16 @@ COPY_PREFIX = "복사 - "
 COPY_PREFIX_RE = re.compile(r"^(?:복사\s*-\s*)+")
 LEGACY_COPY_SUFFIX_RE = re.compile(r"(?:\s*\(복사본\))+$")
 MAX_TEMPLATE_NAME_LENGTH = 120
+
+# Reuse the existing template schema so its category enum has one owner.
+_TEMPLATE_CREATE_RESPONSE = {
+    "allOf": [
+        {"$ref": "#/components/schemas/MessageTemplate"},
+        {"type": "object", "properties": {
+            "creation_content_changed": {"type": "boolean", "readOnly": True},
+        }, "required": ["creation_content_changed"]},
+    ],
+}
 
 
 def build_duplicate_template_name(source_name: str) -> str:
@@ -48,14 +60,33 @@ class MessageTemplateListCreateView(APIView):
             context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
         ).data)
 
+    @extend_schema(
+        request=MessageTemplateSerializer,
+        responses={
+            200: _TEMPLATE_CREATE_RESPONSE,
+            201: _TEMPLATE_CREATE_RESPONSE,
+            400: None,
+            409: inline_serializer(name="MessageTemplateCreateConflictResponse", fields={
+                "code": serializers.CharField(), "detail": serializers.CharField(),
+            }),
+        },
+    )
     def post(self, request):
         serializer = MessageTemplateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save(tenant=request.tenant, is_system=False)
-        return Response(MessageTemplateSerializer(
+        try:
+            serializer.save(tenant=request.tenant, is_system=False)
+        except MessageTemplateCreateConflict as conflict:
+            return Response({"code": conflict.code, "detail": str(conflict.detail)},
+                            status=status.HTTP_409_CONFLICT)
+        return Response(MessageTemplateCreateResponseSerializer(
             serializer.instance,
-            context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
-        ).data, status=status.HTTP_201_CREATED)
+            context={
+                "can_manage_system": can_manage_messaging_settings(request, request.tenant),
+                "creation_content_changed": getattr(serializer, "creation_content_changed", False),
+            },
+        ).data, status=status.HTTP_200_OK if getattr(serializer, "creation_replayed", False)
+            else status.HTTP_201_CREATED)
 
 
 class MessageTemplateDetailView(APIView):
@@ -76,6 +107,20 @@ class MessageTemplateDetailView(APIView):
             context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
         ).data)
 
+    @extend_schema(
+        request=MessageTemplateSerializer,
+        responses={
+            200: MessageTemplateSerializer,
+            400: None,
+            403: None,
+            404: None,
+            409: inline_serializer(name="MessageTemplateConflictResponse", fields={
+                "code": serializers.CharField(),
+                "detail": serializers.CharField(),
+                "current_template": MessageTemplateSerializer(),
+            }),
+        },
+    )
     def patch(self, request, pk):
         template = self._get_template(request, pk)
         if not template:
@@ -90,7 +135,16 @@ class MessageTemplateDetailView(APIView):
             context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
         )
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        try:
+            serializer.save()
+        except MessageTemplateConflict as conflict:
+            return Response({
+                "code": "template_conflict",
+                "detail": str(conflict.detail),
+                "current_template": MessageTemplateSerializer(
+                    conflict.template, context=serializer.context,
+                ).data,
+            }, status=status.HTTP_409_CONFLICT)
         data = serializer.data
         used_variables = set(re.findall(r"#\{([^}]+)\}", serializer.instance.body or ""))
         known_variables = {
@@ -146,22 +200,36 @@ class MessageTemplateDetailView(APIView):
 
 
 class MessageTemplateSetDefaultView(APIView):
-    """POST: tenant+category당 사용자 기본 문구 하나를 토글한다."""
+    """POST: tenant+category 기본을 명시 지정한다. 상태 누락 시 기존 토글을 유지한다."""
 
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(
+        request=inline_serializer(name="MessageTemplateDefaultRequest", fields={
+            "is_user_default": serializers.BooleanField(required=False),
+        }),
+        responses={200: MessageTemplateSerializer, 400: None, 404: None},
+    )
     @transaction.atomic
     def post(self, request, pk):
+        if not isinstance(request.data, dict):
+            return Response({"detail": "JSON object여야 합니다."}, status=status.HTTP_400_BAD_REQUEST)
+        explicit = "is_user_default" in request.data
+        desired = request.data.get("is_user_default")
+        if explicit and not isinstance(desired, bool):
+            return Response({"is_user_default": "JSON boolean 값이어야 합니다."}, status=status.HTTP_400_BAD_REQUEST)
         Tenant.objects.select_for_update().get(pk=request.tenant.pk)
         template = MessageTemplate.objects.filter(tenant=request.tenant, pk=pk).first()
         if not template:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        MessageTemplate.objects.filter(
-            tenant=request.tenant,
-            category=template.category,
-            is_user_default=True,
-        ).exclude(pk=pk).update(is_user_default=False)
-        template.is_user_default = not template.is_user_default
+        next_default = desired if explicit else not template.is_user_default
+        if next_default:
+            MessageTemplate.objects.filter(
+                tenant=request.tenant,
+                category=template.category,
+                is_user_default=True,
+            ).exclude(pk=pk).update(is_user_default=False)
+        template.is_user_default = next_default
         template.save(update_fields=["is_user_default"])
         return Response(MessageTemplateSerializer(
             template,

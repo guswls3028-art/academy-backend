@@ -1,30 +1,14 @@
 {
   "schemaVersion": 3,
   "maximumHighFindings": {
-    "academy-base": 3,
-    "academy-api": 3,
-    "academy-video-worker": 3,
-    "academy-messaging-worker": 3,
-    "academy-ai-worker-cpu": 3,
-    "academy-tools-worker": 3
+    "academy-base": 2,
+    "academy-api": 2,
+    "academy-video-worker": 2,
+    "academy-messaging-worker": 2,
+    "academy-ai-worker-cpu": 2,
+    "academy-tools-worker": 2
   },
   "acceptedHighFindings": [
-    {
-      "cve": "CVE-2026-107161",
-      "packageName": "cyrus-sasl2",
-      "packageVersion": "2.1.28+dfsg1-9",
-      "repositories": [
-        "academy-base",
-        "academy-api",
-        "academy-video-worker",
-        "academy-messaging-worker",
-        "academy-ai-worker-cpu",
-        "academy-tools-worker"
-      ],
-      "expiresOn": "2026-10-15",
-      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-107161",
-      "rationale": "Fresh release-owner review on 2026-10-13, followed by the task owner explicitly approving the exact three CVE/package/version identities across all six repositories including academy-base through 2026-10-16 09:00 KST. The explicit scoped acceptance was obtained after automatic approval review rejected publication under general delegation alone. The previous approval expired on 2026-10-12 UTC and is not made retroactive. Accept only this exact High identity through 2026-10-15 UTC (2026-10-16 09:00 KST); no automatic renewal. Current successful manifest d2a003cfa0a0d831fea9ca4c755cba0b71a7c9a1 has six COMPLETE image scans with exactly the same three reviewed High identities and no Critical. A fresh academy-base rescan completed 2026-10-13T06:22:40Z and added the same two glibc findings to that repository; the other five scan snapshots were less than 24 hours old at that review. After explicit user approval, the official gate refreshed all five now-older service scans before publication late on 2026-10-13 KST and all six images again passed with exactly these three High identities and no Critical. Debian trixie still has no fixed package and upstream PR892 is closed unmerged. Read-only SSM d2886ac6-40e9-4590-adef-4e2923dc9c92 verified exact manifest-bound API/AI/Tools development containers: only libsasl2-2 and libsasl2-modules-db, EXTERNAL only, and DIGEST-MD5 client start returns SASL_NOMECH(-4). verify-sasl.py SHA256 remains 2676232c220c934c99dff12cd54fe9fe2bbdc8deedd8362a3aec3b5edce9c452. The existing oracle remains required after final APT boundaries; preserve libpq/curl/LDAP/SASL ABI. Unexpected plugins or custom SASL_PATH require review. Wheel-vendored implementations and non-inspected runtime containers are outside this fresh runtime observation. New CVEs, package/version changes, Critical findings and expiry remain fail-closed. This is a bounded residual-risk decision, not vendor remediation or a universal non-reachability claim. Preserve package identities, existing native-build checks and all candidate/development/preprod/termination/rolling/cleanup gates. Review before 2026-10-15 09:00 KST; retire an acceptance only after exact-image remediation evidence. Current evidence, limitations and review ownership: docs/operations/container-image-security.md."
-    },
     {
       "cve": "CVE-2026-19499",
       "packageName": "glibc",
@@ -37,9 +21,12 @@
         "academy-ai-worker-cpu",
         "academy-tools-worker"
       ],
-      "expiresOn": "2026-10-15",
+      "expiresOn": null,
+      "indefiniteAcceptance": true,
+      "approvedOn": "2026-10-21",
+      "approvalReference": "docs/operations/container-image-security.md#glibc-approval-20261021",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-19499",
-      "rationale": "Fresh release-owner review on 2026-10-13, followed by the task owner explicitly approving the exact three CVE/package/version identities across all six repositories including academy-base through 2026-10-16 09:00 KST. The explicit scoped acceptance was obtained after automatic approval review rejected publication under general delegation alone. The previous approval expired on 2026-10-12 UTC and is not made retroactive. Accept only this exact High identity through 2026-10-15 UTC (2026-10-16 09:00 KST); no automatic renewal. Current successful manifest d2a003cfa0a0d831fea9ca4c755cba0b71a7c9a1 has six COMPLETE image scans with exactly the same three reviewed High identities and no Critical. A fresh academy-base rescan completed 2026-10-13T06:22:40Z and added the same two glibc findings to that repository; the other five scan snapshots were less than 24 hours old at that review. After explicit user approval, the official gate refreshed all five now-older service scans before publication late on 2026-10-13 KST and all six images again passed with exactly these three High identities and no Critical. Debian trixie 2.41-12+deb13u4 remains vulnerable and no-dsa/Minor issue; the fixed testing/unstable glibc is not a compatible stable-package update. Read-only SSM d2886ac6-40e9-4590-adef-4e2923dc9c92 found this exact libc version and no undefined dynamic references to the five reviewed names in 908 API,1308 AI,863 Tools ELF files, with no census errors. Current application source also has no direct references. Aliases, dlsym, static linking, other service containers and unexercised paths are not excluded; residual memory corruption risk remains. A wholesale core-C-runtime replacement or unvalidated backport would add ABI risk and is not performed as part of this policy review. New CVEs, package/version changes, Critical findings and expiry remain fail-closed. This is a bounded residual-risk decision, not vendor remediation or a universal non-reachability claim. Preserve package identities, existing native-build checks and all candidate/development/preprod/termination/rolling/cleanup gates. Review before 2026-10-15 09:00 KST; retire an acceptance only after exact-image remediation evidence. Current evidence, limitations and review ownership: docs/operations/container-image-security.md."
+      "rationale": "On 2026-10-21 the human task owner explicitly approved indefinite acceptance of these two exact glibc High identities in the existing six repositories while authorizing completion of the online-submission correction release. Residual memory-corruption/service-crash risk remains and runtime unreachability is not established. All six exact candidate scans from failed release39552635486 were COMPLETE with only these two High identities and zero Critical; fresh scans remain mandatory for every new candidate. This approval does not cover other identities, packages, versions, repositories or Critical findings. Preserve native, scan, isolated development, preprod/termination, production approval, rolling, real-use and cleanup gates, and the existing glibc replacement/vulnerability-reproduction HOLD. Exact human approval and evidence: docs/operations/container-image-security.md#glibc-approval-20261021."
     },
     {
       "cve": "CVE-2026-5435",
@@ -53,9 +40,12 @@
         "academy-ai-worker-cpu",
         "academy-tools-worker"
       ],
-      "expiresOn": "2026-10-15",
+      "expiresOn": null,
+      "indefiniteAcceptance": true,
+      "approvedOn": "2026-10-21",
+      "approvalReference": "docs/operations/container-image-security.md#glibc-approval-20261021",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-5435",
-      "rationale": "Fresh release-owner review on 2026-10-13, followed by the task owner explicitly approving the exact three CVE/package/version identities across all six repositories including academy-base through 2026-10-16 09:00 KST. The explicit scoped acceptance was obtained after automatic approval review rejected publication under general delegation alone. The previous approval expired on 2026-10-12 UTC and is not made retroactive. Accept only this exact High identity through 2026-10-15 UTC (2026-10-16 09:00 KST); no automatic renewal. Current successful manifest d2a003cfa0a0d831fea9ca4c755cba0b71a7c9a1 has six COMPLETE image scans with exactly the same three reviewed High identities and no Critical. A fresh academy-base rescan completed 2026-10-13T06:22:40Z and added the same two glibc findings to that repository; the other five scan snapshots were less than 24 hours old at that review. After explicit user approval, the official gate refreshed all five now-older service scans before publication late on 2026-10-13 KST and all six images again passed with exactly these three High identities and no Critical. Debian trixie 2.41-12+deb13u4 remains vulnerable and no-dsa/Minor issue; the fixed testing/unstable glibc is not a compatible stable-package update. Read-only SSM d2886ac6-40e9-4590-adef-4e2923dc9c92 found this exact libc version and no undefined dynamic references to the five reviewed names in 908 API,1308 AI,863 Tools ELF files, with no census errors. Current application source also has no direct references. Aliases, dlsym, static linking, other service containers and unexercised paths are not excluded; residual memory corruption risk remains. A wholesale core-C-runtime replacement or unvalidated backport would add ABI risk and is not performed as part of this policy review. New CVEs, package/version changes, Critical findings and expiry remain fail-closed. This is a bounded residual-risk decision, not vendor remediation or a universal non-reachability claim. Preserve package identities, existing native-build checks and all candidate/development/preprod/termination/rolling/cleanup gates. Review before 2026-10-15 09:00 KST; retire an acceptance only after exact-image remediation evidence. Current evidence, limitations and review ownership: docs/operations/container-image-security.md."
+      "rationale": "On 2026-10-21 the human task owner explicitly approved indefinite acceptance of these two exact glibc High identities in the existing six repositories while authorizing completion of the online-submission correction release. Residual memory-corruption/service-crash risk remains and runtime unreachability is not established. All six exact candidate scans from failed release39552635486 were COMPLETE with only these two High identities and zero Critical; fresh scans remain mandatory for every new candidate. This approval does not cover other identities, packages, versions, repositories or Critical findings. Preserve native, scan, isolated development, preprod/termination, production approval, rolling, real-use and cleanup gates, and the existing glibc replacement/vulnerability-reproduction HOLD. Exact human approval and evidence: docs/operations/container-image-security.md#glibc-approval-20261021."
     }
   ]
 }

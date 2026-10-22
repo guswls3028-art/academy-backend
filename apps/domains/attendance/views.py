@@ -62,6 +62,7 @@ ATTENDANCE_ORDERING_FIELDS = {
     "id": "id",
     "name": "enrollment__student__name",
     "status": "_attendance_status_order",
+    "not_arrived": "_attendance_not_arrived_order",
     "parent_phone": "enrollment__student__parent_phone",
     "phone": "enrollment__student__phone",
 }
@@ -84,6 +85,14 @@ def _apply_attendance_ordering(queryset, requested_ordering):
                     for rank, status_code in enumerate(ATTENDANCE_STATUS_ORDER)
                 ),
                 default=Value(len(ATTENDANCE_STATUS_ORDER)),
+                output_field=IntegerField(),
+            )
+        )
+    elif key == "not_arrived":
+        queryset = queryset.annotate(
+            _attendance_not_arrived_order=Case(
+                When(status__in=("UNSET", "ABSENT"), then=Value(0)),
+                default=Value(1),
                 output_field=IntegerField(),
             )
         )

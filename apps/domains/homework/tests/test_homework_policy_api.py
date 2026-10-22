@@ -129,6 +129,96 @@ class HomeworkPolicyApiTests(APITestCase):
         self.assertEqual(res2.data["cutline_mode"], "PERCENT")
         self.assertEqual(int(res2.data["cutline_value"]), 70)
 
+    def test_generic_policy_writes_preserve_policy_and_score_snapshots(self):
+        policy_id = self._create_policy().data["id"]
+        homework = Homework.objects.create(tenant=self.tenant, session=self.session, title="정책 보존")
+        score = HomeworkScore.objects.create(homework=homework, session=self.session,
+            enrollment=self.enrollment, score=70, max_score=100, passed=False, clinic_required=True)
+        for method in ("put", "delete"):
+            with self.subTest(method=method):
+                response = getattr(self.client, method)(
+                    f"/api/v1/homework/policies/{policy_id}/",
+                    {"cutline_mode": "PERCENT", "cutline_value": 60},
+                    format="json", **self.req_headers,
+                )
+                self.assertEqual(response.status_code, 405, response.data)
+                policy = apps.get_model("homework", "HomeworkPolicy").objects.get(pk=policy_id)
+                score.refresh_from_db()
+                self.assertEqual(policy.cutline_value, 80)
+                self.assertEqual((score.score, score.max_score, score.passed, score.clinic_required),
+                                 (70, 100, False, True))
+
+    def test_homework_edit_cannot_move_or_reclassify_persisted_assessment(self):
+        SessionEnrollment.objects.create(tenant=self.tenant, session=self.session, enrollment=self.enrollment)
+        homework = Homework.objects.create(tenant=self.tenant, session=self.session, title="관계 보존")
+        assignment = HomeworkAssignment.objects.create(tenant=self.tenant, session=self.session,
+            homework=homework, enrollment=self.enrollment)
+        score = HomeworkScore.objects.create(homework=homework, session=self.session,
+            enrollment=self.enrollment, score=70, max_score=100, passed=False)
+        other_session = Session.objects.create(lecture=self.lecture, order=2, title="다른 차시")
+        foreign = Tenant.objects.create(name="Foreign", code="homework-structural-foreign")
+        foreign_lecture = Lecture.objects.create(tenant=foreign, title="Foreign", name="Foreign", subject="MATH")
+        foreign_session = Session.objects.create(lecture=foreign_lecture, order=1, title="Foreign")
+        templates = [Homework.objects.create(tenant=tenant, homework_type="template", title="템플릿")
+                     for tenant in (self.tenant, foreign)]
+        scores_path = f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+        before = self.client.get(scores_path, **self.req_headers)
+        self.assertEqual(before.status_code, 200, before.data)
+        before_total = next(row for row in before.data["rows"]
+                            if row["enrollment_id"] == self.enrollment.id)["homework_total"]
+        self.assertEqual(before_total["score"], 70)
+        changes = [{"session": session.id} for session in (other_session, foreign_session)]
+        changes += [{"homework_type": "template"}]
+        changes += [{"template_homework": template.id} for template in templates]
+        for change in changes:
+            with self.subTest(change=change):
+                homework.refresh_from_db()
+                response = self.client.patch(f"/api/v1/homeworks/{homework.id}/", change,
+                    format="json", HTTP_X_EXPECTED_UPDATED_AT=homework.updated_at.isoformat(), **self.req_headers)
+                self.assertEqual(response.status_code, 400, response.data)
+                homework.refresh_from_db()
+                assignment.refresh_from_db()
+                score.refresh_from_db()
+                self.assertEqual(homework.session_id, self.session.id)
+                self.assertEqual(homework.homework_type, "regular")
+                self.assertIsNone(homework.template_homework_id)
+                self.assertEqual((assignment.session_id, score.session_id), (self.session.id, self.session.id))
+                after = self.client.get(scores_path, **self.req_headers)
+                self.assertEqual(after.status_code, 200, after.data)
+                self.assertEqual(next(row for row in after.data["rows"]
+                                      if row["enrollment_id"] == self.enrollment.id)["homework_total"], before_total)
+
+        response = self.client.patch(f"/api/v1/homeworks/{homework.id}/",
+            {"title": "정상 편집", "session": self.session.id, "homework_type": "regular", "template_homework": None},
+            format="json", HTTP_X_EXPECTED_UPDATED_AT=homework.updated_at.isoformat(), **self.req_headers)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["title"], "정상 편집")
+
+    def test_template_import_and_same_relation_edit_remain_supported(self):
+        template = Homework.objects.create(
+            tenant=self.tenant, homework_type="template", title="불러올 템플릿",
+        )
+        created = self.client.post(
+            "/api/v1/homeworks/",
+            {"session_id": self.session.id, "template_homework_id": template.id},
+            format="json", **self.req_headers,
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        homework = Homework.objects.get(pk=created.data["id"])
+        self.assertEqual((homework.session_id, homework.homework_type, homework.template_homework_id),
+                         (self.session.id, "regular", template.id))
+        edited = self.client.patch(
+            f"/api/v1/homeworks/{homework.id}/",
+            {"title": "불러온 과제 편집", "session": self.session.id,
+             "homework_type": "regular", "template_homework": template.id},
+            format="json", HTTP_X_EXPECTED_UPDATED_AT=homework.updated_at.isoformat(),
+            **self.req_headers,
+        )
+        self.assertEqual(edited.status_code, 200, edited.data)
+        homework.refresh_from_db()
+        self.assertEqual(homework.title, "불러온 과제 편집")
+        self.assertEqual(homework.template_homework_id, template.id)
+
     def test_title_only_patch_preserves_session_cutline_default(self):
         self._create_policy()
         homework = Homework.objects.create(

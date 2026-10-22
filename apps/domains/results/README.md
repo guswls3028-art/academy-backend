@@ -348,6 +348,10 @@ Aggregation
 학생/학부모용 `GET /student/grades/analytics/`이며, 학생/학부모는 선택된 학생 1명만 조회한다.
 학생/학부모 분석의 `date_range.days`는 시험 수·득점률·합격률·미응시·오답·과제
 지표 전체에 동일하게 적용되며, 기간을 판정할 기록 시각이 없는 행은 기간 분석에서 제외한다.
+과제 `avg_score_pct`는 SCORE의 실제 입력 점수만 평균하며 0점도 포함한다.
+COMPLETION의 내부 O/X 저장 값 0/1은 숫자 평균에서 제외하고 점수형 입력이 없으면
+평균은 null이다. `assigned_count`, `graded_count`, `pass_rate_pct`는 기존대로
+합불형도 포함하며 교사 처리·미판정 정책과 원본 성적은 변경하지 않는다.
 
 학생별 누적 시험 추이는 관리자·선생 공용 BFF
 `GET /results/admin/student-grades/?student_id=<id>`와 학생·학부모 공용 BFF
@@ -380,3 +384,40 @@ Change Rules
 - 레거시 import나 죽은 serializer/view/service를 되살리지 않는다.
 - 배점, tenant scope, submission scope, representative attempt, manual score 합산을 바꾸는 변경은 focused test와 운영 검증 대상이다.
 - "이미 완성" 같은 선언보다 재현 가능한 검증 결과를 우선한다.
+
+## Parent-only assessment comments
+
+Staff use the score table assessment menu to list and edit explicit parent-facing
+feedback per session, exam/homework and enrolled student. This is separate storage:
+existing internal/attendance memos are never copied, migrated or published.
+
+`GET results/admin/sessions/{session_id}/{exam|homework}/{assessment_id}/parent-comments/`
+returns eligible assigned students, current text/version/editor/time and revision history.
+The staff list preloads revisions and authors together, keeping history queries constant as student rows grow; single-save responses retain the same history contents.
+`PUT .../parent-comments/{enrollment_id}/` requires `text` (maximum 2000 characters)
+and current `version` (0 for first save). Empty text clears the visible comment while
+retaining revisions. Enrollment locking serializes first creation and edits; stale
+versions return 409 with current state. Retry after reviewing current text preserves
+the draft. Each successful write appends author/time/text/version history atomically.
+
+`GET results/parent/assessment-comments/` requires the active tenant parent role
+and an explicitly selected owned active child (`X-Student-Id`). It returns only
+nonempty comments on currently live, assigned assessments and active session/lecture
+enrollments. Student accounts receive 403; student grades payloads contain no comment
+fields. Tenant, live assessment link, session roster and assessment assignment are
+checked on writes and reads. Staff history/author identifiers are not published to
+parents. No messages are sent. Existing grades and memos remain unchanged.
+
+Parent reads bulk-load current rosters, live assessment titles and target memberships
+for the selected child's stored comments, with session/lecture eager loading. Query
+count does not grow per comment or assessment; there is no cross-request cache, so
+assignment removal and assessment archival apply on the next read. Attendance-first
+roster fallback and explicit exam targets remain identical to staff scope checks.
+Only attendance identity columns are read, never attendance notes or revision history.
+
+Verification owner: `tests/test_parent_assessment_comments.py` covers persistence,
+history, stale edits, clearing, assignment removal, student denial, invalid child,
+cross-tenant staff denial, maximum length, bounded query count across sessions and
+attendance/explicit-target precedence. Frontend owner: score menu feedback
+panel and `src/app_student/domains/grades/components/ParentAssessmentComments.tsx`
+with `GradesPage.tsx` in the sibling frontend repository.

@@ -75,24 +75,21 @@ def _high_policy_document(*entries: dict[str, object]) -> dict[str, object]:
 
 
 @pytest.mark.parametrize("repository", gate.REPOSITORIES)
-def test_current_candidate_only_accepts_exact_reviewed_high_before_expiry(repository: str) -> None:
+def test_current_candidate_only_accepts_exact_reviewed_high(repository: str) -> None:
     policy_dir = Path(__file__).parents[1] / "docs" / "ssot"
     acceptances = gate.load_acceptances(
         policy_dir / "ecr-critical-risk-acceptance.json", datetime.now(timezone.utc).date()
     )
     baselines, known = gate.load_high_baselines(
-        policy_dir / "ecr-high-risk-baseline.json", date(2026, 10, 13)
+        policy_dir / "ecr-high-risk-baseline.json", date(2026, 10, 19)
     )
     assert not acceptances
     assert known == {
-        (repo, "CVE-2026-107161", "cyrus-sasl2", "2.1.28+dfsg1-9")
-        for repo in gate.REPOSITORIES
-    } | {
         (repo, cve, "glibc", "2.41-12+deb13u4")
         for repo in gate.REPOSITORIES
         for cve in ("CVE-2026-19499", "CVE-2026-5435")
     }
-    assert baselines[repository] == 3
+    assert baselines[repository] == 2
     assert gate.evaluate_findings(repository, _scan(), acceptances) == []
     assert gate.evaluate_high_budget(repository, _scan(), baselines, known) == 0
     gcc = _scan(
@@ -102,11 +99,16 @@ def test_current_candidate_only_accepts_exact_reviewed_high_before_expiry(reposi
     with pytest.raises(gate.GateError, match="High reviewed policy exceeded|unreviewed High"):
         gate.evaluate_high_budget(repository, gcc, baselines, known)
     reviewed = _scan(
-        _finding("CVE-2026-107161", "cyrus-sasl2", "2.1.28+dfsg1-9", "HIGH"),
         _finding("CVE-2026-19499", "glibc", "2.41-12+deb13u4", "HIGH"),
         _finding("CVE-2026-5435", "glibc", "2.41-12+deb13u4", "HIGH"),
     )
-    assert gate.evaluate_high_budget(repository, reviewed, baselines, known) == 3
+    assert gate.evaluate_high_budget(repository, reviewed, baselines, known) == 2
+    cyrus = _finding("CVE-2026-107161", "cyrus-sasl2", "2.1.28+dfsg1-9", "HIGH")
+    combined = _scan(*reviewed["imageScanFindings"]["findings"], cyrus)
+    with pytest.raises(gate.GateError, match="High reviewed policy exceeded"):
+        gate.evaluate_high_budget(repository, combined, baselines, known)
+    with pytest.raises(gate.GateError, match="unreviewed High"):
+        gate.evaluate_high_budget(repository, _scan(cyrus), baselines, known)
     for finding in [
         _finding("CVE-2099-9999", "gcc-14", "14.2.0-19", "HIGH"),
         _finding("CVE-2026-102010", "gcc-14", "14.2.0-20", "HIGH"),
@@ -138,34 +140,26 @@ def test_retired_gcc_exceptions_do_not_block_clean_candidates_after_their_old_ex
                 ), baselines, known)
 
 
-def test_current_sasl_review_has_its_own_expiry_without_renewing_gcc(tmp_path) -> None:
+def test_fixed_system_cyrus_has_no_exception_and_glibc_has_explicit_indefinite_approval() -> None:
     policy = Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
     entries = json.loads(policy.read_text(encoding="utf-8"))["acceptedHighFindings"]
     assert not [entry for entry in entries if entry["packageName"] == "gcc-14"]
-    sasl = [entry for entry in entries if entry["packageName"] == "cyrus-sasl2"]
-    assert len(sasl) == 1
-    assert sasl[0]["expiresOn"] == "2026-10-15"
-    isolated = tmp_path / "sasl-review.json"
-    isolated.write_text(json.dumps(_high_policy_document(*sasl)), encoding="utf-8")
-    baselines, known = gate.load_high_baselines(isolated, date(2026, 10, 15))
-    for repository in gate.REPOSITORIES:
-        assert gate.evaluate_high_budget(repository, _scan(
-            _finding("CVE-2026-107161", "cyrus-sasl2", "2.1.28+dfsg1-9", "HIGH")
-        ), baselines, known) == 1
-    with pytest.raises(gate.GateError, match="High risk acceptance expired"):
-        gate.load_high_baselines(isolated, date(2026, 10, 16))
+    cyrus = [entry for entry in entries if entry["packageName"] == "cyrus-sasl2"]
+    assert not cyrus
+    assert all(entry["indefiniteAcceptance"] is True for entry in entries)
+    gate.load_high_baselines(policy, date(2100, 1, 1))
 
 
 @pytest.mark.parametrize("repository", gate.REPOSITORIES)
-def test_approved_glibc_review_keeps_exact_service_scope_and_expiry(repository, tmp_path) -> None:
+def test_approved_glibc_review_keeps_exact_service_scope_without_expiry(repository, tmp_path) -> None:
     policy = Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
     entries = json.loads(policy.read_text(encoding="utf-8"))["acceptedHighFindings"]
     glibc = [entry for entry in entries if entry["packageName"] == "glibc"]
     assert {entry["cve"] for entry in glibc} == {"CVE-2026-19499", "CVE-2026-5435"}
-    assert all(entry["expiresOn"] == "2026-10-15" for entry in glibc)
+    assert all(entry["expiresOn"] is None and entry["indefiniteAcceptance"] is True for entry in glibc)
     isolated = tmp_path / "glibc-review.json"
     isolated.write_text(json.dumps(_high_policy_document(*glibc)), encoding="utf-8")
-    baselines, known = gate.load_high_baselines(isolated, date(2026, 10, 15))
+    baselines, known = gate.load_high_baselines(isolated, date(2100, 1, 1))
     for entry in glibc:
         finding = _finding(entry["cve"], "glibc", "2.41-12+deb13u4", "HIGH")
         assert gate.evaluate_high_budget(repository, _scan(finding), baselines, known) == 1
@@ -178,8 +172,41 @@ def test_approved_glibc_review_keeps_exact_service_scope_and_expiry(repository, 
             gate.evaluate_findings(repository, _scan(
                 _finding(entry["cve"], "glibc", "2.41-12+deb13u4", "CRITICAL"),
             ), {})
+
+
+@pytest.mark.parametrize("overrides", [
+    {"indefiniteAcceptance": False},
+    {"indefiniteAcceptance": "true"},
+    {"indefiniteAcceptance": 1},
+    {"expiresOn": "2099-12-31"},
+    {"approvedOn": None},
+    {"approvedOn": "invalid"},
+    {"approvalReference": None},
+    {"approvalReference": "unrecorded approval"},
+])
+def test_indefinite_high_acceptance_requires_unambiguous_record(tmp_path, overrides) -> None:
+    entry = _high_policy_entry(
+        expiresOn=None, indefiniteAcceptance=True, approvedOn="2026-10-21",
+        approvalReference="docs/operations/container-image-security.md#glibc-approval-20261021",
+    )
+    entry.update(overrides)
+    policy = tmp_path / "indefinite.json"
+    policy.write_text(json.dumps(_high_policy_document(entry)), encoding="utf-8")
+    with pytest.raises(gate.GateError):
+        gate.load_high_baselines(policy, date(2100, 1, 1))
+
+
+def test_finite_high_expiry_and_critical_expiry_still_fail_closed(tmp_path) -> None:
+    entry = _high_policy_entry(expiresOn="2026-10-20")
+    policy = tmp_path / "finite.json"
+    policy.write_text(json.dumps(_high_policy_document(entry)), encoding="utf-8")
     with pytest.raises(gate.GateError, match="High risk acceptance expired"):
-        gate.load_high_baselines(isolated, date(2026, 10, 16))
+        gate.load_high_baselines(policy, date(2026, 10, 21))
+    entry.update(expiresOn=None, indefiniteAcceptance=True, approvedOn="2026-10-21",
+                 approvalReference="docs/operations/container-image-security.md#glibc-approval-20261021")
+    policy.write_text(json.dumps({"schemaVersion": 1, "acceptedFindings": [entry]}), encoding="utf-8")
+    with pytest.raises(gate.GateError, match="invalid expiresOn"):
+        gate.load_acceptances(policy, date(2026, 10, 21))
 
 
 @pytest.mark.parametrize(
@@ -227,7 +254,7 @@ def test_historical_acceptance_is_exact_and_time_bounded() -> None:
 
 
 @pytest.mark.parametrize("repository", gate.REPOSITORIES)
-@pytest.mark.parametrize("version", ["2.8.3-1~deb13u1", "2.8.4+academy1-1"])
+@pytest.mark.parametrize("version", ["2.8.3-1~deb13u1", "2.8.4+academy1-1", "2.9.0+academy1-1"])
 def test_expat_backport_does_not_override_actual_high_scan(repository, version):
     policy = Path(__file__).parents[1] / "docs/ssot/ecr-high-risk-baseline.json"
     baselines, known = gate.load_high_baselines(policy, date(2026, 10, 9))
@@ -510,8 +537,8 @@ def test_base_image_backports_new_native_library_fixes_without_acceptance() -> N
     )
     assert "60d74a257d1ccec0475e749cba2f21559e48139efba6ff28224357c7c798dfee" in build_script
     assert "autoreconf --force --install" in build_script
-    assert build_script.count("sha256sum --check") == 3
-    assert build_script.count("download \\") == 8
+    assert build_script.count("sha256sum --check") == 2
+    assert build_script.count("download \\") == 9
     assert "CVE-2026-52490" in build_script
     assert "tiff_version='4.7.2-1+academy1'" in build_script
     assert "c5086d8f7c5ba51ca98241f24a8bd1cb66218c399077aeccbf6a236cf3152acc" in build_script
@@ -519,10 +546,6 @@ def test_base_image_backports_new_native_library_fixes_without_acceptance() -> N
     assert "python /usr/local/bin/verify-tiff.py" in verifier
     assert "COPY docker/native-security/patches/" in dockerfile
     for commit, checksum in (
-        (
-            "0cfd15bdf4b2c22d6b0df73610709dfb60921091",
-            "c17ecebf947aed83a577c708f17f3437e2f3964dbf62954d05882fc9354f29b1",
-        ),
         (
             "28fcfba540f6933aa8904a1514c4811713d2ab72",
             "4d179a59e86668f35fefd2ac0b43b7878e4b597af507f3b4decdac9f680c8a25",

@@ -1900,6 +1900,57 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
                     transaction.savepoint_rollback(savepoint)
                     delete_object_r2_ai.reset_mock()
 
+    def _parent_comment(self, *, tenant, lecture, enrollment, suffix):
+        Session = django_apps.get_model("lectures", "Session")
+        Comment = django_apps.get_model("results", "ParentAssessmentComment")
+        Revision = django_apps.get_model("results", "ParentAssessmentCommentRevision")
+        session = Session.objects.create(lecture=lecture, order=1, title=suffix)
+        comment = Comment.objects.create(tenant=tenant, session=session, enrollment=enrollment,
+            assessment_kind="exam", assessment_id=1, text=suffix, version=2, updated_by=self.admin_a)
+        for version in (1, 2):
+            Revision.objects.create(comment=comment, version=version, text=f"{suffix}-{version}", author=self.admin_a)
+        return comment
+
+    def test_permanent_delete_cascades_parent_comments_and_revisions_only_for_owned_student(self):
+        Comment = django_apps.get_model("results", "ParentAssessmentComment")
+        Revision = django_apps.get_model("results", "ParentAssessmentCommentRevision")
+        owned = self._parent_comment(tenant=self.tenant_a, lecture=self.lecture_a,
+            enrollment=self.enrollment_a, suffix="Owned comment")
+        foreign_user = User.objects.create_user(username="comment-foreign", tenant=self.tenant_b)
+        foreign_student = Student.objects.create(tenant=self.tenant_b, user=foreign_user, name="Preserved", ps_number="B-comment")
+        foreign_lecture = Lecture.objects.create(tenant=self.tenant_b, name="Foreign comment class")
+        foreign_enrollment = Enrollment.objects.create(tenant=self.tenant_b, student=foreign_student, lecture=foreign_lecture)
+        foreign = self._parent_comment(tenant=self.tenant_b, lecture=foreign_lecture,
+            enrollment=foreign_enrollment, suffix="Preserved comment")
+        response = self._call(self.tenant_a, self.admin_a, [self.student_a.id])
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["deleted"], 1)
+        self.assertFalse(Comment.objects.filter(pk=owned.pk).exists())
+        self.assertFalse(Revision.objects.filter(comment_id=owned.pk).exists())
+        self.assertTrue(Comment.objects.filter(pk=foreign.pk, text="Preserved comment").exists())
+        self.assertEqual(Revision.objects.filter(comment_id=foreign.pk).count(), 2)
+        self.assertTrue(User.objects.filter(pk=self.admin_a.pk).exists())
+        self.assertTrue(User.objects.filter(pk=foreign_user.pk).exists())
+        self.assertTrue(Submission.objects.filter(pk=self.sub_b.pk).exists())
+
+    def test_permanent_delete_denies_foreign_comment_tenant_or_session_before_cleanup(self):
+        Comment = django_apps.get_model("results", "ParentAssessmentComment")
+        Revision = django_apps.get_model("results", "ParentAssessmentCommentRevision")
+        foreign_lecture = Lecture.objects.create(tenant=self.tenant_b, name="Foreign session")
+        for tenant, lecture in ((self.tenant_b, self.lecture_a), (self.tenant_a, foreign_lecture)):
+            with self.subTest(tenant=tenant.id, lecture=lecture.id):
+                comment = self._parent_comment(tenant=tenant, lecture=lecture,
+                    enrollment=self.enrollment_a, suffix="Corrupt cross tenant reference")
+                with self.assertRaises(StudentLifecycleError) as raised:
+                    permanently_delete_students(tenant=self.tenant_a, student_ids=[self.student_a.id])
+                self.assertEqual(raised.exception.code, "cross_tenant_reference")
+                self.assertTrue(Student.objects.filter(pk=self.student_a.pk).exists())
+                self.assertTrue(Enrollment.objects.filter(pk=self.enrollment_a.pk).exists())
+                self.assertTrue(Submission.objects.filter(pk=self.sub_a.pk).exists())
+                self.assertTrue(Comment.objects.filter(pk=comment.pk).exists())
+                self.assertEqual(Revision.objects.filter(comment_id=comment.pk).count(), 2)
+                comment.delete()
+
     def test_permanent_delete_relation_contract_matches_model_graph(self):
         """신규 Student/Submission FK가 수동 삭제 그래프에서 누락되지 않게 한다."""
         student_relations = {

@@ -129,11 +129,14 @@ def build_student_exam_history(
     tenant: Any,
     enrollment_ids: list[int],
     published_results_only: bool = False,
+    totals_rows: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     """Build deduplicated exam rows and progression inside an authorized scope.
 
     Callers own the enrollment visibility policy. Staff can pass all of a
     student's tenant enrollments; the student app passes active enrollments.
+    An optional totals_rows consumer receives the same published first-attempt
+    projection per enrollment before display-only exam-id deduplication.
     """
     if not enrollment_ids:
         return [], [], empty_exam_summary()
@@ -209,10 +212,11 @@ def build_student_exam_history(
     )
 
     canonical_rows: list[dict[str, Any]] = []
-    seen_exam_ids: set[int] = set()
+    seen_result_pairs: set[tuple[int, int]] = set()
     for result in results:
         exam_id = result["target_id"]
-        if exam_id in seen_exam_ids:
+        result_pair = (int(result["enrollment_id"]), int(exam_id))
+        if result_pair in seen_result_pairs:
             continue
         info = exams_map.get(exam_id)
         if not info:
@@ -245,7 +249,7 @@ def build_student_exam_history(
         lecture_title = session_meta.get("lecture_title") or enrollment_info["lecture_title"]
         lecture_color = session_meta.get("lecture_color") or enrollment_info["lecture_color"]
         lecture_chip_label = session_meta.get("lecture_chip_label") or enrollment_info["lecture_chip_label"]
-        seen_exam_ids.add(exam_id)
+        seen_result_pairs.add(result_pair)
         canonical_rows.append({
             "result": result,
             "initial_score": initial_score,
@@ -294,6 +298,7 @@ def build_student_exam_history(
         enrollment_id = result["enrollment_id"]
         achievement = achievements.get((int(enrollment_id), int(exam_id)), {})
         subjective_pending = bool(row["subjective_pending"])
+        is_provisional = subjective_pending or bool(achievement.get("is_provisional"))
         is_not_submitted = (
             not subjective_pending
             and achievement.get("meta_status") == "NOT_SUBMITTED"
@@ -311,15 +316,15 @@ def build_student_exam_history(
             "title": row["info"]["title"],
             "total_score": (
                 None
-                if is_not_submitted or subjective_pending
+                if is_not_submitted or is_provisional
                 else row["initial_score"].total_score
             ),
             "max_score": row["initial_score"].max_score,
-            "is_pass": None if subjective_pending else achievement.get("is_pass"),
-            "achievement": None if subjective_pending else achievement.get("achievement"),
+            "is_pass": None if is_provisional else achievement.get("is_pass"),
+            "achievement": None if is_provisional else achievement.get("achievement"),
             "meta_status": None if subjective_pending else achievement.get("meta_status"),
             "grading_status": "subjective_pending" if subjective_pending else None,
-            "is_provisional": subjective_pending,
+            "is_provisional": is_provisional,
             "retake_count": retake_counts.get((enrollment_id, exam_id), 1),
             "session_id": row["session_id"],
             "session_title": row["session_title"],
@@ -336,5 +341,19 @@ def build_student_exam_history(
             "archived": not row["info"]["is_active"],
         })
 
+    if totals_rows is not None:
+        # Reuse the published, authorized first-attempt projection before the
+        # display-only exam-id dedup discards other lecture enrollments.
+        totals_rows.extend({key: row.get(key) for key in (
+            "exam_id", "enrollment_id", "session_id", "total_score", "max_score",
+            "meta_status", "grading_status", "is_provisional",
+        )} for row in exam_list)
+    seen_exam_ids: set[int] = set()
+    display_rows = []
+    for row in exam_list:
+        if row["exam_id"] not in seen_exam_ids:
+            seen_exam_ids.add(row["exam_id"])
+            display_rows.append(row)
+    exam_list = display_rows
     trend, summary = build_exam_progression(exam_list)
     return exam_list, trend, summary

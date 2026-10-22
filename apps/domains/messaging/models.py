@@ -346,6 +346,29 @@ class DefaultTemplateSuppression(models.Model):
         ]
 
 
+class MessageTemplateCreateRequest(models.Model):
+    """Creation-only receipt; retain a tombstone after explicit template deletion."""
+
+    tenant = models.ForeignKey(
+        "core.Tenant", on_delete=models.CASCADE, related_name="message_template_create_requests",
+    )
+    client_request_id = models.UUIDField()
+    payload_fingerprint = models.CharField(max_length=64)
+    template = models.ForeignKey(
+        "messaging.MessageTemplate", on_delete=models.SET_NULL, null=True,
+        related_name="creation_requests",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = "messaging"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "client_request_id"], name="uniq_template_create_request",
+            ),
+        ]
+
+
 class AutoSendConfig(models.Model):
     """
     자동발송 설정 — 이벤트(트리거)별 템플릿·발송 조건.

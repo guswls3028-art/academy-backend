@@ -229,6 +229,11 @@ def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
     scheduled_send_at = data.get("scheduled_send_at")
     blockers: list[PreflightIssue] = []
     warnings: list[PreflightIssue] = []
+    from apps.support.messaging.session_message_context import resolve_session_message_data, SessionMessageContextError
+    try:
+        data = resolve_session_message_data(tenant=tenant, data=data)
+    except SessionMessageContextError as exc:
+        blockers.append(PreflightIssue("session_context_missing", "수업 정보 확인 필요", str(exc)))
 
     if is_messaging_disabled(tenant.id):
         blockers.append(

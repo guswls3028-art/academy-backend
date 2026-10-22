@@ -17,6 +17,7 @@ from apps.domains.submissions.services.lifecycle import (
 from apps.support.submissions.dependencies import (
     dispatch_submission_ai_job,
     grade_submission_objective,
+    lock_submission_score_edit_scope_before_write,
 )
 
 dispatch_job = dispatch_submission_ai_job
@@ -106,6 +107,10 @@ def dispatch_submission(submission: Submission) -> None:
     Online 답안은 즉시 채점, file 기반(OMR / Homework)은 AI worker 로 enqueue.
     select_for_update 로 동시 dispatch 를 방지한다.
     """
+    # Online processing grades synchronously. Acquire the same Exam -> Session
+    # scope as submission admission and teacher grading before its row lock.
+    if submission.source == Submission.Source.ONLINE:
+        lock_submission_score_edit_scope_before_write(submission=submission)
     submission = Submission.objects.select_for_update().get(pk=submission.pk)
 
     if submission.status != Submission.Status.SUBMITTED:

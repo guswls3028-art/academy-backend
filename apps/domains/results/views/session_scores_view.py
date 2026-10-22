@@ -44,6 +44,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.models import Result, ExamAttempt
+from apps.domains.results.services.assessment_totals import row_totals, total_config, order_assessment_rows
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import (
     latest_results_for_targets_per_enrollment,
@@ -323,7 +324,7 @@ class SessionScoresView(APIView):
         # -------------------------------------------------
         homeworks = list(
             Homework.objects
-            .filter(session=session)
+            .filter(session=session, tenant=tenant, homework_type="regular")
             .exclude(meta__removed_from_session_at__isnull=False)
             .order_by("display_order", "created_at", "id")
         )
@@ -430,6 +431,12 @@ class SessionScoresView(APIView):
                 for hw in homeworks
             ],
         }
+
+        for key, id_key, order_key in (("exams", "exam_id", "exam_order"), ("homeworks", "homework_id", "homework_order")):
+            response_meta[key] = order_assessment_rows(session, response_meta[key], id_key=id_key, order_key=order_key)
+            for index, item in enumerate(response_meta[key]):
+                item["display_order"] = index
+        response_meta["total_config"] = total_config(session, response_meta["exams"], response_meta["homeworks"])
 
         if not enrollment_ids:
             return Response({"meta": response_meta, "rows": []})
@@ -1131,6 +1138,9 @@ class SessionScoresView(APIView):
                 }
             )
 
+        for row in rows:
+            row.update(row_totals(response_meta, row))
+
         return Response(
             {
                 "meta": response_meta,
@@ -1275,6 +1285,18 @@ class SessionScoreCorrectionView(APIView):
                     enrollment_id=enrollment_id,
                     homework_id=source_id,
                 )
+                expected_media_fingerprint = payload.get("expected_media_set_fingerprint")
+                if (
+                    expected_media_fingerprint is not None
+                    and expected_media_fingerprint != source_fingerprint
+                ):
+                    return Response(
+                        {
+                            "detail": "제출 파일이 변경되었습니다. 최신 파일을 다시 확인해 주세요.",
+                            "code": "HOMEWORK_MEDIA_CHANGED",
+                        },
+                        status=409,
+                    )
 
         if source_type == AssessmentCorrection.SourceType.EXAM:
             if score is None or max_score is None or max_score <= 0:

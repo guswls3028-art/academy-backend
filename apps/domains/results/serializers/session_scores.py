@@ -120,6 +120,8 @@ class HomeworkScoreBlockSerializer(serializers.Serializer):
 
 
 class SessionScoreRowSerializer(serializers.Serializer):
+    exam_total = serializers.DictField(required=False)
+    homework_total = serializers.DictField(required=False)
     enrollment_id = serializers.IntegerField()
     student_id = serializers.IntegerField(allow_null=True)
     student_name = serializers.CharField(allow_blank=True)
@@ -171,5 +173,10 @@ class AssessmentCorrectionUpdateSerializer(serializers.Serializer):
     )
     expected_updated_at = serializers.DateTimeField(
         allow_null=True,
+        required=False,
+    )
+    expected_media_set_fingerprint = serializers.RegexField(
+        regex=r"^[0-9a-f]{64}$",
+        max_length=64,
         required=False,
     )

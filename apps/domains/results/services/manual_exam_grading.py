@@ -15,6 +15,7 @@ from apps.domains.results.guards.score_edit_lease_guard import (
     require_score_edit_scope_available_for_exam,
 )
 from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
+from apps.domains.results.services.initial_attempt_snapshot import sync_confirmed_initial_snapshot_meta
 from apps.domains.results.services.manual_subjective_score import (
     latest_subjective_grading_facts,
 )
@@ -910,7 +911,8 @@ def _item_cell_payload(
     method: str,
 ) -> dict[str, Any]:
     state = None
-    if item is not None:
+    pending = item is not None and item.source == "online_pending"
+    if item is not None and not pending:
         if bool(item.is_correct) and bool(item.include_in_wrong_note):
             state = "review"
         elif bool(item.is_correct):
@@ -921,7 +923,9 @@ def _item_cell_payload(
         "editable": editable,
         "entry_method": method if editable else "omr",
         "state": state,
-        "score": float(item.score or 0.0) if item is not None else None,
+        "score": float(item.score or 0.0) if item is not None and not pending else None,
+        "answer": str(item.answer or "") if item is not None else "",
+        "grading_status": "pending" if pending else "graded" if item is not None else None,
         "include_in_wrong_note": (
             bool(item.include_in_wrong_note) if item is not None else False
         ),
@@ -1009,17 +1013,11 @@ def _save_result_and_attempt(
     meta["max_score"] = float(max_score)
     meta["synced_from_result"] = True
     meta["last_manual_grid_publish"] = {"published_at": now.isoformat()}
-    if (
-        int(attempt.attempt_index) == 1
-        and not isinstance(meta.get("initial_snapshot"), dict)
-        and not is_not_submitted
-    ):
-        meta["initial_snapshot"] = {
-            "total_score": float(total_score),
-            "max_score": float(max_score),
-            "submitted_at": now.isoformat(),
-            "source": "manual_grading_grid",
-        }
+    if not is_not_submitted:
+        meta = sync_confirmed_initial_snapshot_meta(
+            attempt=attempt, meta=meta, total_score=total_score,
+            max_score=max_score, confirmed_at=now, fallback_source="manual_grading_grid",
+        )
     attempt.meta = meta
     attempt.status = "done"
     attempt.save(update_fields=["meta", "status", "updated_at"])

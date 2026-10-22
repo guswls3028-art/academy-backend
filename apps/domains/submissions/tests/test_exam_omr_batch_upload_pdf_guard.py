@@ -222,6 +222,84 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
 
     @patch("apps.domains.submissions.views.exam_omr_batch_upload_view.dispatch_submission")
     @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
+    def test_empty_scan_is_explained_and_only_its_ordinal_is_retried(
+        self, upload_fileobj_to_r2, dispatch_submission,
+    ):
+        legacy = self._post(SimpleUploadedFile("empty.jpg", b"", content_type="image/jpeg"))
+        self.assertEqual(legacy.status_code, 400)
+        self.assertIn("비어", legacy.data["detail"])
+        self.assertFalse(OmrUploadBatch.objects.exists())
+
+        batch_id = self._initialize(2).data["id"]
+        response = self._upload_to_batch(batch_id, [
+            self._image("valid.jpg"),
+            SimpleUploadedFile("empty.jpg", b"", content_type="image/jpeg"),
+        ], [1, 2])
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["created_count"], 1)
+        failed = response.data["items"][1]
+        self.assertEqual(failed["ordinal"], 2)
+        self.assertEqual(failed["failure_code"], "empty_file")
+        self.assertIn("비어", failed["failure_message"])
+        self.assertIsNone(failed["submission_id"])
+        self.assertEqual(self._detail(batch_id).data["items"], response.data["items"])
+        original_id = response.data["items"][0]["submission_id"]
+
+        retried = self._upload_to_batch(batch_id, [self._image("replacement.jpg")], [2])
+        self.assertEqual(retried.data["created_count"], 1)
+        self.assertEqual(retried.data["items"][0]["submission_id"], original_id)
+        self.assertEqual(retried.data["items"][1]["status"], "received")
+        self.assertIsNone(retried.data["items"][1]["failure_code"])
+        self.assertEqual(upload_fileobj_to_r2.call_count, 2)
+        self.assertEqual(dispatch_submission.call_count, 2)
+
+    def test_batch_ledger_keeps_every_reserved_ordinal_without_file_identity(self):
+        response = self._initialize(100)
+        ledger = response.data["items"]
+        self.assertEqual([item["ordinal"] for item in ledger], list(range(1, 101)))
+        self.assertEqual(len({item["id"] for item in ledger}), 100)
+        self.assertTrue(all(item["status"] == "pending_admission" for item in ledger))
+        self.assertTrue(all(item["submission_id"] is None for item in ledger))
+        self.assertNotIn("file_name", str(ledger))
+        self.assertNotIn("file_key", str(ledger))
+        self.assertEqual(self._detail(response.data["id"]).data["items"], ledger)
+
+    def test_ledger_and_counts_hide_a_mismatched_submission(self):
+        other_tenant = Tenant.objects.create(code="omr-other", name="Other")
+        batch_id = self._initialize(1).data["id"]
+        foreign = Submission.objects.create(
+            tenant=other_tenant, user=self.user, target_type=Submission.TargetType.EXAM,
+            target_id=self.exam.id, source=Submission.Source.OMR_SCAN, status=Submission.Status.DONE,
+            meta={"identifier_status": "foreign-private-value"},
+        )
+        OmrUploadBatchItem.objects.filter(batch_id=batch_id).update(
+            admission_status=OmrUploadBatchItem.AdmissionStatus.RECEIVED, submission=foreign,
+        )
+        response = self._detail(batch_id)
+        self.assertEqual(response.data["counts"]["completed"], 0)
+        self.assertEqual(response.data["counts"]["failed"], 1)
+        self.assertEqual(response.data["admission_failed_ordinals"], [1])
+        self.assertEqual(response.data["items"][0]["status"], "failed")
+        self.assertIsNone(response.data["items"][0]["submission_id"])
+        self.assertIsNone(response.data["items"][0]["identifier_status"])
+        self.assertNotIn("foreign-private-value", str(response.data))
+
+    def test_legacy_null_item_scope_still_reads_its_scoped_submission(self):
+        batch_id = self._initialize(1).data["id"]
+        submission = Submission.objects.create(
+            tenant=self.tenant, user=self.user, target_type=Submission.TargetType.EXAM,
+            target_id=self.exam.id, source=Submission.Source.OMR_SCAN, status=Submission.Status.SUBMITTED,
+        )
+        OmrUploadBatchItem.objects.filter(batch_id=batch_id).update(
+            tenant_id=None, exam_id=None,
+            admission_status=OmrUploadBatchItem.AdmissionStatus.RECEIVED, submission=submission,
+        )
+        response = self._detail(batch_id)
+        self.assertEqual(response.data["counts"]["received"], 1)
+        self.assertEqual(response.data["items"][0]["submission_id"], submission.id)
+
+    @patch("apps.domains.submissions.views.exam_omr_batch_upload_view.dispatch_submission")
+    @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
     def test_exact_file_reupload_across_batches_is_accounted_without_new_submission(
         self,
         upload_fileobj_to_r2,
@@ -311,6 +389,7 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
         self.assertEqual(first.data["counts"]["received"], 2)
         self.assertEqual(first.data["counts"]["failed"], 1)
         self.assertEqual(first.data["failed_ordinals"], [2])
+        self.assertEqual([row["status"] for row in first.data["items"]], ["received", "failed", "received"])
         self.assertNotIn("first.jpg", str(first.data))
         item_one_id = OmrUploadBatchItem.objects.get(batch_id=batch_id, ordinal=1).submission_id
         self.assertEqual(Submission.objects.filter(target_id=self.exam.id).count(), 2)
@@ -533,6 +612,9 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
         self.assertEqual(response.data["counts"]["needs_identification"], 1)
         self.assertEqual(response.data["counts"]["failed"], 1)
         self.assertEqual(response.data["counts"]["superseded"], 1)
+        self.assertEqual([row["status"] for row in response.data["items"]], [
+            "received", "processing", "processing", "completed", "needs_identification", "failed", "superseded",
+        ])
         self.assertFalse(response.data["terminal"])
         self.assertIsNone(batch_after.completion_notice_claimed_at)
         self.assertEqual(batch_after.updated_at, batch_before.updated_at)

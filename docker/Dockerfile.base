@@ -52,11 +52,13 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
 WORKDIR /build
 
 COPY docker/native-security/build-fixed-libs.sh docker/native-security/build-krb5.sh /usr/local/bin/
+COPY docker/native-security/fetch-fixed-sasl.sh /usr/local/bin/
 COPY docker/native-security/verify-krb5.py /usr/local/bin/
 COPY docker/native-security/patches/ /usr/local/share/academy-native-security/
 COPY docker/native-security/build-python-xml.py docker/native-security/verify-expat.py /usr/local/bin/
 RUN sh /usr/local/bin/build-fixed-libs.sh /build/native-security/out \
-    && sh /usr/local/bin/build-krb5.sh /build/native-security/out
+    && sh /usr/local/bin/build-krb5.sh /build/native-security/out \
+    && sh /usr/local/bin/fetch-fixed-sasl.sh /build/native-security/out
 
 # 의존성 파일 복사 및 설치 (pip 업그레이드와 단일 RUN으로 레이어 최소화)
 COPY requirements/constraints.txt ./requirements/constraints.txt
@@ -97,7 +99,7 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
     util-linux \
     && dpkg -i /tmp/academy-native-security/*.deb \
     && ldconfig \
-    && test "$(dpkg-query -W -f='${Version}' libexpat1)" = '2.8.4+academy1-1' \
+    && test "$(dpkg-query -W -f='${Version}' libexpat1)" = '2.9.0+academy1-1' \
     && test "$(dpkg-query -W -f='${Source}' libexpat1)" = 'expat' \
     && test "$(find /tmp/academy-native-security/python-xml -maxdepth 1 -type f -name '*.so' | wc -l)" -eq 2 \
     && cp /tmp/academy-native-security/python-xml/*.so /usr/local/lib/python3.11/lib-dynload/ \

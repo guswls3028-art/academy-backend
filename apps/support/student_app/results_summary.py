@@ -28,6 +28,7 @@ from apps.support.results.student_grade_history import (
     build_student_exam_history,
     empty_exam_summary,
 )
+from apps.support.results.score_total_dependencies import student_exam_session_pairs, student_session_totals
 from apps.support.submissions.dependencies import homework_submission_revisions
 from apps.support.attendance.learning_todo_eligibility import actual_absent_learning_todo_pairs
 from apps.support.student_app.learning_todo_policy import (
@@ -241,10 +242,12 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "report_layout": report_layout,
         }
 
+    totals_exam_rows = []
     exam_list, exam_trend, exam_summary = build_student_exam_history(
         tenant=tenant,
         enrollment_ids=enrollment_ids,
         published_results_only=True,
+        totals_rows=totals_exam_rows,
     )
     pending_exam_keys = set(
         Submission.objects.filter(
@@ -266,6 +269,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         exam
         for exam in exam_list
         if exam.get("grading_status") != "subjective_pending"
+        and not exam.get("is_provisional")
     ]
     exam_ids = [int(exam["exam_id"]) for exam in ready_exams]
     result_ids = [int(exam["_result_id"]) for exam in ready_exams]
@@ -328,7 +332,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         exam_id = int(exam["exam_id"])
         enrollment_id = int(exam["enrollment_id"])
         exam["submission_pending"] = (enrollment_id, exam_id) in pending_exam_keys
-        if exam.get("grading_status") == "subjective_pending":
+        if exam.get("grading_status") == "subjective_pending" or exam.get("is_provisional"):
             exam.update({
                 "rank": None,
                 "percentile": None,
@@ -417,7 +421,8 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         .select_related("homework", "session", "session__lecture")
         .order_by("-homework__updated_at", "-homework_id")
     )
-    learning_pairs = {
+    exam_session_pairs = student_exam_session_pairs(tenant=tenant, enrollment_ids=enrollment_ids)
+    learning_pairs = exam_session_pairs | {
         (int(assignment.enrollment_id), int(assignment.session_id))
         for assignment in assigned_homeworks
     } | {
@@ -425,7 +430,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         for score in homework_scores
     } | {
         (int(exam["enrollment_id"]), int(exam["session_id"]))
-        for exam in exam_list if exam.get("session_id") is not None
+        for exam in totals_exam_rows if exam.get("session_id") is not None
     }
     absent_learning_pairs = actual_absent_learning_todo_pairs(
         tenant=tenant, enrollment_session_pairs=learning_pairs,
@@ -632,6 +637,8 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
     return {
         "exams": exam_list,
         "homeworks": homework_list,
+        "session_totals": student_session_totals(tenant=tenant, exam_rows=totals_exam_rows, homework_rows=homework_list,
+                                                absent_learning_pairs=absent_learning_pairs, session_pairs=exam_session_pairs),
         "exam_trend": exam_trend,
         "exam_summary": exam_summary,
         "lecture_options": lecture_options,

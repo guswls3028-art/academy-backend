@@ -125,6 +125,7 @@ class TestAttendanceListOrdering(TestCase):
             ("-name", ["하늘", "나래", "가람"]),
             ("status", ["가람", "나래", "하늘"]),
             ("-status", ["하늘", "나래", "가람"]),
+            ("not_arrived", ["가람", "하늘", "나래"]),
             ("phone", ["가람", "나래", "하늘"]),
             ("-parent_phone", ["하늘", "나래", "가람"]),
             ("unknown", ["가람", "나래", "하늘"]),
@@ -135,3 +136,25 @@ class TestAttendanceListOrdering(TestCase):
                     f"session={self.session.id}&page_size=50&ordering={ordering}"
                 )
                 self.assertEqual([row["name"] for row in data["results"]], expected_names)
+
+    def test_not_arrived_order_covers_all_pages_with_stable_ties_and_filters(self):
+        original_unset = Attendance.objects.get(session=self.session, status="UNSET")
+        duplicate_name = self._create_attendance("가람", "ABSENT", "01040000000", "01090000004", 4)
+        self._create_attendance("가나", "ONLINE", "01050000000", "01090000005", 5)
+        self._create_attendance("가다", "LATE", "01060000000", "01090000006", 6)
+
+        query = f"session={self.session.id}&ordering=not_arrived&page_size=3"
+        first_page = self._list(f"{query}&page=1")
+        second_page = self._list(f"{query}&page=2")
+        self.assertEqual(first_page["count"], 6)
+        self.assertEqual([row["name"] for row in first_page["results"]], ["가람", "가람", "하늘"])
+        self.assertEqual([row["id"] for row in first_page["results"][:2]], [original_unset.id, duplicate_name.id])
+        self.assertEqual([row["name"] for row in second_page["results"]], ["가나", "가다", "나래"])
+
+        filtered = self._list(f"{query}&status=ABSENT&search=가람")
+        self.assertEqual(filtered["count"], 1)
+        self.assertEqual([row["id"] for row in filtered["results"]], [duplicate_name.id])
+
+        Attendance.objects.filter(id=duplicate_name.id).update(status="PRESENT")
+        refreshed = self._list(f"{query}&page=1")
+        self.assertEqual([row["name"] for row in refreshed["results"]], ["가람", "하늘", "가나"])

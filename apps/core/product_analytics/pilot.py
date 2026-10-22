@@ -47,6 +47,7 @@ def _postgres_storage(*, observed_days: int, projection_days: int) -> dict:
         "database_bytes": None,
         "projected_analytics_bytes": None,
         "projected_database_share": None,
+        "projection_status": "unavailable",
     }
     if connection.vendor != "postgresql":
         return result
@@ -62,21 +63,31 @@ def _postgres_storage(*, observed_days: int, projection_days: int) -> dict:
         )
         raw_bytes, daily_bytes, database_bytes = cursor.fetchone()
 
-    observed = max(1, observed_days)
-    raw_horizon = min(30, projection_days)
-    raw_projected = int(raw_bytes * max(1.0, raw_horizon / min(observed, 30)))
-    daily_projected = int(
-        daily_bytes * max(1.0, projection_days / min(observed, projection_days))
-    )
-    projected = raw_projected + daily_projected
+    if observed_days <= 0:
+        projected = None
+        projection_status = "insufficient_observation"
+    else:
+        raw_horizon = min(30, projection_days)
+        raw_projected = int(
+            raw_bytes * max(1.0, raw_horizon / min(observed_days, 30))
+        )
+        daily_projected = int(
+            daily_bytes
+            * max(1.0, projection_days / min(observed_days, projection_days))
+        )
+        projected = raw_projected + daily_projected
+        projection_status = "scope_unverified"
     return {
         "raw_relation_bytes": raw_bytes,
         "daily_relation_bytes": daily_bytes,
         "database_bytes": database_bytes,
         "projected_analytics_bytes": projected,
         "projected_database_share": (
-            round(projected / database_bytes, 6) if database_bytes else None
+            round(projected / database_bytes, 6)
+            if projected is not None and database_bytes
+            else None
         ),
+        "projection_status": projection_status,
     }
 
 
@@ -146,6 +157,12 @@ def build_pilot_report(
     warnings: list[str] = []
     breaches: list[str] = []
     auto_disable_reasons: list[str] = []
+    if storage["projection_status"] in {"unavailable", "insufficient_observation"}:
+        warnings.append("storage_projection_unavailable")
+        breaches.append("storage_projection_unavailable")
+    elif storage["projection_status"] == "scope_unverified":
+        warnings.append("storage_projection_scope_unverified")
+        breaches.append("storage_projection_scope_unverified")
     if enabled_codes != [tenant_code]:
         breaches.append("enabled_tenant_scope_mismatch")
         auto_disable_reasons.append("enabled_tenant_scope_mismatch")
@@ -171,7 +188,8 @@ def build_pilot_report(
         auto_disable_reasons.append("write_share_exceeded")
     projected_share = storage["projected_database_share"]
     if (
-        projected_share is not None
+        storage["projection_status"] == "available"
+        and projected_share is not None
         and projected_share >= max_projected_database_share
     ):
         breaches.append("projected_database_share_exceeded")

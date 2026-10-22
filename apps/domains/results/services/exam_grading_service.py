@@ -156,7 +156,9 @@ class ExamGradingService:
         exam = self._load_exam(submission)
         validate_exam_submission_scope(submission=submission, exam=exam)
 
-        sheet, answer_key = GradingContractGuard.validate_exam_for_grading(exam)
+        sheet, answer_key = GradingContractGuard.validate_exam_for_grading(
+            exam, require_online_answers=submission.source == "online",
+        )
 
         existing = (
             ExamResult.objects

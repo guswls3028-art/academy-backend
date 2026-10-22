@@ -22,6 +22,7 @@ from apps.support.student_app.exam_dependencies import (
     StudentExamSubmitError,
     create_online_exam_submission,
     dispatch_student_exam_submission,
+    fail_student_exam_submission,
     get_enrollment_for_student_exam,
     normalize_student_exam_answers,
     student_exam_queryset,
@@ -235,10 +236,12 @@ class StudentExamSubmitView(APIView):
             dispatch_student_exam_submission(submission)
         except Exception:
             logger.exception("StudentExamSubmitView dispatch_submission failed")
+            fail_student_exam_submission(submission)
             return Response(
-                {"detail": "제출 처리 중 오류가 발생했습니다."},
+                {"detail": "제출 처리 중 오류가 발생했습니다. 입력한 답안으로 다시 제출해 주세요."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+        submission.refresh_from_db(fields=["status"])
         return Response(
             {"submission_id": submission.id, "status": getattr(submission, "status", submission.status)},
             status=status.HTTP_201_CREATED,

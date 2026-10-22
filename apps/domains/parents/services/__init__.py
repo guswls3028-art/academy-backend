@@ -96,6 +96,9 @@ def ensure_parent_account_for_student(
             credentials_resolved = True
 
     User = get_user_model()
+    name_limit = min(User._meta.get_field("name").max_length, Parent._meta.get_field("name").max_length)
+    name_suffix = " 학부모"
+    default_parent_name = f"{student_name[:name_limit - len(name_suffix)]}{name_suffix}"
     # tenant 내 유일한 학부모 식별: username = p_{tenant_id}_{phone}
     parent_username = parent_account_username(tenant=tenant, parent_phone=parent_phone)
 
@@ -177,7 +180,7 @@ def ensure_parent_account_for_student(
                         tenant=tenant,
                         phone=parent_phone,
                     )
-                    user_name = (parent.name if parent else "") or f"{student_name} 학부모"
+                    user_name = (parent.name if parent else "") or default_parent_name
                     user = User.objects.create_user(
                         username=parent_username,
                         phone=parent_phone,
@@ -219,7 +222,7 @@ def ensure_parent_account_for_student(
                     parent = Parent.objects.create(
                         tenant=tenant,
                         user=user,
-                        name=f"{student_name} 학부모",
+                        name=default_parent_name,
                         phone=parent_phone,
                     )
                 elif not parent.user_id:

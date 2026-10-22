@@ -8,7 +8,7 @@ import sys
 import sysconfig
 
 
-def native_parser(library):
+def native_parser(library, *, unpatched_baseline=False):
     lib = ctypes.CDLL(library)
     lib.XML_ParserCreate.argtypes = [ctypes.c_char_p]
     lib.XML_ParserCreate.restype = ctypes.c_void_p
@@ -16,7 +16,10 @@ def native_parser(library):
     lib.XML_Parse.restype = ctypes.c_int
     lib.XML_ParserFree.argtypes = [ctypes.c_void_p]
     lib.XML_ExpatVersion.restype = ctypes.c_char_p
-    assert lib.XML_ExpatVersion() == b"expat_2.8.4"
+    expected = b"expat_2.8.4" if unpatched_baseline else b"expat_2.9.0"
+    assert lib.XML_ExpatVersion() == expected
+    if not unpatched_baseline:
+        verify_buffer_capacity(lib)
 
     def parse(data):
         parser = lib.XML_ParserCreate(None)
@@ -29,13 +32,42 @@ def native_parser(library):
     return parse
 
 
+def verify_buffer_capacity(lib):
+    """Exercise CVE-2026-77214 rejection and recovery on the loaded library."""
+    lib.XML_GetBuffer.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    lib.XML_GetBuffer.restype = ctypes.c_void_p
+    lib.XML_ParseBuffer.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+    lib.XML_ParseBuffer.restype = ctypes.c_int
+    lib.XML_GetErrorCode.argtypes = [ctypes.c_void_p]
+    lib.XML_GetErrorCode.restype = ctypes.c_int
+    # Stable enum values from expat.h: NO_BUFFER=42, INVALID_ARGUMENT=41.
+    for final in (0, 1):
+        parser = lib.XML_ParserCreate(None)
+        assert parser
+        try:
+            assert lib.XML_ParseBuffer(parser, 10, final) == 0
+            assert lib.XML_GetErrorCode(parser) == 42
+            buffer = lib.XML_GetBuffer(parser, 10)
+            assert buffer
+            assert lib.XML_ParseBuffer(parser, 10000, final) == 0
+            assert lib.XML_GetErrorCode(parser) == 41
+            ctypes.memmove(buffer, b"<r></r>", 7)
+            assert lib.XML_ParseBuffer(parser, 7, 0) == 1
+            assert lib.XML_ParseBuffer(parser, 10000, final) == 0
+            assert lib.XML_GetErrorCode(parser) == 41
+            assert lib.XML_ParseBuffer(parser, 0, 1) == 1
+        finally:
+            lib.XML_ParserFree(parser)
+    print("EXPAT_BUFFER_CAPACITY_AND_RECOVERY_PASS")
+
+
 def python_parsers(module_dir):
     import pyexpat
     import _elementtree
     import xml.etree.ElementTree as etree
 
     assert sys.version_info[:3] == (3, 11, 15)
-    assert pyexpat.EXPAT_VERSION == "expat_2.8.4"
+    assert pyexpat.EXPAT_VERSION == "expat_2.9.0"
     suffix = sysconfig.get_config_var("EXT_SUFFIX")
     for module in [pyexpat, _elementtree]:
         assert Path(module.__file__).resolve() == (module_dir / f"{module.__name__}{suffix}").resolve()
@@ -105,7 +137,7 @@ def verify(parsers):
 
 
 def verify_package():
-    for field, expected in [("Version", "2.8.4+academy1-1"), ("Source", "expat")]:
+    for field, expected in [("Version", "2.9.0+academy1-1"), ("Source", "expat")]:
         actual = subprocess.check_output(["dpkg-query", "-W", f"-f=${{{field}}}", "libexpat1"], text=True)
         assert actual == expected
     ctypes.CDLL("libexpatw.so.1")
@@ -118,10 +150,13 @@ if __name__ == "__main__":
     parser.add_argument("--module-dir", type=Path, default=Path(sysconfig.get_config_var("DESTSHARED") or "."))
     parser.add_argument("--package", action="store_true")
     parser.add_argument("--wide", action="store_true")
+    parser.add_argument("--unpatched-baseline", action="store_true")
     args = parser.parse_args()
+    if args.unpatched_baseline and (args.python or args.package or args.wide):
+        parser.error("the unpatched negative control cannot verify runtime artifacts")
     if args.package:
         verify_package()
-    parsers = [native_parser(args.library)]
+    parsers = [native_parser(args.library, unpatched_baseline=args.unpatched_baseline)]
     if args.wide:
         verify_wide_output(args.library)
     if args.package:

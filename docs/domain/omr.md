@@ -355,6 +355,16 @@ Batch와 item에는 tenant, 생성 직원, 시험/차시/강의 id, 총수, ordi
 동일 파일 판정용 SHA-256, 안전한 실패 코드만 저장한다. 파일명, 학생 이름·전화번호, R2 raw key는 batch 모델이나
 batch API 응답에 저장·노출하지 않는다. 실제 원본과 학생 매칭은 기존 tenant-scoped
 Submission 계약을 그대로 사용한다.
+초기화·접수·목록·상세·재시도 응답의 `items`는 총수에 포함된 모든 ordinal을 순서대로
+반환한다. 각 항목은 안정적인 `batch:ordinal` id, 접수/처리 상태, 같은 tenant·시험의
+submission id, 안전한 접수 실패 사유를 제공한다. 다른 tenant·시험의 잘못된 연결은
+내역과 집계 모두 실패로 표시하고 제출 id·상태·식별 메타를 노출하지 않는다. 기존 집계
+필드는 유지하며 구버전 클라이언트는 추가 필드를 무시할 수 있다. 0바이트 파일은 저장·dispatch
+전에 거부한다. Legacy 요청은 batch 생성 전 400, 예약된 batch는 그 ordinal만
+`empty_file`로 실패 처리하고 정상 파일 접수는 유지한다. 올바른 파일을 같은 순번으로
+재선택하면 원래 성공 항목을 중복 생성하지 않고 복구한다. 기존 사용자 데이터를 일괄 수정하지 않는다.
+회귀 검증은 `test_exam_omr_batch_upload_pdf_guard.py`의 빈 파일→재접수, 100개 순번 보존,
+혼합 처리 상태, tenant 격리 및 GET 무변경 사례를 따른다.
 도입 전 item은 migration에서 tenant/exam scope만 backfill하고 기존 R2 원본을 다시 읽지
 않으므로 hash는 빈 값으로 보존한다. rolling 배포 중 구버전 API가 만드는 item도 새
 scope/hash 열을 모르므로 null일 수 있으며 conditional constraint 대상에서 제외된다. 신규
@@ -480,7 +490,7 @@ HTML·PDF 출력 및 사용자 업로드 우선순위를 회귀 검사한다.
 | POST | `/submissions/exams/{id}/omr/batch/` | 스캔 파일 일괄 업로드 | 현행 |
 | POST | `/submissions/exams/{id}/omr/batches/` | 총수·차시를 고정한 durable batch/ordinal 생성 | 현행 |
 | GET | `/submissions/omr/batches/` | 로그인 직원의 최근 7일 batch 목록(완전 read-only) | 현행 |
-| GET | `/submissions/omr/batches/{batch_id}/` | batch 접수/AI 처리 집계(완전 read-only) | 현행 |
+| GET | `/submissions/omr/batches/{batch_id}/` | batch 접수/AI 처리 집계와 순번별 내역(완전 read-only) | 현행 |
 | POST | `/submissions/omr/batches/{batch_id}/retry/` | 실패 또는 미접수 ordinal만 재시도 | 현행 |
 | POST | `/submissions/omr/batches/{batch_id}/claim-completion/` | terminal 완료 알림 1회 소유권 획득 | 현행 |
 | GET | `/results/admin/exams/{id}/result-import/template/` | 학생·문항이 채워진 결과 입력 엑셀 다운로드 | 현행 |

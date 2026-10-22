@@ -134,10 +134,23 @@ analytics_hash_key_missing`으로 거부된다. 일반 테넌트 관리자는 �
 `report_product_usage_pilot --tenant-code hakwonplus`가 판정한다.
 활성 테넌트 범위, 최근 다른 테넌트 이벤트, HMAC key, 24시간 writer DB
 시간·write 비중과 90일 저장 전망을 한 JSON으로 출력한다. writer DB
-시간 또는 write가 10% 이상이거나 90일 분석 저장 전망이 현재 DB의
+시간 또는 write가 10% 이상이거나, 검증된 90일 분석 저장 전망이 현재 DB의
 20% 이상이면 정확한 확인 문구가 있는 실행만 `hakwonplus` 플래그를
-transaction과 운영 감사 로그로 자동 해제한다. 예상 밖의 두 번째 활성
-테넌트는 원인을 보존하기 위해 어느 플래그도 임의 변경하지 않고 실패한다.
+transaction과 운영 감사 로그로 자동 해제한다. 범위 위반도 확인 문구가
+있는 경우 정확한 파일럿만 해제하고 다른 테넌트 플래그는 보존한다.
+관측 이벤트가 0건이면 기존 relation 할당량에서 성장률을 만들 수 없으므로
+저장 전망을 미확정으로 보고 gate를 실패시킨다. 이는 파일럿 플래그를 자동
+해제하는 hard breach가 아니며, 현재 relation 크기는 측정값으로만 남긴다.
+양수 관측일의 전망도 전체 relation 크기와 단일 파일럿 관측 기간의 범위가
+일치하는지 검증하기 전에는 미확정 gate로 실패시키며 자동 해제 근거로
+사용하지 않는다. `database.projection_status`가 `insufficient_observation`이면
+전망 값은 null이고, `scope_unverified`이면 계산값은 참고용일 뿐 비용 초과
+증거가 아니다. PostgreSQL 측정 자체가 없는 `unavailable`도 gate를 통과하지
+못한다. 현재 relation 측정기는 `available`을 생성하지 않으므로 이 보고서만으로
+저장 전망 검증이나 파일럿 확대 승인을 주장할 수 없다. 수집·집계와 기존 저장
+이력은 그대로 보존한다. `apps/core/tests/test_product_analytics_pilot.py`는
+실제 문제의 용량 수치, 관측 0일/양수일, 미확정 플래그 비변경, 유효한 비용·범위
+위반의 정확한 파일럿 해제와 감사 기록을 검증한다.
 
 ## 5. 저장, 집계와 보존
 

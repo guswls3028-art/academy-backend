@@ -322,6 +322,7 @@ class Session(TimestampModel):
     )
     title = models.CharField(max_length=255)
     date = models.DateField(null=True, blank=True)
+    score_totals = models.JSONField(default=dict, blank=True, null=True)
 
     class Meta:
         ordering = ["order"]

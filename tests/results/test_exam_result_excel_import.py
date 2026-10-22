@@ -1532,6 +1532,16 @@ class ExamResultExcelImportTests(TestCase):
         self.assertEqual(ranked.cell(6, 10).value, "기준 미설정")
 
     def test_analysis_export_keeps_first_attempt_score_after_retake_result_changes(self):
+        apply_exam_result_import(plan=plan_exam_result_import(
+            exam=self.exam,
+            tenant=self.tenant,
+            filename="first-attempt-before-correction.xlsx",
+            workbook_bytes=_workbook_bytes([
+                ["수강등록ID", "이름", 1, 2],
+                [self.enrollment.id, "김학생", "O", "X"],
+            ]),
+        ))
+        initial = ExamAttempt.objects.get(exam=self.exam, attempt_index=1).meta["initial_snapshot"]
         apply_exam_result_import(
             plan=plan_exam_result_import(
                 exam=self.exam,
@@ -1551,6 +1561,8 @@ class ExamResultExcelImportTests(TestCase):
             enrollment=self.enrollment,
         )
         self.assertEqual(result.attempt.meta["initial_snapshot"]["total_score"], 100.0)
+        self.assertEqual(result.attempt.meta["initial_snapshot"]["submitted_at"], initial["submitted_at"])
+        self.assertEqual(result.attempt.meta["initial_snapshot"]["source"], initial["source"])
         result.attempt.is_representative = False
         result.attempt.save(update_fields=["is_representative", "updated_at"])
         retake_attempt = ExamAttempt.objects.create(

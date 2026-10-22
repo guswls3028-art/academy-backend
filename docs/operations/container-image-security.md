@@ -5,6 +5,274 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+<a id="glibc-approval-20261021"></a>
+
+## 2026-10-21 온라인 제출 수정 배포의 glibc 두 예외 무기한 승인
+
+[온라인 제출 수정 PR669](https://github.com/guswls3028-art/academy-backend/pull/669)의
+[배포39552635486](https://github.com/guswls3028-art/academy-backend/actions/runs/39552635486)은
+기존 예외 만료로 후보 scan 게이트에서 중단됐다. 격리 development·preprod·운영
+교체는 실행되지 않았으며 공유 잠금 반환을 확인했다.
+
+사용자는 기존 여섯 저장소의 `CVE-2026-19499`, `CVE-2026-5435`,
+`glibc / 2.41-12+deb13u4`에 대한 메모리 손상·서비스 장애 위험과 실제 서비스의
+악용 가능성 미확인을 전달받고 **“전부 수용 무제한”**이라고 명시 승인했다.
+이는 바로 위 두 exact identity와 기존 여섯 저장소의 **기한 제한 없는 위험 수용**이다.
+미래 CVE, 다른 패키지·버전·저장소, Critical 수용까지 확대하지 않는다.
+
+정본 `docs/ssot/ecr-high-risk-baseline.json`의 두 항목은 `expiresOn: null`,
+`indefiniteAcceptance: true`, 승인일 `approvedOn`과 이 절의 `approvalReference`로
+기록한다. schemaVersion 3의 명시적 무기한 형식이며, 이 표시가 없는 항목은
+계속 유효한 만료일을 요구한다. 누락된 승인 기록, 잘못된 표시와 날짜·무기한의
+충돌은 차단한다. Critical 정책은 변경하지 않으며 각 저장소 High 상한은 2다.
+이는 사용자의 새 승인 반영이지 자동 갱신이 아니다. 새 후보는 계속 신선한
+COMPLETE scan과 exact identity 검사를 통과해야 한다.
+
+10월 21일 15:37–15:45 KST 여섯 후보 digest의 scan은 모두 COMPLETE,
+High 2·Critical 0이었다. 서비스 이미지는 실패 실행의 immutable 태그
+`sha-00ec3fc204f40d9f71518efced294af8317b577d-run-39552635486-1`, base는
+`sha256:fb6c6defc3d6c7b34043a40576462004ef37cda8e1cdc797bb6e7e09386c0d5b`의
+재검사다. 이는 다음 후보의 검사를 대체하지 않는다.
+[Debian CVE-2026-19499](https://security-tracker.debian.org/tracker/CVE-2026-19499)와
+[CVE-2026-5435](https://security-tracker.debian.org/tracker/CVE-2026-5435)는 당일
+해당 trixie 버전을 vulnerable로 유지하며 stable 수정본은 확인되지 않았다.
+이 승인은 취약점 수정이나 비도달성의 증명이 아니다.
+
+기존 glibc 교체·취약 입력 재현 HOLD와 native·scan·격리 development·preprod,
+임시 인스턴스 종료·플랫폼 승인·rolling·실사용·cleanup 0 조건은 그대로 유지한다.
+승인 원문과 digest/scan 증거는
+`_artifacts/online-submit-fix-01a15c9f/security-approval-20261021.json`과
+`candidate-scan-readback.json`에 보존한다. 실패 실행은 소급 변경하지 않고 새
+정책을 포함한 main source로 정규 배포한다.
+
+## 2026-10-20 온라인 시험 총점·재응시 수정 배포의 glibc 두 예외 재승인 (이력)
+
+민원 기능의 실제 화면 검증에서 온라인 자동 채점 점수가 선택 총점에 미확정으로
+남는 문제와 재응시 후 최초 점수의 확정 판정 문제가 확인됐다.
+[PR666](https://github.com/guswls3028-art/academy-backend/pull/666)은 과거 점수를
+변경하지 않는 조회 호환 수정이며, 종전 예외는 **10월 20일 09:00 KST**에 만료됐다.
+사용자는 정확한 두 항목과 잔여 메모리 손상·서비스 장애 위험, 실제 도달성 미확인을
+전달받고 **“10월 21일 오전 9시까지 위 두 항목만 한시 수용”**이라고 명시 승인했다.
+
+- `CVE-2026-19499`, `CVE-2026-5435 / glibc / 2.41-12+deb13u4`만 해당한다.
+- 기존 `academy-base`, `academy-api`, `academy-video-worker`,
+  `academy-messaging-worker`, `academy-ai-worker-cpu`, `academy-tools-worker`만 유지한다.
+- 만료는 **2026-10-21 09:00 KST**, 즉 `expiresOn: 2026-10-20` UTC 종료다.
+  각 저장소 High 상한 2와 Critical 수용 없음은 변경하지 않는다.
+
+현재 성공 릴리스39334061045의 여섯 exact digest를 재조회한 결과는 모두 COMPLETE,
+High 2·Critical 0이다. base scan은 10월 19일 23:42 KST, 서비스 다섯 scan은
+10월 20일 07:25–07:26 KST에 완료됐다. 이는 기존 이미지의 관측이며 **새 후보의
+신선한 scan을 대체하지 않는다**. 새 후보에서도 동일 exact 범위만 허용한다.
+10월 20일 [Debian CVE-2026-19499](https://security-tracker.debian.org/tracker/CVE-2026-19499)와
+[CVE-2026-5435](https://security-tracker.debian.org/tracker/CVE-2026-5435)는 trixie의
+해당 버전을 vulnerable로 유지하고 stable 수정본은 확인되지 않았다.
+이 승인은 수정이나 비도달성의 증명이 아니며 자동 연장도 허용하지 않는다.
+
+기존 glibc 교체·취약 입력 재현 HOLD, native·scan·격리 development·preprod와
+임시 인스턴스 종료·플랫폼 승인·rolling·실사용·cleanup 0 조건을 모두 유지한다.
+승인 원문, exact digest와 scan 원본은
+`_artifacts/sessions/assessment-feedback-01a15422/featureArtifacts/security-readback-20261020/`에 보존한다.
+
+## 2026-10-19 민원 기능 배포의 glibc 두 예외 재승인 (이력)
+
+민원 기능 PR663의 [배포39269386805](https://github.com/guswls3028-art/academy-backend/actions/runs/39269386805)는
+기존 glibc 예외가 **10월 19일 09:00 KST**에 만료되어 후보 보안 게이트에서
+중단했다. 격리 development·preprod·운영 교체는 실행되지 않았으며 공유 잠금은
+반환됐다. 실패한 실행을 소급 승인하지 않고 새 정책 source로 공식 배포한다.
+
+사용자는 기존 여섯 이미지의 두 High 항목, 잔여 메모리 손상·서비스 장애 위험과
+실제 도달성 미확인을 전달받은 뒤 **“10월 20일 오전 9시까지 위 두 항목 한시 수용”**이라고
+명시 승인했다. 이번 민원 기능 배포에 한해 다음 범위만 갱신한다.
+
+- `CVE-2026-19499`, `CVE-2026-5435 / glibc / 2.41-12+deb13u4`.
+- `academy-base`, `academy-api`, `academy-video-worker`,
+  `academy-messaging-worker`, `academy-ai-worker-cpu`, `academy-tools-worker`.
+- 만료 **2026-10-20 09:00 KST**, 즉 `expiresOn: 2026-10-19` UTC 종료.
+  각 저장소 High 상한은 2이며 Critical 수용은 비어 있다. 자동 연장은 없다.
+
+10월 19일 23:35–23:42 KST의 여섯 COMPLETE scan에서 정확히 위 두 High만
+검출됐고 Critical은 0이다. 서비스 다섯 이미지는 실패 실행의 immutable 후보
+태그 `sha-2677ba90e5195bb3d75a65001c0eb3d09b48568e-run-39269386805-1`,
+base는 재사용 digest `sha256:fb6c6defc3d6c7b34043a40576462004ef37cda8e1cdc797bb6e7e09386c0d5b`를
+새로 검사했다. [Debian CVE-2026-19499](https://security-tracker.debian.org/tracker/CVE-2026-19499)와
+[CVE-2026-5435](https://security-tracker.debian.org/tracker/CVE-2026-5435) tracker는
+당일 trixie의 해당 버전을 vulnerable로 기록하며 stable 수정본은 확인되지 않았다.
+이 승인은 수정이나 비도달성의 증명이 아니다.
+
+새 identity·package/version·저장소 확대·Critical·만료는 계속 차단한다.
+기존 native·신선한 scan·격리 development·preprod/임시 인스턴스 종료·플랫폼 승인·
+rolling·영향 동선 실사용·cleanup 0 게이트와 기존 glibc 교체/취약 입력 재현의
+차단 범위도 유지한다. 승인 원문과 여섯 exact digest/scan 요약은
+`_artifacts/sessions/assessment-security-01a15422/security-approval-20261019.json`과
+`candidate-security-readback.json`, 원본 scan은
+`_artifacts/sessions/assessment-feedback-01a15422/scan-*.json`에 보존한다.
+
+## 2026-10-18 system Cyrus 공식 수정 패키지 후보 (이력)
+
+사용자는 한시 수용 만료 전 근본 조치와, 기존 모델 차단에 관련되지 않은 조치의
+선행 완료를 요청했다. [Debian 공식 tracker](https://security-tracker.debian.org/tracker/CVE-2026-107161)는
+10월 16일 공개한 `cyrus-sasl2 2.1.28+dfsg1-12`를 fixed로 기록한다. 이 새 vendor
+패키지 교체는 기존에 차단된 LDAP/SASL 제거·glibc 교체·취약 입력 재현 작업과
+분리하며 그 작업트리와 차단 상태를 보존한다.
+
+공통 base의 `fetch-fixed-sasl.sh`는 Debian 서명으로 검증한 임시 APT 목록에서
+`libsasl2-2`와 `libsasl2-modules-db` 두 패키지만 exact version으로 내려받고,
+arm64/amd64별 SHA-256을 추가 확인한다. sid의 고정된 두 바이너리를 사용하는
+범위 한정 예외이며 base 배포판·glibc·APT 설치 소스는 trixie 그대로 유지한다.
+의존성은 기존 libc6(최소 2.38), libssl3t64, libdb5.3t64로 충족되며 설치 후
+`dpkg --audit`와 `apt-get check`가 실패하면 빌드를 중단한다. Debian 패키지와
+source identity를 그대로 설치하고 자체 버전 표기나 metadata 제거를 하지 않는다.
+core의 기존 공개 심볼을 모두 유지해야 하며 마지막 APT 단계 뒤의 기존 SASL
+검사는 fixed 패키지 쌍과 `EXTERNAL`, DIGEST-MD5 거부를 함께 확인한다.
+추가 인증 플러그인은 설치하지 않는다.
+
+이 후보의 정책은 여섯 저장소에서 Cyrus 수용을 제거하고 High 상한을 3→2로
+낮췄다. 당시 glibc 두 exact identity와 **2026-10-19 09:00 KST** 만료를 유지했으며,
+현재 만료는 위 10월 19일 명시 승인에 따른다.
+Cyrus가 하나라도 다시 검출되면 미검토 High로 차단한다. 새 후보의 여섯 COMPLETE
+scan, arm64 native 검증, 격리 development DB/TLS·Excel/PPT/R2 실사용과 cleanup 0,
+preprod/임시 인스턴스 종료, 정규 rolling 및 운영 readback 전에 완료로 표시하지 않는다.
+
+적용 범위는 system Debian 패키지다. `psycopg2-binary` wheel의 별도 SASL 구현을
+수정했다고 주장하지 않는다. PyPI 최신 2.9.13 arm64 wheel도 9월 9일 배포되어
+이번 Debian 수정판보다 이르며, 버전 업그레이드만으로 해당 구현의 수정 여부를
+증명할 수 없다. wheel/기존 소스 연결 전환과 glibc 두 건은 별도 미완료 상태로 남는다.
+
+## 2026-10-18 base addendum: 동일 Cyrus의 academy-base 추가 승인 (이력)
+
+아래 최초 승인을 반영한 PR659의 [배포39076470310](https://github.com/guswls3028-art/academy-backend/actions/runs/39076470310)은
+`academy-base`의 새 scan에서 동일 Cyrus 항목을 검출해 중단했다. base digest
+`sha256:5691af13d98b2838209669291d105d7b72f4648c957ca1b32ab30bf637be8379`는
+변하지 않았지만, 10월 17일 04:37:50 KST scan의 High 2건과 달리 10월 18일
+07:54:29 KST COMPLETE scan은 High 3건·Critical 0건이다. 같은 이미지의 검출
+결과가 바뀐 사실은 확인했으며 scanner 내부 재분류 원인까지 확인한 것은 아니다.
+다른 다섯 저장소도 승인된 세 identity만 있으며 여섯 scan 모두 COMPLETE·Critical 0이다.
+개발·preprod·운영은 실행되지 않았고 공유 잠금은 반환됐다.
+
+최초 승인은 base를 제외했으므로 자동 확대하지 않았다. 정확한 추가 범위와 잔여
+메모리 손상·장애 위험, 실제 도달성 미확인을 전달한 뒤 사용자가
+**“academy-base도 같은 기한으로 추가 수용 승인”**이라고 명시 승인했다.
+`CVE-2026-107161 / cyrus-sasl2 / 2.1.28+dfsg1-9`의 저장소 목록에
+`academy-base`만 추가하고 그 High 상한만 2에서 3으로 바꾼다.
+기존 서비스 다섯 저장소, glibc 두 항목과 만료 **2026-10-19 09:00 KST**
+(`expiresOn: 2026-10-18` UTC 종료)는 변경하지 않는다. Critical 수용은 비어 있다.
+
+이는 호환 수정본이나 비도달성의 증명이 아니다. 아래 vendor·잔여 위험과 모든
+native·신선한 scan·격리 개발 P2/ACK/cleanup 0·preprod/종료·승인·rolling·운영
+검증 조건을 유지하며 새 정책 source의 공식 배포로 다시 검증한다.
+승인 원문은 `_artifacts/session-closeout-01a14bb1/security-base-addendum-approval-20261018.json`,
+범위 검토와 exact scan은 `_artifacts/sessions/weekly-p2-01a13ee0/`의
+`security-base-addendum-decision.json`, `approved-candidate-security-readback.json`에 보존한다.
+
+## 2026-10-18 P2 배포의 Cyrus 한시 수용 및 glibc 재승인 (이력: base 제외)
+
+PR658의 [배포39072408861](https://github.com/guswls3028-art/academy-backend/actions/runs/39072408861)은
+후보 보안 검사에서 기존 승인에 없는 `CVE-2026-107161`을 검출해 중단했다.
+여섯 scan은 COMPLETE·Critical 0이며 base에는 기존 glibc High 2건,
+서비스 이미지 다섯 개에는 Cyrus를 포함한 High 3건이 있다. 개발·preprod·운영
+교체는 실행되지 않았고 공유 잠금은 반환됐다. 실패 실행을 소급 승인하지 않는다.
+
+사용자는 10월 18일 **“검토안의 대상 범위대로 새 Cyrus 취약점과 기존 glibc 2건을
+10월 19일 오전 9시(KST)까지 한시 수용 승인함. 배포·운영 검증까지 마무리하고
+완료된 세션 정리해줘.”**라고 명시 승인했다.
+
+- `CVE-2026-107161 / cyrus-sasl2 / 2.1.28+dfsg1-9`: `academy-api`,
+  `academy-video-worker`, `academy-messaging-worker`, `academy-ai-worker-cpu`,
+  `academy-tools-worker`만 허용하며 `academy-base`는 제외한다.
+- `CVE-2026-19499`, `CVE-2026-5435 / glibc / 2.41-12+deb13u4`:
+  위 다섯 저장소와 `academy-base`의 기존 범위만 갱신한다.
+- 만료는 **2026-10-19 09:00 KST**, 즉 `expiresOn: 2026-10-18` UTC 종료다.
+  High 상한은 base 2, 나머지 3이며 Critical 수용은 비어 있다. 자동 연장은 없다.
+
+10월 18일 [Debian Cyrus tracker](https://security-tracker.debian.org/tracker/CVE-2026-107161)는
+trixie `2.1.28+dfsg1-9`를 vulnerable, sid `2.1.28+dfsg1-12`를 fixed로 표시한다.
+sid 수정본은 호환 가능한 stable 수정본의 검증을 대신하지 않는다. DIGEST-MD5
+challenge 처리의 heap 손상·장애 위험과 기존 glibc 잔여 위험은 남는다.
+실제 도달 가능성은 입증하거나 배제하지 않았으며, 과거 native 검사를 새 후보의
+비도달성 증거로 쓰지 않는다. 기존 native oracle 및 예상 밖 mechanism 차단을 유지한다.
+
+release owner `weekly-p2-01a13ee0`는 이 정책이 포함된 새 source로 공식 배포를 시작한다.
+새 CVE·package/version·범위 변경·Critical·만료는 계속 실패하며, 신선한 immutable scan,
+격리 개발의 P2 실제 queue/worker/R2 복구 및 cleanup 0, preprod와 임시 인스턴스 종료,
+플랫폼 승인·공유 잠금, 호환 rolling, runtime·영향 동선 검증을 모두 유지한다.
+승인 원문은 `_artifacts/session-closeout-01a14bb1/security-approval-20261018.json`,
+후보 증거는 `_artifacts/sessions/weekly-p2-01a13ee0/candidate-security-readback.json`에 보존한다.
+
+## 2026-10-17 출석 정렬 배포의 glibc 두 예외 재승인 (이력)
+
+출석 미도착 우선 정렬 후보를 준비하면서 기존 승인이 **10월 17일 09:00 KST**에
+만료되어 `load_high_baselines`가 차단하는 것을 확인했다. 자동 갱신하거나
+만료 기간의 배포를 소급 승인하지 않았다. 사용자는 잔여 메모리 손상·서비스 장애
+위험, Debian stable 수정본 부재, 정확한 두 CVE·패키지·6개 저장소·기한을 전달받고
+**“해당 범위·기한의 한시 수용 승인”**으로 새 승인을 명시했다.
+
+- 대상: `CVE-2026-19499`, `CVE-2026-5435`, 정확히 `glibc 2.41-12+deb13u4`.
+- 저장소: `academy-base`, `academy-api`, `academy-video-worker`,
+  `academy-messaging-worker`, `academy-ai-worker-cpu`, `academy-tools-worker`.
+- 만료: **2026-10-17 UTC 종료, 즉 10월 18일 09:00 KST**. 자동 연장은 없다.
+- 저장소별 High 상한은 2, Critical 수용은 빈 상태를 유지한다. 새 identity,
+  package/version 변경, Critical, 만료와 기존 native·scan·개발·preprod·임시
+  인스턴스 종료·rolling·실사용·cleanup 실패는 계속 차단한다.
+
+당시 성공 manifest의 source는 `ee658e8ff96dd696a84755a4a82b4741a68a3351`,
+공식 배포는 [run38954773713](https://github.com/guswls3028-art/academy-backend/actions/runs/38954773713)이다.
+10월 17일 조회한 여섯 exact digest의 COMPLETE scan은 같은 날 04:37~04:55 KST에
+완료됐으며, 모두 위 High 2건·Critical 0건이다. 이는 기존 배포 이미지의 증거이며
+새 후보의 보안 검사를 대신하지 않는다. 두 Debian tracker의 trixie 패키지는
+여전히 vulnerable/no-dsa이고 stable 수정본은 없다. 아래 10월 16일 native 검사는
+과거 실행 경로 증거로만 보존하며 새 후보의 비도달성을 주장하지 않는다.
+
+release owner `attendance-visible-01a1499b`가 이 기한 안의 새 후보와 실제 scan을
+다시 확인한다. 조회 증거는 `_artifacts/attendance-visible-01a1499b/security-review.json`에
+보존한다. 기존 승인과 검토 근거는 아래 이력에 남긴다.
+
+## 2026-10-16 glibc 두 예외의 명시 승인과 Cyrus 수용 제거 (이력)
+
+계정 probe의 PostgreSQL transaction 경계를 고친 PR651의 공식 배포
+[run38827165225](https://github.com/guswls3028-art/academy-backend/actions/runs/38827165225)은
+기존 예외 만료 후 후보 보안 검사에서 차단됐다. 개발·preprod·운영 전환은
+실행되지 않았고 공유 배포 잠금 해제는 성공했다. 실패한 배포를 소급 승인하지 않는다.
+
+사용자는 미수정 메모리 손상·장애 위험과 정확한 대상·기한을 전달받은 뒤
+**“해당 범위·기한의 한시 수용 승인”**으로 아래 두 High identity만 명시 승인했다.
+적용 저장소는 `academy-base`, `academy-api`, `academy-video-worker`,
+`academy-messaging-worker`, `academy-ai-worker-cpu`, `academy-tools-worker`다.
+만료는 **2026-10-16 UTC 종료, 즉 10월 17일 09:00 KST**이며 자동 연장은 없다.
+
+| CVE | 정확한 package/version | 현재 vendor 상태 |
+|---|---|---|
+| `CVE-2026-19499` | `glibc / 2.41-12+deb13u4` | [Debian](https://security-tracker.debian.org/tracker/CVE-2026-19499) trixie는 vulnerable, `no-dsa / Minor issue`; stable 수정본 없음 |
+| `CVE-2026-5435` | `glibc / 2.41-12+deb13u4` | [Debian](https://security-tracker.debian.org/tracker/CVE-2026-5435) trixie는 vulnerable, `no-dsa / Minor issue`; stable 수정본 없음 |
+
+10월 16일 09:24 KST 조회한 exact 후보 조합은 API·AI의 새 이미지와 성공 manifest
+`1c61cd287df2a5e4406d85f665f08b64c15cac14`의 base·Video·Messaging·Tools다.
+여섯 COMPLETE scan은 모두 24시간 이내이며 위 High 2건과 Critical 0건이다.
+현재 scan에는 `CVE-2026-107161`이 없어 Cyrus 수용을 제거하고 저장소별 High 상한을
+3에서 2로 낮춘다. [Cyrus vendor](https://security-tracker.debian.org/tracker/CVE-2026-107161)는
+아직 unfixed다. scanner 목록에서 사라진 것을 vendor 수정이나 비도달성 증거로
+해석하지 않으며, 같은 Cyrus High가 다시 나타나도 새 검토 없이 통과하지 않는다.
+
+읽기 전용 SSM `d705d38b-98ef-4c81-bbf1-544919d603ae`는 **현재 성공 runtime**
+`1c61cd287df2a5e4406d85f665f08b64c15cac14`에 대응하는 격리 개발 인스턴스
+`i-009f8d2aa80aaa23d`의 API·AI·Tools exact digest를 확인했다. 실패 후보를 실행한
+검사가 아니다. 세 컨테이너 모두 기존 `verify-sasl.py` hash
+`2676232c220c934c99dff12cd54fe9fe2bbdc8deedd8362a3aec3b5edce9c452`가 일치하고
+EXTERNAL만 있으며 DIGEST-MD5는 `SASL_NOMECH(-4)`로 거부됐다. API 909·AI 1308·
+Tools 863개 ELF에서 `strfmon`, `strfmon_l`, `ns_printrrf`, `ns_printrr`, `fp_nquery`의
+undefined dynamic reference와 검사 오류는 각각 0개였다. `dlsym`, 정적 링크,
+다른 이미지와 미실행 경로는 배제하지 못하므로 잔여 위험은 남는다.
+
+Critical 수용은 비어 있고 새 CVE·package/version 변경·만료는 계속 차단한다.
+기존 native ABI·최종 APT 이후 oracle, 후보 scan, 격리 개발·preprod·임시 인스턴스
+종료·호환 migration·healthy rolling·실사용·cleanup 게이트는 모두 유지한다.
+release owner `account-qa-01a13ee0`가 다음 후보 게시 및 만료 전에 다시 검토하며,
+수정 증거 또는 새로운 정확한 승인이 없으면 만료 차단을 유지한다.
+
+증거는 `_artifacts/sessions/account-qa-01a13ee0/security-expiry-review/`의
+`current-scans.json`(여섯 raw scan의 digest·시각·SHA-256), `native-command.json`,
+`native-result.json`, `decision.json`에 보존한다. 아래 기록은 당시 결정의 이력이다.
+
 ## 2026-10-13 세 예외의 재검토와 제한된 수용
 
 사용자는 기존 세 보안 예외의 필요한 조치를 자율적으로 마무리하도록
@@ -528,24 +796,25 @@ PBDS binary heap의 `erase_if` 재할당 뒤 entry pointer를 갱신하는 헤�
   그대로 상속한다. 완료 ECR scan은 두 CVE가 어떤 affected digest에도 남아 있으면
   기존 Critical gate에서 계속 실패 폐쇄한다.
 
-## Expat UTF-16 경계와 Python XML 호환성
+## Expat 2.9.0 보안 경계와 Python XML 호환성
 
-`CVE-2026-93990`은 잘못된 UTF-16 surrogate pair를 허용하는 문제다.
-공식 배포35532553325/c2ee의 새 API·AI digest에서 Debian `expat`
-`2.8.3-1~deb13u1` High1이 확인되어 development 이전에 중단됐다.
-2026-09-21 확인 시 [Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-93990)는
-trixie와 sid 모두 미수정으로 표시한다. Expat2.8.4로 버전만 올려도 해결되지 않는다.
+2026-10-17 배포38948995652의 후보는 Expat `2.8.4+academy1-1`의 High6과
+기존 glibc High2로 development 이전에 차단됐다. 공통 base는
+[공식 Expat2.9.0](https://github.com/libexpat/libexpat/releases/tag/R_2_9_0)으로
+교체한다. 이 릴리스는 기존 UTF-16 surrogate pair 수정과
+`CVE-2026-77214`의 `XML_ParseBuffer` 용량 검사,
+`CVE-2026-102633`의 32비트 정수 오버플로 수정을 포함한다.
+원본 tarball은 공식 release asset의 SHA-256
+`1e6371862cc31999b368c3b89b49994f0677e1bab5f1b2b85ae3741f5d803051`로 고정한다.
+패키지 정체성은 `Package: libexpat1`, `Source: expat`,
+실제 빌드 버전 `2.9.0+academy1-1`이다. 이전 임시 수정 patch는 제거한다.
 
-공통 base는 실제 upstream2.8.4와
-[공식 수정0cfd15b](https://github.com/libexpat/libexpat/commit/0cfd15bdf4b2c22d6b0df73610709dfb60921091),
-[공식 회귀28fcfba](https://github.com/libexpat/libexpat/commit/28fcfba540f6933aa8904a1514c4811713d2ab72)를
-`docker/native-security/patches/`에 검증된 바이트로 보관하고 Docker COPY 뒤 SHA-256을
-재검사한다. 빌드 시 GitHub 생성 `.patch`를 다시 내려받지 않아 바이트 드리프트가
-같은 커밋의 재빌드를 중단시키지 않는다. 2.8.4 원본 tarball도 SHA-256으로 고정한다.
-2.8.4에 남은 `FASTCALL`과 맞추기 위해 patch의
-context 한 줄만 정확히 변환하고 fuzz 없는 적용을 요구한다. 패키지 정체성은
-`Package: libexpat1`, `Source: expat`, 실제 backport 버전 `2.8.4+academy1-1`이다.
-아직 발표되지 않은 버전을 주장하거나 scanner에서 패키지를 숨기지 않는다.
+수정 전 실패 증거를 유지하기 위해 2.8.4 원본과
+[공식 회귀28fcfba](https://github.com/libexpat/libexpat/commit/28fcfba540f6933aa8904a1514c4811713d2ab72)는
+빌드 단계의 negative control에만 사용한다. 두 입력 모두 SHA-256으로 검증하고
+회귀 patch는 검증된 저장소 바이트를 fuzz 없이 적용한다. 해당 라이브러리는
+최종 이미지에 복사하지 않는다. `--unpatched-baseline`은 이 실패 재현에만
+사용하며 runtime package/Python/wide 검사와 함께 사용할 수 없다.
 Debian 패키지가 제공하는 `libexpat.so.1`·`libexpatw.so.1` ABI를 모두 보존하고
 원본 라이선스를 포함한다. 빌드 입력·검증의 정본은 `docker/native-security/`다.
 
@@ -561,26 +830,30 @@ SOABI를 확인한 뒤 `pyexpat`·`_elementtree` 두 확장만 함께 재빌드�
 
 - 원본2.8.4에 회귀 테스트만 적용했을 때 normal·`XML_MIN_SIZE` 빌드에서 해당
   테스트만 실패하고, 잘못된 UTF-16 허용을 별도 동작 검사에서도 재현한다.
-- 수정 뒤 normal·`XML_MIN_SIZE` 빌드의 upstream 테스트가 성공한다.
+- 2.9.0 normal 빌드의 upstream 테스트가 성공한다. 2.9.0에서 제거된
+  `XML_MIN_SIZE`는 이전 negative control에만 사용한다. 배포한 두 ABI는 원래
+  이 옵션과 함께 제거된 `XML_ATTR_INFO`를 사용하지 않았다.
   upstream 테스트는 ushort wide ABI를 명시적으로 지원하지 않으므로 wide
   라이브러리는 실제 parser의 정상/비정상 UTF-16 입력 및 한글·emoji의
   16비트 callback 출력 바이트를 검사한다. 테스트를 위해 libc와 호환되지 않는
   `wchar_t` ABI로 바꾸지 않는다. 이 출력 검사도 최종 서비스 이미지에서 실행한다.
   시스템 라이브러리와 Python XML 두 경로에서 UTF-16 LE/BE의 정상 한글·emoji·
   유효 surrogate pair는 허용하고 비정상 pair는 거부한다.
+- 두 실제 native ABI에서 buffer 미확보·용량 초과 요청을 정확한 오류로 거부하고,
+  정상 입력 및 오류 후 재시도가 성공하는지 검사한다. 32비트 전용 정수 경로는
+  upstream 수정 소스로 제공되며 ARM64 실행을 32비트 검증으로 주장하지 않는다.
 - CPython의 pyexpat·ElementTree·C accelerator·minidom·SAX 회귀와 실제로 로드한
   확장의 경로·버전 검증이 성공한다. 검사 파일이나 소스 비교만으로 대체하지 않는다.
 - 공통 base와 API·Video·AI·Tools의 마지막 APT 설치 뒤에도 정확한 package/source와
   실제 Python XML 동작을 재검증한다. Messaging은 검증한 공통 base를 상속한다.
 
 빌드·호환성 실패는 이미지를 중단시키며 운영 데이터의 재처리나 변경을 유발하지
-않는다. 실제 수정과 ECR scan의 판정은 별도 증거다. 이 backport가 동작 검사를
+않는다. 실제 수정과 ECR scan의 판정은 별도 증거다. 새 릴리스가 동작 검사를
 통과해도 새 여섯 digest의 완료 스캔에서 해당 Expat 취약점의 Critical/High 0과
 현재 exact 정책 준수를 확인하기 전에는 배포 가능하다고 판단하지 않는다.
 scanner가 해당 Expat 취약점을 계속 High로 분류하면 실패 상태를 유지하며
 그 항목의 상한·acceptance를 추가하거나 package/source 이름을 바꾸어 넘기지 않는다.
-향후 공식 수정본으로 전환할 때는 이 취약점 수정 포함 여부, 두 ABI·Python CAPI,
-같은 정상/비정상 입력 회귀와 새 완료 scan을 확인하고 임시 backport를 제거한다.
+glibc의 기존 exact 승인 identity·상한·만료일은 이 교체에서 변경하지 않는다.
 전체 배포에는 기존 격리 개발·preprod·운영 연속성·runtime readback 게이트도 적용한다.
 
 첫 검증35534369800/c95e의 x64/QEMU 빌드는 45분 제한으로 종료됐다. 공식 로그에서

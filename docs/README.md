@@ -69,6 +69,7 @@ backend/docs/
 | 출결 명단 정렬·페이지네이션 | [domain/attendance.md](domain/attendance.md) |
 | 강의 정규 수업·보강 유형과 이름 | [domain/lecture-sessions.md](domain/lecture-sessions.md) |
 | 과제 만점·합격 정책·성적 저장 | [domain/homework-grading.md](domain/homework-grading.md) |
+| 차시별 시험·점수형 과제 선택 총점 | [domain/assessment-totals.md](domain/assessment-totals.md) |
 | 학생별 누적 성적·정규/보강 범위 | [domain/student-performance-console.md](domain/student-performance-console.md) |
 | 학생 성적표 오답 상태·학원별 성장 그래프 구성 | [domain/student-grade-report.md](domain/student-grade-report.md) |
 | 교직원 저장소·학생 인벤토리 파일과 R2 보상 정리 | [domain/inventory-storage.md](domain/inventory-storage.md) |
@@ -135,3 +136,5 @@ backend/docs/
 기능을 설명해서는 안 된다.
 
 - [계정 초기 비밀번호 SSOT](ssot/account-initial-password-policy.md): 학생·학부모 역할별 설정, 최종 명시 선택, 미설정/전화번호 부재 복구, 기존 계정 보존.
+
+- [학부모 전용 평가 코멘트](../apps/domains/results/README.md#parent-only-assessment-comments) — 학생 비공개 피드백·배정 권한·수정 이력 API
