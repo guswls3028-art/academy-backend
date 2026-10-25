@@ -440,6 +440,14 @@ try {
     Assert-True $conflictRefused "Conflicting merge-tree output must not count as integrated work."
     Assert-True (Test-Path -LiteralPath $noopPath) "Conflict rejection removed the worktree."
     [void](Invoke-Git -Root $noopPath -Arguments @("reset", "--hard", $historicalHead))
+    [void](Invoke-Git -Root $backendRoot -Arguments @("config", "merge.fixture.driver", "true"))
+    $driverRefused = $false
+    try {
+        & $scriptUnderTest -Action Close -Session historical-noop-test -Repository backend -WorkspaceRoot $fixtureRoot `
+            -ExpectedBranch $noopBranch -ExpectedIntegrationCommit $noopMain *> $null
+    } catch { $driverRefused = $_.Exception.Message.Contains("not merged") }
+    Assert-True $driverRefused "Custom merge drivers must not supply cleanup evidence."
+    [void](Invoke-Git -Root $backendRoot -Arguments @("config", "--unset", "merge.fixture.driver"))
     [void](& $scriptUnderTest -Action Close -Session historical-noop-test -Repository backend -WorkspaceRoot $fixtureRoot `
         -ExpectedBranch $noopBranch -ExpectedIntegrationCommit $noopMain -WhatIf)
     Assert-True (Test-Path -LiteralPath $noopPath) "Merge-no-op WhatIf removed the worktree."

@@ -247,7 +247,8 @@ merge resolutions; it does not rely on whitespace-insensitive patch IDs or PR
 status alone. Extra unmerged changes, ambiguous bases and unrelated integration
 commits fail closed. For bundled or independently cherry-picked work, it also
 accepts a conflict-free `git merge-tree` from a unique merge base only when the
-resulting tree exactly equals the specified published commit. This proves that
+resulting tree exactly equals the specified published commit. This proof refuses
+configured custom merge drivers and disables merge normalization. This proves that
 merging the branch would add no content; the real index and checkout are untouched.
 Later main changes may have superseded the integrated work;
 this proves historical publication, not that the old behavior remains current.

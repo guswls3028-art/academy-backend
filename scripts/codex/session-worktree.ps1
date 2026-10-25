@@ -187,9 +187,14 @@ function Get-HistoricalIntegrationState([string]$Root, [string]$MainSha, [string
     # Bundled/cherry-picked work may be integrated alongside other changes. A
     # clean merge that leaves the published tree identical proves no net work
     # would be lost. This writes Git objects only, never the index or checkout.
+    # A custom merge driver could silently choose one side. Do not use it as
+    # evidence of integration, and disable normalization for this proof.
+    if (Test-GitSuccess -Root $Root -Arguments @("config", "--get-regexp", '^merge\..*\.driver$')) {
+        return "unmerged"
+    }
     $bases = @(Invoke-GitChecked -Root $Root -Arguments @("merge-base", "--all", $HeadSha, $Commit))
     if ($bases.Count -ne 1) { return "unmerged" }
-    $mergedTree = @(& git -C $Root merge-tree --write-tree --no-messages $Commit $HeadSha 2>&1)
+    $mergedTree = @(& git -C $Root merge-tree --write-tree --no-messages -Xno-renormalize $Commit $HeadSha 2>&1)
     if ($LASTEXITCODE -eq 1) { return "unmerged" }
     if ($LASTEXITCODE -ne 0) { throw "Cannot verify historical merge tree; preserving worktree: $Root" }
     if ($mergedTree.Count -eq 1 -and $mergedTree[0] -ceq $trees[1]) {
