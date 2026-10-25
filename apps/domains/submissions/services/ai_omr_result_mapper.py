@@ -166,12 +166,13 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
 
     status = payload.get("status")
     error = payload.get("error")
+    failed_result = status in {"FAILED", "REJECTED_BAD_INPUT"} or bool(error)
 
     # AI worker는 version/answers/identifier를 payload 최상위에 보낸다.
     # 구버전 호환: payload["result"] 하위에 있을 수도 있다.
     result = _extract_worker_result(payload)
 
-    late_answer_hydration = _can_hydrate_late_ai_answers(
+    late_answer_hydration = not failed_result and _can_hydrate_late_ai_answers(
         submission=submission,
         result=result,
     )
@@ -199,7 +200,7 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     }
     submission.meta = meta
 
-    if status == "FAILED":
+    if failed_result:
         fail_submission_in_memory(
             submission,
             error_message=error or "AI worker failed",
