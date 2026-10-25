@@ -17,6 +17,7 @@ on:
       - 'docs/reports/**'
       - 'docs/ssot/runtime-current.md'
       - 'scripts/codex/**'
+      - 'scripts/v1/run-cost-waste-audit.ps1'
       - '.github/workflows/candidate-build-only.yml'
       - 'scripts/v1/candidate_build_only.py'
       - 'scripts/v1/test_candidate_build_only.py'
@@ -202,7 +203,7 @@ jobs:
           # not change product behavior.
           # Exclude them from accumulated per-image diffs as well as push triggers,
           # otherwise a later workflow-file change would reclassify it as API/AI.
-          runtime_changes() { grep -vE '^scripts/codex/|^scripts/v1/candidate_build_only\.py$|^scripts/v1/(test-[^/]+\.ps1|test_[^/]+\.py)$|^\.github/workflows/candidate-build-only\.yml$|(^|/)tests(/|\.py$)' <<< "$1" || true; }
+          runtime_changes() { grep -vE '^scripts/codex/|^scripts/v1/run-cost-waste-audit\.ps1$|^scripts/v1/candidate_build_only\.py$|^scripts/v1/(test-[^/]+\.ps1|test_[^/]+\.py)$|^\.github/workflows/candidate-build-only\.yml$|(^|/)tests(/|\.py$)' <<< "$1" || true; }
 
           # Base contains dependencies only, not academy/apps/libs source. Compare
           # its actual inputs separately; old base source must not reintroduce

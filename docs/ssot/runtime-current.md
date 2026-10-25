@@ -102,20 +102,26 @@ instance. Batch-managed ASGs should have desired 0 when no Batch job is active.
 
 ## Cost Guardrails
 
-The 2026-10-09 [cost audit](../reports/cost-waste-audit.latest.md) rechecked
+The 2026-10-25 [cost audit](../reports/cost-waste-audit.latest.md) rechecked
 30/90-day usage and current inventory. No detached EBS, unassociated EIP, orphan
 EC2 or reclaimable ECR image was found. API CPU peaked at 99.85%; RDS free memory
-fell to 0.14 GiB over 90 days. Keep the existing compute/warm baselines. The
-account-wide September unblended bill was USD 345.99 including tax; this is not
-Academy-only attribution. At the audit, AWS Budget forecast October at USD 285.56;
-that forecast predates this optimization and is not its realized saving.
+fell to 0.25 GiB over 90 days. Keep the existing compute/warm baselines. AWS
+Budget showed account-wide actual USD 249.83 and October forecast USD 319.08
+against a USD 380 budget; neither is Academy-only attribution or a realized
+saving. Project-tagged service costs are reported separately. Messaging already
+runs on `t4g.small`, so the audit no longer counts the historical medium-to-small
+price difference as a new saving. Redis has measured memory headroom but any
+single-node resize still needs a continuity/maintenance plan; none was performed.
 
 Cost/performance work instead removes repeated video publication HEAD requests
 using complete strongly-consistent R2 listings, and repeated CDN HMAC key imports.
 See the [video worker owner](../../apps/worker/video_worker/README.md) and
 [signed CDN owner](../../infra/cdn_worker/README.md). Current R2 data and signed URL
-formats remain intact. Cloudflare R2 account storage was about 755.28 decimal GB,
-with Academy video/storage holding most bytes; no user objects are deleted or
+formats remain intact. Cloudflare R2 analytics on 2026-10-25 showed 767.41 decimal
+GB across 1,060,310 objects, with video (534.15 GB) and storage (228.08 GB) holding
+most bytes. All seven buckets retain the seven-day incomplete-multipart abort
+rule; pending multipart uploads were zero. The rolling 30-day operation count
+was 599,880. No user objects are deleted or
 automatically moved to a retrieval-charged class. Short-lived cleanup candidates
 and committed release state are assessed separately from monthly savings.
 

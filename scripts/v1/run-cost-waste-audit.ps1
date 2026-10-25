@@ -262,6 +262,12 @@ function Format-MetricNumber {
     return ("{0:N2}{1}" -f (Convert-ToDouble $Value), $Suffix)
 }
 
+function Format-LiveMemory {
+    param($Memory)
+    if ($Memory.Status -ne "measured") { return "not measured ($($Memory.Status))" }
+    return "used=$(Convert-BytesToGiB $Memory.UsedBytes), available=$(Convert-BytesToGiB $Memory.AvailableBytes) ($($Memory.AvailablePercent)%), measured"
+}
+
 function Get-Ec2HourlyPrice {
     param([string]$InstanceType)
     try {
@@ -849,7 +855,7 @@ Add-TableRow $sb @(
 )
 Add-TableRow $sb @(
     "API live memory",
-    "used=$(Convert-BytesToGiB $apiMemory.UsedBytes), available=$(Convert-BytesToGiB $apiMemory.AvailableBytes) ($($apiMemory.AvailablePercent)%), $($apiMemory.Status)",
+    (Format-LiveMemory $apiMemory),
     "historical OS memory unavailable",
     $apiMemory.Container
 )
@@ -861,7 +867,7 @@ Add-TableRow $sb @(
 )
 Add-TableRow $sb @(
     "Messaging live memory",
-    "used=$(Convert-BytesToGiB $messagingMemory.UsedBytes), available=$(Convert-BytesToGiB $messagingMemory.AvailableBytes) ($($messagingMemory.AvailablePercent)%), $($messagingMemory.Status)",
+    (Format-LiveMemory $messagingMemory),
     "historical OS memory unavailable",
     $messagingMemory.Container
 )
@@ -907,15 +913,15 @@ Add-TableRow $sb @(
     "Redis memory / connections",
     "DB memory peak=$(Format-MetricNumber $redisDatabaseMemory.Recent.Peak '%'), free low=$(Convert-BytesToGiB $redisFreeMemory.Recent.Low), connections peak=$('{0:N0}' -f $redisConnections.Recent.Peak)",
     "DB memory peak=$(Format-MetricNumber $redisDatabaseMemory.Long.Peak '%'), free low=$(Convert-BytesToGiB $redisFreeMemory.Long.Low), connections peak=$('{0:N0}' -f $redisConnections.Long.Peak), evictions=$('{0:N0}' -f $redisEvictions.Long.Total)",
-    "single-node restart and low free-memory interval block micro"
+    "$redisDecision; any resize still requires a compatible single-node maintenance plan"
 )
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## Right-Sizing Decisions")
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("| Component | Decision | Evidence status |")
 [void]$sb.AppendLine("|-----------|----------|-----------------|")
-Add-TableRow $sb @("API", $apiDecision, "confirmed CloudWatch history + current SSM memory")
-Add-TableRow $sb @("Messaging", $messagingDecision, "confirmed CloudWatch history + current SSM memory")
+Add-TableRow $sb @("API", $apiDecision, "CloudWatch samples=$($apiCpu.Long.Samples); current SSM memory=$($apiMemory.Status)")
+Add-TableRow $sb @("Messaging", $messagingDecision, "CloudWatch samples=$($messagingCpu.Long.Samples); current SSM memory=$($messagingMemory.Status)")
 Add-TableRow $sb @("AI / Tools", "retain current one-instance warm baselines", "user-facing cold-start policy + confirmed burst CPU")
 Add-TableRow $sb @("RDS", $rdsDecision, "confirmed CloudWatch memory, swap, credits, connections")
 Add-TableRow $sb @("Redis", $redisDecision, "confirmed CloudWatch dataset, memory, credits, connections, evictions")
@@ -963,11 +969,15 @@ if ($projectCostRows.Count -eq 0) {
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("| Projection | Amount | Basis |")
 [void]$sb.AppendLine("|------------|--------|-------|")
-Add-TableRow $sb @(
-    "Messaging t4g.medium -> t4g.small",
-    "$('{0:N2}' -f $messagingMonthlySavings) USD/month",
-    "Seoul Linux on-demand price difference x 730 hours; excludes unchanged EBS/public IPv4/tax"
-)
+if ($messagingDecision -eq "downsize to t4g.small" -and $messagingMonthlySavings -gt 0) {
+    Add-TableRow $sb @(
+        "Messaging t4g.medium -> t4g.small",
+        "$('{0:N2}' -f $messagingMonthlySavings) USD/month",
+        "Eligible current t4g.medium; Seoul Linux on-demand price difference x 730 hours; excludes unchanged EBS/public IPv4/tax"
+    )
+} else {
+    Add-TableRow $sb @("New Messaging compute savings", "none established", "Current class=$messagingActualType; $messagingDecision. An already applied reduction is not a new saving.")
+}
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## Unverified")
 [void]$sb.AppendLine("")
@@ -984,7 +994,8 @@ Add-TableRow $sb @("Academy historical tagged cost", "Cost allocation cannot be 
 Add-TableRow $sb @("API scale-to-zero or smaller class", "Rejected: public API warm-baseline policy plus observed CPU burst near saturation.")
 Add-TableRow $sb @("Messaging scale-to-zero", "Rejected: account recovery and Alimtalk latency require one warm worker; instance class can still be reduced.")
 Add-TableRow $sb @("AI/Tools scale-to-zero", "Rejected: student import, AI, and document conversion are user-facing wait paths; each keeps one warm worker.")
-Add-TableRow $sb @("RDS / Redis further downsize", "Rejected for this pass: observed memory/credit lows and single-node restart risk conflict with stability guardrails.")
+Add-TableRow $sb @("RDS further downsize", $rdsDecision)
+Add-TableRow $sb @("Redis further downsize", "$redisDecision; a single-node resize needs a reviewed continuity/maintenance plan.")
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## Recommended Actions")
 [void]$sb.AppendLine("")
@@ -1000,7 +1011,7 @@ Add-TableRow $sb @("API warm baseline", 'kept at one `t4g.medium`; target tracki
 Add-TableRow $sb @("Messaging worker warm baseline", "kept at one ``$($script:MessagingInstanceType)``; account recovery and Alimtalk wait paths should not cold-start.")
 Add-TableRow $sb @("AI/Tools workers", "one warm instance retained for first-request latency; queue alarms own burst scale-out.")
 Add-TableRow $sb @("Standard video encoding", "Spot Batch CE retained; paid encode tests are not submitted by this audit.")
-Add-TableRow $sb @("RDS/Redis", "current classes retained because this audit found memory/credit guardrails against another downsize.")
+Add-TableRow $sb @("RDS/Redis", "RDS: $rdsDecision. Redis: $redisDecision. This read-only audit does not resize either service.")
 
 if (-not (Test-Path $ReportsDir)) { New-Item -ItemType Directory -Path $ReportsDir -Force | Out-Null }
 [void](New-Item -ItemType Directory -Path $HistoryDir -Force)

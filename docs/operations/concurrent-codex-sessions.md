@@ -301,6 +301,14 @@ while retaining its build and verification job logs.
 
 ## Local disk capacity
 
+Completed detached worktrees require an explicit reviewed identity. After
+`Inspect`, close one exact repository with `-ExpectedDetachedHead <40-character
+HEAD SHA>`. This option is valid only for `Close`, cannot be combined with
+`-ExpectedBranch`, and refuses named branches, changed HEADs, dirty/unmerged work
+and unknown ignored data. `-WhatIf` performs the same preflight without deleting
+anything. Registered paths, fresh main, integration and race checks still apply;
+detached cleanup never deletes a named branch. Preserve unresolved candidates.
+
 Keep the local machine for editing, review and lightweight checks. Reuse the
 existing Codespace for dependency-heavy installs, builds and browser suites;
 this is the default before the local disk becomes full. Keep one primary remote
