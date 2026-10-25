@@ -170,17 +170,30 @@ function Get-HistoricalIntegrationState([string]$Root, [string]$MainSha, [string
     $trees = @(Invoke-GitChecked -Root $Root -Arguments @("rev-parse", "$HeadSha^{tree}", "$Commit^{tree}"))
     if ($trees.Count -eq 2 -and $trees[0] -ceq $trees[1]) { return "historical-tree-equivalent" }
     $parents = (@(Invoke-GitChecked -Root $Root -Arguments @("rev-list", "--parents", "-n", "1", $Commit))[0] -split ' ')
-    if ($parents.Count -ne 2) { return "unmerged" }
-    $bases = @(Invoke-GitChecked -Root $Root -Arguments @("merge-base", "--all", $HeadSha, $parents[1]))
-    if ($bases.Count -ne 1) { return "unmerged" }
     # Compare exact paths, modes and full before/after blob IDs, including binary
     # files and merge resolutions. Patch IDs alone ignore meaningful whitespace.
     $diffArgs = @("-c", "core.quotePath=true", "diff", "--raw", "--no-abbrev", "--no-renames",
         "--no-ext-diff", "--no-textconv", "--no-color", "--no-relative")
-    $headDelta = @(Invoke-GitChecked -Root $Root -Arguments ($diffArgs + @($bases[0], $HeadSha, "--")))
-    $mergedDelta = @(Invoke-GitChecked -Root $Root -Arguments ($diffArgs + @($parents[1], $Commit, "--")))
-    if ($headDelta.Count -gt 0 -and ($headDelta -join "`n") -ceq ($mergedDelta -join "`n")) {
-        return "historical-squash-equivalent"
+    if ($parents.Count -eq 2) {
+        $bases = @(Invoke-GitChecked -Root $Root -Arguments @("merge-base", "--all", $HeadSha, $parents[1]))
+        if ($bases.Count -eq 1) {
+            $headDelta = @(Invoke-GitChecked -Root $Root -Arguments ($diffArgs + @($bases[0], $HeadSha, "--")))
+            $mergedDelta = @(Invoke-GitChecked -Root $Root -Arguments ($diffArgs + @($parents[1], $Commit, "--")))
+            if ($headDelta.Count -gt 0 -and ($headDelta -join "`n") -ceq ($mergedDelta -join "`n")) {
+                return "historical-squash-equivalent"
+            }
+        }
+    }
+    # Bundled/cherry-picked work may be integrated alongside other changes. A
+    # clean merge that leaves the published tree identical proves no net work
+    # would be lost. This writes Git objects only, never the index or checkout.
+    $bases = @(Invoke-GitChecked -Root $Root -Arguments @("merge-base", "--all", $HeadSha, $Commit))
+    if ($bases.Count -ne 1) { return "unmerged" }
+    $mergedTree = @(& git -C $Root merge-tree --write-tree --no-messages $Commit $HeadSha 2>&1)
+    if ($LASTEXITCODE -eq 1) { return "unmerged" }
+    if ($LASTEXITCODE -ne 0) { throw "Cannot verify historical merge tree; preserving worktree: $Root" }
+    if ($mergedTree.Count -eq 1 -and $mergedTree[0] -ceq $trees[1]) {
+        return "integrated-merge-noop"
     }
     return "unmerged"
 }

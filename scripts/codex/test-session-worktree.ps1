@@ -423,6 +423,31 @@ try {
     Assert-True (@($historicalOutput -match 'integration=historical-squash-equivalent').Count -eq 1) "Historical aggregate proof failed."
     Assert-True (-not (Test-Path -LiteralPath $historicalPath)) "Proven historical squash worktree remains."
 
+    [void](& $scriptUnderTest -Action Start -Session historical-noop-test -Repository backend `
+        -WorkspaceRoot $fixtureRoot -AllowLowDisk)
+    $noopPath = Join-Path $fixtureRoot "_worktrees\sessions\historical-noop-test\backend"
+    $noopBranch = @(Invoke-Git -Root $noopPath -Arguments @("branch", "--show-current"))[0]
+    [void](Invoke-Git -Root $noopPath -Arguments @("reset", "--hard", $historicalHead))
+    $noopMain = @(Invoke-Git -Root $backendRoot -Arguments @("rev-parse", "HEAD"))[0]
+    [IO.File]::WriteAllBytes((Join-Path $noopPath "historical-one.bin"), [byte[]](0, 42, 255))
+    [void](Invoke-Git -Root $noopPath -Arguments @("add", "historical-one.bin"))
+    [void](Invoke-Git -Root $noopPath -Arguments @("commit", "-m", "fixture conflicting binary change"))
+    $conflictRefused = $false
+    try {
+        & $scriptUnderTest -Action Close -Session historical-noop-test -Repository backend -WorkspaceRoot $fixtureRoot `
+            -ExpectedBranch $noopBranch -ExpectedIntegrationCommit $noopMain *> $null
+    } catch { $conflictRefused = $_.Exception.Message.Contains("not merged") }
+    Assert-True $conflictRefused "Conflicting merge-tree output must not count as integrated work."
+    Assert-True (Test-Path -LiteralPath $noopPath) "Conflict rejection removed the worktree."
+    [void](Invoke-Git -Root $noopPath -Arguments @("reset", "--hard", $historicalHead))
+    [void](& $scriptUnderTest -Action Close -Session historical-noop-test -Repository backend -WorkspaceRoot $fixtureRoot `
+        -ExpectedBranch $noopBranch -ExpectedIntegrationCommit $noopMain -WhatIf)
+    Assert-True (Test-Path -LiteralPath $noopPath) "Merge-no-op WhatIf removed the worktree."
+    $noopOutput = @(& $scriptUnderTest -Action Close -Session historical-noop-test -Repository backend -WorkspaceRoot $fixtureRoot `
+        -ExpectedBranch $noopBranch -ExpectedIntegrationCommit $noopMain)
+    Assert-True (@($noopOutput -match 'integration=integrated-merge-noop').Count -eq 1) "Already integrated aggregate work was not recognized."
+    Assert-True (-not (Test-Path -LiteralPath $noopPath)) "Proven merge-no-op worktree remains."
+
     [void](& $scriptUnderTest -Action Start -Session historical-tree-test -Repository backend `
         -WorkspaceRoot $fixtureRoot -AllowLowDisk)
     $historicalTreePath = Join-Path $fixtureRoot "_worktrees\sessions\historical-tree-test\backend"

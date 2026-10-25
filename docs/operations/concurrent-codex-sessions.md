@@ -245,13 +245,17 @@ single-parent integration commit. The latter compares paths, file modes and full
 before/after blob IDs from the unique merge base, including binary files and
 merge resolutions; it does not rely on whitespace-insensitive patch IDs or PR
 status alone. Extra unmerged changes, ambiguous bases and unrelated integration
-commits fail closed. Later main changes may have superseded the integrated work;
+commits fail closed. For bundled or independently cherry-picked work, it also
+accepts a conflict-free `git merge-tree` from a unique merge base only when the
+resulting tree exactly equals the specified published commit. This proves that
+merging the branch would add no content; the real index and checkout are untouched.
+Later main changes may have superseded the integrated work;
 this proves historical publication, not that the old behavior remains current.
 Retain original tips under named recovery refs (and record their paths/SHAs) when
 performing a bulk reconciliation, including tips whose remote branch was deleted.
 Dirty state, ignored-data and race safeguards still apply. The lifecycle contract
-tests cover historical squash/tree success, unpublished/unrelated proofs, extra
-unmerged work and `-WhatIf` preservation.
+tests cover historical squash/tree and merge-no-op success, unpublished/unrelated
+proofs, extra unmerged work, conflicts and `-WhatIf` preservation.
 
 `Close` clears ignored backend Python caches (`.pytest_cache/`, `.ruff_cache/`,
 and `__pycache__/`) and frontend dependency/build outputs (`node_modules/`,
