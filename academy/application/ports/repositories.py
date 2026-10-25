@@ -37,7 +37,8 @@ class AIJobRepository(Protocol):
         now: datetime,
     ) -> bool:
         """
-        PENDING → RUNNING 전이 (멱등: 이미 RUNNING이면 True).
+        PENDING/RETRYING 또는 lease가 만료된 RUNNING → RUNNING 전이.
+        유효 lease의 중복 RUNNING claim은 False.
         Returns: 성공 여부.
         """
         ...
