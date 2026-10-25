@@ -211,7 +211,8 @@ one explicit terminal state:
 
 1. **Merged:** branch is contained in `origin/main`, or no exclusive merge commit
    remains and its ordinary commits are patch-equivalent or its complete tracked
-   tree equals the checked main tree; the worktree is clean and the session
+   tree equals the checked main tree, or the historical integration proof below
+   succeeds; the worktree is clean and the session
    worktree and local branch are removed.
 2. **Review pending:** clean committed branch/PR, named owner, exact SHA, and a
    stated merge or discard decision. It remains a worktree until resolved.
@@ -233,6 +234,30 @@ check to the recorded main and HEAD SHAs, then rechecks the registered path,
 branch, HEAD, clean status and ignored data immediately before removal. Branch
 deletion compares the recorded SHA atomically; a concurrent advance is preserved
 and reported for recovery. Keep exclusive ownership until cleanup finishes.
+
+For a historical squash after main has advanced, first identify the actual
+merged PR and its integration commit. `Close -ExpectedIntegrationCommit <40-SHA>`
+requires one repository and an explicit `-ExpectedBranch` or
+`-ExpectedDetachedHead`. It independently requires that integration commit to be
+an ancestor of the freshly checked main and proves either the complete tracked
+trees are identical or the aggregate branch change exactly matches that
+single-parent integration commit. The latter compares paths, file modes and full
+before/after blob IDs from the unique merge base, including binary files and
+merge resolutions; it does not rely on whitespace-insensitive patch IDs or PR
+status alone. Extra unmerged changes, ambiguous bases and unrelated integration
+commits fail closed. For bundled or independently cherry-picked work, it also
+accepts a conflict-free `git merge-tree` from a unique merge base only when the
+resulting tree exactly equals the specified published commit. This proof refuses
+configured custom merge drivers and disables merge normalization. This proves that
+merging the branch would add no content; the real index and checkout are untouched.
+Later main changes may have superseded the integrated work;
+this proves historical publication, not that the old behavior remains current.
+Retain original tips under named recovery refs (and record their paths/SHAs) when
+performing a bulk reconciliation, including tips whose remote branch was deleted.
+Dirty state, ignored-data and race safeguards still apply. The lifecycle contract
+tests cover historical squash/tree and merge-no-op success, unpublished/unrelated
+proofs, extra unmerged work, conflicts and `-WhatIf` preservation.
+
 `Close` clears ignored backend Python caches (`.pytest_cache/`, `.ruff_cache/`,
 and `__pycache__/`) and frontend dependency/build outputs (`node_modules/`,
 `dist/`, `.vite/`) after verifying every ignored path. Git unlinks dependency

@@ -371,6 +371,101 @@ try {
     Assert-True ($preservedSquashHead -eq $squashHead) "Close must preserve the published original commits."
     Write-Output "SESSION_WORKTREE_CASE_PASS aggregate-squash-tree-equivalence"
 
+    # Historical squash proof remains valid after unrelated main changes, while
+    # a PR label, an unpublished commit or extra local work is never sufficient.
+    [void](& $scriptUnderTest -Action Start -Session historical-test -Repository backend `
+        -WorkspaceRoot $fixtureRoot -AllowLowDisk)
+    $historicalPath = Join-Path $fixtureRoot "_worktrees\sessions\historical-test\backend"
+    $historicalBranch = @(Invoke-Git -Root $historicalPath -Arguments @("branch", "--show-current"))[0]
+    foreach ($part in @("one", "two")) {
+        [IO.File]::WriteAllBytes((Join-Path $historicalPath "historical-$part.bin"), [byte[]](0, 1, 255, $part.Length))
+        [void](Invoke-Git -Root $historicalPath -Arguments @("add", "historical-$part.bin"))
+        [void](Invoke-Git -Root $historicalPath -Arguments @("commit", "-m", "fixture historical $part"))
+    }
+    $historicalHead = @(Invoke-Git -Root $historicalPath -Arguments @("rev-parse", "HEAD"))[0]
+    Set-Content -LiteralPath (Join-Path $backendRoot "unrelated-before.txt") -Value "unrelated"
+    [void](Invoke-Git -Root $backendRoot -Arguments @("add", "unrelated-before.txt"))
+    [void](Invoke-Git -Root $backendRoot -Arguments @("commit", "-m", "fixture unrelated before squash"))
+    $unrelatedCommit = @(Invoke-Git -Root $backendRoot -Arguments @("rev-parse", "HEAD"))[0]
+    [void](Invoke-Git -Root $backendRoot -Arguments @("merge", "--squash", $historicalBranch))
+    [void](Invoke-Git -Root $backendRoot -Arguments @("commit", "-m", "fixture historical squash"))
+    $historicalMerge = @(Invoke-Git -Root $backendRoot -Arguments @("rev-parse", "HEAD"))[0]
+    Set-Content -LiteralPath (Join-Path $backendRoot "unrelated-after.txt") -Value "later"
+    [void](Invoke-Git -Root $backendRoot -Arguments @("add", "unrelated-after.txt"))
+    [void](Invoke-Git -Root $backendRoot -Arguments @("commit", "-m", "fixture later main"))
+    [void](Invoke-Git -Root $backendRoot -Arguments @("push", "origin", "main"))
+    foreach ($wrongCommit in @($historicalHead, $unrelatedCommit)) {
+        $refused = $false
+        try {
+            & $scriptUnderTest -Action Close -Session historical-test -Repository backend -WorkspaceRoot $fixtureRoot `
+                -ExpectedBranch $historicalBranch -ExpectedIntegrationCommit $wrongCommit *> $null
+        } catch { $refused = $true }
+        Assert-True $refused "Unpublished or unrelated integration commits must not permit closure."
+        Assert-True (Test-Path -LiteralPath $historicalPath) "Rejected proof removed the worktree."
+    }
+    Set-Content -LiteralPath (Join-Path $historicalPath "unique.txt") -Value "preserve extra work"
+    [void](Invoke-Git -Root $historicalPath -Arguments @("add", "unique.txt"))
+    [void](Invoke-Git -Root $historicalPath -Arguments @("commit", "-m", "fixture extra unmerged work"))
+    $refused = $false
+    try {
+        & $scriptUnderTest -Action Close -Session historical-test -Repository backend -WorkspaceRoot $fixtureRoot `
+            -ExpectedBranch $historicalBranch -ExpectedIntegrationCommit $historicalMerge *> $null
+    } catch { $refused = $_.Exception.Message.Contains("not merged") }
+    Assert-True $refused "A merged PR must not hide later unique commits."
+    Assert-True (Test-Path -LiteralPath (Join-Path $historicalPath "unique.txt")) "Unmerged file was removed."
+    # Only this disposable fixture discards the deliberate negative-test commit.
+    [void](Invoke-Git -Root $historicalPath -Arguments @("reset", "--hard", $historicalHead))
+    [void](& $scriptUnderTest -Action Close -Session historical-test -Repository backend -WorkspaceRoot $fixtureRoot `
+        -ExpectedBranch $historicalBranch -ExpectedIntegrationCommit $historicalMerge -WhatIf)
+    Assert-True (Test-Path -LiteralPath $historicalPath) "Historical WhatIf must preserve the worktree."
+    $historicalOutput = @(& $scriptUnderTest -Action Close -Session historical-test -Repository backend -WorkspaceRoot $fixtureRoot `
+        -ExpectedBranch $historicalBranch -ExpectedIntegrationCommit $historicalMerge)
+    Assert-True (@($historicalOutput -match 'integration=historical-squash-equivalent').Count -eq 1) "Historical aggregate proof failed."
+    Assert-True (-not (Test-Path -LiteralPath $historicalPath)) "Proven historical squash worktree remains."
+
+    [void](& $scriptUnderTest -Action Start -Session historical-noop-test -Repository backend `
+        -WorkspaceRoot $fixtureRoot -AllowLowDisk)
+    $noopPath = Join-Path $fixtureRoot "_worktrees\sessions\historical-noop-test\backend"
+    $noopBranch = @(Invoke-Git -Root $noopPath -Arguments @("branch", "--show-current"))[0]
+    [void](Invoke-Git -Root $noopPath -Arguments @("reset", "--hard", $historicalHead))
+    $noopMain = @(Invoke-Git -Root $backendRoot -Arguments @("rev-parse", "HEAD"))[0]
+    [IO.File]::WriteAllBytes((Join-Path $noopPath "historical-one.bin"), [byte[]](0, 42, 255))
+    [void](Invoke-Git -Root $noopPath -Arguments @("add", "historical-one.bin"))
+    [void](Invoke-Git -Root $noopPath -Arguments @("commit", "-m", "fixture conflicting binary change"))
+    $conflictRefused = $false
+    try {
+        & $scriptUnderTest -Action Close -Session historical-noop-test -Repository backend -WorkspaceRoot $fixtureRoot `
+            -ExpectedBranch $noopBranch -ExpectedIntegrationCommit $noopMain *> $null
+    } catch { $conflictRefused = $_.Exception.Message.Contains("not merged") }
+    Assert-True $conflictRefused "Conflicting merge-tree output must not count as integrated work."
+    Assert-True (Test-Path -LiteralPath $noopPath) "Conflict rejection removed the worktree."
+    [void](Invoke-Git -Root $noopPath -Arguments @("reset", "--hard", $historicalHead))
+    [void](Invoke-Git -Root $backendRoot -Arguments @("config", "merge.fixture.driver", "true"))
+    $driverRefused = $false
+    try {
+        & $scriptUnderTest -Action Close -Session historical-noop-test -Repository backend -WorkspaceRoot $fixtureRoot `
+            -ExpectedBranch $noopBranch -ExpectedIntegrationCommit $noopMain *> $null
+    } catch { $driverRefused = $_.Exception.Message.Contains("not merged") }
+    Assert-True $driverRefused "Custom merge drivers must not supply cleanup evidence."
+    [void](Invoke-Git -Root $backendRoot -Arguments @("config", "--unset", "merge.fixture.driver"))
+    [void](& $scriptUnderTest -Action Close -Session historical-noop-test -Repository backend -WorkspaceRoot $fixtureRoot `
+        -ExpectedBranch $noopBranch -ExpectedIntegrationCommit $noopMain -WhatIf)
+    Assert-True (Test-Path -LiteralPath $noopPath) "Merge-no-op WhatIf removed the worktree."
+    $noopOutput = @(& $scriptUnderTest -Action Close -Session historical-noop-test -Repository backend -WorkspaceRoot $fixtureRoot `
+        -ExpectedBranch $noopBranch -ExpectedIntegrationCommit $noopMain)
+    Assert-True (@($noopOutput -match 'integration=integrated-merge-noop').Count -eq 1) "Already integrated aggregate work was not recognized."
+    Assert-True (-not (Test-Path -LiteralPath $noopPath)) "Proven merge-no-op worktree remains."
+
+    [void](& $scriptUnderTest -Action Start -Session historical-tree-test -Repository backend `
+        -WorkspaceRoot $fixtureRoot -AllowLowDisk)
+    $historicalTreePath = Join-Path $fixtureRoot "_worktrees\sessions\historical-tree-test\backend"
+    [void](Invoke-Git -Root $historicalTreePath -Arguments @("checkout", "--detach", $squashHead))
+    $historicalTreeOutput = @(& $scriptUnderTest -Action Close -Session historical-tree-test -Repository backend `
+        -WorkspaceRoot $fixtureRoot -ExpectedDetachedHead $squashHead -ExpectedIntegrationCommit $squashMain)
+    Assert-True (@($historicalTreeOutput -match 'integration=historical-tree-equivalent').Count -eq 1) "Historical exact tree proof failed."
+    Assert-True (-not (Test-Path -LiteralPath $historicalTreePath)) "Historical detached tree remains."
+    Write-Output "SESSION_WORKTREE_CASE_PASS historical-squash-and-tree-equivalence"
+
     [void](& $scriptUnderTest -Action Start -Session detached-test -Repository backend `
         -WorkspaceRoot $fixtureRoot -AllowLowDisk)
     $detachedPath = Join-Path $fixtureRoot "_worktrees\sessions\detached-test\backend"
