@@ -1,13 +1,13 @@
-"""수강후기 사진 R2 업로드 — Phase 4-D.
+"""공개 커뮤니티 사진 업로드 (기존 review-photo 경로 호환).
 
 POST /api/v1/landing-public/uploads/review-photo/
 - multipart/form-data: file (이미지) + (optional) review_id (기존 후기에 추가 첨부)
 - 권한: TenantResolvedAndMember (학원 family — 학생/학부모/staff)
-- R2 키: `landing-public/reviews/{tenant_id}/{ulid}.{ext}`
-- 응답: { key, url } → frontend가 photos 배열에 URL 추가하여 후기 update.
+- R2 키: `landing-public/reviews/{tenant_id}/users/{user_id}/{sha256}.{ext}`
+- 응답: { key, url } → key를 게시판 meta.photos / 후기 photos에 저장.
 """
 import logging
-import secrets
+import hashlib
 from rest_framework import status, views
 from rest_framework.response import Response
 
@@ -44,10 +44,16 @@ class ReviewPhotoUploadView(views.APIView):
                 return Response({"detail": "이미지 파일이 손상되었거나 이미지 형식이 아닙니다."}, status=status.HTTP_400_BAD_REQUEST)
         except Exception:
             logger.warning("REVIEW_PHOTO_MAGIC_BYTE_CHECK_UNAVAILABLE")
+            return Response({"detail": "이미지 검증을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        # 키 생성 — 충돌 방지용 8byte 랜덤 토큰
-        token = secrets.token_urlsafe(8).replace("=", "").replace("-", "").replace("_", "")[:12]
-        key = f"landing-public/reviews/{tenant.id}/{token}.{ext}"
+        # Response-loss retries write identical bytes to the same author-scoped
+        # object instead of leaking another random object on every retry.
+        file.seek(0)
+        digest = hashlib.sha256()
+        for chunk in file.chunks():
+            digest.update(chunk)
+        file.seek(0)
+        key = f"landing-public/reviews/{tenant.id}/users/{request.user.id}/{digest.hexdigest()}.{ext}"
 
         try:
             from apps.infrastructure.storage import r2 as r2_storage

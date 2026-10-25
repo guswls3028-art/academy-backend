@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from ..models import PublicBoardPost, PublicPostLike, PublicPostReply, PublicReview
+from ..services.photos import photo_urls, validate_photos
 
 
 _STAFF_ROLES = {"owner", "admin", "staff", "teacher", "assistant"}
@@ -107,6 +108,13 @@ class PublicBoardPostListSerializer(serializers.ModelSerializer):
 class PublicBoardPostDetailSerializer(PublicBoardPostListSerializer):
     """detail — content 포함."""
     is_owner_or_author = serializers.SerializerMethodField()
+    meta = serializers.SerializerMethodField()
+
+    def get_meta(self, obj):
+        meta = dict(obj.meta) if isinstance(obj.meta, dict) else {}
+        if "photos" in meta:
+            meta["photos"] = photo_urls(meta["photos"], obj.tenant_id)
+        return meta
 
     class Meta(PublicBoardPostListSerializer.Meta):
         fields = PublicBoardPostListSerializer.Meta.fields + (
@@ -128,6 +136,19 @@ class PublicBoardPostWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = PublicBoardPost
         fields = ("title", "content", "category", "cover_image_url", "is_anonymous", "meta")
+
+    def validate_meta(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("게시물 추가 정보가 올바르지 않습니다.")
+        existing = self.instance.meta if self.instance and isinstance(self.instance.meta, dict) else {}
+        value = dict(value)
+        if "photos" in value:
+            request = self.context.get("request")
+            value["photos"] = validate_photos(value["photos"], tenant_id=getattr(getattr(request, "tenant", None), "id", None),
+                                              user_id=getattr(getattr(request, "user", None), "id", None), existing=existing.get("photos", []))
+        elif "photos" in existing:
+            value["photos"] = existing["photos"]  # Older clients must not erase photos when updating report metadata.
+        return value
 
 
 class PublicReviewListSerializer(serializers.ModelSerializer):
@@ -157,6 +178,11 @@ class PublicReviewListSerializer(serializers.ModelSerializer):
 
 
 class PublicReviewDetailSerializer(PublicReviewListSerializer):
+    photos = serializers.SerializerMethodField()
+
+    def get_photos(self, obj):
+        return photo_urls(obj.photos, obj.tenant_id)
+
     class Meta(PublicReviewListSerializer.Meta):
         fields = PublicReviewListSerializer.Meta.fields + ("content", "photos")
 
@@ -176,11 +202,9 @@ class PublicReviewWriteSerializer(serializers.ModelSerializer):
         return value
 
     def validate_photos(self, value):
-        if not isinstance(value, list):
-            raise serializers.ValidationError("photos는 URL 리스트여야 합니다.")
-        if len(value) > 8:
-            raise serializers.ValidationError("사진은 최대 8장까지 첨부 가능합니다.")
-        return value
+        request = self.context.get("request")
+        return validate_photos(value, tenant_id=getattr(getattr(request, "tenant", None), "id", None),
+                               user_id=getattr(getattr(request, "user", None), "id", None), existing=self.instance.photos if self.instance else [])
 
 
 class PublicReviewModerateSerializer(serializers.ModelSerializer):
