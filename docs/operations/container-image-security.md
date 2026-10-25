@@ -5,6 +5,23 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-10-25 Brotli stable 보안 수정
+
+출결 이름 정렬 PR674의 배포40155954828은 후보 scan에서
+`CVE-2026-111497 / brotli / 1.1.0-2` Critical이 탐지되어 격리 개발·preprod·운영
+교체 전에 중단됐다. [Debian 보안 tracker](https://security-tracker.debian.org/tracker/CVE-2026-111497)는
+trixie-security의 `1.1.0-2+deb13u1`을 수정본으로 기록한다.
+
+기존 Tesseract/libcurl 의존성이 Brotli를 사용하는 API·AI CPU·Tools 세 이미지의
+APT 단계에서 `libbrotli1`을 해당 stable 수정 버전으로 명시 설치하고 실제 설치
+버전을 검사한다. 배포판·glibc·기존 native 수정본·Python 요구사항은 변경하지
+않는다. 버전을 제공하지 않는 mirror나 일치하지 않는 설치 결과는 빌드 실패로
+처리하며 이전 이미지를 운영에 유지한다. Critical acceptance와 High 정책은
+변경하지 않고 새 immutable 후보의 완료 scan, 격리 개발 실사용·preprod·rolling
+및 운영 readback을 모두 요구한다. 계약 회귀는 세 이미지의 수정 패키지와 실제
+버전 검사를 고정하며 기존 공통 base·Video·Messaging에 새 Brotli 의존성을
+추가하지 않는다.
+
 <a id="glibc-approval-20261021"></a>
 
 ## 2026-10-21 온라인 제출 수정 배포의 glibc 두 예외 무기한 승인
