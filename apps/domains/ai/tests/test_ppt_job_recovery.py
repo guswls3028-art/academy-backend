@@ -36,6 +36,7 @@ class PptJobRecoveryTests(TestCase):
             "filename": "presentation_aaaaaaaaaaaa.pptx",
             "slide_count": 2,
             "size_bytes": 42,
+            "readability_warning": {"narrow_slide_count": 1, "slide_numbers": [2]},
         })
 
     @staticmethod
@@ -68,6 +69,9 @@ class PptJobRecoveryTests(TestCase):
         self.assertEqual(progress_response.status_code, 200, progress_response.data)
         self.assertEqual(status_response.data["result"]["download_url"], "https://storage.invalid/fresh-1")
         self.assertEqual(progress_response.data["result"]["download_url"], "https://storage.invalid/fresh-2")
+        expected_warning = {"narrow_slide_count": 1, "slide_numbers": [2]}
+        self.assertEqual(status_response.data["result"]["readability_warning"], expected_warning)
+        self.assertEqual(progress_response.data["result"]["readability_warning"], expected_warning)
         self.assertNotIn("r2_key", status_response.data["result"])
         self.assertNotIn("r2_key", progress_response.data["result"])
         self.assertEqual(presign.call_count, 2)

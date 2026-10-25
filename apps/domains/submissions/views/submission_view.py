@@ -47,6 +47,8 @@ from apps.domains.submissions.services.lifecycle import (
     schedule_unreferenced_ai_object_cleanup,
     supersede_submission,
 )
+from apps.domains.submissions.services.homework_media import HomeworkMediaConflict
+from apps.support.homework.review_lock import lock_homework_review_target
 from apps.support.submissions.dependencies import (
     allowed_manual_exam_question_ids,
     create_exam_enrollment_assignment,
@@ -54,6 +56,7 @@ from apps.support.submissions.dependencies import (
     exam_question_number_by_id,
     finalize_omr_result_projection,
     get_synced_exam_score,
+    homework_submission_is_teacher_reviewed,
     lock_submission_score_edit_scope_before_write,
     rebind_representative_omr_submission,
     request_is_parent,
@@ -436,6 +439,21 @@ class SubmissionViewSet(ModelViewSet):
                 raise PermissionDenied("해당 시험/과제에 등록되지 않은 수강 정보입니다.")
         try:
             with transaction.atomic():
+                if target_type == Submission.TargetType.HOMEWORK and source in {
+                    Submission.Source.HOMEWORK_IMAGE, Submission.Source.HOMEWORK_VIDEO,
+                }:
+                    assignment = lock_homework_review_target(
+                        tenant=tenant, enrollment_id=int(enrollment_id), homework_id=int(target_id),
+                    )
+                    if assignment is None:
+                        raise PermissionDenied("해당 과제에 등록되지 않은 수강 정보입니다.")
+                    if homework_submission_is_teacher_reviewed(
+                        tenant=tenant, enrollment_id=int(enrollment_id), homework_id=int(target_id),
+                    ):
+                        raise HomeworkMediaConflict(
+                            code="HOMEWORK_MEDIA_REVIEWED",
+                            detail="완료 또는 통과한 과제 파일은 변경할 수 없습니다. 보완이 필요하면 선생님에게 상태 변경을 요청해 주세요.",
+                        )
                 submission = serializer.save(user=self.request.user, tenant=tenant)
         except Exception as error:
             if isinstance(error, SubmissionUploadCleanupRequired):

@@ -31,6 +31,8 @@ from apps.support.teacher_app.ops_assistant_dependencies import (
     delete_disposable_enrollment,
     get_auto_send_config,
     get_owner_tenant_id,
+    find_parent_account_user,
+    lock_student_creation_tenant_reference,
     normalize_student_phone,
     parent_account_needs_password,
     resolve_access_mode,
@@ -513,6 +515,42 @@ class ExecutionResult:
     video_ids: tuple[int, ...]
 
 
+def _lock_proposal_accounts(*, tenant, student_ids: set[int], parent_phones: set[str]):
+    """Lock the complete User set before any Student in an atomic proposal."""
+    lock_student_creation_tenant_reference(tenant_id=tenant.id)
+    identity_fields = ("user_id", "parent_id", "parent__user_id", "deleted_at")
+    snapshots = {
+        row["id"]: tuple(row[field] for field in identity_fields)
+        for row in Student.objects.filter(tenant=tenant, id__in=student_ids).values("id", *identity_fields)
+    }
+    if set(snapshots) != student_ids:
+        raise ValidationError("검토한 학생 정보를 다시 확인해 주세요.")
+    user_ids = {value for row in snapshots.values() for value in (row[0], row[2]) if value is not None}
+    try:
+        for phone in sorted(parent_phones):
+            user = find_parent_account_user(tenant=tenant, parent_phone=phone)
+            if user is not None:
+                user_ids.add(user.pk)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+    locked_user_ids = set(get_user_model().objects.select_for_update().filter(
+        Q(tenant=tenant) | Q(tenant__isnull=True), pk__in=user_ids,
+    ).order_by("pk").values_list("pk", flat=True))
+    if locked_user_ids != user_ids:
+        raise ValidationError("학생 또는 학부모 계정 연결이 변경되었습니다. 다시 확인해 주세요.")
+    students = {
+        student.pk: student for student in Student.objects.select_for_update()
+        .filter(tenant=tenant, id__in=student_ids).order_by("pk")
+    }
+    current = {
+        row["id"]: tuple(row[field] for field in identity_fields)
+        for row in Student.objects.filter(tenant=tenant, id__in=student_ids).values("id", *identity_fields)
+    }
+    if current != snapshots:
+        raise ValidationError("학생 또는 학부모 계정 연결이 변경되었습니다. 다시 확인해 주세요.")
+    return students, locked_user_ids
+
+
 def execute_proposal(*, tenant, actor, payload: dict, overrides: list[dict]) -> ExecutionResult:
     del actor
     source_by_id = {str(row["row_id"]): row for row in payload["rows"]}
@@ -553,7 +591,10 @@ def execute_proposal(*, tenant, actor, payload: dict, overrides: list[dict]) -> 
         correction_lock_ids = {
             int(row["remove_enrollment_id"]) for row in confirmed_rows if row.get("remove_enrollment_id")
         }
-        list(Student.objects.select_for_update().filter(tenant=tenant, id__in=student_lock_ids))
+        locked_students, locked_user_ids = _lock_proposal_accounts(
+            tenant=tenant, student_ids=student_lock_ids,
+            parent_phones={str(row["parent_phone"]) for row in confirmed_rows if row.get("parent_phone")},
+        )
         list(
             Enrollment.objects.select_for_update()
             .filter(tenant=tenant)
@@ -579,12 +620,9 @@ def execute_proposal(*, tenant, actor, payload: dict, overrides: list[dict]) -> 
             profile_changed: list[str] = []
             repaired_parent_notice_sent = False
             if match["status"] == "existing":
-                student = (
-                    Student.objects.select_for_update()
-                    .select_related("user")
-                    .get(tenant=tenant, deleted_at__isnull=True, id=match["id"])
-                )
-                get_user_model().objects.select_for_update().get(pk=student.user_id)
+                student = locked_students[int(match["id"])]
+                if student.deleted_at is not None:
+                    raise ValidationError("검토한 학생 정보가 변경되었습니다. 다시 확인해 주세요.")
                 update_data: dict[str, Any] = {}
                 if not student.phone and row.get("student_phone"):
                     update_data["phone"] = row["student_phone"]
@@ -604,9 +642,12 @@ def execute_proposal(*, tenant, actor, payload: dict, overrides: list[dict]) -> 
                             data=update_data,
                             identity_field="ps_number",
                             strict_school_validation=False,
+                            locked_user_ids=frozenset(locked_user_ids),
                         )
                     except StudentProfileUpdateError as exc:
                         raise ValidationError(exc.detail) from exc
+                    if updated.student.parent_id and updated.student.parent.user_id:
+                        locked_user_ids.add(updated.student.parent.user_id)
                     profile_changed = list(updated.changed_fields)
                     if updated.parent_relinked or updated.parent_credentials_initialized:
                         profile_changed.append("parent.link")
@@ -642,6 +683,7 @@ def execute_proposal(*, tenant, actor, payload: dict, overrides: list[dict]) -> 
                     parent_initial_password_mode=row.get("parent_initial_password_mode"),
                     identity_policy="phone_if_available",
                     source_job_id=str(payload["nonce"]),
+                    locked_user_ids=locked_user_ids,
                 )
                 student, created, restored = resolution.student, resolution.created, resolution.restored
 

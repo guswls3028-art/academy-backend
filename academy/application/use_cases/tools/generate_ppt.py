@@ -24,6 +24,7 @@ class PptResult:
     slide_count: int
     # "question": 문항 단위 분리. "page": 페이지 단위 (스캔 PDF fallback). 이미지 모드는 None.
     mode: Optional[str] = None
+    narrow_slide_numbers: List[int] = field(default_factory=list)
 
 
 @dataclass
@@ -87,7 +88,11 @@ class GeneratePptUseCase:
                 on_progress(pct, label)
 
         pptx_bytes = composer.finalize()
-        return PptResult(pptx_bytes=pptx_bytes, slide_count=composer.slide_count)
+        return PptResult(
+            pptx_bytes=pptx_bytes,
+            slide_count=composer.slide_count,
+            narrow_slide_numbers=composer.narrow_slide_numbers,
+        )
 
 
 class GeneratePptFromPdfUseCase:
@@ -271,6 +276,7 @@ class GeneratePptFromPdfUseCase:
             pptx_bytes=pptx_bytes,
             slide_count=composer.slide_count,
             mode=result_mode,
+            narrow_slide_numbers=composer.narrow_slide_numbers,
         )
 
 
