@@ -219,6 +219,12 @@ one explicit terminal state:
 3. **Intentional WIP:** a named `wip/` branch with a recovery commit, owner, and
    next decision. It is never a deployment source. Raw uncommitted WIP is not a
    durable handoff state.
+4. **Reviewed superseded:** the task owner has verified that current published
+   behavior or an explicit current policy replaces every proposed change, with
+   no needed work or applicable HOLD left. `Retire` removes the clean checkout
+   while retaining its original branch, a named recovery ref and a verified Git
+   bundle. This is a recorded supersession decision, not a claim that the old
+   commits were merged. Preservation alone does not satisfy this state.
 
 For the merged state, the close command performs a full preflight and refuses
 dirty, foreign, or unmerged worktrees before deleting anything. A squash or
@@ -257,6 +263,52 @@ performing a bulk reconciliation, including tips whose remote branch was deleted
 Dirty state, ignored-data and race safeguards still apply. The lifecycle contract
 tests cover historical squash/tree and merge-no-op success, unpublished/unrelated
 proofs, extra unmerged work, conflicts and `-WhatIf` preservation.
+
+### Retire a reviewed superseded proposal
+
+Use this only within an authorized paused-session takeover/cleanup. Review the
+original objective and every changed path against current owners, code and
+relevant verification evidence. Integrate and release any necessary remainder
+first. Do not use retirement for an unreviewed diff, a failing required gate,
+unfinished feature, or an applicable platform/security HOLD. Do not manufacture
+a merge solely to make cleanup accept an obsolete proposal.
+
+Create a durable JSON review under `_artifacts/sessions/` with these fields:
+
+- `version: 1`, `repository`, `session`, exact `head`, shared-ancestor `base`,
+  exact current `reviewed_main`, `decision: "superseded"`, a concrete `reason`,
+  and boolean `pending_work: false`, `hold: false`.
+- `files`: exactly the paths changed from `base` to `head`, each with `path`,
+  `disposition` (`already-present`, `replaced` or `obsolete`), `reason`, and a
+  nonempty `evidence` array. Each evidence item identifies a `path` in the
+  reviewed main and explains the replacement in `reason`. Record relevant
+  verification/deployment receipts alongside the review when the original
+  objective requires them.
+- `recovery_ref`: a `refs/heads/wip/…` ref at the exact reviewed head;
+  `bundle_path`: a durable bundle under `_artifacts/sessions/`; and its
+  `bundle_sha256`. The bundle must advertise the reviewed head. A compact bundle
+  may depend on retained canonical main history; record that prerequisite and
+  restore with `git fetch <bundle> <recovery-ref>` into a repository containing it.
+
+Invoke the fresh helper with `-Action Retire`, one `-Repository`, `-Session`,
+`-WorkspaceRoot`, exact `-ExpectedBranch` or `-ExpectedDetachedHead`,
+`-RetirementRecord` and the reviewed file's SHA256 as `-ExpectedReviewHash`.
+The record and bundle must be outside every session's disposable `scratch/`
+directory; the helper rejects evidence that a later session close could erase.
+`-WhatIf` runs the evidence checks while retaining the checkout and refs.
+The helper validates coverage, published evidence paths, the current main and
+head, the recovery ref, bundle hash, prerequisites and actual object pack. It
+rechecks review/recovery evidence at removal and preserves the ordinary clean,
+ignored-data, registered-path, branch and HEAD guards. Both original branch and
+recovery ref survive; ignored user data must first be retained outside the tree.
+Only owned marked scratch is disposable. `SESSION_WORKTREE_RETIRED` identifies
+this outcome separately from `SESSION_WORKTREE_CLOSED`.
+
+These checks bind the review to exact recoverable content; they cannot decide
+semantic equivalence. The task owner remains responsible for the per-path
+decision and for completing actual product work. The lifecycle contract tests
+exercise invalid/pending/held reviews, missing evidence, dirty source, corrupt
+bundle data, recovery-ref races, WhatIf and successful recoverability.
 
 `Close` clears ignored backend Python caches (`.pytest_cache/`, `.ruff_cache/`,
 and `__pycache__/`) and frontend dependency/build outputs (`node_modules/`,

@@ -844,6 +844,107 @@ class OMRMapperReviewPolicyTests(TestCase):
         self.assertEqual(current_match.status, OMRStudentMatch.Status.CONFIRMED)
         self.assertEqual(current_match.method, OMRStudentMatch.Method.MANUAL)
 
+    def test_incomplete_identifier_manual_match_regrades_and_persists(self):
+        tenant, exam, enrollment, submission = self._make_exam()
+        from datetime import timedelta
+
+        from django.utils import timezone as dj_tz
+
+        exam.close_at = dj_tz.now() - timedelta(minutes=1)
+        exam.save(update_fields=["close_at", "updated_at"])
+        questions = list(
+            ExamQuestion.objects.filter(sheet__exam=exam).order_by("number")
+        )
+        apply_omr_ai_result(
+            {
+                "submission_id": submission.id,
+                "tenant_id": tenant.id,
+                "status": "DONE",
+                "version": "v15",
+                "aligned": True,
+                "identifier": {
+                    "status": "ambiguous",
+                    "identifier": "1234567?",
+                    "raw_identifier": "1234567?",
+                },
+                "answers": [
+                    {
+                        "question_id": 1,
+                        "detected": ["1"],
+                        "status": "ok",
+                        "marking": "single",
+                        "confidence": 0.99,
+                    },
+                    {
+                        "question_id": 2,
+                        "detected": ["2"],
+                        "status": "ok",
+                        "marking": "single",
+                        "confidence": 0.99,
+                    },
+                ],
+            }
+        )
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.NEEDS_IDENTIFICATION)
+        self.assertIsNone(submission.enrollment_id)
+        self.assertIn(
+            "IDENTIFIER_INCOMPLETE",
+            submission.meta["manual_review"]["reasons"],
+        )
+
+        request = APIRequestFactory().post(
+            f"/submissions/submissions/{submission.id}/manual-edit/",
+            {
+                "identifier": {"enrollment_id": enrollment.id},
+                "answers": [
+                    {"exam_question_id": question.id, "answer": answer}
+                    for question, answer in zip(questions, ["1", "2"], strict=True)
+                ],
+                "note": "omr_review_ui",
+            },
+            format="json",
+        )
+        request.tenant = tenant
+        force_authenticate(request, user=submission.user)
+        response = SubmissionViewSet.as_view({"post": "manual_edit"})(
+            request,
+            pk=submission.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["graded"])
+        self.assertEqual(response.data["status"], Submission.Status.DONE)
+        self.assertEqual(response.data["enrollment_id"], enrollment.id)
+        self.assertEqual(float(response.data["score"]), 100.0)
+        submission.refresh_from_db()
+        self.assertEqual(submission.enrollment_id, enrollment.id)
+        self.assertEqual(submission.status, Submission.Status.DONE)
+        self.assertFalse(submission.meta["manual_review"]["required"])
+        self.assertEqual(
+            float(
+                Result.objects.get(
+                    target_type="exam",
+                    target_id=exam.id,
+                    enrollment=enrollment,
+                ).total_score
+            ),
+            100.0,
+        )
+
+        get_request = APIRequestFactory().get(
+            f"/submissions/submissions/{submission.id}/manual-edit/"
+        )
+        get_request.tenant = tenant
+        force_authenticate(get_request, user=submission.user)
+        get_response = SubmissionViewSet.as_view({"get": "manual_edit"})(
+            get_request,
+            pk=submission.id,
+        )
+        self.assertEqual(get_response.status_code, 200, get_response.data)
+        self.assertEqual(get_response.data["enrollment_id"], enrollment.id)
+        self.assertEqual(get_response.data["submission_status"], Submission.Status.DONE)
+
     def test_manual_match_confirmation_reuses_exact_manual_objective_result(self):
         tenant, exam, enrollment, submission = self._make_exam()
         questions = list(
