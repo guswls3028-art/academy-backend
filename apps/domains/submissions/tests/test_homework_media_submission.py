@@ -28,6 +28,7 @@ from apps.domains.lectures.test_support import (
 )
 from apps.domains.parents.test_support import create_parent_account_fixture
 from apps.domains.students.test_support import create_student_fixture
+from apps.domains.submissions.views.submission_view import SubmissionViewSet
 from apps.domains.submissions.models import (
     Submission,
     SubmissionMedia,
@@ -1485,3 +1486,63 @@ class HomeworkSubmissionMediaTests(TestCase):
 
         self.assertEqual(response.status_code, 404, response.data)
         presign.assert_not_called()
+
+    def _legacy_post(self, *, file):
+        path = "/api/v1/submissions/submissions/"
+        request = self._request(
+            "post",
+            path,
+            data={
+                "enrollment_id": self.enrollment.id,
+                "target_type": Submission.TargetType.HOMEWORK,
+                "target_id": self.homework.id,
+                "source": Submission.Source.HOMEWORK_IMAGE,
+                "file": file,
+            },
+        )
+        return SubmissionViewSet.as_view({"post": "create"})(request)
+
+    @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
+    def test_legacy_media_create_is_locked_after_passing_teacher_score(
+        self,
+        upload_fileobj_to_r2,
+    ):
+        create_homework_score_fixture(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=self.homework,
+            score=10,
+            max_score=10,
+            passed=True,
+            attempt_index=1,
+        )
+
+        response = self._legacy_post(file=_jpeg("legacy-reviewed.jpg"))
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["code"], "HOMEWORK_MEDIA_REVIEWED")
+        upload_fileobj_to_r2.assert_not_called()
+        self.assertFalse(
+            Submission.objects.filter(
+                target_type=Submission.TargetType.HOMEWORK,
+                target_id=self.homework.id,
+                enrollment=self.enrollment,
+            ).exists()
+        )
+
+    @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
+    def test_legacy_media_create_remains_available_before_teacher_review(
+        self,
+        upload_fileobj_to_r2,
+    ):
+        response = self._legacy_post(file=_jpeg("legacy-open.jpg"))
+
+        self.assertEqual(response.status_code, 201, response.data)
+        upload_fileobj_to_r2.assert_called_once()
+        submission = Submission.objects.get(
+            target_type=Submission.TargetType.HOMEWORK,
+            target_id=self.homework.id,
+            enrollment=self.enrollment,
+        )
+        self.assertEqual(submission.user_id, self.student_user.id)
+        self.assertTrue(submission.file_key)

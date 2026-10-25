@@ -309,6 +309,9 @@ null, 복습 표시는 실제 boolean만 허용한다. 숫자 0/1을 저장해 �
   `client_file_id` 재시도를 포함한 upload/delete를 object 저장이나 행 변경 전에
   `409 HOMEWORK_MEDIA_REVIEWED`로 거부한다. 학생 변경이 먼저 잠금을 얻었으면 교사는
   그 transaction이 끝날 때까지 기다린 뒤 확정된 media set만 검수 근거로 기록한다.
+- 레거시 `/submissions/submissions/`의 과제 이미지·영상 생성에도 같은 assignment
+  잠금과 완료/통과 확인을 적용한다. 일반 제출 엔드포인트로 검수 완료를 우회할 수 없고,
+  아직 검수되지 않은 제출은 기존처럼 저장한다. 거부 시 R2 업로드나 새 제출 행은 없다.
 - 업로드 transaction은 R2 원본 저장과 최종 `uploaded` 상태 확정까지 assignment
   잠금을 유지한다. object 저장 실패는 transaction 안에서 해당 deterministic 행을
   `failed`로 만든 뒤 transaction을 커밋하고 `503`을 반환하므로 같은
