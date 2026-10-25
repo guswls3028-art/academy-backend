@@ -463,6 +463,15 @@ function Invoke-Close {
     foreach ($plan in $plans) {
         if ($PSCmdlet.ShouldProcess($plan.Path, "remove merged clean Academy session worktree")) {
             Assert-ClosePlanUnchanged $plan
+            if ($plan.Branch -ceq "(detached)") {
+                # Give a detached tip a durable ref before removal. A commit
+                # racing the final check must survive just as a named branch's
+                # late advance does. Never force or overwrite an existing ref.
+                $recoveryBranch = "wip/detached-close/$Session-$($plan.Name)-$([guid]::NewGuid().ToString('N'))"
+                [void](Invoke-GitChecked -Root $plan.Path -Arguments @("switch", "-c", $recoveryBranch))
+                $plan.Branch = $recoveryBranch
+                Assert-ClosePlanUnchanged $plan
+            }
             if ($plan.IgnoredPaths.Count -gt 0) {
                 $cleanArguments = @("clean", "-fdX", "--") + @($plan.IgnoredPaths)
                 [void](Invoke-GitChecked -Root $plan.Path -Arguments $cleanArguments)

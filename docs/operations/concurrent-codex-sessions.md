@@ -307,7 +307,11 @@ HEAD SHA>`. This option is valid only for `Close`, cannot be combined with
 `-ExpectedBranch`, and refuses named branches, changed HEADs, dirty/unmerged work
 and unknown ignored data. `-WhatIf` performs the same preflight without deleting
 anything. Registered paths, fresh main, integration and race checks still apply;
-detached cleanup never deletes a named branch. Preserve unresolved candidates.
+detached cleanup never deletes a pre-existing named branch. Immediately before
+removal it creates a unique `wip/detached-close/` recovery branch and rechecks
+the reviewed SHA. A concurrent commit aborts cleanup and retains that branch;
+successful cleanup removes only its own unchanged recovery ref with compare-and-
+delete. Preserve unresolved candidates.
 
 Keep the local machine for editing, review and lightweight checks. Reuse the
 existing Codespace for dependency-heavy installs, builds and browser suites;

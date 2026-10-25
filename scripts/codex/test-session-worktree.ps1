@@ -22,7 +22,7 @@ function Assert-True([bool]$Condition, [string]$Message) {
 }
 
 function Invoke-InterceptedClose {
-    param([string]$Session, [hashtable]$State, [scriptblock]$BeforeGit)
+    param([string]$Session, [hashtable]$State, [scriptblock]$BeforeGit, [string]$ExpectedDetachedHead = "")
 
     $gitExecutable = (Get-Command git -CommandType Application | Select-Object -First 1).Source
     # Intercept only Git call boundaries; execute the unmodified production script
@@ -33,7 +33,9 @@ function Invoke-InterceptedClose {
         & $gitExecutable @arguments
         Set-Variable -Name LASTEXITCODE -Value $LASTEXITCODE -Scope 1
     }
-    & $scriptUnderTest -Action Close -Session $Session -Repository backend -WorkspaceRoot $fixtureRoot
+    $extra = @{}
+    if ($ExpectedDetachedHead) { $extra.ExpectedDetachedHead = $ExpectedDetachedHead }
+    & $scriptUnderTest -Action Close -Session $Session -Repository backend -WorkspaceRoot $fixtureRoot @extra
 }
 
 try {
@@ -417,6 +419,33 @@ try {
     $preservedBranch = @(Invoke-Git -Root $backendRoot -Arguments @("rev-parse", "refs/heads/$detachedBranch"))[0]
     Assert-True ($preservedBranch -eq $detachedHead) "Detached cleanup changed an unrelated named branch."
     Write-Output "SESSION_WORKTREE_CASE_PASS explicit-detached-head-cleanup"
+
+    [void](& $scriptUnderTest -Action Start -Session detached-race-test -Repository backend `
+        -WorkspaceRoot $fixtureRoot -AllowLowDisk)
+    $detachedRacePath = Join-Path $fixtureRoot "_worktrees\sessions\detached-race-test\backend"
+    [void](Invoke-Git -Root $detachedRacePath -Arguments @("checkout", "--detach"))
+    $detachedRaceHead = @(Invoke-Git -Root $detachedRacePath -Arguments @("rev-parse", "HEAD"))[0]
+    $detachedRace = @{ Path = $detachedRacePath; Injected = $false }
+    $refused = $false
+    try {
+        Invoke-InterceptedClose -Session detached-race-test -State $detachedRace `
+            -ExpectedDetachedHead $detachedRaceHead -BeforeGit {
+            param($Arguments, $State, $GitExecutable)
+            if ($Arguments[2] -eq "switch" -and -not $State.Injected) {
+                Set-Content -LiteralPath (Join-Path $State.Path "late-detached.txt") -Value "preserve"
+                & $GitExecutable -C $State.Path add late-detached.txt
+                & $GitExecutable -C $State.Path commit -m "late detached commit"
+                if ($LASTEXITCODE -ne 0) { throw "Could not inject the detached race." }
+                $State.Injected = $true
+            }
+        } *> $null
+    } catch { $refused = $_.Exception.Message.Contains("branch or HEAD changed") }
+    Assert-True $detachedRace.Injected "The detached race did not reach branch preservation."
+    Assert-True $refused "Detached cleanup must stop when the tip advances before preservation."
+    $recoveryBranch = @(Invoke-Git -Root $detachedRacePath -Arguments @("branch", "--show-current"))[0]
+    Assert-True ($recoveryBranch -like 'wip/detached-close/*') "Late detached work must have a durable recovery branch."
+    Assert-True (Test-Path -LiteralPath (Join-Path $detachedRacePath "late-detached.txt")) "Late detached content was lost."
+    Write-Output "SESSION_WORKTREE_CASE_PASS detached-head-race-preserved"
 
     [void](& $scriptUnderTest -Action Start -Session reused-test -Repository backend `
         -WorkspaceRoot $fixtureRoot -AllowLowDisk)
