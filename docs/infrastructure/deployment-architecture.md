@@ -125,7 +125,8 @@ The same exclusions apply to direct `scripts/v1/test-*.ps1` and
 paths too, so a later workflow edit cannot turn an already checked test change
 into an API/AI image rebuild. Mixed changes still select their runtime images;
 operational scripts and nested paths remain eligible. The read-only
-`scripts/v1/run-cost-waste-audit.ps1` is also excluded from the push trigger and
+`scripts/v1/run-cost-waste-audit.ps1` and the procedure-only `scripts/v1/README.md`
+are also excluded from the push trigger and
 accumulated runtime diffs. Its report-generation changes cannot rebuild an image;
 the separate resource mutation and cleanup scripts retain their existing gates.
 Release and per-image Git diffs disable rename detection so both the removed

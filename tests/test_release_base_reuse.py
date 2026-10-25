@@ -123,6 +123,7 @@ def test_previous_base_source_does_not_reintroduce_already_shipped_app_changes(t
     "scripts/v1/test-production-source-freshness.ps1",
     "scripts/v1/test_frontend_development_qa.py",
     "scripts/v1/run-cost-waste-audit.ps1",
+    "scripts/v1/README.md",
 ])
 def test_test_only_accumulated_diffs_do_not_rebuild_any_runtime(tmp_path, changed):
     outputs = classify(tmp_path, runtime=changed)
