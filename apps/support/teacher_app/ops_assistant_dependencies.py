@@ -12,7 +12,7 @@ from apps.domains.lectures.models import Lecture, Session
 from apps.domains.messaging.models import NotificationLog, ScheduledNotification
 from apps.domains.messaging.policy import get_owner_tenant_id
 from apps.domains.messaging.selectors import get_auto_send_config
-from apps.domains.parents.services import parent_account_needs_password
+from apps.domains.parents.services import find_parent_account_user, parent_account_needs_password
 from apps.domains.students.models import Student
 from apps.domains.students.services.account_notifications import (
     send_parent_account_credentials_notice,
@@ -26,6 +26,7 @@ from apps.domains.students.services.profile import (
 )
 from apps.domains.video.models import AccessMode, Video, VideoAccess
 from apps.domains.video.services.access_resolver import resolve_access_mode
+from apps.support.students.namespace_lock import lock_student_creation_tenant_reference
 
 __all__ = [
     "AccessMode",
@@ -48,6 +49,8 @@ __all__ = [
     "ensure_session_roster_membership",
     "get_auto_send_config",
     "get_owner_tenant_id",
+    "find_parent_account_user",
+    "lock_student_creation_tenant_reference",
     "normalize_student_phone",
     "parent_account_needs_password",
     "resolve_access_mode",
