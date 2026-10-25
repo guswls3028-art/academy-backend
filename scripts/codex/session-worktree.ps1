@@ -10,7 +10,9 @@ param(
     [switch]$AllowLowDisk,
     [string]$ExpectedBranch = "",
     [ValidatePattern('^[a-fA-F0-9]{40}$')]
-    [string]$ExpectedDetachedHead = ""
+    [string]$ExpectedDetachedHead = "",
+    [ValidatePattern('^[a-fA-F0-9]{40}$')]
+    [string]$ExpectedIntegrationCommit = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,6 +26,10 @@ if ($ExpectedBranch -and ($Action -ne "Close" -or $Repository -eq "both")) {
 }
 if ($ExpectedDetachedHead -and ($ExpectedBranch -or $Action -ne "Close" -or $Repository -eq "both")) {
     throw "ExpectedDetachedHead requires Close, one exact repository and no ExpectedBranch."
+}
+if ($ExpectedIntegrationCommit -and ($Action -ne "Close" -or $Repository -eq "both" -or
+    (-not $ExpectedBranch -and -not $ExpectedDetachedHead))) {
+    throw "ExpectedIntegrationCommit requires Close, one repository and an exact branch or detached HEAD."
 }
 
 if (-not $WorkspaceRoot) {
@@ -153,6 +159,28 @@ function Get-IntegrationState([string]$Root, [string]$MainSha = "", [string]$Hea
     ))
     if ($trees.Count -eq 2 -and $trees[0] -ceq $trees[1]) {
         return "tree-equivalent"
+    }
+    return "unmerged"
+}
+
+function Get-HistoricalIntegrationState([string]$Root, [string]$MainSha, [string]$HeadSha, [string]$Commit) {
+    if (-not (Test-GitSuccess -Root $Root -Arguments @("merge-base", "--is-ancestor", $Commit, $MainSha))) {
+        throw "Expected integration commit is not contained in the checked origin/main."
+    }
+    $trees = @(Invoke-GitChecked -Root $Root -Arguments @("rev-parse", "$HeadSha^{tree}", "$Commit^{tree}"))
+    if ($trees.Count -eq 2 -and $trees[0] -ceq $trees[1]) { return "historical-tree-equivalent" }
+    $parents = (@(Invoke-GitChecked -Root $Root -Arguments @("rev-list", "--parents", "-n", "1", $Commit))[0] -split ' ')
+    if ($parents.Count -ne 2) { return "unmerged" }
+    $bases = @(Invoke-GitChecked -Root $Root -Arguments @("merge-base", "--all", $HeadSha, $parents[1]))
+    if ($bases.Count -ne 1) { return "unmerged" }
+    # Compare exact paths, modes and full before/after blob IDs, including binary
+    # files and merge resolutions. Patch IDs alone ignore meaningful whitespace.
+    $diffArgs = @("-c", "core.quotePath=true", "diff", "--raw", "--no-abbrev", "--no-renames",
+        "--no-ext-diff", "--no-textconv", "--no-color", "--no-relative")
+    $headDelta = @(Invoke-GitChecked -Root $Root -Arguments ($diffArgs + @($bases[0], $HeadSha, "--")))
+    $mergedDelta = @(Invoke-GitChecked -Root $Root -Arguments ($diffArgs + @($parents[1], $Commit, "--")))
+    if ($headDelta.Count -gt 0 -and ($headDelta -join "`n") -ceq ($mergedDelta -join "`n")) {
+        return "historical-squash-equivalent"
     }
     return "unmerged"
 }
@@ -429,7 +457,11 @@ function Invoke-Close {
         if ($ExpectedDetachedHead -and $headSha -ine $ExpectedDetachedHead) {
             throw "Detached HEAD does not match the exact reviewed revision; preserving worktree: $path"
         }
-        $integration = Get-IntegrationState -Root $path -MainSha $mainSha -HeadSha $headSha
+        $integration = if ($ExpectedIntegrationCommit) {
+            Get-HistoricalIntegrationState -Root $path -MainSha $mainSha -HeadSha $headSha -Commit $ExpectedIntegrationCommit
+        } else {
+            Get-IntegrationState -Root $path -MainSha $mainSha -HeadSha $headSha
+        }
         if ($integration -eq "unmerged") {
             throw "Session branch is not merged into origin/main and will be preserved: $branch"
         }
