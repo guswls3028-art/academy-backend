@@ -97,7 +97,7 @@ class PublicReviewViewSet(viewsets.GenericViewSet):
         return Response(PublicReviewDetailSerializer(obj, context={"request": request}).data)
 
     def create(self, request, *args, **kwargs):
-        ser = PublicReviewWriteSerializer(data=request.data)
+        ser = PublicReviewWriteSerializer(data=request.data, context={"request": request})
         ser.is_valid(raise_exception=True)
         tenant = request.tenant
         user = request.user
@@ -134,7 +134,7 @@ class PublicReviewViewSet(viewsets.GenericViewSet):
         is_staff = _is_staff_role(_resolve_role(user, request.tenant))
         if obj.author_id != user.id and not is_staff:
             return Response({"detail": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
-        ser = PublicReviewWriteSerializer(obj, data=request.data, partial=True)
+        ser = PublicReviewWriteSerializer(obj, data=request.data, partial=True, context={"request": request})
         ser.is_valid(raise_exception=True)
         obj = ser.save()
         if not is_staff and obj.status == PublicReview.Status.APPROVED:

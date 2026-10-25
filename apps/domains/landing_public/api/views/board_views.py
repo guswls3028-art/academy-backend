@@ -125,7 +125,7 @@ class PublicBoardPostViewSet(viewsets.GenericViewSet):
         return Response({"view_count": obj.view_count})
 
     def create(self, request, *args, **kwargs):
-        ser = PublicBoardPostWriteSerializer(data=request.data)
+        ser = PublicBoardPostWriteSerializer(data=request.data, context={"request": request})
         ser.is_valid(raise_exception=True)
         tenant = request.tenant
         user = request.user
@@ -164,7 +164,7 @@ class PublicBoardPostViewSet(viewsets.GenericViewSet):
         obj = self.get_object()
         if not self._can_edit(request, obj):
             return Response({"detail": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
-        ser = PublicBoardPostWriteSerializer(obj, data=request.data, partial=True)
+        ser = PublicBoardPostWriteSerializer(obj, data=request.data, partial=True, context={"request": request})
         ser.is_valid(raise_exception=True)
         # update 시에도 meta.matchup_report_ids 게이트 재검증 (학원장 published list 변경 가능성 대비)
         if "meta" in ser.validated_data:

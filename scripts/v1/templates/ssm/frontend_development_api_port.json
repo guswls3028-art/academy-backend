@@ -3,7 +3,7 @@
   "description": "Development API only; fixed remote and local ports, no remote host or shell input.",
   "sessionType": "Port",
   "inputs": {
-    "maxSessionDuration": "65",
+    "maxSessionDuration": "90",
     "idleSessionTimeout": "5"
   },
   "properties": {
