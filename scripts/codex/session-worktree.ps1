@@ -1,6 +1,6 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [ValidateSet("Inspect", "Start", "Sync", "Close")]
+    [ValidateSet("Inspect", "Start", "Sync", "Close", "Retire")]
     [string]$Action = "Inspect",
     [string]$Session = "",
     [ValidateSet("backend", "frontend", "both")]
@@ -12,7 +12,10 @@ param(
     [ValidatePattern('^[a-fA-F0-9]{40}$')]
     [string]$ExpectedDetachedHead = "",
     [ValidatePattern('^[a-fA-F0-9]{40}$')]
-    [string]$ExpectedIntegrationCommit = ""
+    [string]$ExpectedIntegrationCommit = "",
+    [string]$RetirementRecord = "",
+    [ValidatePattern('^[a-fA-F0-9]{64}$')]
+    [string]$ExpectedReviewHash = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,15 +24,23 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
     throw "PowerShell 7 is required for safe directory-link cleanup."
 }
 
-if ($ExpectedBranch -and ($Action -ne "Close" -or $Repository -eq "both")) {
-    throw "ExpectedBranch requires Close and one exact repository."
+if ($ExpectedBranch -and ($Action -notin @("Close", "Retire") -or $Repository -eq "both")) {
+    throw "ExpectedBranch requires Close/Retire and one exact repository."
 }
-if ($ExpectedDetachedHead -and ($ExpectedBranch -or $Action -ne "Close" -or $Repository -eq "both")) {
-    throw "ExpectedDetachedHead requires Close, one exact repository and no ExpectedBranch."
+if ($ExpectedDetachedHead -and ($ExpectedBranch -or $Action -notin @("Close", "Retire") -or $Repository -eq "both")) {
+    throw "ExpectedDetachedHead requires Close/Retire, one exact repository and no ExpectedBranch."
 }
 if ($ExpectedIntegrationCommit -and ($Action -ne "Close" -or $Repository -eq "both" -or
     (-not $ExpectedBranch -and -not $ExpectedDetachedHead))) {
     throw "ExpectedIntegrationCommit requires Close, one repository and an exact branch or detached HEAD."
+}
+if ($Action -eq "Retire") {
+    if ($Repository -eq "both" -or (-not $ExpectedBranch -and -not $ExpectedDetachedHead) -or
+        -not $RetirementRecord -or -not $ExpectedReviewHash) {
+        throw "Retire requires one exact repository, branch/HEAD, review record and expected review hash."
+    }
+} elseif ($RetirementRecord -or $ExpectedReviewHash) {
+    throw "Retirement evidence is accepted only by Retire."
 }
 
 if (-not $WorkspaceRoot) {
@@ -423,6 +434,76 @@ function Assert-ClosePlanUnchanged($Plan, [switch]$CachesRemoved) {
     }
 }
 
+function Assert-DurableRetirementPath([string]$Path) {
+    $artifactRoot = Join-Path $WorkspaceRoot "_artifacts\sessions"
+    Assert-StoragePath -Path $Path -Parent $artifactRoot
+    $relative = [IO.Path]::GetRelativePath($artifactRoot, [IO.Path]::GetFullPath($Path))
+    if ($relative -match '^[^\\/]+[\\/]scratch(?:[\\/]|$)') {
+        throw "Retirement evidence must be durable, outside disposable session scratch."
+    }
+}
+
+function Assert-RetirementEvidence([string]$Root, [string]$HeadSha, [string]$MainSha) {
+    $currentMain = @(Invoke-GitChecked -Root $Root -Arguments @("rev-parse", "--verify", "origin/main^{commit}"))[0]
+    if ($currentMain -cne $MainSha) { throw "Main changed after retirement review; preserving worktree." }
+    Assert-DurableRetirementPath -Path $RetirementRecord
+    if ((Get-FileHash -LiteralPath $RetirementRecord -Algorithm SHA256).Hash -ine $ExpectedReviewHash) {
+        throw "Retirement review hash changed; preserving worktree."
+    }
+    $review = Get-Content -LiteralPath $RetirementRecord -Raw | ConvertFrom-Json -AsHashtable
+    if ($review.version -ne 1 -or $review.repository -cne $Repository -or $review.session -cne $Session -or
+        $review.head -cne $HeadSha -or $review.reviewed_main -cne $MainSha -or
+        $review.decision -cne "superseded" -or $review.pending_work -isnot [bool] -or $review.pending_work -or
+        $review.hold -isnot [bool] -or $review.hold -or [string]::IsNullOrWhiteSpace($review.reason)) {
+        throw "Retirement requires an exact-current-main, completed supersession review without pending work or HOLD."
+    }
+    if ($review.base -notmatch '^[a-f0-9]{40}$' -or
+        -not (Test-GitSuccess -Root $Root -Arguments @("merge-base", "--is-ancestor", $review.base, $HeadSha)) -or
+        -not (Test-GitSuccess -Root $Root -Arguments @("merge-base", "--is-ancestor", $review.base, $MainSha))) {
+        throw "Retirement review base must be a shared recorded ancestor."
+    }
+    $changed = @(Invoke-GitChecked -Root $Root -Arguments @(
+        "-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", $review.base, $HeadSha, "--"
+    ) | Sort-Object -CaseSensitive)
+    $reviewed = @($review.files | ForEach-Object { $_.path } | Sort-Object -CaseSensitive)
+    if ($changed.Count -eq 0 -or $changed.Count -ne $reviewed.Count -or
+        ($changed -join "`n") -cne ($reviewed -join "`n")) {
+        throw "Retirement review must account for every changed path exactly once."
+    }
+    foreach ($file in $review.files) {
+        if ($file.disposition -notin @("already-present", "replaced", "obsolete") -or
+            [string]::IsNullOrWhiteSpace($file.reason) -or @($file.evidence).Count -eq 0) {
+            throw "Retirement path has no completed disposition and evidence: $($file.path)"
+        }
+        foreach ($evidence in $file.evidence) {
+            if ([string]::IsNullOrWhiteSpace($evidence.path) -or [string]::IsNullOrWhiteSpace($evidence.reason) -or
+                -not (Test-GitSuccess -Root $Root -Arguments @("cat-file", "-e", "${MainSha}:$($evidence.path)"))) {
+                throw "Retirement evidence must identify a current published repository path."
+            }
+        }
+    }
+    if ($review.recovery_ref -cnotlike "refs/heads/wip/*" -or
+        -not (Test-GitSuccess -Root $Root -Arguments @("check-ref-format", $review.recovery_ref))) {
+        throw "Retirement requires a named wip recovery ref."
+    }
+    $recovery = @(Invoke-GitChecked -Root $Root -Arguments @("rev-parse", "--verify", "$($review.recovery_ref)^{commit}"))[0]
+    if ($recovery -cne $HeadSha) { throw "Retirement recovery ref changed or does not preserve the reviewed HEAD." }
+    Assert-DurableRetirementPath -Path $review.bundle_path
+    if ($review.bundle_sha256 -notmatch '^[a-fA-F0-9]{64}$' -or
+        (Get-FileHash -LiteralPath $review.bundle_path -Algorithm SHA256).Hash -ine $review.bundle_sha256) {
+        throw "Retirement recovery bundle is missing or changed."
+    }
+    [void](Invoke-GitChecked -Root $Root -Arguments @("bundle", "verify", $review.bundle_path))
+    # Header/prerequisite verification alone does not detect a damaged pack.
+    # Unbundle validates the recoverable object data without updating any refs.
+    [void](Invoke-GitChecked -Root $Root -Arguments @("bundle", "unbundle", $review.bundle_path))
+    $bundleHeads = @(Invoke-GitChecked -Root $Root -Arguments @("bundle", "list-heads", $review.bundle_path))
+    if (@($bundleHeads | Where-Object { ([string]$_ -split ' ')[0] -ceq $HeadSha }).Count -eq 0) {
+        throw "Retirement bundle does not contain the reviewed HEAD as a recoverable ref."
+    }
+    return $review.recovery_ref
+}
+
 function Invoke-Close {
     Assert-SessionName
     $sessionRoot = Join-Path $WorkspaceRoot "_worktrees\sessions\$Session"
@@ -475,7 +556,10 @@ function Invoke-Close {
         if ($ExpectedDetachedHead -and $headSha -ine $ExpectedDetachedHead) {
             throw "Detached HEAD does not match the exact reviewed revision; preserving worktree: $path"
         }
-        $integration = if ($ExpectedIntegrationCommit) {
+        $integration = if ($Action -eq "Retire") {
+            [void](Assert-RetirementEvidence -Root $path -HeadSha $headSha -MainSha $mainSha)
+            "reviewed-superseded"
+        } elseif ($ExpectedIntegrationCommit) {
             Get-HistoricalIntegrationState -Root $path -MainSha $mainSha -HeadSha $headSha -Commit $ExpectedIntegrationCommit
         } else {
             Get-IntegrationState -Root $path -MainSha $mainSha -HeadSha $headSha
@@ -511,8 +595,12 @@ function Invoke-Close {
     }
 
     foreach ($plan in $plans) {
-        if ($PSCmdlet.ShouldProcess($plan.Path, "remove merged clean Academy session worktree")) {
+        $operation = if ($Action -eq "Retire") { "retire reviewed superseded worktree; retain branch, recovery ref and verified bundle" } else { "remove merged clean Academy session worktree" }
+        if ($PSCmdlet.ShouldProcess($plan.Path, $operation)) {
             Assert-ClosePlanUnchanged $plan
+            if ($Action -eq "Retire") {
+                [void](Assert-RetirementEvidence -Root $plan.Path -HeadSha $plan.HeadSha -MainSha $plan.MainSha)
+            }
             if ($plan.Branch -ceq "(detached)") {
                 # Give a detached tip a durable ref before removal. A commit
                 # racing the final check must survive just as a named branch's
@@ -527,19 +615,22 @@ function Invoke-Close {
                 [void](Invoke-GitChecked -Root $plan.Path -Arguments $cleanArguments)
                 Assert-ClosePlanUnchanged $plan -CachesRemoved
             }
+            if ($Action -eq "Retire") {
+                [void](Assert-RetirementEvidence -Root $plan.Path -HeadSha $plan.HeadSha -MainSha $plan.MainSha)
+                Assert-ClosePlanUnchanged $plan -CachesRemoved
+            }
             [void](Invoke-GitChecked -Root $plan.Root -Arguments @(
                 "worktree", "remove", $plan.Path
             ))
             # Compare and delete atomically: preserve a tip advanced after the
             # last check, without depending on a possibly stale canonical HEAD.
-            if ($plan.Branch -cne "(detached)") {
+            if ($plan.Branch -cne "(detached)" -and $Action -ne "Retire") {
                 [void](Invoke-GitChecked -Root $plan.Root -Arguments @(
                     "update-ref", "--no-deref", "-d", "refs/heads/$($plan.Branch)", $plan.HeadSha
                 ))
             }
-            Write-Output (
-                "SESSION_WORKTREE_CLOSED repo=$($plan.Name) branch=$($plan.Branch) integration=$($plan.Integration) head=$($plan.HeadSha) main=$($plan.MainSha)"
-            )
+            $event = if ($Action -eq "Retire") { "SESSION_WORKTREE_RETIRED" } else { "SESSION_WORKTREE_CLOSED" }
+            Write-Output "$event repo=$($plan.Name) branch=$($plan.Branch) integration=$($plan.Integration) head=$($plan.HeadSha) main=$($plan.MainSha)"
         }
     }
 
@@ -568,4 +659,5 @@ switch ($Action) {
     "Start" { Invoke-Start }
     "Sync" { Invoke-Sync }
     "Close" { Invoke-Close }
+    "Retire" { Invoke-Close }
 }

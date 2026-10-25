@@ -22,7 +22,7 @@ function Assert-True([bool]$Condition, [string]$Message) {
 }
 
 function Invoke-InterceptedClose {
-    param([string]$Session, [hashtable]$State, [scriptblock]$BeforeGit, [string]$ExpectedDetachedHead = "")
+    param([string]$Session, [hashtable]$State, [scriptblock]$BeforeGit, [string]$ExpectedDetachedHead = "", [hashtable]$RetirementParams = @{})
 
     $gitExecutable = (Get-Command git -CommandType Application | Select-Object -First 1).Source
     # Intercept only Git call boundaries; execute the unmodified production script
@@ -35,7 +35,9 @@ function Invoke-InterceptedClose {
     }
     $extra = @{}
     if ($ExpectedDetachedHead) { $extra.ExpectedDetachedHead = $ExpectedDetachedHead }
-    & $scriptUnderTest -Action Close -Session $Session -Repository backend -WorkspaceRoot $fixtureRoot @extra
+    $action = if ($RetirementParams.Count) { "Retire" } else { "Close" }
+    foreach ($key in $RetirementParams.Keys) { $extra[$key] = $RetirementParams[$key] }
+    & $scriptUnderTest -Action $action -Session $Session -Repository backend -WorkspaceRoot $fixtureRoot @extra
 }
 
 try {
@@ -710,6 +712,127 @@ try {
         }
         Write-Output "SESSION_WORKTREE_CASE_PASS $boundary-boundary"
     }
+
+    # Reviewed retirement is separate from merge proof. The source branch and a
+    # verified recovery bundle survive even when a proposal is superseded.
+    [void](& $scriptUnderTest -Action Start -Session retire-test -Repository backend -WorkspaceRoot $fixtureRoot)
+    $retirePath = Join-Path $fixtureRoot "_worktrees\sessions\retire-test\backend"
+    $retireBranch = @(Invoke-Git -Root $retirePath -Arguments @("branch", "--show-current"))[0]
+    $retireMain = @(Invoke-Git -Root $retirePath -Arguments @("rev-parse", "origin/main"))[0]
+    Set-Content -LiteralPath (Join-Path $retirePath "retired.txt") -Value "recover this superseded proposal"
+    [void](Invoke-Git -Root $retirePath -Arguments @("add", "retired.txt"))
+    [void](Invoke-Git -Root $retirePath -Arguments @("commit", "-m", "fixture obsolete proposal"))
+    $retireHead = @(Invoke-Git -Root $retirePath -Arguments @("rev-parse", "HEAD"))[0]
+    $recoveryRef = "refs/heads/wip/retire-test"
+    [void](Invoke-Git -Root $retirePath -Arguments @("update-ref", $recoveryRef, $retireHead))
+    $retireArtifact = Join-Path $fixtureRoot "_artifacts\sessions\retire-test"
+    $bundlePath = Join-Path $retireArtifact "recovery.bundle"
+    $recordPath = Join-Path $retireArtifact "review.json"
+    [void](Invoke-Git -Root $retirePath -Arguments @("bundle", "create", $bundlePath, "$retireMain..$recoveryRef"))
+    $review = @{
+        version=1; repository="backend"; session="retire-test"; head=$retireHead; base=$retireMain
+        reviewed_main=$retireMain; decision="superseded"; pending_work=$false; hold=$false
+        reason="Fixture proposal replaced by the reviewed current README contract."
+        recovery_ref=$recoveryRef; bundle_path=$bundlePath
+        bundle_sha256=(Get-FileHash -LiteralPath $bundlePath).Hash
+        files=@(@{path="retired.txt"; disposition="obsolete"; reason="Current contract replaces this proposal."
+            evidence=@(@{path="README.md"; reason="Published replacement contract inspected."})})
+    }
+    $validReview = $review | ConvertTo-Json -Depth 8
+    $retireArgs = @{Action="Retire";Session="retire-test";Repository="backend";WorkspaceRoot=$fixtureRoot;ExpectedBranch=$retireBranch;RetirementRecord=$recordPath;SkipFetch=$true}
+    foreach ($invalid in @("pending", "hold", "head", "main", "paths", "evidence", "recovery", "bundle-hash", "review-hash", "dirty")) {
+        $review = $validReview | ConvertFrom-Json -AsHashtable
+        switch ($invalid) {
+            "pending" { $review.pending_work=$true }
+            "hold" { $review.hold=$true }
+            "head" { $review.head=$retireMain }
+            "main" { $review.reviewed_main=$retireHead }
+            "paths" { $review.files=@() }
+            "evidence" { $review.files[0].evidence[0].path="not-published.txt" }
+            "recovery" { $review.recovery_ref="refs/heads/main" }
+            "bundle-hash" { $review.bundle_sha256='0'*64 }
+            "dirty" { Add-Content -LiteralPath (Join-Path $retirePath "retired.txt") -Value "preserve new work" }
+        }
+        $review | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $recordPath
+        $retireArgs.ExpectedReviewHash=(Get-FileHash -LiteralPath $recordPath).Hash
+        if ($invalid -eq "review-hash") { Add-Content -LiteralPath $recordPath -Value ' ' }
+        $refused=$false
+        try { & $scriptUnderTest @retireArgs *> $null } catch { $refused=$true }
+        Assert-True $refused "Retire accepted invalid $invalid evidence."
+        Assert-True (Test-Path -LiteralPath $retirePath) "Retire removed invalid $invalid worktree."
+        if ($invalid -eq "dirty") { [void](Invoke-Git -Root $retirePath -Arguments @("restore", "--", "retired.txt")) }
+    }
+    foreach ($scratchCase in @("record", "bundle")) {
+        $review = $validReview | ConvertFrom-Json -AsHashtable
+        $scratchEvidence = Join-Path $retireArtifact "scratch\$scratchCase"
+        if ($scratchCase -eq "record") {
+            Set-Content -LiteralPath $scratchEvidence -Value $validReview
+            $retireArgs.RetirementRecord=$scratchEvidence
+        } else {
+            Copy-Item -LiteralPath $bundlePath -Destination $scratchEvidence
+            $review.bundle_path=$scratchEvidence
+            $review | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $recordPath
+        }
+        $retireArgs.ExpectedReviewHash=(Get-FileHash -LiteralPath $retireArgs.RetirementRecord).Hash
+        $refused=$false
+        try { & $scriptUnderTest @retireArgs *> $null } catch { $refused=$_.Exception.Message -like '*outside disposable session scratch*' }
+        Assert-True $refused "Retire accepted disposable $scratchCase evidence."
+        Assert-True (Test-Path -LiteralPath $retirePath) "Retire removed worktree with disposable evidence."
+        $retireArgs.RetirementRecord=$recordPath
+    }
+    # Valid JSON/hash and bundle headers must not hide a damaged object pack.
+    $originalBundle=[IO.File]::ReadAllBytes($bundlePath)
+    $damagedBundle=[byte[]]$originalBundle.Clone()
+    $damagedBundle[$damagedBundle.Length-1]=$damagedBundle[$damagedBundle.Length-1] -bxor 1
+    [IO.File]::WriteAllBytes($bundlePath,$damagedBundle)
+    $review=$validReview|ConvertFrom-Json -AsHashtable
+    $review.bundle_sha256=(Get-FileHash -LiteralPath $bundlePath).Hash
+    $review|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $recordPath
+    $retireArgs.ExpectedReviewHash=(Get-FileHash -LiteralPath $recordPath).Hash
+    $corruptRefused=$false
+    try { & $scriptUnderTest @retireArgs *> $null } catch { $corruptRefused=$_.Exception.Message.Contains("unbundle") }
+    Assert-True $corruptRefused "Retire must reject damaged recovery pack data."
+    [IO.File]::WriteAllBytes($bundlePath,$originalBundle)
+    Set-Content -LiteralPath $recordPath -Value $validReview
+    $retireArgs.ExpectedReviewHash=(Get-FileHash -LiteralPath $recordPath).Hash
+    [void](& $scriptUnderTest @retireArgs -WhatIf)
+    Assert-True (Test-Path -LiteralPath $retirePath) "Retirement WhatIf removed the checkout."
+
+    $raceState=@{Count=0;Root=$backendRoot;Ref=$recoveryRef;Head=$retireHead;Main=$retireMain;Injected=$false}
+    $raceRefused=$false
+    try {
+        Invoke-InterceptedClose -Session retire-test -State $raceState -RetirementParams @{
+            ExpectedBranch=$retireBranch; RetirementRecord=$recordPath; ExpectedReviewHash=$retireArgs.ExpectedReviewHash; SkipFetch=$true
+        } -BeforeGit {
+            param($Arguments,$State,$GitExecutable)
+            if ("rev-parse" -in $Arguments -and "$($State.Ref)^{commit}" -in $Arguments) {
+                $State.Count++
+                if($State.Count -eq 2) {
+                    & $GitExecutable -C $State.Root update-ref $State.Ref $State.Main $State.Head
+                    if($LASTEXITCODE -ne 0){throw "Fixture recovery race failed"}
+                    $State.Injected=$true
+                }
+            }
+        } *> $null
+    } catch { $raceRefused=$_.Exception.Message.Contains("recovery ref changed") }
+    Assert-True ($raceState.Injected -and $raceRefused) "Retire did not reject recovery-ref race."
+    Assert-True (Test-Path -LiteralPath $retirePath) "Recovery race removed checkout."
+    [void](Invoke-Git -Root $backendRoot -Arguments @("update-ref", $recoveryRef, $retireHead, $retireMain))
+    [void](Invoke-Git -Root $retirePath -Arguments @("switch", "--detach", $retireHead))
+    [void]$retireArgs.Remove("ExpectedBranch")
+    $retireArgs.ExpectedDetachedHead=$retireHead
+    $retiredOutput=@(& $scriptUnderTest @retireArgs)
+    Assert-True (@($retiredOutput -match '^SESSION_WORKTREE_RETIRED ').Count -eq 1) "Retirement receipt missing."
+    Assert-True (-not (Test-Path -LiteralPath $retirePath)) "Retired checkout remains."
+    $detachedRecovery=@(Invoke-Git -Root $backendRoot -Arguments @("for-each-ref", "--format=%(objectname)", "refs/heads/wip/detached-close/retire-test-backend-*"))
+    Assert-True ($detachedRecovery.Count -eq 1 -and $detachedRecovery[0] -ceq $retireHead) "Detached retirement did not retain a race-safe attached branch."
+    foreach($ref in @("refs/heads/$retireBranch",$recoveryRef)) {
+        Assert-True (@(Invoke-Git -Root $backendRoot -Arguments @("rev-parse",$ref))[0] -ceq $retireHead) "Retirement lost $ref."
+    }
+    [void](Invoke-Git -Root $backendRoot -Arguments @("bundle", "verify", $bundlePath))
+    Assert-True ((Get-FileHash -LiteralPath $bundlePath).Hash -ceq ($validReview|ConvertFrom-Json).bundle_sha256) "Retirement changed recovery bundle."
+    Assert-True (@(Invoke-Git -Root $backendRoot -Arguments @("show", "${retireHead}:retired.txt"))[0] -eq "recover this superseded proposal") "Retirement lost recoverable content."
+    Write-Output "SESSION_WORKTREE_CASE_PASS reviewed-retirement-preservation-and-boundaries"
 
     $frontendRoot = Join-Path $fixtureRoot "frontend"
     Set-Content -LiteralPath (Join-Path $frontendRoot "dirty-sync.txt") -Value "dirty" -Encoding UTF8
