@@ -139,7 +139,7 @@ def add_slide(
     image_bytes: bytes,
     background_color: str = "black",
     fit_mode: str = "contain",
-) -> None:
+) -> float:
     """Add a slide with an image to the presentation.
 
     Args:
@@ -181,6 +181,8 @@ def add_slide(
         picture.crop_top = crop_top
         picture.crop_right = crop_right
         picture.crop_bottom = crop_bottom
+
+    return width / prs.slide_width
 
 
 def save_to_bytes(prs: Presentation) -> bytes:

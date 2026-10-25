@@ -543,6 +543,8 @@ class TeacherOpsStudentLockConcurrencyPostgresTests(TransactionTestCase):
         created = create_student_account(
             tenant=tenant,
             password="safe-pass",
+            parent_password="parent-safe-pass",
+            parent_password_mode="fixed",
             student_data={
                 "name": "잠금 학생",
                 "phone": "01033334444",
