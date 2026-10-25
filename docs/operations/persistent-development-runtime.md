@@ -377,7 +377,7 @@ cleanup0 승격 계약은 frontend `docs/DEPLOYMENT-OPERATIONS.md`가 소유한�
 #### 세션 제한과 장애 경계
 
 고정 QA document의 `inputs`는 maxSessionDuration=5분/idleSessionTimeout=5분,
-Port document는 65분/5분이다. frontend의 60분 실사용 검사와 65분 로컬 tunnel
+Port document는 90분/5분이다. frontend의 85분 실사용 검사와 90분 로컬 tunnel
 제한에 맞춰, 연결 시작·검사 종료에 5분 여유를 둔다. 호출자가 timeout을 바꾸는
 parameter는 없다. 공식 실행35543367845의 기존25분 연결은23:07:01Z부터
 23:32:01Z까지 정확히25분 뒤 종료되어, 진행 중이던 자료함 삭제가 ECONNREFUSED로
@@ -386,13 +386,16 @@ parameter는 없다. 공식 실행35543367845의 기존25분 연결은23:07:01Z�
 실행37372206862의 연결도 2026-10-05 21:25:23Z부터 22:00:23Z까지 정확히
 35분 뒤 종료돼 당시 55분으로 맞췄다. 이후 실행38843507538에서 36건이
 39분24초에 통과한 뒤 마지막 영상 검증 도중 50분 검사 프로세스 한도에 도달했다.
-영상 검증의 개별 17분 한도를 포함할 수 있도록 검사 60분·터널 65분으로 맞춘다.
+당시 영상 검증의 개별 17분 한도를 포함하도록 검사 60분·터널 65분으로 맞췄다.
 당시 양쪽 QA tenant/user/R2/process/listener 정리 0은 확인됐고 운영 승격은 차단됐다.
-65분 계약은 검사 예산과 종료 여유를 일치시키며,
+이후 실행40168553418은 기존 36건에 47.79분이 걸려 60분 전체 한도에서 마지막 영상이
+중단됐다. 현재 39건의 검사 예산은 마지막 영상 17분·새 사진 흐름 2건 각 7분과
+변동 여유를 포함해 85분이며, 서버·로컬 터널은 90분으로 맞춘다. 개별 테스트 제한,
+단일 worker·재시도 0·전체 필수 통과·cleanup0 조건은 유지한다. 90분 계약은 검사 예산과 종료 여유를 일치시키며,
 고정 8000→18000 포트, 5분 idle 제한, 역할·tenant/data 범위를 바꾸지 않는다.
 영상 갱신 중 먼저 발생한 worker timeout은 이 수명 차이와 별도로 진단한다.
-QA CI job은 설치·정리·증거 업로드를 포함해 75분이며, 해당 job의 OIDC 요청과
-`academy-frontend-development-qa` 역할의 MaxSessionDuration은 4500초(75분)로 맞춘다.
+QA CI job은 설치·정리·증거 업로드를 포함해 100분이며, 해당 job의 OIDC 요청과
+`academy-frontend-development-qa` 역할의 MaxSessionDuration은 6000초(100분)로 맞춘다.
 기존 3600초 인증이 검사 종료 전후 만료돼 Cleanup/Inspect를 막는 일을 방지한다.
 별도 readiness job은 기존 3600초 요청을 유지한다. 역할의 trust·inline policy·
 action·resource와 QA command의 5분 수명은 바꾸지 않는다.
