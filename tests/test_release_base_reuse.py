@@ -122,6 +122,8 @@ def test_previous_base_source_does_not_reintroduce_already_shipped_app_changes(t
     "scripts/v1/test-workflow-governance-contract.ps1",
     "scripts/v1/test-production-source-freshness.ps1",
     "scripts/v1/test_frontend_development_qa.py",
+    "scripts/v1/run-cost-waste-audit.ps1",
+    "scripts/v1/README.md",
 ])
 def test_test_only_accumulated_diffs_do_not_rebuild_any_runtime(tmp_path, changed):
     outputs = classify(tmp_path, runtime=changed)
@@ -135,6 +137,15 @@ def test_test_filter_preserves_mixed_product_change(tmp_path):
         "apps/domains/results/views/score_draft_view.py"
     ))
     assert outputs["build_base"] == "false"
+    assert outputs["build_api"] == "true"
+    assert outputs["build_ai"] == "true"
+
+
+def test_read_only_cost_audit_filter_preserves_runtime_changes(tmp_path):
+    outputs = classify(tmp_path, runtime=(
+        "scripts/v1/run-cost-waste-audit.ps1\n"
+        "scripts/v1/run-resource-cleanup.ps1"
+    ))
     assert outputs["build_api"] == "true"
     assert outputs["build_ai"] == "true"
 

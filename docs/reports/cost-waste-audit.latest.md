@@ -1,6 +1,6 @@
 # Cost/Waste Audit - Current Runtime
 
-**Generated:** 2026-10-09T00:38:02.3314202+09:00
+**Generated:** 2026-10-25T20:17:42.9711238+09:00
 **Scope:** Academy V1 production resources in `ap-northeast-2`; account-wide billing is labeled separately until project-tagged cost data accumulates.
 **Mode:** AWS describe/get/list, CloudWatch 30/90-day history, read-only OS measurement via SSM, and cleanup dry-runs.
 **Truth sources:** AWS actual state, `docs/ssot/params.yaml`, CloudWatch, SSM host memory, AWS Price List, Cost Explorer, AWS Budget, and cleanup dry-runs.
@@ -9,14 +9,14 @@
 
 | Check | Result | Disposition |
 |-------|--------|-------------|
-| AWS Budget | actual=70.09 USD, limit=380, forecast=285.56, used=18.4% | ok |
-| Cost Explorer (AWS account) | ok; period 2026-10-01 through 2026-10-09 | account-wide monthly-to-date; not Academy-only |
+| AWS Budget | actual=249.83 USD, limit=380, forecast=319.08, used=65.7% | ok |
+| Cost Explorer (AWS account) | ok; period 2026-10-01 through 2026-10-25 | account-wide monthly-to-date; not Academy-only |
 | Project cost-allocation tag | Project status=Active; Academy tagged-cost status=ok | future Academy isolation enabled |
 | ECR cleanup dry-run | 0 image(s), 0 GB reclaimable, status=ok | no ECR deletion needed |
-| Batch jobdef cleanup dry-run | keep=42, drop=72, status=ok | cleanup candidate |
+| Batch jobdef cleanup dry-run | keep=42, drop=48, status=ok | cleanup candidate |
 | RDS class | db.t4g.medium, status=available, pending={} | matches SSOT |
 | Redis node | cache.t4g.small, status=available | matches SSOT |
-| Running EC2 in academy VPC | 5 | API/Messaging/AI/Tools warm baseline + persistent development runtime + active Batch bursts |
+| Running EC2 in academy VPC | 7 | API/Messaging/AI/Tools warm baseline + persistent development runtime + active Batch bursts |
 | Persistent development EC2 | 1 exact-tagged instance(s) | confirmed |
 | NAT Gateway | 0 available | matches NAT-off posture |
 
@@ -28,36 +28,36 @@
 | Messaging worker ASG | min=1 desired=1 max=3, type=t4g.small | min=1 desired=1 max=3, healthy=1, type=t4g.small | confirmed |
 | AI worker ASG | min=1 desired=1 max=5, type=t4g.medium | min=1 desired=1 max=5, healthy=1, type=t4g.medium | confirmed |
 | Tools worker ASG | min=1 desired=1 max=2, type=t4g.small | min=1 desired=1 max=2, healthy=1, type=t4g.small | confirmed |
-| Video Batch CE | min=0 max=40 type=SPOT, types=c6g.4xlarge,c6g.2xlarge,c6g.xlarge | SPOT, state=ENABLED/VALID, min=0 desired=0 max=40, types=c6g.4xlarge,c6g.2xlarge,c6g.xlarge | confirmed |
-| Video Ops CE | min=0 max=1 type=EC2, types=m6g.medium | EC2, state=ENABLED/VALID, min=0 desired=0 max=1, types=m6g.medium | confirmed |
+| Video Batch CE | min=0 max=40 type=SPOT, types=c6g.4xlarge,c6g.2xlarge,c6g.xlarge | SPOT, state=ENABLED/VALID, min=0 desired=4 max=40, types=c6g.4xlarge,c6g.2xlarge,c6g.xlarge | confirmed |
+| Video Ops CE | min=0 max=1 type=EC2, types=m6g.medium | EC2, state=ENABLED/VALID, min=0 desired=1 max=1, types=m6g.medium | confirmed |
 
 ## Cumulative Usage Evidence
 
 | Component / signal | Last 30 days | Last 90 days | Interpretation |
 |--------------------|----------------------|---------------------|----------------|
-| API CPU | avg=12.44%, peak=99.79% | avg=11.28%, peak=99.85% | keep t4g.medium; burst CPU reached 99.85% |
-| API live memory | used=2.24 GiB, available=1.32 GiB (35.4%), measured | historical OS memory unavailable | academy-api 1.815GiB / 3.742GiB |
-| Messaging CPU | avg=0.42%, peak=4.08% | avg=0.46%, peak=57.41% | keep t4g.small (right-sized) |
-| Messaging live memory | used=0.38 GiB, available=1.25 GiB (69.2%), measured | historical OS memory unavailable | academy-messaging-worker 65.77MiB / 1.8GiB |
-| AI CPU | avg=1.46%, peak=88.66% | avg=4.28%, peak=88.66% | keep one warm baseline; active bursts need current CPU class |
-| Tools CPU | avg=0.47%, peak=50.12% | avg=1.49%, peak=61.05% | keep one warm baseline t4g.small |
-| Messaging SQS sent | 2,450 messages | 6,796 messages | cumulative CloudWatch Sum |
-| AI SQS sent | 961 messages | 1,582 messages | cumulative CloudWatch Sum |
-| Tools SQS sent | 132 messages | 320 messages | cumulative CloudWatch Sum |
-| RDS CPU / connections | CPU avg=5.92%, peak=52.87%; connections peak=39 | CPU avg=5.35%, peak=53.27%; connections peak=391 | keep db.t4g.medium; memory/connection guardrail blocks another downsize |
-| RDS memory / credits | free low=0.25 GiB, swap peak=0.16 GiB, credit low=574.55 | free low=0.14 GiB, swap peak=0.16 GiB, credit low=0.00 | memory guardrail blocks db.t4g.small |
-| Redis CPU / dataset | host peak=18.23%, engine peak=0.43%, dataset peak=0.01 GiB | host peak=18.23%, engine peak=0.47%, dataset peak=0.01 GiB | keep cache.t4g.small; single-node micro headroom is not proven |
-| Redis memory / connections | DB memory peak=1.29%, free low=1.24 GiB, connections peak=53 | DB memory peak=2.31%, free low=0.34 GiB, connections peak=53, evictions=0 | single-node restart and low free-memory interval block micro |
+| API CPU | avg=11.19%, peak=99.79% | avg=11.86%, peak=99.85% | keep t4g.medium; burst CPU reached 99.85% |
+| API live memory | used=0.98 GiB, available=2.58 GiB (68.9%), measured | historical OS memory unavailable | academy-api 655.5MiB / 3.742GiB |
+| Messaging CPU | avg=0.42%, peak=4.08% | avg=0.42%, peak=55.70% | keep t4g.small (right-sized) |
+| Messaging live memory | used=0.41 GiB, available=1.22 GiB (67.6%), measured | historical OS memory unavailable | academy-messaging-worker 87.4MiB / 1.8GiB |
+| AI CPU | avg=1.36%, peak=88.66% | avg=3.17%, peak=88.66% | keep one warm baseline; active bursts need current CPU class |
+| Tools CPU | avg=0.46%, peak=43.00% | avg=1.36%, peak=61.05% | keep one warm baseline t4g.small |
+| Messaging SQS sent | 809 messages | 6,861 messages | cumulative CloudWatch Sum |
+| AI SQS sent | 740 messages | 1,650 messages | cumulative CloudWatch Sum |
+| Tools SQS sent | 98 messages | 328 messages | cumulative CloudWatch Sum |
+| RDS CPU / connections | CPU avg=5.52%, peak=52.87%; connections peak=30 | CPU avg=5.59%, peak=53.27%; connections peak=391 | keep db.t4g.medium; memory/connection guardrail blocks another downsize |
+| RDS memory / credits | free low=0.25 GiB, swap peak=0.16 GiB, credit low=575.34 | free low=0.25 GiB, swap peak=0.16 GiB, credit low=574.55 | memory guardrail blocks db.t4g.small |
+| Redis CPU / dataset | host peak=18.23%, engine peak=0.43%, dataset peak=0.01 GiB | host peak=18.23%, engine peak=0.47%, dataset peak=0.01 GiB | review cache.t4g.micro in a maintenance window |
+| Redis memory / connections | DB memory peak=1.32%, free low=1.23 GiB, connections peak=54 | DB memory peak=1.32%, free low=1.23 GiB, connections peak=54, evictions=0 | review cache.t4g.micro in a maintenance window; any resize still requires a compatible single-node maintenance plan |
 
 ## Right-Sizing Decisions
 
 | Component | Decision | Evidence status |
 |-----------|----------|-----------------|
-| API | keep t4g.medium; burst CPU reached 99.85% | confirmed CloudWatch history + current SSM memory |
-| Messaging | keep t4g.small (right-sized) | confirmed CloudWatch history + current SSM memory |
+| API | keep t4g.medium; burst CPU reached 99.85% | CloudWatch samples=361; current SSM memory=measured |
+| Messaging | keep t4g.small (right-sized) | CloudWatch samples=361; current SSM memory=measured |
 | AI / Tools | retain current one-instance warm baselines | user-facing cold-start policy + confirmed burst CPU |
 | RDS | keep db.t4g.medium; memory/connection guardrail blocks another downsize | confirmed CloudWatch memory, swap, credits, connections |
-| Redis | keep cache.t4g.small; single-node micro headroom is not proven | confirmed CloudWatch dataset, memory, credits, connections, evictions |
+| Redis | review cache.t4g.micro in a maintenance window | confirmed CloudWatch dataset, memory, credits, connections, evictions |
 
 ## Waste Checks
 
@@ -67,45 +67,49 @@
 | Unused Security Group | 0 / total SG 6 | clean |
 | Available EBS volume | 0, 0 GiB | clean |
 | Orphan EC2 in academy VPC | 0 | clean |
-| Batch compute | standard=SPOT, state=ENABLED/VALID, min=0 desired=0 max=40, types=c6g.4xlarge,c6g.2xlarge,c6g.xlarge; ops=EC2, state=ENABLED/VALID, min=0 desired=0 max=1, types=m6g.medium | idle desired should remain 0 outside jobs |
+| Batch compute | standard=SPOT, state=ENABLED/VALID, min=0 desired=4 max=40, types=c6g.4xlarge,c6g.2xlarge,c6g.xlarge; ops=EC2, state=ENABLED/VALID, min=0 desired=1 max=1, types=m6g.medium | idle desired should remain 0 outside jobs |
 | SQS academy-v1-messaging-queue | visible=0, in-flight=0, DLQ=0 | clean |
 | SQS academy-v1-ai-queue | visible=0, in-flight=0, DLQ=0 | clean |
 | SQS academy-v1-tools-queue | visible=0, in-flight=0, DLQ=0 | clean |
 
 ## Cost Explorer Snapshot - AWS Account Wide
 
-Time period: 2026-10-01 through 2026-10-09, unblended cost, estimated. This table is context only and must not be reported as Academy-only cost.
+Time period: 2026-10-01 through 2026-10-25, unblended cost, estimated. This table is context only and must not be reported as Academy-only cost.
 
 | Service | Cost |
 |---------|------|
-| Amazon Elastic Compute Cloud - Compute | 23.73 USD |
-| Amazon Relational Database Service | 18.15 USD |
-| Amazon ElastiCache | 7.80 USD |
-| Amazon Virtual Private Cloud | 6.49 USD |
-| Tax | 6.37 USD |
-| Amazon Elastic Load Balancing | 3.84 USD |
-| EC2 - Other | 2.89 USD |
-| Amazon EC2 Container Registry (ECR) | 0.58 USD |
-| AmazonCloudWatch | 0.11 USD |
-| AWS Systems Manager | 0.07 USD |
-| Amazon Simple Storage Service | 0.04 USD |
+| Amazon Elastic Compute Cloud - Compute | 87.05 USD |
+| Amazon Relational Database Service | 63.62 USD |
+| Amazon ElastiCache | 27.31 USD |
+| Tax | 22.71 USD |
+| Amazon Virtual Private Cloud | 21.38 USD |
+| Amazon Elastic Load Balancing | 13.22 USD |
+| EC2 - Other | 6.25 USD |
+| Amazon Bedrock | 4.33 USD |
+| Amazon EC2 Container Registry (ECR) | 1.90 USD |
+| AmazonCloudWatch | 1.50 USD |
+| AWS Systems Manager | 0.23 USD |
+| Amazon Simple Storage Service | 0.15 USD |
+| Amazon Simple Queue Service | 0.14 USD |
+| AWS Cost Explorer | 0.05 USD |
 
 ## Cost Explorer Snapshot - Academy Project Tag
 
 | Service | Cost |
 |---------|------|
-| Amazon Elastic Compute Cloud - Compute | 21.77 USD |
-| Amazon Relational Database Service | 18.15 USD |
-| Amazon ElastiCache | 7.80 USD |
-| Amazon Elastic Load Balancing | 3.84 USD |
-| EC2 - Other | 1.60 USD |
-| Amazon EC2 Container Registry (ECR) | 0.58 USD |
+| Amazon Elastic Compute Cloud - Compute | 82.64 USD |
+| Amazon Relational Database Service | 63.62 USD |
+| Amazon ElastiCache | 27.31 USD |
+| Amazon Elastic Load Balancing | 13.22 USD |
+| EC2 - Other | 2.56 USD |
+| Amazon EC2 Container Registry (ECR) | 1.90 USD |
+| Amazon Simple Queue Service | 0.14 USD |
 
 ## Projections
 
 | Projection | Amount | Basis |
 |------------|--------|-------|
-| Messaging t4g.medium -> t4g.small | 15.18 USD/month | Seoul Linux on-demand price difference x 730 hours; excludes unchanged EBS/public IPv4/tax |
+| New Messaging compute savings | none established | Current class=t4g.small; keep t4g.small (right-sized). An already applied reduction is not a new saving. |
 
 ## Unverified
 
@@ -122,13 +126,14 @@ Time period: 2026-10-01 through 2026-10-09, unblended cost, estimated. This tabl
 | API scale-to-zero or smaller class | Rejected: public API warm-baseline policy plus observed CPU burst near saturation. |
 | Messaging scale-to-zero | Rejected: account recovery and Alimtalk latency require one warm worker; instance class can still be reduced. |
 | AI/Tools scale-to-zero | Rejected: student import, AI, and document conversion are user-facing wait paths; each keeps one warm worker. |
-| RDS / Redis further downsize | Rejected for this pass: observed memory/credit lows and single-node restart risk conflict with stability guardrails. |
+| RDS further downsize | keep db.t4g.medium; memory/connection guardrail blocks another downsize |
+| Redis further downsize | review cache.t4g.micro in a maintenance window; a single-node resize needs a reviewed continuity/maintenance plan. |
 
 ## Recommended Actions
 
 | Action |
 |--------|
-| Run `python scripts/v1/batch-jobdef-cleanup.py --execute --keep 5` to deregister 72 old ACTIVE job definition revision(s). |
+| Run `python scripts/v1/batch-jobdef-cleanup.py --execute --keep 5` to deregister 48 old ACTIVE job definition revision(s). |
 
 ## Policy Decisions Retained
 
@@ -138,4 +143,4 @@ Time period: 2026-10-01 through 2026-10-09, unblended cost, estimated. This tabl
 | Messaging worker warm baseline | kept at one `t4g.small`; account recovery and Alimtalk wait paths should not cold-start. |
 | AI/Tools workers | one warm instance retained for first-request latency; queue alarms own burst scale-out. |
 | Standard video encoding | Spot Batch CE retained; paid encode tests are not submitted by this audit. |
-| RDS/Redis | current classes retained because this audit found memory/credit guardrails against another downsize. |
+| RDS/Redis | RDS: keep db.t4g.medium; memory/connection guardrail blocks another downsize. Redis: review cache.t4g.micro in a maintenance window. This read-only audit does not resize either service. |

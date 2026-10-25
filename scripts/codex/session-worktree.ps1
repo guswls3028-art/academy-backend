@@ -8,7 +8,9 @@ param(
     [string]$WorkspaceRoot = "",
     [switch]$SkipFetch,
     [switch]$AllowLowDisk,
-    [string]$ExpectedBranch = ""
+    [string]$ExpectedBranch = "",
+    [ValidatePattern('^[a-fA-F0-9]{40}$')]
+    [string]$ExpectedDetachedHead = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +21,9 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 
 if ($ExpectedBranch -and ($Action -ne "Close" -or $Repository -eq "both")) {
     throw "ExpectedBranch requires Close and one exact repository."
+}
+if ($ExpectedDetachedHead -and ($ExpectedBranch -or $Action -ne "Close" -or $Repository -eq "both")) {
+    throw "ExpectedDetachedHead requires Close, one exact repository and no ExpectedBranch."
 }
 
 if (-not $WorkspaceRoot) {
@@ -401,7 +406,11 @@ function Invoke-Close {
             throw "Session path is not the exact registered $name worktree: $path"
         }
         $branch = Get-BranchName $path
-        if ($ExpectedBranch) {
+        if ($ExpectedDetachedHead) {
+            if ($branch -cne "(detached)") {
+                throw "ExpectedDetachedHead requires an explicitly targeted detached worktree: $path"
+            }
+        } elseif ($ExpectedBranch) {
             if ($branch -cne $ExpectedBranch -or $branch -cnotlike "codex/*") {
                 throw "ExpectedBranch does not match the exact owned Codex branch: $path ($branch)"
             }
@@ -417,6 +426,9 @@ function Invoke-Close {
         $headSha = @(Invoke-GitChecked -Root $path -Arguments @(
             "rev-parse", "--verify", "HEAD^{commit}"
         ))[0]
+        if ($ExpectedDetachedHead -and $headSha -ine $ExpectedDetachedHead) {
+            throw "Detached HEAD does not match the exact reviewed revision; preserving worktree: $path"
+        }
         $integration = Get-IntegrationState -Root $path -MainSha $mainSha -HeadSha $headSha
         if ($integration -eq "unmerged") {
             throw "Session branch is not merged into origin/main and will be preserved: $branch"
@@ -451,6 +463,15 @@ function Invoke-Close {
     foreach ($plan in $plans) {
         if ($PSCmdlet.ShouldProcess($plan.Path, "remove merged clean Academy session worktree")) {
             Assert-ClosePlanUnchanged $plan
+            if ($plan.Branch -ceq "(detached)") {
+                # Give a detached tip a durable ref before removal. A commit
+                # racing the final check must survive just as a named branch's
+                # late advance does. Never force or overwrite an existing ref.
+                $recoveryBranch = "wip/detached-close/$Session-$($plan.Name)-$([guid]::NewGuid().ToString('N'))"
+                [void](Invoke-GitChecked -Root $plan.Path -Arguments @("switch", "-c", $recoveryBranch))
+                $plan.Branch = $recoveryBranch
+                Assert-ClosePlanUnchanged $plan
+            }
             if ($plan.IgnoredPaths.Count -gt 0) {
                 $cleanArguments = @("clean", "-fdX", "--") + @($plan.IgnoredPaths)
                 [void](Invoke-GitChecked -Root $plan.Path -Arguments $cleanArguments)
@@ -461,9 +482,11 @@ function Invoke-Close {
             ))
             # Compare and delete atomically: preserve a tip advanced after the
             # last check, without depending on a possibly stale canonical HEAD.
-            [void](Invoke-GitChecked -Root $plan.Root -Arguments @(
-                "update-ref", "--no-deref", "-d", "refs/heads/$($plan.Branch)", $plan.HeadSha
-            ))
+            if ($plan.Branch -cne "(detached)") {
+                [void](Invoke-GitChecked -Root $plan.Root -Arguments @(
+                    "update-ref", "--no-deref", "-d", "refs/heads/$($plan.Branch)", $plan.HeadSha
+                ))
+            }
             Write-Output (
                 "SESSION_WORKTREE_CLOSED repo=$($plan.Name) branch=$($plan.Branch) integration=$($plan.Integration) head=$($plan.HeadSha) main=$($plan.MainSha)"
             )
