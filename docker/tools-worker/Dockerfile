@@ -18,6 +18,7 @@ FROM ${BASE_IMAGE} AS curl-fixed-system
 ARG LIBCURL_VERSION=8.21.0-2~bpo13+1
 ARG LIBNGHTTP3_VERSION=1.15.0-1~bpo13+1
 ARG LIBNGTCP2_VERSION=1.22.1-1~bpo13+1
+ARG LIBBROTLI_VERSION=1.1.0-2+deb13u1
 
 ENV WORKER_TYPE=TOOLS
 
@@ -35,6 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libngtcp2-16="${LIBNGTCP2_VERSION}" \
     libngtcp2-crypto-ossl0="${LIBNGTCP2_VERSION}" \
     libcurl4t64="${LIBCURL_VERSION}" \
+    libbrotli1="${LIBBROTLI_VERSION}" \
     tesseract-ocr \
     tesseract-ocr-kor \
     libseccomp2 \
@@ -42,6 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfontconfig1 libfreetype6 libcairo2 libglib2.0-0t64 \
     libdbus-1-3 libnss3 /tmp/academy-cups/libcups2t64-openssl.deb \
     && dpkg --configure -a \
+    && test "$(dpkg-query -W -f='${Version}' libbrotli1)" = "${LIBBROTLI_VERSION}" \
     && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libglib2.0-0t64)" ge "2.84.4-3~deb13u4" \
     && libcurl_version="$(dpkg-query -W -f='${Version}' libcurl4t64)" \
     && libnghttp3_version="$(dpkg-query -W -f='${Version}' libnghttp3-9)" \

@@ -9,6 +9,7 @@ FROM ${BASE_IMAGE} AS curl-fixed-system
 ARG LIBCURL_VERSION=8.21.0-2~bpo13+1
 ARG LIBNGHTTP3_VERSION=1.15.0-1~bpo13+1
 ARG LIBNGTCP2_VERSION=1.22.1-1~bpo13+1
+ARG LIBBROTLI_VERSION=1.1.0-2+deb13u1
 
 # 시스템·Python 의존성을 앱 소스보다 먼저 확정한다. 앱 코드 변경이
 # apt/pip 레이어를 무효화하지 않아야 일반 릴리스가 캐시를 재사용한다.
@@ -26,9 +27,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libngtcp2-16="${LIBNGTCP2_VERSION}" \
     libngtcp2-crypto-ossl0="${LIBNGTCP2_VERSION}" \
     libcurl4t64="${LIBCURL_VERSION}" \
+    libbrotli1="${LIBBROTLI_VERSION}" \
     tesseract-ocr \
     tesseract-ocr-kor \
     && dpkg --configure -a \
+    && test "$(dpkg-query -W -f='${Version}' libbrotli1)" = "${LIBBROTLI_VERSION}" \
     && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libglib2.0-0t64)" ge "2.84.4-3~deb13u4" \
     && libcurl_version="$(dpkg-query -W -f='${Version}' libcurl4t64)" \
     && libnghttp3_version="$(dpkg-query -W -f='${Version}' libnghttp3-9)" \
