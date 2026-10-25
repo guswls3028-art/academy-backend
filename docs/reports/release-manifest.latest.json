@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "status": "successful",
   "complete": true,
-  "generatedAt": "2026-10-22T17:13:21+00:00",
-  "gitSha": "24713c58b06ae1c732466d5a8d9b7377453e2ba1",
-  "releaseImageTag": "sha-24713c58b06ae1c732466d5a8d9b7377453e2ba1-run-39819683022-1",
+  "generatedAt": "2026-10-25T03:45:36+00:00",
+  "gitSha": "5ebedc4997f6522fb60c0ac07355c4e0547cd4c5",
+  "releaseImageTag": "sha-5ebedc4997f6522fb60c0ac07355c4e0547cd4c5-run-40158153326-1",
   "images": {
     "academy-base": {
       "digest": "sha256:fb6c6defc3d6c7b34043a40576462004ef37cda8e1cdc797bb6e7e09386c0d5b",
@@ -12,8 +12,8 @@
       "source": "prior-success"
     },
     "academy-api": {
-      "digest": "sha256:23727633d161db1ff4dd414c691de753a24be0249f97226a999e7a603c6ec329",
-      "tag": "sha-24713c58b06ae1c732466d5a8d9b7377453e2ba1-run-39819683022-1",
+      "digest": "sha256:886bebc4774d21aed979d8639da10aebb9368ed9bf73abc5f99a5392dbbfb919",
+      "tag": "sha-5ebedc4997f6522fb60c0ac07355c4e0547cd4c5-run-40158153326-1",
       "source": "built"
     },
     "academy-video-worker": {
@@ -27,15 +27,15 @@
       "source": "prior-success"
     },
     "academy-ai-worker-cpu": {
-      "digest": "sha256:9f31e4b0791b3942afb8d4e0b6c523c1c19f49be9712b6b2fc7bd6d336a4c63a",
-      "tag": "sha-24713c58b06ae1c732466d5a8d9b7377453e2ba1-run-39819683022-1",
+      "digest": "sha256:ac2f815a076e5294852b6a88b954883ab217398186fb79c3c36f3a9c03d1f3b4",
+      "tag": "sha-5ebedc4997f6522fb60c0ac07355c4e0547cd4c5-run-40158153326-1",
       "source": "built"
     },
     "academy-tools-worker": {
-      "digest": "sha256:73ea337c42bbaa9c18b8c30c83a027e566e248e198b5e36e18339848c9ec0448",
-      "tag": "sha-4c42f5b44cdc4200cbb3242399efd6ec6ca773f2-run-39767397084-1",
-      "source": "prior-success"
+      "digest": "sha256:71a478442f2e53ca49ac572a994e51a1560ba6cfdc0d928366de482140844522",
+      "tag": "sha-5ebedc4997f6522fb60c0ac07355c4e0547cd4c5-run-40158153326-1",
+      "source": "built"
     }
   },
-  "verifiedAt": "2026-10-22T17:34:22+00:00"
+  "verifiedAt": "2026-10-25T04:11:25+00:00"
 }
