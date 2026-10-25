@@ -596,6 +596,72 @@ class OMRMapperReviewPolicyTests(TestCase):
         )
         return tenant, exam, enrollment, submission
 
+    def test_terminal_rejection_or_error_does_not_persist_answers_or_match_student(self):
+        tenant, exam, enrollment, submission = self._make_exam()
+        for status, error in (("FAILED", "failed"), ("REJECTED_BAD_INPUT", None), ("DONE", "worker error")):
+            with self.subTest(status=status, error=error):
+                submission.status = Submission.Status.DISPATCHED
+                submission.meta = {}
+                submission.error_message = ""
+                submission.save(update_fields=["status", "meta", "error_message"])
+                payload = {
+                    "submission_id": submission.id,
+                    "tenant_id": tenant.id,
+                    "version": "v15",
+                    "status": status,
+                    "error": error,
+                    "aligned": True,
+                    "identifier": {"status": "ok", "identifier": "12345678"},
+                    "answers": [
+                        {"question_id": 1, "detected": ["1"], "status": "ok", "confidence": 0.99},
+                    ],
+                }
+                self.assertEqual(apply_omr_ai_result(payload), submission.id)
+                submission.refresh_from_db()
+                self.assertEqual(submission.status, Submission.Status.FAILED)
+                self.assertEqual(submission.meta["ai_result"]["status"], status)
+                self.assertEqual(submission.error_message, error or "AI worker failed")
+                self.assertIsNone(submission.enrollment_id)
+                self.assertFalse(submission.answers.exists())
+                self.assertFalse(OMRRecognitionRun.objects.filter(submission=submission).exists())
+                self.assertFalse(Result.objects.filter(target_id=exam.id, enrollment=enrollment).exists())
+
+    def test_terminal_rejection_preserves_completed_submission_and_rejects_other_tenant(self):
+        tenant, exam, enrollment, submission = self._make_exam()
+        payload = {
+            "submission_id": submission.id,
+            "tenant_id": tenant.id + 10000,
+            "version": "v15",
+            "status": "REJECTED_BAD_INPUT",
+            "error": "invalid input",
+            "answers": [
+                {"question_id": 1, "detected": ["1"], "status": "ok", "confidence": 0.99},
+            ],
+        }
+        self.assertIsNone(apply_omr_ai_result(payload))
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.DISPATCHED)
+        self.assertNotIn("ai_result", submission.meta or {})
+
+        submission.status = Submission.Status.DONE
+        submission.enrollment = enrollment
+        submission.save(update_fields=["status", "enrollment"])
+        result = Result.objects.create(
+            target_type="exam", target_id=exam.id, enrollment=enrollment,
+            total_score=45, max_score=100,
+        )
+        payload["tenant_id"] = tenant.id
+        for status in ("FAILED", "REJECTED_BAD_INPUT", "DONE"):
+            with self.subTest(late_status=status):
+                payload["status"] = status
+                self.assertEqual(apply_omr_ai_result(payload), submission.id)
+                submission.refresh_from_db()
+                result.refresh_from_db()
+                self.assertEqual(submission.status, Submission.Status.DONE)
+                self.assertEqual(result.total_score, 45)
+                self.assertFalse(submission.answers.exists())
+                self.assertNotIn("ai_result", submission.meta or {})
+
     def test_session_candidate_without_exam_enrollment_matches_parent_tail_and_creates_exam_enrollment(self):
         tenant, exam, enrollment, submission = self._make_exam(
             phone="01011112222",
