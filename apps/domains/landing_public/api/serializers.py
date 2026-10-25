@@ -108,13 +108,14 @@ class PublicBoardPostListSerializer(serializers.ModelSerializer):
 class PublicBoardPostDetailSerializer(PublicBoardPostListSerializer):
     """detail — content 포함."""
     is_owner_or_author = serializers.SerializerMethodField()
-    meta = serializers.SerializerMethodField()
 
-    def get_meta(self, obj):
+    def to_representation(self, obj):
+        data = super().to_representation(obj)
         meta = dict(obj.meta) if isinstance(obj.meta, dict) else {}
         if "photos" in meta:
             meta["photos"] = photo_urls(meta["photos"], obj.tenant_id)
-        return meta
+        data["meta"] = meta
+        return data
 
     class Meta(PublicBoardPostListSerializer.Meta):
         fields = PublicBoardPostListSerializer.Meta.fields + (
@@ -178,10 +179,10 @@ class PublicReviewListSerializer(serializers.ModelSerializer):
 
 
 class PublicReviewDetailSerializer(PublicReviewListSerializer):
-    photos = serializers.SerializerMethodField()
-
-    def get_photos(self, obj):
-        return photo_urls(obj.photos, obj.tenant_id)
+    def to_representation(self, obj):
+        data = super().to_representation(obj)
+        data["photos"] = photo_urls(obj.photos, obj.tenant_id)
+        return data
 
     class Meta(PublicReviewListSerializer.Meta):
         fields = PublicReviewListSerializer.Meta.fields + ("content", "photos")
