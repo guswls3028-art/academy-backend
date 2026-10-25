@@ -16,6 +16,7 @@ from rest_framework.exceptions import APIException, NotFound
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from apps.core.parsing import parse_bool
 from apps.api.common.query_params import parse_query_int
+from apps.domains.students.ordering import student_name_codepoint_ordering
 from .models import Attendance
 from .serializers import (
     AttendanceSerializer,
@@ -103,7 +104,9 @@ def _apply_attendance_ordering(queryset, requested_ordering):
         ordering.append("enrollment__student__name")
     if key != "id":
         ordering.append("id")
-    return queryset.order_by(*ordering)
+    return queryset.order_by(*student_name_codepoint_ordering(
+        ordering, name_field="enrollment__student__name",
+    ))
 
 
 def _secession_status_conflict(instance, requested_status):

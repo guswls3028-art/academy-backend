@@ -1,11 +1,12 @@
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
 from apps.domains.attendance.models import Attendance
-from apps.domains.attendance.views import AttendanceViewSet
+from apps.domains.attendance.views import AttendanceViewSet, _apply_attendance_ordering
 from apps.domains.enrollment.test_support import create_enrollment_fixture
 from apps.domains.lectures.test_support import (
     create_lecture_fixture,
@@ -87,7 +88,7 @@ class TestAttendanceListOrdering(TestCase):
             tenant=self.tenant,
             user=user,
             ps_number=f"ORDER-{suffix}",
-            omr_code=f"8800000{suffix}",
+            omr_code=f"{88000000 + suffix:08d}",
             name=name,
             phone=phone,
             parent_phone=parent_phone,
@@ -158,3 +159,55 @@ class TestAttendanceListOrdering(TestCase):
         Attendance.objects.filter(id=duplicate_name.id).update(status="PRESENT")
         refreshed = self._list(f"{query}&page=1")
         self.assertEqual([row["name"] for row in refreshed["results"]], ["가람", "하늘", "가나"])
+
+    def test_letter_suffixes_stay_with_korean_names_across_pages_and_sort_groups(self):
+        # Import order is deliberately different from name order. The suffix is
+        # part of the stored name; never strip it or move it into a Latin group.
+        for suffix, name in enumerate(
+            ("황가온", "김가온B", "나누리B", "김가온", "이하루A", "김가온A", "나누리A", "김가온A"),
+            start=10,
+        ):
+            self._create_attendance(name, "UNSET", f"0108000{suffix:04d}", "01090000000", suffix)
+        current = Attendance.objects.filter(tenant=self.tenant, session=self.session)
+        current.update(status="UNSET")
+        expected = sorted(
+            current.select_related("enrollment__student"),
+            key=lambda row: (row.enrollment.student.name, row.id),
+        )
+        expected_ids = [row.id for row in expected]
+
+        for ordering in ("name", "status", "not_arrived", "invalid"):
+            with self.subTest(ordering=ordering):
+                found = []
+                for page in range(1, (len(expected) + 3) // 4 + 1):
+                    result = self._list(
+                        f"session={self.session.id}&ordering={ordering}&page_size=4&page={page}"
+                    )
+                    self.assertEqual(result["count"], len(expected))
+                    found.extend(row["id"] for row in result["results"])
+                self.assertEqual(found, expected_ids)
+                ordered = _apply_attendance_ordering(current, ordering)
+                if connection.vendor == "postgresql":
+                    self.assertIn('COLLATE "C"', str(ordered.query))
+
+        descending = self._list(f"session={self.session.id}&ordering=-name&page_size=50")
+        self.assertEqual(
+            [row["id"] for row in descending["results"]],
+            [row.id for row in sorted(expected, key=lambda row: row.enrollment.student.name, reverse=True)],
+        )
+        filtered = self._list(f"session={self.session.id}&search=김가온&ordering=name")
+        self.assertEqual([row["name"] for row in filtered["results"]], ["김가온", "김가온A", "김가온A", "김가온B"])
+
+        # Telephone/status primary ordering must use the same name collation
+        # for ties, including descending primary keys and restored invalid input.
+        for ordering in ("-name", "phone", "-phone", "parent_phone", "-parent_phone", "-status", "-not_arrived"):
+            with self.subTest(ordering=ordering):
+                ordered = _apply_attendance_ordering(current, ordering)
+                if connection.vendor == "postgresql":
+                    self.assertIn('COLLATE "C"', str(ordered.query))
+                self.assertEqual(ordered.count(), len(expected))
+        phone_ties = self._list(f"session={self.session.id}&ordering=parent_phone&page_size=50")
+        self.assertEqual(
+            [row["name"] for row in phone_ties["results"][:8]],
+            ["김가온", "김가온A", "김가온A", "김가온B", "나누리A", "나누리B", "이하루A", "황가온"],
+        )
