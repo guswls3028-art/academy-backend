@@ -105,7 +105,7 @@ PostgreSQL 잠금 경합을 검증한다. `test_bulk_present_undo.py`는 잠금 
 재계산한다. 결석을 `ONLINE` 또는 `PRESENT`로 수정하면 수행 가능한 TODO가 다시
 나타난다. 기존 시험 응시·제출·점수·수동 채점·해결된 클리닉 기록과 학생 이력은
 삭제하거나 바꾸지 않는다. 미채점 시험에서 새 자동 클리닉 링크를 만들지 않는 기존
-정책도 유지한다. 화면은 현재 평가 대상 여부와 출결 상태를 함께 받아 결석자의 빈
+정책도 유지한다. 성적표는 같은 차시·수강의 저장된 영상 진행률과 완료 여부를 함께 조회하며, 기록이 없으면 `null`을 반환한다. 다른 차시의 진도를 재사용하거나 조회 중 계산·저장하지 않는다. 화면은 현재 평가 대상 여부와 출결 상태를 함께 받아 결석자의 빈
 칸을 `결석 제외`로 표시한다. 프런트엔드 조작과 모바일 검증은
 [`ATTENDANCE-ROSTER-SAFETY.md`](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/ATTENDANCE-ROSTER-SAFETY.md)가 소유한다.
 

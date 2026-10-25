@@ -356,6 +356,26 @@ class LearningTodoEligibilityPostgresTests(TransactionTestCase):
         )
         self.assertEqual(self._unrelated_write_counts(), writes_before)
 
+    def test_session_scores_project_only_same_session_video_progress(self):
+        online = self.enrollments["ONLINE"]
+        SessionProgress.objects.create(
+            session=self.session, enrollment=online,
+            video_progress_rate=35, video_completed=False,
+        )
+        other_session = Session.objects.create(lecture=self.lecture, order=9, title="Other")
+        SessionProgress.objects.create(
+            session=other_session, enrollment=self.enrollments["PRESENT"],
+            video_progress_rate=100, video_completed=True,
+        )
+        response = self._session_scores()
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = {row["enrollment_id"]: row for row in response.data["rows"]}
+        self.assertEqual(rows[online.id]["video_progress_rate"], 35)
+        self.assertIs(rows[online.id]["video_completed"], False)
+        self.assertIsNone(rows[self.enrollments["PRESENT"].id]["video_progress_rate"])
+        self.assertIsNone(rows[self.enrollments["PRESENT"].id]["video_completed"])
+        self.assertTrue(rows[online.id]["assessment_todo_eligible"])
+
     def test_bulk_present_materializes_todos_and_undo_restores_absent_projection(self):
         absent = self.enrollments["ABSENT"]
         exam = Exam.objects.create(
