@@ -136,9 +136,14 @@ def _weighted_poll(queue: SQSAIQueueAdapter, *, tools_only: bool = False) -> tup
     else:
         total = BASIC_POLL_WEIGHT + LITE_POLL_WEIGHT
         tier = "basic" if random.randint(1, total) <= BASIC_POLL_WEIGHT else "lite"
+        other_tier = "lite" if tier == "basic" else "basic"
+        if queue.queue_name(tier) == queue.queue_name(other_tier):
+            # Default deployments map both CPU tiers to one physical queue.
+            # A single long poll already wakes for either tier there.
+            return queue.receive(tier=tier, wait_time_seconds=SQS_WAIT_TIME_SECONDS), tier
         # Preserve priority under load, but do not spend a 20-second long poll
         # on an empty tier while the other CPU queue already has work.
-        for ready_tier in (tier, "lite" if tier == "basic" else "basic"):
+        for ready_tier in (tier, other_tier):
             msg = queue.receive(tier=ready_tier, wait_time_seconds=0)
             if msg:
                 return msg, ready_tier

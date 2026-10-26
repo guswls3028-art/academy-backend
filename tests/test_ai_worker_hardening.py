@@ -46,6 +46,7 @@ def test_inconsistent_stored_tenant_payload_never_reaches_inference():
 @pytest.mark.parametrize("preferred,other,draw", [("basic", "lite", 1), ("lite", "basic", 4)])
 def test_busy_other_queue_is_received_without_waiting_on_empty_preferred(preferred, other, draw):
     queue = Mock()
+    queue.queue_name.side_effect = lambda tier: tier
     message = {"job_id": "ready"}
     queue.receive.side_effect = lambda *, tier, wait_time_seconds: message if tier == other else None
     with patch.dict("os.environ", {"AI_WORKER_PREMIUM_ONLY": "0"}), patch.object(
@@ -59,12 +60,27 @@ def test_busy_other_queue_is_received_without_waiting_on_empty_preferred(preferr
 
 def test_empty_queues_still_long_poll_instead_of_spinning():
     queue = Mock()
+    queue.queue_name.side_effect = lambda tier: tier
     queue.receive.return_value = None
     with patch.dict("os.environ", {"AI_WORKER_PREMIUM_ONLY": "0"}), patch.object(
         ai_sqs_worker.random, "randint", return_value=1
     ):
         assert ai_sqs_worker._weighted_poll(queue) == (None, "basic")
     assert [c.kwargs["wait_time_seconds"] for c in queue.receive.call_args_list] == [0, 0, 20]
+
+
+def test_tiers_on_one_physical_queue_do_not_add_redundant_probes():
+    from academy.adapters.queue.sqs.ai_queue import SQSAIQueueAdapter
+
+    queue = SQSAIQueueAdapter()
+    queue._impl = Mock()
+    queue._impl._get_queue_name.return_value = "academy-v1-ai-queue"
+    queue._impl.receive_message.return_value = None
+    with patch.dict("os.environ", {"AI_WORKER_PREMIUM_ONLY": "0"}), patch.object(
+        ai_sqs_worker.random, "randint", return_value=1
+    ):
+        assert ai_sqs_worker._weighted_poll(queue) == (None, "basic")
+    queue._impl.receive_message.assert_called_once_with(tier="basic", wait_time_seconds=20)
 
 
 @pytest.mark.parametrize("tools_only,premium,tier", [(True, "0", "tools"), (False, "1", "premium")])

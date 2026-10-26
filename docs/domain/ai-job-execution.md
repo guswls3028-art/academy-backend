@@ -24,7 +24,9 @@ tier는 basic일 수 있다. 실패 정책은 저장된 tier, visibility 연장�
 
 ## 대기·성공·실패·재시도
 
-CPU 워커는 기존 basic/lite 선택 가중치를 유지하면서 선택한 queue와 다른
+CPU 워커는 basic/lite가 같은 물리 queue를 가리키면 기존 단일 long poll을
+유지해 중복 요청을 만들지 않는다. 서로 다른 queue일 때는 기존 basic/lite
+선택 가중치를 유지하면서 선택한 queue와 다른
 CPU queue를 먼저 즉시 조회한다. 둘 다 비었을 때만 선택한 queue에서 최대
 20초 long poll한다. 빈 queue 대기로 이미 준비된 다른 queue의 작업이 지연되는
 경로를 줄이며, 유휴 상태의 반복 호출 루프를 만들지 않는다. Premium 전용과
