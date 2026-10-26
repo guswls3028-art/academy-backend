@@ -25,6 +25,7 @@ from apps.domains.results.views.admin_representative_attempt_view import (
 from apps.domains.results.views.admin_exam_subjective_score_view import AdminExamSubjectiveScoreView
 from apps.domains.results.views.admin_exam_total_score_view import AdminExamTotalScoreView
 from apps.domains.results.views.session_scores_view import SessionScoresView
+from apps.domains.results.utils.initial_exam_score import load_initial_exam_scores
 from apps.domains.students.models import Student
 from apps.support.results.session_scores_dependencies import Attendance
 
@@ -371,6 +372,54 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
             .meta["result_snapshot"],
             {"total_score": 85.0, "objective_score": 45.0, "max_score": 85.0},
         )
+
+    def test_manual_component_corrections_survive_retake_projection(self):
+        cases = (
+            (AdminExamSubjectiveScoreView, 15, 95),
+            (AdminExamObjectiveScoreView, 70, 70),
+            (AdminExamItemScoreView, 15, 95),
+        )
+        for view, score, expected in cases:
+            with self.subTest(view=view.__name__):
+                exam, questions = self._create_structured_exam(view.__name__, [80], [20])
+                result = self._create_result(exam, objective_score=80)
+                ResultItem.objects.create(
+                    result=result, question=questions[0], answer="1", is_correct=True,
+                    score=80, max_score=80, source="omr",
+                )
+                first = result.attempt
+                first.meta["initial_snapshot"] = {
+                    "total_score": 80, "max_score": 100,
+                    "submitted_at": "2026-09-05T10:55:38+09:00",
+                    "source": "submission_sync", "submission_id": 1234,
+                }
+                first.save(update_fields=["meta", "updated_at"])
+                response = self._patch_for_exam(
+                    view, exam, {"score": score},
+                    **({"question_id": questions[1].id} if view is AdminExamItemScoreView else {}),
+                )
+                self.assertEqual(response.status_code, 200, response.data)
+                first.refresh_from_db()
+                snapshot = first.meta["initial_snapshot"]
+                self.assertEqual(snapshot["total_score"], expected)
+                self.assertEqual(snapshot["max_score"], 100)
+                self.assertEqual(snapshot["source"], "submission_sync")
+                self.assertEqual(snapshot["submission_id"], 1234)
+                first.is_representative = False
+                first.save(update_fields=["is_representative", "updated_at"])
+                retake = ExamAttempt.objects.create(
+                    exam=exam, enrollment=self.assigned_enrollment, submission_id=0,
+                    attempt_index=2, is_retake=True, is_representative=True, status="done",
+                    meta={"total_score": 90, "max_score": 100},
+                )
+                result.refresh_from_db()
+                result.attempt = retake
+                result.total_score = 90
+                result.save(update_fields=["attempt", "total_score", "updated_at"])
+                projected = load_initial_exam_scores(
+                    exam_ids=[exam.id], enrollment_ids=[self.assigned_enrollment.id],
+                )[(exam.id, self.assigned_enrollment.id)]
+                self.assertEqual(projected.total_score, expected)
 
     def test_subjective_score_rejects_aggregate_above_current_exam_max(self):
         exam, _questions = self._create_structured_exam(

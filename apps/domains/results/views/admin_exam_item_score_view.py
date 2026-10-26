@@ -14,6 +14,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework import status as drf_status
 from rest_framework.exceptions import ValidationError, NotFound
 
+from apps.domains.results.services.initial_attempt_snapshot import sync_confirmed_initial_snapshot_meta
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultItem, ResultFact, ExamAttempt
 from apps.domains.results.validation import parse_finite_score
@@ -377,6 +378,11 @@ class AdminExamItemScoreView(APIView):
             attempt.meta["total_score"] = float(total_score)
             attempt.meta["synced_from_result"] = True
             attempt.meta.pop("status", None)
+            attempt.meta = sync_confirmed_initial_snapshot_meta(
+                attempt=attempt, meta=attempt.meta, total_score=float(total_score),
+                max_score=float(max_total), confirmed_at=timezone.now(),
+                fallback_source="admin_manual_item",
+            )
             attempt.save(update_fields=["meta", "updated_at"])
 
         finalization = finalize_omr_result_if_ready(result_id=int(result.id))

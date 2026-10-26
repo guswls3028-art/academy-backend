@@ -4,6 +4,17 @@ from unittest import TestCase
 class MessagingPolicyTests(TestCase):
     """자동발송 정책/구현상태 회귀 테스트."""
 
+    def test_general_attendance_has_no_automatic_trigger(self):
+        from apps.domains.messaging.policy import (
+            get_trigger_implementation_status,
+            is_auto_send_enabled_by_default,
+        )
+
+        for trigger in ("check_in_complete", "absent_occurred"):
+            with self.subTest(trigger=trigger):
+                self.assertEqual(get_trigger_implementation_status(trigger), "manual_only")
+                self.assertFalse(is_auto_send_enabled_by_default(trigger))
+
     def test_manual_only_triggers_are_not_default_enabled(self):
         from apps.domains.messaging.policy import (
             get_trigger_implementation_status,

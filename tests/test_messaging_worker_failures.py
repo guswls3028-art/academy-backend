@@ -9,6 +9,7 @@ from apps.worker.messaging_worker.sqs_main import (
     _safe_payload_shape,
     _send_failure_disposition,
     _should_defer_disabled_tenant_message,
+    _worker_observer_copy_block_reason,
     send_one_alimtalk,
 )
 
@@ -271,3 +272,26 @@ def test_solapi_balance_rejection_is_definite_and_not_auto_retryable(
         definitely_not_accepted=result["definitely_not_accepted"],
         provider_retryable=result["provider_retryable"],
     ) == "terminal"
+
+
+def test_requeued_sensitive_observer_copy_is_blocked_before_provider() -> None:
+    payload = {
+        "event_type": "password_reset_student",
+        "target_type": "messaging_observer",
+        "origin_type": "messaging_observer",
+    }
+
+    assert (
+        _worker_observer_copy_block_reason(payload)
+        == "sensitive_observer_copy_blocked"
+    )
+
+
+def test_requeued_non_sensitive_observer_copy_remains_allowed() -> None:
+    payload = {
+        "event_type": "clinic_reminder",
+        "target_type": "messaging_observer",
+        "origin_type": "messaging_observer",
+    }
+
+    assert _worker_observer_copy_block_reason(payload) == ""

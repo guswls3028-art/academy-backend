@@ -444,15 +444,15 @@ class SessionScoresView(APIView):
         # -------------------------------------------------
         # 3) 진행/완료 + Clinic 대상자
         # -------------------------------------------------
-        progress_completed_ids: Set[int] = set(
-            SessionProgress.objects.filter(
-                session=session,
-                enrollment_id__in=enrollment_ids,
-                completed=True,
-            )
-            .values_list("enrollment_id", flat=True)
-            .distinct()
-        )
+        progress_state_map = {
+            int(state["enrollment_id"]): state
+            for state in SessionProgress.objects.filter(
+                session=session, enrollment_id__in=enrollment_ids,
+            ).values("enrollment_id", "completed", "video_progress_rate", "video_completed")
+        }
+        progress_completed_ids: Set[int] = {
+            eid for eid, state in progress_state_map.items() if state["completed"]
+        }
 
         clinic_links = list(
             ClinicLink.objects.filter(
@@ -1128,6 +1128,8 @@ class SessionScoresView(APIView):
                     "homeworks": homeworks_payload,
                     "updated_at": updated_at or timezone.now(),
                     "clinic_required": clinic_required,
+                    "video_progress_rate": progress_state_map.get(eid, {}).get("video_progress_rate"),
+                    "video_completed": progress_state_map.get(eid, {}).get("video_completed"),
                     "progress_completed": progress_completed,
                     "progress_status": progress_status,
                     "name_highlight_clinic_target": name_highlight_clinic_target,

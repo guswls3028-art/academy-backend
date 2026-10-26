@@ -141,6 +141,8 @@ class SessionScoreRowSerializer(serializers.Serializer):
     # 행 단위 클리닉 대상 여부(ClinicLink 기준). 판정 컬럼 "대상"|"합격" 표시용
     clinic_required = serializers.BooleanField(default=False)
     # 최종 차시 진행 상태 SSOT. completed면 미제출/1차 불합격 잔상이 있어도 현재 클리닉 대상이 아니다.
+    video_progress_rate = serializers.IntegerField(min_value=0, max_value=100, allow_null=True, default=None)
+    video_completed = serializers.BooleanField(allow_null=True, default=None)
     progress_completed = serializers.BooleanField(default=False)
     progress_status = serializers.ChoiceField(
         choices=["completed", "in_progress"],

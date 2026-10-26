@@ -148,9 +148,8 @@ IMPLEMENTED_AUTO_TRIGGERS: frozenset = frozenset([
     "password_find_otp",
     "password_reset_student",
     "password_reset_parent",
-    # 출결 (즉시 발화)
-    "check_in_complete",
-    "absent_occurred",
+    # 일반 강의 출결 저장은 발송하지 않는다. 입실/결석 안내는
+    # 담당자의 preview → confirm으로만 접수하는 manual_only 트리거다.
     # 클리닉/상담 (즉시 발화)
     "clinic_reservation_created",
     "clinic_reservation_changed",

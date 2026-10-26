@@ -84,6 +84,17 @@ def _get_template_summary(event_type: str, template_id: str, message_mode: str) 
     return "비지원 채널 차단"
 
 
+def _worker_observer_copy_block_reason(data: dict) -> str:
+    """Block a sensitive observer copy even when it arrives via SQS redelivery."""
+
+    from apps.domains.messaging.observers import observer_copy_block_reason
+
+    return observer_copy_block_reason(
+        trigger=str(data.get("event_type") or ""),
+        payload=data,
+    )
+
+
 def _video_encoding_block_reason(event_type: str, message_mode: str, template_id: str) -> str:
     """영상 인코딩 완료는 알림톡 승인 템플릿 없이 발송하지 않는다."""
     if event_type != "video_encoding_complete":
@@ -1047,6 +1058,7 @@ def main() -> int:
                         channel_policy_block_reason
                         or video_encoding_block_reason
                         or template_policy_block_reason
+                        or _worker_observer_copy_block_reason(data)
                     )
                     if policy_block_reason:
                         logger.error(
