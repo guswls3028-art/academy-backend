@@ -321,6 +321,36 @@ class RegistrationPasswordSafetyTests(TestCase):
         self.assertIsNotNone(reg.student_id)
         self.assertIsNotNone(reg.student.pending_account_notice_since)
 
+    def test_auto_approval_preserves_explicit_parent_password_with_random_default(self):
+        self.tenant.student_registration_auto_approve = True
+        self.tenant.account_password_policy = {"parent_mode": "random"}
+        self.tenant.save(update_fields=["student_registration_auto_approve", "account_password_policy"])
+        TenantDomain.objects.filter(tenant=self.tenant, is_primary=True).update(is_primary=False)
+        TenantDomain.objects.create(tenant=self.tenant, host="regsafe.test", is_primary=True)
+        client = APIClient(HTTP_HOST="regsafe.test")
+        password = " synthetic initial 42 "
+        payload = {
+            **self._registration_payload(),
+            "username": "qa-account-auto-approval",
+            "initial_password": password,
+            "password_confirmation": password,
+            "parent_initial_password_mode": "fixed",
+            "parent_initial_password": password,
+        }
+        response = client.post("/api/v1/students/registration_requests/", payload, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["ps_number"], payload["username"])
+        student = Student.objects.get(pk=response.data["id"], tenant=self.tenant)
+        self.assertTrue(student.user.check_password(password), "student credential preserved")
+        self.assertTrue(student.parent.user.check_password(password), "parent credential preserved")
+        for role, username in (("student", student.ps_number), ("parent", student.parent_phone)):
+            with self.subTest(role=role):
+                client.credentials()
+                login = client.post("/api/v1/token/", {"username": username, "password": password}, format="json")
+                self.assertEqual(login.status_code, 200, login.data)
+                client.credentials(HTTP_AUTHORIZATION="Bearer " + login.data["access"])
+                self.assertEqual(client.get("/api/v1/core/me/").data["tenantRole"], role)
+
     @patch(
         "apps.domains.messaging.services.send_registration_approved_messages",
     )
