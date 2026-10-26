@@ -1393,19 +1393,22 @@ def _expand_singleton_cross_column_shared_range(
     if not shared_content or not body_content:
         return False
 
-    pad_x = max(page_width * 0.012, margin * 2)
     pad_bottom = max(page_height * 0.035, margin * 3)
     combined_content = [*shared_content, *body_content]
+    # Both columns belong to this shared question. Text extents cannot bound
+    # a table/diagram: its outer border may extend well beyond the last glyph.
+    # Keep the same column widths as DualColumnStrategy while retaining the
+    # established vertical limits and the separate body/context roles.
     combined_bbox = (
-        max(0.0, min(block.x0 for block in combined_content) - pad_x),
+        0.0,
         max(0.0, min(shared_block.y0, body_anchor.y0) - margin),
-        min(page_width, max(block.x1 for block in combined_content) + pad_x),
+        page_width,
         min(page_height, max(block.y1 for block in combined_content) + pad_bottom),
     )
     body_bbox = (
-        max(0.0, min(block.x0 for block in body_content) - pad_x),
+        mid_x - margin if shared_in_left else 0.0,
         max(0.0, body_anchor.y0 - margin),
-        min(page_width, max(block.x1 for block in body_content) + pad_x),
+        page_width if shared_in_left else mid_x + margin,
         min(page_height, max(block.y1 for block in body_content) + pad_bottom),
     )
 

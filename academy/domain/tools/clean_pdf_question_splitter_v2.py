@@ -540,7 +540,9 @@ def _build_regions(
             text = anchor.block.text
 
         flags = set(_semantic_flags(text))
-        if anchor.flow == "right" and "visual_context" in flags:
+        # Glyph bounds omit diagram/table borders in every reading flow.
+        # Preserve the established column width, including full-width figures.
+        if "visual_context" in flags:
             x0, x1 = flow_x0, flow_x1
 
         if anchor.flow == "full" and x1 - x0 < page_width * 0.62:
