@@ -495,6 +495,34 @@ def test_scanned_pdf_keeps_pages_without_detected_boxes(tmp_path, monkeypatch):
     assert composer.slides[1].startswith(b"\xff\xd8")
 
 
+def test_native_pdf_visual_content_beyond_text_survives_ppt_export(tmp_path):
+    import fitz
+    import numpy as np
+    from PIL import Image
+    from pptx import Presentation
+
+    from academy.application.use_cases.tools.generate_ppt import GeneratePptFromPdfUseCase
+
+    source = tmp_path / "visual-outside-text.pdf"
+    with fitz.open() as document:
+        page = document.new_page(width=595, height=842)
+        page.insert_text((35, 60), "7. 그림의 내용을 설명하시오.", fontname="korea")
+        page.insert_text((35, 240), "① 보기 하나 ② 보기 둘 ③ 보기 셋", fontname="korea")
+        page.draw_rect(fitz.Rect(35, 90, 570, 245), color=(0, 0, 0))
+        # A diagram marker beyond every glyph must survive the entire export,
+        # including the default clean-PDF route and image preprocessing.
+        page.draw_rect(fitz.Rect(554, 150, 570, 170), color=(1, 0, 0), fill=(1, 0, 0))
+        document.save(source)
+
+    result = GeneratePptFromPdfUseCase().execute(str(source))
+    assert result.mode == "question"
+    assert result.slide_count == 1
+    presentation = Presentation(io.BytesIO(result.pptx_bytes))
+    pixels = np.asarray(Image.open(io.BytesIO(presentation.slides[0].shapes[0].image.blob)).convert("RGB"))
+    red = (pixels[:, :, 0] > 180) & (pixels[:, :, 1] < 80) & (pixels[:, :, 2] < 80)
+    assert red.sum() > 100
+
+
 def test_ppt_pdf_shared_range_keeps_opposite_column_question_body():
     """A shared [7~8] context must not replace the actual right-column Q7."""
     from academy.domain.tools.paper_type import PaperType, PaperTypeResult
@@ -560,3 +588,8 @@ def test_ppt_pdf_shared_range_keeps_opposite_column_question_body():
     assert region.bbox[2] > page_width * 0.85
     assert region.bbox[3] > page_height * 0.65
     assert "shared_context_cross_column" in region.semantic_flags
+    # The actual table border reaches x=570 even though its last glyph is at
+    # x=519. Joining columns must retain their width, not just text extents.
+    assert region.bbox[2] > 570
+    assert region.body_bbox[2] > 570
+    assert region.body_bbox[0] >= page_width / 2 - 2

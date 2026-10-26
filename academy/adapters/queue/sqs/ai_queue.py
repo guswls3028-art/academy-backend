@@ -22,6 +22,9 @@ class SQSAIQueueAdapter:
     def receive(self, tier: str, wait_time_seconds: int = 20) -> Optional[dict[str, Any]]:
         return self._get_impl().receive_message(tier=tier, wait_time_seconds=wait_time_seconds)
 
+    def queue_name(self, tier: str) -> str:
+        return self._get_impl()._get_queue_name(tier)
+
     def delete(self, receipt_handle: str, tier: str) -> bool:
         return self._get_impl().delete_message(receipt_handle=receipt_handle, tier=tier)
 

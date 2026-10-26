@@ -78,6 +78,7 @@ backend/docs/
 | 알림톡 발송 기록의 역할별 조회·상태·개인정보 경계 | [domain/messaging-delivery-log.md](domain/messaging-delivery-log.md) |
 | 시험 원본→회차 범위 HWPX 오답노트 계획 | [refactor/exam-wrong-note-hwpx-plan.md](refactor/exam-wrong-note-hwpx-plan.md) |
 | OMR 출력·인식 | [domain/omr.md](domain/omr.md) |
+| AI·Tools 작업 claim·queue 대기·PDF 자원 경계 | [domain/ai-job-execution.md](domain/ai-job-execution.md) |
 | 배포 아키텍처 | [infrastructure/deployment-architecture.md](infrastructure/deployment-architecture.md) |
 | 배포 경로 비교 | [operations/deployment-modes.md](operations/deployment-modes.md) |
 | 컨테이너 이미지 보안 | [operations/container-image-security.md](operations/container-image-security.md) |

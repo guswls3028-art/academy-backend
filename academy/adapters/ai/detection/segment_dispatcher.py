@@ -1311,7 +1311,11 @@ def _pdf_to_images(
                 pil_img.save(out_path, "PNG")
             finally:
                 pil_img.close()
-            if render_dpi == 200.0:
+            if (
+                render_dpi == 200.0
+                and abs(image_width - physical_width * _PDF_TO_PIXEL_SCALE) <= 1
+                and abs(image_height - physical_height * _PDF_TO_PIXEL_SCALE) <= 1
+            ):
                 render_scale_x = render_scale_y = _PDF_TO_PIXEL_SCALE
             else:
                 render_scale_x = image_width / physical_width

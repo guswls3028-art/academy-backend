@@ -63,6 +63,9 @@ def prepare_ai_job(
         if existing is None:
             logger.warning("AI_JOB_NOT_FOUND | job_id=%s", job_id)
             return None
+        # The queue is a delivery hint; the committed row owns execution data.
+        # Never let an old/tampered envelope switch a job's engine or source.
+        tier = existing.tier
         if not tenant_id:
             logger.error(
                 "AI_JOB_MISSING_TENANT_ID_REJECTED | job_id=%s | source_domain=%s | source_id=%s",
@@ -98,17 +101,28 @@ def prepare_ai_job(
                     preflight_only=True,
                 )
             return None
+        stored_payload = existing.payload
+        if not isinstance(stored_payload, dict) or (
+            stored_payload.get("tenant_id") is not None
+            and str(stored_payload["tenant_id"]) != str(existing.tenant_id)
+        ):
+            logger.error("AI_JOB_STORED_PAYLOAD_REJECTED | job_id=%s", job_id)
+            if not existing.is_terminal():
+                repo.mark_failed(
+                    job_id, "invalid_stored_job_payload", tier, now, preflight_only=True,
+                )
+            return None
         if not repo.mark_running(job_id, worker_id, lease_expires_at, now):
             return None
     return PreparedJob(
         job_id=job_id,
-        job_type=job_type,
+        job_type=existing.job_type,
         tier=tier,
-        payload=payload,
+        payload=stored_payload,
         receipt_handle=receipt_handle,
-        tenant_id=tenant_id,
-        source_domain=source_domain,
-        source_id=source_id,
+        tenant_id=str(existing.tenant_id),
+        source_domain=existing.source_domain,
+        source_id=existing.source_id,
         claim_locked_at=now,
     )
 
