@@ -21,6 +21,9 @@ class _OneMessageQueue:
         self.delete_error = delete_error
         self.delete_calls = 0
 
+    def queue_name(self, tier: str) -> str:
+        return "academy-v1-development-ai-queue"
+
     def receive(self, *, tier: str, wait_time_seconds: int):
         message = self._message
         self._message = None
