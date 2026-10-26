@@ -296,3 +296,7 @@ DB 실패·검증 거절·transaction rollback은 receipt/outbox와 커밋 후 �
 
 계정 초기 비밀번호의 설정·최종 선택은 [계정 초기 비밀번호 SSOT](account-initial-password-policy.md)를 따른다.
 승인된 계정 안내 비밀번호 변수에는 실제 로그인 가능한 값만 넣는다. 초기 설정은 발송 채널/템플릿 승인을 대신하지 않는다.
+
+### 민감 계정 알림 참관 사본의 재전달 차단
+
+계정·인증 알림은 참관 사본 생성 시뿐 아니라 기존 outbox 재시도와 SQS 워커 소비에서도 차단한다. `target_type` 또는 `origin_type`이 `messaging_observer`인 민감 알림은 `sensitive_observer_copy_blocked`로 종결하고 공급자를 호출하지 않는다. 원 수신자의 계정 안내와 일반 업무 참관 사본은 기존 정책을 유지한다. 이력의 원문을 복원하거나 과거 발송을 재실행하지 않는다. outbox 재시도와 워커 경계 회귀에서 차단 사유·실패 상태·enqueue 0을 검증한다.

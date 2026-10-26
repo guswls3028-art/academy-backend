@@ -89,3 +89,20 @@ def build_messaging_observer_payloads(
         )
         payloads.append(observer_payload)
     return payloads
+
+
+def observer_copy_block_reason(*, trigger: str = "", payload: object = None) -> str:
+    """Re-check sensitive observer copies at every retry/worker boundary."""
+
+    if not isinstance(payload, dict):
+        return ""
+    if not (
+        payload.get("target_type") == "messaging_observer"
+        or payload.get("origin_type") == "messaging_observer"
+    ):
+        return ""
+    from apps.domains.messaging.security import is_sensitive_notification
+
+    if is_sensitive_notification(trigger=trigger, payload=payload):
+        return "sensitive_observer_copy_blocked"
+    return ""

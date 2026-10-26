@@ -28,6 +28,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.domains.submissions.models import Submission
+from apps.support.submissions.dependencies import active_submission_ai_job_exists
 from apps.domains.submissions.services.lifecycle import (
     InvalidTransitionError,
     STUCK_RECOVERABLE_STATUSES,
@@ -43,6 +44,9 @@ logger = logging.getLogger(__name__)
 RECOVERY_TIMEOUTS_MIN: dict[str, int] = {
     status: 30 for status in STUCK_RECOVERABLE_STATUSES
 }
+
+
+ACTIVE_OMR_JOB_GRACE = timedelta(minutes=65)
 
 
 @dataclass(frozen=True)
@@ -157,6 +161,12 @@ def recover_stuck_submissions(
                         updated_at__lt=cutoff,
                     )
                 except Submission.DoesNotExist:
+                    report.skipped.append(alert.submission_id)
+                    continue
+                if active_submission_ai_job_exists(
+                    submission_id=int(sub.id), tenant_id=int(sub.tenant_id),
+                    now=recovery_now, grace=ACTIVE_OMR_JOB_GRACE,
+                ):
                     report.skipped.append(alert.submission_id)
                     continue
                 try:

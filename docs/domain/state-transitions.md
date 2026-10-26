@@ -1147,3 +1147,7 @@ true`가 필요하다. `secession_scope=session`은 해당 차시 등록·시험
 - `apps/domains/clinic/models.py`에 독립적인 Submission 모델이 존재 (pending/passed/failed)
 - `apps/domains/submissions/models/submission.py`의 Submission과 이름이 동일하지만 완전히 다른 모델
 - **리스크:** 코드 가독성. 네이밍 정리 권장 (ClinicSubmission 등)
+
+### 진행 중인 OMR 작업의 복구 제외
+
+30분 상태 정체를 감지하더라도 같은 테넌트·제출물의 살아 있는 AI 작업 임대 또는 최근 65분 이내 시작/대기 작업이 있으면 실패 처리하지 않는다. 60분 워커 처리 창에 5분 여유를 두며, 임대와 유예가 모두 끝나면 기존 복구 전이를 적용한다. 다른 테넌트의 작업은 복구를 막거나 완료 결과를 복원하는 근거로 사용하지 않는다. 완료 작업 조회는 테넌트와 제출 ID를 함께 제한하고 생성 시각·ID 순으로 최신 작업을 선택한다. 이미 실패·거절된 제출의 늦은 콜백 복원 금지는 유지한다. 임대 만료 전후와 외부 테넌트 작업 회귀는 `test_state_recovery.py`가 소유한다.
