@@ -136,6 +136,13 @@ def _weighted_poll(queue: SQSAIQueueAdapter, *, tools_only: bool = False) -> tup
     else:
         total = BASIC_POLL_WEIGHT + LITE_POLL_WEIGHT
         tier = "basic" if random.randint(1, total) <= BASIC_POLL_WEIGHT else "lite"
+        # Preserve priority under load, but do not spend a 20-second long poll
+        # on an empty tier while the other CPU queue already has work.
+        for ready_tier in (tier, "lite" if tier == "basic" else "basic"):
+            msg = queue.receive(tier=ready_tier, wait_time_seconds=0)
+            if msg:
+                return msg, ready_tier
+        # Both probes were empty. Keep a long poll to avoid an idle busy loop.
     msg = queue.receive(tier=tier, wait_time_seconds=SQS_WAIT_TIME_SECONDS)
     return msg, tier
 
@@ -487,31 +494,15 @@ def run_ai_sqs_worker(
                 receipt_handle = message.get("receipt_handle")
                 job_id = message.get("job_id")
                 job_type = message.get("job_type") or message.get("type") or message.get("task") or ""
-                tier_from_msg = message.get("tier", tier)
+                # ACK/visibility must use the queue actually polled, regardless
+                # of the envelope's execution tier (Tools jobs often say basic).
+                tier_from_msg = tier
                 payload = message.get("payload", {})
 
                 if not receipt_handle or not job_id or not job_type:
                     logger.error("Invalid message: job_id=%s receipt_handle=%s", job_id, bool(receipt_handle))
                     if job_id and receipt_handle:
                         queue.delete(receipt_handle, tier_from_msg)
-                    continue
-
-                job_type_normalized = job_type.strip().lower()
-                if supported_job_types is not None and job_type_normalized not in supported_job_types:
-                    logger.error(
-                        "UNSUPPORTED_JOB_FOR_WORKER | worker=%s | job_id=%s | job_type=%s",
-                        worker_kind,
-                        job_id,
-                        job_type,
-                    )
-                    fail_ai_job(
-                        uow_factory(),
-                        job_id,
-                        f"unsupported_job_type_for_{worker_kind}_worker:{job_type}",
-                        tier_from_msg,
-                        preflight_only=True,
-                    )
-                    queue.delete(receipt_handle, tier_from_msg)
                     continue
 
                 request_id = uuid.uuid4().hex[:8]
@@ -556,6 +547,22 @@ def run_ai_sqs_worker(
                         break
                     continue
 
+                # Check the persisted type, after resolving the authoritative
+                # job. An envelope must not choose the worker's engine.
+                if supported_job_types is not None and prepared.job_type.strip().lower() not in supported_job_types:
+                    logger.error(
+                        "UNSUPPORTED_JOB_FOR_WORKER | worker=%s | job_id=%s | job_type=%s",
+                        worker_kind, job_id, prepared.job_type,
+                    )
+                    fail_ai_job(
+                        uow_factory(), job_id,
+                        f"unsupported_job_type_for_{worker_kind}_worker:{prepared.job_type}",
+                        prepared.tier, expected_locked_at=prepared.claim_locked_at,
+                    )
+                    _ack_persisted_terminal_message(queue, job_id, message, tier_from_msg)
+                    _current_receipt_handle = None
+                    continue
+
                 # 2) Visibility 연장 시작 (장시간 작업 대비)
                 extender.start(
                     receipt_handle=receipt_handle,
@@ -595,7 +602,7 @@ def run_ai_sqs_worker(
                             request_id, job_id,
                         )
                         ok = fail_ai_job(
-                            uow_factory(), job_id, "inference_timeout_60min", tier_from_msg,
+                            uow_factory(), job_id, "inference_timeout_60min", prepared.tier,
                             expected_locked_at=prepared.claim_locked_at,
                         )
                         if not ok:
@@ -624,7 +631,7 @@ def run_ai_sqs_worker(
                     result = result_container[0] if result_container else None
                     if result is None:
                         ok = fail_ai_job(
-                            uow_factory(), job_id, "inference_error_no_result", tier_from_msg,
+                            uow_factory(), job_id, "inference_error_no_result", prepared.tier,
                             expected_locked_at=prepared.claim_locked_at,
                         )
                         if not ok:
@@ -687,7 +694,7 @@ def run_ai_sqs_worker(
                         consecutive_errors = 0
                     else:
                         ok = fail_ai_job(
-                            uow_factory(), job_id, result.error or "failed", tier_from_msg,
+                            uow_factory(), job_id, result.error or "failed", prepared.tier,
                             expected_locked_at=prepared.claim_locked_at,
                         )
                         if not ok:

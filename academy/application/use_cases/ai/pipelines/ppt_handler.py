@@ -27,6 +27,7 @@ PPT_STEPS = {
     "done": "완료",
 }
 MAX_ARCHIVED_IMAGES = 500
+MAX_ARCHIVED_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_ARCHIVED_IMAGE_TOTAL_BYTES = 1024 * 1024 * 1024
 
 
@@ -70,11 +71,29 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
       - settings: image processing settings (invert, grayscale, etc.)
     """
     payload = job.payload or {}
-    tenant_id = str(payload.get("tenant_id") or job.tenant_id or "") if (
-        payload.get("tenant_id") or job.tenant_id
-    ) else None
+    if not isinstance(payload, dict):
+        return AIResult.failed(job.id, "invalid PPT payload")
+    tenant_id = str(job.tenant_id or "")
+    if (
+        not tenant_id.isascii() or not tenant_id.isdigit() or int(tenant_id) <= 0
+        or (payload.get("tenant_id") is not None and str(payload["tenant_id"]) != tenant_id)
+    ):
+        return AIResult.failed(job.id, "invalid PPT tenant context")
 
     mode = str(payload.get("mode", "images")).lower()
+    if mode == "pdf":
+        source_keys = [payload.get("r2_key")]
+    elif mode == "images":
+        source_keys = [payload["r2_archive_key"]] if payload.get("r2_archive_key") else payload.get("r2_keys")
+    else:
+        return AIResult.failed(job.id, "invalid PPT mode")
+    prefix = f"tenants/{tenant_id}/tools/ppt/tmp/"
+    if (
+        not isinstance(source_keys, list) or not source_keys
+        or len(source_keys) > MAX_ARCHIVED_IMAGES
+        or any(not isinstance(key, str) or not key.startswith(prefix) or key == prefix for key in source_keys)
+    ):
+        return AIResult.failed(job.id, "invalid PPT source scope")
     config = payload.get("config") or {}
     settings = payload.get("settings") or {}
 
@@ -175,6 +194,8 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
                         return AIResult.failed(job.id, "image archive is empty")
                     if len(infos) > MAX_ARCHIVED_IMAGES:
                         return AIResult.failed(job.id, f"too many archived images: {len(infos)}")
+                    if any(info.file_size > MAX_ARCHIVED_IMAGE_BYTES for info in infos):
+                        return AIResult.failed(job.id, "archived image exceeds size limit")
                     total_uncompressed = sum(info.file_size for info in infos)
                     if total_uncompressed > MAX_ARCHIVED_IMAGE_TOTAL_BYTES:
                         return AIResult.failed(job.id, "image archive exceeds total size limit")
@@ -198,28 +219,22 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
                 if not r2_keys:
                     return AIResult.failed(job.id, "r2_archive_key or r2_keys required for images mode")
 
-                image_bytes_list = []
                 total_imgs = len(r2_keys)
-                for i, key in enumerate(r2_keys):
-                    local_path = download_r2_key_to_tmp(r2_key=key, job_id=f"{job.id}-{i}")
-                    tmp_dirs.append(os.path.dirname(local_path))
-                    with open(local_path, "rb") as f:
-                        raw_bytes = f.read()
 
-                    # Apply image processing if settings provided
-                    processed = _apply_image_settings(raw_bytes, settings, i)
-                    image_bytes_list.append(processed)
+                def _iter_downloaded_images():
+                    total_bytes = 0
+                    for i, key in enumerate(r2_keys):
+                        local_path = download_r2_key_to_tmp(r2_key=key, job_id=f"{job.id}-{i}")
+                        tmp_dirs.append(os.path.dirname(local_path))
+                        size = os.path.getsize(local_path)
+                        total_bytes += size
+                        if size > MAX_ARCHIVED_IMAGE_BYTES or total_bytes > MAX_ARCHIVED_IMAGE_TOTAL_BYTES:
+                            raise ValueError("PPT images exceed size limit")
+                        with open(local_path, "rb") as f:
+                            raw_bytes = f.read()
+                        yield _apply_image_settings(raw_bytes, settings, i)
 
-                    dl_pct = int((i + 1) / total_imgs * 100)
-                    _record_progress(
-                        job.id, "downloading", 10 + int(dl_pct * 0.1),
-                        step_index=1, step_total=PPT_STEP_TOTAL,
-                        step_name_display=f"다운로드 {i + 1}/{total_imgs}",
-                        step_percent=dl_pct,
-                        tenant_id=tenant_id,
-                    )
-
-                result = _generate_from_images(image_bytes_list, len(image_bytes_list))
+                result = _generate_from_images(_iter_downloaded_images(), total_imgs)
             pptx_bytes = result.pptx_bytes
             slide_count = result.slide_count
             ppt_mode = None  # 이미지 모드는 페이지/문항 분기 없음

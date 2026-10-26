@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 import tempfile
 from dataclasses import dataclass
 from collections.abc import Sequence
@@ -14,6 +15,11 @@ from typing import List, Tuple
 from PIL import Image
 
 PdfTextLine = tuple[float, float, str, float]
+
+# Shared by PPT, Matchup and OMR. Bound native raster allocation, not just the
+# PIL image afterwards. A4 at 300 DPI remains below both limits.
+MAX_RENDER_PIXELS = 20_000_000
+MAX_RENDER_DIMENSION = 8192
 
 
 @dataclass
@@ -183,9 +189,19 @@ class PdfDocument:
                 f"Page index {page_index} out of range (0-{len(self._doc) - 1})"
             )
         page = self._doc[page_index]
-        zoom = dpi / 72.0
+        width, height = page.rect.width, page.rect.height
+        if not all(math.isfinite(value) and value > 0 for value in (width, height, dpi)):
+            raise ValueError("PDF page dimensions and render DPI must be finite and positive")
+        zoom = min(
+            dpi / 72.0,
+            math.sqrt(MAX_RENDER_PIXELS / width / height),
+            MAX_RENDER_DIMENSION / max(width, height),
+        )
+        # MuPDF rounds each edge outwards. Include those pixels in the budget.
+        while math.ceil(width * zoom) * math.ceil(height * zoom) > MAX_RENDER_PIXELS:
+            zoom *= 0.999
         mat = fitz.Matrix(zoom, zoom)
-        pix = page.get_pixmap(matrix=mat)
+        pix = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB, alpha=False)
         img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
         return img
 

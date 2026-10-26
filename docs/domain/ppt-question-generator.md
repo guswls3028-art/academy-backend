@@ -87,6 +87,21 @@ PDF 모드는 먼저 문항 단위 크롭을 시도하고,
 
 ## 비동기 작업과 저장 경계
 
+워커는 파일을 읽기 전에 저장된 job tenant와 payload tenant의 일치, `pdf/images`
+모드, 입력 키 전체가 정확한 `tenants/<tenant_id>/tools/ppt/tmp/`에 속하는지
+검증한다. 목록에 다른 tenant 키가 섞여 있어도 첫 파일을 내려받지 않는다.
+잘못된 입력은 작업 실패로 반환하고 결과 파일을 만들지 않는다. 정상 사용자는
+기존 업로드·진행 상태·완료 파일 다운로드 흐름을 그대로 사용한다.
+
+압축 이미지 목록은 최대 500개·전체 해제 크기 1GB와 함께 개별 이미지 20MB를
+압축 해제 전에 검사한다. 기존 개별 키 목록도 이미지 한 장씩 내려받아 PPT에
+추가해 모든 원본 바이트를 동시에 보관하지 않는다. 실패 시 로컬 임시 파일과
+미완료 출력 키는 기존 정리 경로를 따른다. 원본 R2 자료를 일괄 삭제하지 않는다.
+공통 PDF 렌더러는 픽셀 할당 전에 배율을 제한하며 세부 계약은
+[AI·Tools 실행 경계](ai-job-execution.md#pdf이미지-자원-경계)에 있다.
+정상 PPTX 재열기·순서·임시 정리와 잘못된 scope/압축 입력은
+`tests/test_ppt_worker_input_boundary.py`로 검증한다.
+
 API는 업로드를 `tenants/<tenant_id>/tools/ppt/tmp/` 아래에 두고
 `ppt_generation` 작업을 Tools queue로 보낸다. Tools worker가 원본을 임시
 디렉터리에 내려받아 분할·렌더·PPTX 조립을 수행한 뒤 로컬 임시 디렉터리를

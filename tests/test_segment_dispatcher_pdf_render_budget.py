@@ -16,7 +16,7 @@ from academy.domain.tools import paper_type, question_splitter
 
 @pytest.mark.parametrize(
     ("width", "height", "page_count"),
-    [(595, 842, 1), (3000, 4000, 9), (4284, 5712, 1)],
+    [(595, 842, 1), (3000, 4000, 9), (4284, 5712, 1), (72, 14400, 1)],
 )
 def test_pdf_page_budget_preserves_result_geometry_and_metadata(
     monkeypatch, tmp_path, width, height, page_count,
@@ -25,7 +25,8 @@ def test_pdf_page_budget_preserves_result_geometry_and_metadata(
 
     class FakeImage:
         def __init__(self, dpi):
-            self.size = (round(width * dpi / 72), round(height * dpi / 72))
+            zoom = min(dpi / 72, 8192 / max(width, height))
+            self.size = (round(width * zoom), round(height * zoom))
             self.closed = False
 
         def save(self, path, _format):
@@ -95,7 +96,7 @@ def test_pdf_page_budget_preserves_result_geometry_and_metadata(
         assert all(image.closed for _, _, image in rendered)
         for index, dpi, image in rendered:
             assert image.size[0] * image.size[1] <= dispatcher._PDF_RENDER_MAX_PIXELS
-            if width == 595:
+            if width in (595, 72):
                 assert dpi == 200.0
             else:
                 assert dpi < 200.0
@@ -103,8 +104,8 @@ def test_pdf_page_budget_preserves_result_geometry_and_metadata(
             assert page["page_index"] == index
             assert page["numbers"] == [index + 1]
             assert Path(page["image_path"]).exists()
-            sx = dispatcher._PDF_TO_PIXEL_SCALE if dpi == 200.0 else image.size[0] / width
-            sy = dispatcher._PDF_TO_PIXEL_SCALE if dpi == 200.0 else image.size[1] / height
+            sx = dispatcher._PDF_TO_PIXEL_SCALE if width == 595 else image.size[0] / width
+            sy = dispatcher._PDF_TO_PIXEL_SCALE if width == 595 else image.size[1] / height
             expected = dispatcher._bbox_points_to_pixels(
                 (width * .1, height * .1, width * .4, height * .3),
                 scale_x=sx, scale_y=sy,
@@ -115,8 +116,9 @@ def test_pdf_page_budget_preserves_result_geometry_and_metadata(
             assert meta["display_box"] == meta["audit_box"] == expected
             assert meta["body_box"] != expected
             assert meta["context_box"] != expected
-            assert abs(expected[0] / image.size[0] - .1) < .002
-            assert abs(expected[1] / image.size[1] - .1) < .002
+            # Very narrow bounded rasters quantize coordinates in whole pixels.
+            assert abs(expected[0] / image.size[0] - .1) <= max(.002, 1 / image.size[0])
+            assert abs(expected[1] / image.size[1] - .1) <= max(.002, 1 / image.size[1])
             assert questions[index]["page_index"] == index
             assert questions[index]["bbox"] == list(expected)
             assert questions[index]["meta_extra"]["segmentation_flags"] == ["synthetic_question"]

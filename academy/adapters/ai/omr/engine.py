@@ -602,6 +602,45 @@ def _detect_single_question(
         "rect": question_rect,
     }
 
+    # Four/five filled choices contaminate the bottom-half noise pool. Require
+    # positive per-bubble ink evidence before using this dense-mark path; a
+    # uniformly dark row or printed outlines must not become multiple answers.
+    dense_candidates = [
+        (label, details) for label, _, details in fills
+        if details.get("raw_darkness", 0.0) >= 0.20
+    ]
+    dense_marks = []
+    # Ordinary one/two/three-choice rows never pay for another image statistic.
+    if config.use_elliptical_mask and len(dense_candidates) >= max(3, len(fills) - 1):
+        rects_by_label = {rect["label"]: rect for rect in bubble_rects}
+        for label, details in dense_candidates:
+            rect = rects_by_label[label]
+            x, y, w, h = (rect[key] for key in ("x", "y", "w", "h"))
+            roi = gray_raw[y:y + h, x:x + w]
+            if not roi.size:
+                continue
+            mask = np.zeros((h, w), dtype=np.uint8)
+            cv2.ellipse(mask, (w // 2, h // 2), (w // 2, h // 2), 0, 0, 360, 255, -1)
+            paper = roi[mask == 0]
+            mx, my = int(w * 0.2), int(h * 0.2)
+            center = roi[my:h - my, mx:w - mx]
+            if not paper.size or not center.size:
+                continue
+            contrast = max(0.0, (float(np.percentile(paper, 75)) - float(np.mean(center))) / 255.0)
+            details["local_contrast"] = round(contrast, 4)
+            if contrast >= 0.20:
+                dense_marks.append(label)
+    if len(dense_marks) >= max(3, len(fills) - 1):
+        dense_marks.sort(key=lambda label: choice_order[label])
+        contrast = min(details["local_contrast"] for label, _, details in fills if label in dense_marks)
+        raw_data["multi_decision"] = {"decision": "dense_local_contrast"}
+        return OMRAnswerV1(
+            version=meta_version, question_id=q_num,
+            detected=dense_marks, marking="multi",
+            confidence=round(min(1.0, contrast / 0.5), 4), status="ok",
+            raw=raw_data,
+        )
+
     # ── 판정 (v15: 강건한 noise floor 추정) ──
     # 노이즈는 "마킹 안 된 버블들"의 점수 분포여야 한다. 이중마킹/삼중마킹이 있으면
     # 전체 IQR이 폭증해 blank threshold가 비현실적으로 커진다 → bottom-half에서만
