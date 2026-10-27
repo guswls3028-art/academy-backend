@@ -10,6 +10,41 @@ import subprocess
 import sys
 import tempfile
 
+FAILURE_CODES = frozenset({
+    "development_batch_required", "candidate_environment_mismatch",
+    "development_bucket_required", "general_video_must_remain_disabled",
+    "development_database_required", "production_database_denial_unproven",
+    "production_parameter_denial_unproven", "production_parameter_access_not_denied",
+    "production_bucket_denial_unproven", "production_bucket_access_not_denied",
+    "invalid_batch_identity", "synthetic_source_roundtrip_mismatch",
+    "compatible_frame_decode_failed", "compatible_upload_size_mismatch",
+    "synthetic_objects_remain",
+})
+
+
+def verify_database_boundary(connection, production_database: str) -> None:
+    # libpq connection-time FATAL errors may have no SQLSTATE. Query the same
+    # authoritative permission used by the development/preprod release gates.
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT current_database(), current_user, "
+            "has_database_privilege(current_user, %s, 'CONNECT')",
+            [production_database],
+        )
+        database, user, production_connect = cursor.fetchone()
+    if (database, user) != ("academy_api_development", "academy_api_development_app"):
+        raise RuntimeError("development_database_required")
+    if production_connect is not False:
+        raise RuntimeError("production_database_denial_unproven")
+
+
+def failure_record(error: Exception) -> dict:
+    # Only fixed guard codes can cross the log boundary, never SDK/DB messages.
+    code = error.args[0] if type(error) is RuntimeError and len(error.args) == 1 else None
+    return {"schema": "homework-preview-development-canary/v1", "success": False,
+            "failure_type": type(error).__name__,
+            "failure_code": code if isinstance(code, str) and code in FAILURE_CODES else "unexpected_error"}
+
 
 def run(*, release_id: str, production_database: str) -> dict:
     from django.conf import settings
@@ -28,23 +63,7 @@ def run(*, release_id: str, production_database: str) -> dict:
         raise RuntimeError("development_bucket_required")
     if settings.VIDEO_BATCH_JOB_QUEUE or settings.VIDEO_BATCH_JOB_DEFINITION:
         raise RuntimeError("general_video_must_remain_disabled")
-    connection = connections["default"]
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT current_database(), current_user")
-        identity = cursor.fetchone()
-    if tuple(identity) != ("academy_api_development", "academy_api_development_app"):
-        raise RuntimeError("development_database_required")
-    parameters = connection.get_connection_params()
-    parameters.update(dbname=production_database, connect_timeout=5)
-    denied = False
-    try:
-        unexpected = connection.Database.connect(**parameters)
-    except Exception as error:
-        denied = (getattr(error, "sqlstate", None) or getattr(error, "pgcode", None)) == "42501"
-    else:
-        unexpected.close()
-    if not denied:
-        raise RuntimeError("production_database_denial_unproven")
+    verify_database_boundary(connections["default"], production_database)
 
     ssm = boto3.client("ssm", region_name=os.environ["AWS_DEFAULT_REGION"])
     try:
@@ -59,7 +78,9 @@ def run(*, release_id: str, production_database: str) -> dict:
     try:
         storage.head_bucket(Bucket="academy-ai")
     except ClientError as error:
-        if str(error.response["Error"]["Code"]) not in {"403", "AccessDenied"}:
+        # R2 may conceal a forbidden bucket with 404, as in the owning
+        # development runtime gate. Transport/authentication errors still fail.
+        if str(error.response["Error"]["Code"]) not in {"403", "404", "AccessDenied", "NoSuchBucket"}:
             raise RuntimeError("production_bucket_denial_unproven") from None
     else:
         raise RuntimeError("production_bucket_access_not_denied")
@@ -114,12 +135,11 @@ def main() -> int:
     if len(sys.argv) != 3:
         return 2
     import django
-    django.setup()
     try:
+        django.setup()
         result = run(release_id=sys.argv[1], production_database=sys.argv[2])
     except Exception as error:
-        # Only a bounded exception class; never emit connection/credential values.
-        print(json.dumps({"schema": "homework-preview-development-canary/v1", "success": False, "failure_type": type(error).__name__}))
+        print(json.dumps(failure_record(error)))
         return 1
     print(json.dumps({**result, "success": True}, sort_keys=True))
     return 0

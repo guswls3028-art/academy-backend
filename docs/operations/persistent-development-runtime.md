@@ -588,7 +588,13 @@ DB/R2만 사용하며 일반 강의 Video 파이프라인과 Redis는 활성화�
   최대 45초 동안 5초 간격으로 재시도한다. SDK 자동 재시도는 끄고, timeout·5xx 등
   접수 여부가 불확실한 응답은 재제출하지 않는다. 영구 거부는 계속 release를 차단한다.
   Batch에서 개발 DB/역할, 운영 DB CONNECT 거부, 운영 worker parameter·R2 거부,
-  합성 HEVC R2 왕복, H.264 변환과 실제 RGB 프레임 디코딩을 검증한다. tenant/user 행은
+  합성 HEVC R2 왕복, H.264 변환과 실제 RGB 프레임 디코딩을 검증한다. DB 거부는 기존
+  개발/preprod gate와 같은 `has_database_privilege(current_user, 대상 DB, 'CONNECT')`
+  결과가 정확히 false인지 확인한다. 초기 연결 FATAL의 빈 SQLSTATE를 접근 허용으로
+  오판하지 않으며, 역할·DB 불일치, 조회 실패와 불명확한 결과는 거부한다. R2는 기존
+  개발 gate와 같은 403/404/AccessDenied/NoSuchBucket만 거부 증거로 인정한다.
+  실패 로그에는 고정 allowlist의 검사 코드 또는 `unexpected_error`와 예외 유형만
+  남기며 연결정보·SDK/DB 오류 원문은 출력하지 않는다. tenant/user 행은
   만들지 않고 `qa-homework-preview/<정확한 Batch UUID>/`의 두 객체만 쓴다.
 - 성공·실패 모두 terminal job 확인 뒤 같은 두 key만 SSM으로 삭제하고 prefix 잔여 0을
   재조회한다. 제출 응답 유실은 고유 jobName으로 재조회하며 중복 제출하지 않는다.

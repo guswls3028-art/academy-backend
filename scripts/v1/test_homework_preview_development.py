@@ -182,4 +182,82 @@ class HomeworkRuntimeTests(unittest.TestCase):
             self.assertFalse(module.container_properties_match({**actual, "logConfiguration": changed_log}, expected))
 
 
+class HomeworkCanaryBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        from apps.worker.video_worker import homework_preview_canary
+        from unittest.mock import MagicMock
+        self.canary = homework_preview_canary
+        self.connection = MagicMock()
+        self.cursor = self.connection.cursor.return_value.__enter__.return_value
+        self.cursor.fetchone.return_value = (
+            "academy_api_development", "academy_api_development_app", False,
+        )
+
+    def test_catalog_denial_does_not_depend_on_connection_error_sqlstate(self):
+        self.canary.verify_database_boundary(self.connection, "postgres")
+        query, parameters = self.cursor.execute.call_args.args
+        self.assertIn("has_database_privilege(current_user, %s, 'CONNECT')", query)
+        self.assertEqual(parameters, ["postgres"])
+        self.connection.Database.connect.assert_not_called()
+
+    def test_wrong_identity_or_unknown_connect_privilege_blocks_canary(self):
+        for row in (("postgres", "academy_api_development_app", False),
+                    ("academy_api_development", "production_role", False),
+                    ("academy_api_development", "academy_api_development_app", True),
+                    ("academy_api_development", "academy_api_development_app", None),
+                    ("academy_api_development", "academy_api_development_app", 0)):
+            with self.subTest(row=row), self.assertRaises(RuntimeError):
+                self.cursor.fetchone.return_value = row
+                self.canary.verify_database_boundary(self.connection, "postgres")
+
+    def test_catalog_read_failure_is_never_treated_as_denial(self):
+        self.cursor.execute.side_effect = RuntimeError("transport failure")
+        with self.assertRaisesRegex(RuntimeError, "transport failure"):
+            self.canary.verify_database_boundary(self.connection, "postgres")
+
+    def test_failure_log_only_contains_fixed_guard_codes(self):
+        from botocore.exceptions import ClientError
+        expected = self.canary.failure_record(RuntimeError("production_database_denial_unproven"))
+        self.assertEqual(expected["failure_code"], "production_database_denial_unproven")
+        for error in (RuntimeError("secret-connection-url"),
+                      ValueError("production_database_denial_unproven"),
+                      ClientError({"Error": {"Code": "Denied", "Message": "secret-connection-url"}}, "Read")):
+            with self.subTest(error_type=type(error).__name__):
+                record = self.canary.failure_record(error)
+                self.assertEqual(record["failure_code"], "unexpected_error")
+                self.assertNotIn("secret-connection-url", json.dumps(record))
+
+    def test_storage_denial_matches_development_gate_and_rejects_unknown_errors(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from botocore.exceptions import ClientError
+        settings = SimpleNamespace(R2_AI_BUCKET="academy-development-artifacts",
+                                   VIDEO_BATCH_JOB_QUEUE="", VIDEO_BATCH_JOB_DEFINITION="")
+        storage, ssm = MagicMock(), MagicMock()
+        ssm.get_parameter.side_effect = ClientError({"Error": {"Code": "AccessDenied"}}, "GetParameter")
+        storage.put_object.side_effect = RuntimeError("reached_synthetic_write")
+        storage.list_objects_v2.return_value = {"KeyCount": 0}
+        environment = {"AWS_BATCH_JOB_ID": "12345678-1234-1234-1234-123456789abc",
+                       "ACADEMY_RUNTIME_ENV": "development", "ACADEMY_DEVELOPMENT_RELEASE_ID": "owned-release",
+                       "AWS_DEFAULT_REGION": "ap-northeast-2"}
+        with patch.dict("os.environ", environment), patch("django.db.connections", {"default": self.connection}), \
+                patch("django.conf.settings", settings), \
+                patch("boto3.client", return_value=ssm), \
+                patch.dict(sys.modules, {"apps.infrastructure.storage.r2": SimpleNamespace(_get_s3_client=lambda **_: storage)}):
+            for code in ("403", "404", "AccessDenied", "NoSuchBucket", "401", "RequestTimeout", "InternalError"):
+                with self.subTest(code=code):
+                    storage.reset_mock()
+                    storage.head_bucket.side_effect = ClientError({"Error": {"Code": code}}, "HeadBucket")
+                    recognized = code in {"403", "404", "AccessDenied", "NoSuchBucket"}
+                    expected = "reached_synthetic_write" if recognized else "production_bucket_denial_unproven"
+                    with self.assertRaisesRegex(RuntimeError, expected):
+                        self.canary.run(release_id="owned-release", production_database="postgres")
+                    self.assertEqual(storage.put_object.called, recognized)
+            storage.reset_mock()
+            storage.head_bucket.side_effect = None
+            with self.assertRaisesRegex(RuntimeError, "production_bucket_access_not_denied"):
+                self.canary.run(release_id="owned-release", production_database="postgres")
+            storage.put_object.assert_not_called()
+
+
 if __name__ == "__main__": unittest.main()
