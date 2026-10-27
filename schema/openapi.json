@@ -5189,6 +5189,7 @@
             "type": "boolean"
           },
           "is_system": {
+            "default": false,
             "description": "시스템용 강의 (전체공개영상 컨테이너 등). 강의 목록·성적 등에서 자동 제외.",
             "type": "boolean"
           },
@@ -5509,6 +5510,7 @@
             "type": "boolean"
           },
           "is_system": {
+            "default": false,
             "description": "시스템용 강의 (전체공개영상 컨테이너 등). 강의 목록·성적 등에서 자동 제외.",
             "type": "boolean"
           },
@@ -9911,6 +9913,7 @@
             "type": "boolean"
           },
           "is_system": {
+            "default": false,
             "description": "시스템용 강의 (전체공개영상 컨테이너 등). 강의 목록·성적 등에서 자동 제외.",
             "type": "boolean"
           },
