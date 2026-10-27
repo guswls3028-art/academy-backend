@@ -19,7 +19,8 @@ spec.loader.exec_module(module)
 class HomeworkRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.config = {"global": {"region": "ap-northeast-2", "accountId": "809466760795"},
-            "apiDevelopment": {"workersEnvParameter": "/academy/workers/development/env", "accessMode": "ssm-only", "roleName": "academy-api-development-role"},
+            "apiDevelopment": {"workersEnvParameter": "/academy/workers/development/env", "accessMode": "ssm-only", "roleName": "academy-api-development-role",
+                "instanceName": "academy-v1-api-development", "managedByTag": "academy-api-development"},
             "homeworkPreviewDevelopment": {"queueName": "academy-development-homework-video-queue", "jobDefinitionPrefix": "academy-development-homework-video-",
                 "computeEnvironmentName": "academy-development-homework-video-ce", "jobRoleName": "academy-development-homework-video-job-role",
                 "executionRoleName": "academy-development-homework-video-execution-role", "apiPolicyName": module.POLICY_NAME,
@@ -107,6 +108,42 @@ class HomeworkRuntimeTests(unittest.TestCase):
                     exec(module.canary_submission_script("ap-northeast-2", {}), {})
                 factory.return_value.submit_job.assert_called_once()
                 sleep.assert_not_called()
+
+    def test_canary_completes_with_submit_only_api_permission_and_exact_cleanup(self):
+        from botocore.exceptions import ClientError
+        runtime = self.runtime()
+        resources = {"queue": "owned-queue", "definition": "owned-definition:1"}
+        job_id = "12345678-1234-1234-1234-123456789abc"
+        cleanup = {"remaining_objects": 0, "tenant_rows_created": 0, "user_rows_created": 0}
+
+        def submit(**payload):
+            # Reproduce Batch's extra authorization check on tagged submission.
+            if "tags" in payload:
+                raise ClientError({"Error": {"Code": "AccessDeniedException", "Message": "batch:TagResource denied"}}, "SubmitJob")
+            self.assertEqual(payload["jobQueue"], resources["queue"])
+            self.assertEqual(payload["jobDefinition"], resources["definition"])
+            self.assertTrue(payload["jobName"].startswith("qa-homework-preview-"))
+            return {"jobId": job_id}
+
+        def remote(command):
+            if command == runtime.cleanup_command(job_id):
+                return cleanup
+            source = command.split("<<'HOMEWORK_CANARY'\n", 1)[1].rsplit("\nHOMEWORK_CANARY", 1)[0]
+            output = io.StringIO()
+            with patch("boto3.client") as factory, patch("time.monotonic", side_effect=[0, 45]), redirect_stdout(output):
+                factory.return_value.submit_job.side_effect = submit
+                exec(source, {})
+                factory.return_value.submit_job.assert_called_once()
+            return json.loads(output.getvalue())
+
+        with patch.object(runtime, "aws", side_effect=[
+            {"Reservations": [{"Instances": [{"InstanceId": "owned-instance"}]}]},
+            {"jobs": [{"status": "SUCCEEDED"}]},
+        ]), patch.object(runtime, "remote_json", side_effect=remote) as remote_call, patch.object(runtime, "verify_job", return_value={"status": "SUCCEEDED"}) as verify:
+            self.assertEqual(runtime.canary(resources, "academy"), {"status": "SUCCEEDED"})
+            verify.assert_called_once_with(resources, job_id)
+            self.assertEqual(remote_call.call_args_list[-1].args, (runtime.cleanup_command(job_id),))
+        self.assertEqual(runtime.evidence, {"job_id": job_id, "cleanup": cleanup})
 
     def test_isolation_grant_and_oidc_policy_stay_bounded(self):
         grant = json.loads((ROOT / "scripts/v1/templates/iam/policy_homework_preview_development_submit.json").read_text())

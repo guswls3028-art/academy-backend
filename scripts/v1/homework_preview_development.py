@@ -270,7 +270,9 @@ class Runtime:
         # API instance role, not the orchestration role, proves the product's SubmitJob permission.
         payload = {"jobName": "qa-homework-preview-" + uuid.uuid4().hex, "jobQueue": runtime["queue"], "jobDefinition": runtime["definition"],
             "containerOverrides": {"command": ["python", "-m", "apps.worker.video_worker.homework_preview_canary", self.release, production_database]},
-            "tags": {**self.tags, "Purpose": "codec-canary"}, "timeout": {"attemptDurationSeconds": 300}}
+            # Match the product's SubmitJob-only grant. Supplying job tags also
+            # requires TagResource, which the API role intentionally cannot use.
+            "timeout": {"attemptDurationSeconds": 300}}
         code = canary_submission_script(self.region, payload)
         command = "set -eu\ntimeout 75 docker exec -i academy-api python - <<'HOMEWORK_CANARY'\n" + code + "\nHOMEWORK_CANARY"
         self.instance_id = targets[0]["InstanceId"]

@@ -555,6 +555,9 @@ DB/R2만 사용하며 일반 강의 Video 파이프라인과 Redis는 활성화�
   opt-in 없이 이전 검증 이미지로 접속 기반을 만든다.
 - 공식 workflow와 수동 `deploy.ps1`은 후보 API 활성화 전에 codec canary를 요구한다.
   현재 active development API container의 instance role로 고정 명령을 SubmitJob한다.
+  제품과 같은 SubmitJob-only 권한으로 검사하며 추가 TagResource 권한을 요구하는 작업
+  태그는 보내지 않는다. 전용 queue/definition, 고유 jobName과 반환된 job ID로 소유권을
+  확인하고 인프라 자원의 기존 소유 태그는 유지한다.
   IAM 정책 readback과 지역별 권한 적용 사이의 전파 지연은 명시적 AccessDenied 응답에만
   최대 45초 동안 5초 간격으로 재시도한다. SDK 자동 재시도는 끄고, timeout·5xx 등
   접수 여부가 불확실한 응답은 재제출하지 않는다. 영구 거부는 계속 release를 차단한다.
