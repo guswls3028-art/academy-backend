@@ -5,6 +5,7 @@ import json
 from django.core.files.uploadedfile import SimpleUploadedFile, TemporaryUploadedFile
 from django.test import SimpleTestCase, override_settings
 from django.urls import path
+from rest_framework import serializers
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -28,7 +29,21 @@ class ParserProbe(APIView):
         return Response({"label": request.data["label"]})
 
 
-urlpatterns = [path("parser-probe/", ParserProbe.as_view())]
+class RowSerializer(serializers.Serializer):
+    score = serializers.IntegerField(min_value=0)
+
+
+class BulkValidationProbe(ParserProbe):
+    def post(self, request):
+        serializer = RowSerializer(data=request.data, many=True)
+        serializer.is_valid(raise_exception=True)
+        return Response(serializer.validated_data)
+
+
+urlpatterns = [
+    path("parser-probe/", ParserProbe.as_view()),
+    path("bulk-probe/", BulkValidationProbe.as_view()),
+]
 
 
 @override_settings(
@@ -65,3 +80,41 @@ class RequestSizeBoundaryTests(SimpleTestCase):
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"size": size, "spooled": True, "label": "원본 자료"})
+
+    def test_non_text_json_charsets_are_rejected_without_decoding(self):
+        for charset in ("zlib_codec", "bz2_codec", "base64_codec", "rot_13"):
+            with self.subTest(charset=charset):
+                response = self.client.generic(
+                    "POST", "/parser-probe/", data=b'{"label":"ok"}',
+                    content_type=f"application/json; charset={charset}",
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("Unsupported charset", response.json()["detail"])
+
+    def test_oversized_content_type_is_rejected_before_parser_selection(self):
+        response = self.client.generic(
+            "POST", "/parser-probe/", data=b'{"label":"ok"}',
+            content_type='application/json; padding="' + "x" * 256 + '"',
+        )
+        self.assertEqual(response.status_code, 415)
+
+    def test_long_accept_token_is_skipped_and_valid_json_remains_usable(self):
+        long_token = 'application/json; padding="' + "x" * 300 + '"'
+        for accept, expected in ((long_token, 406), (long_token + ", application/json", 200)):
+            with self.subTest(expected=expected):
+                response = self.client.post(
+                    "/parser-probe/", data='{"label":"ok"}', content_type="application/json",
+                    HTTP_ACCEPT=accept,
+                )
+                self.assertEqual(response.status_code, expected)
+
+    def test_bulk_validation_keeps_existing_per_row_error_array(self):
+        response = self.client.post(
+            "/bulk-probe/", data=json.dumps([{"score": 7}, {"score": -1}]),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        errors = response.json()
+        self.assertIsInstance(errors, list)
+        self.assertEqual(errors[0], {})
+        self.assertEqual(len(errors[1]["score"]), 1)

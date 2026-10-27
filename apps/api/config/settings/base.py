@@ -293,6 +293,8 @@ TEMPLATES = [
 # ==================================================
 
 REST_FRAMEWORK = {
+    # Preserve the existing per-row validation error contract during the DRF security upgrade.
+    "LIST_SERIALIZER_ERRORS_AS_DICT": False,
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
