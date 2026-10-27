@@ -28,6 +28,7 @@ node_modules/
 # storage/* 로 내용만 무시하면 루트 storage 디렉터리는 탐색되어 예외 규칙이 적용됨.
 storage/*
 *.mp4
+!apps/worker/video_worker/fixtures/homework-hevc.mp4
 *.avi
 *.mov
 *.mkv

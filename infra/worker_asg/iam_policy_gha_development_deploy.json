@@ -107,6 +107,103 @@
         "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/env",
         "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/workers/development/env"
       ]
+    },
+    {
+      "Sid": "HomeworkNetworkRead",
+      "Effect": "Allow",
+      "Action": "ec2:DescribeRouteTables",
+      "Resource": "*"
+    },
+    {
+      "Sid": "HomeworkBatchRead",
+      "Effect": "Allow",
+      "Action": [
+        "batch:DescribeJobQueues",
+        "batch:DescribeJobs",
+        "batch:ListJobs"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "HomeworkBatchRuntime",
+      "Effect": "Allow",
+      "Action": [
+        "batch:CreateComputeEnvironment",
+        "batch:CreateJobQueue",
+        "batch:RegisterJobDefinition",
+        "batch:TagResource"
+      ],
+      "Resource": [
+        "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-development-homework-video-ce",
+        "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-development-homework-video-queue",
+        "arn:aws:batch:ap-northeast-2:809466760795:job-definition/academy-development-homework-video-*"
+      ]
+    },
+    {
+      "Sid": "HomeworkJobTerminate",
+      "Effect": "Allow",
+      "Action": "batch:TerminateJob",
+      "Resource": "arn:aws:batch:ap-northeast-2:809466760795:job/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/ManagedBy": "academy-homework-preview-development"
+        }
+      }
+    },
+    {
+      "Sid": "HomeworkOwnedRoles",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:TagRole",
+        "iam:GetRole",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
+        "iam:PutRolePolicy",
+        "iam:GetRolePolicy"
+      ],
+      "Resource": [
+        "arn:aws:iam::809466760795:role/academy-development-homework-video-job-role",
+        "arn:aws:iam::809466760795:role/academy-development-homework-video-execution-role"
+      ]
+    },
+    {
+      "Sid": "HomeworkEcsPassRoles",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": [
+        "arn:aws:iam::809466760795:role/academy-development-homework-video-job-role",
+        "arn:aws:iam::809466760795:role/academy-development-homework-video-execution-role"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "ecs-tasks.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "HomeworkApiSubmitPolicy",
+      "Effect": "Allow",
+      "Action": [
+        "iam:PutRolePolicy",
+        "iam:GetRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::809466760795:role/academy-api-development-role"
+    },
+    {
+      "Sid": "HomeworkCodecLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:TagResource",
+        "logs:ListTagsLogGroup",
+        "logs:PutRetentionPolicy",
+        "logs:GetLogEvents"
+      ],
+      "Resource": [
+        "arn:aws:logs:ap-northeast-2:809466760795:log-group:/aws/batch/academy-homework-development",
+        "arn:aws:logs:ap-northeast-2:809466760795:log-group:/aws/batch/academy-homework-development:*"
+      ]
     }
   ]
 }

@@ -1134,8 +1134,34 @@ jobs:
         run: |
           ./scripts/v1/publish-api-development-env.ps1 `
             -ReleaseId "${{ env.RELEASE_IMAGE_TAG }}" `
+            -EnableHomeworkPreview `
             -GithubOutputPath $env:GITHUB_OUTPUT `
             -Ci
+
+      - name: Verify isolated homework video codec before candidate activation
+        shell: pwsh
+        run: |
+          python3 scripts/v1/deployment_lock.py renew `
+            --owner "$env:ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
+          if ($LASTEXITCODE -ne 0) { throw "Shared deployment lock renewal failed." }
+          $candidate = Get-Content /tmp/api-development-candidate/release-manifest.candidate.json -Raw | ConvertFrom-Json
+          $videoDigest = [string]$candidate.images.'academy-video-worker'.digest
+          if ($videoDigest -notmatch '^sha256:[0-9a-f]{64}$') { throw "Invalid candidate Video digest." }
+          ./scripts/v1/run-homework-preview-development-canary.ps1 `
+            -VideoImageUri "${{ env.ECR_REGISTRY }}/academy-video-worker@$videoDigest" `
+            -ReleaseId "${{ steps.development-env.outputs.release_id }}" `
+            -WorkersEnvVersion "${{ steps.development-env.outputs.workers_parameter_version }}" `
+            -ProductionDatabaseName "${{ steps.development-env.outputs.production_database_name }}" `
+            -OutputPath /tmp/api-development-candidate/homework-preview-canary.json `
+            -Apply
+
+      - name: Preserve isolated homework codec evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: homework-preview-development-canary
+          path: /tmp/api-development-candidate/homework-preview-canary.json
+          if-no-files-found: ignore
 
       - name: Blue/green candidate review on persistent development runtime
         shell: pwsh

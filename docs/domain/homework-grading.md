@@ -393,8 +393,38 @@ PostgreSQL barrier 회귀는
 | GET/POST | `/submissions/submissions/homework/{homework_id}/media/` | 본인 파일 목록·파일 하나 업로드. 여러 파일은 독립 요청으로 부분 성공을 보존 |
 | DELETE | `/submissions/submissions/homework/{homework_id}/media/{media_id}/` | 미제출·미완료·불합격인 본인 파일 soft remove. 완료/통과 상태는 잠금 |
 | GET | `/submissions/submissions/homework/{homework_id}/media/{media_id}/preview/` | 권한 확인 뒤 짧은 미리보기 URL 발급 |
+| GET/POST | `/submissions/submissions/homework/{homework_id}/media/{media_id}/preview/compatible/` | 동일 원본 권한으로 영상 변환 상태 조회/명시적 준비 요청 |
 | GET | `/submissions/submissions/homework/{homework_id}/` | 교직원 학생별 제출, ordered `files`, 직접 검수 상태 목록 |
 | PATCH | `/results/admin/sessions/{session_id}/score-correction/` | `source_type=homework`인 교사 확인 완료·취소. 점수는 변경하지 않음 |
+
+### 비공개 숙제 동영상 재생 호환
+
+HEVC/MOV 등 원본을 브라우저가 영상으로 디코딩하지 못하면 프런트가 호환 미리보기를
+요청한다. `HomeworkMediaPreview`는 tenant·Submission·media ID·원본 key 지문별 한 행이며
+기존 제출/점수와 분리된 파생물이다. GET은 작업을 만들지 않는다. POST는 동일 접근
+권한(교직원, 본인 학생, 선택 자녀가 일치하는 학부모)을 재검증하고 준비 중 요청을
+재사용한다. 레거시 단건의 `legacy-{submission_id}`도 같은 원본 소유권 검사를 거친다.
+실패/30분 초과 작업만 새 attempt token으로 재시도하며 시간당 최대 3회다.
+
+실제 변환은 AWS Batch의 Video 이미지에서만 실행한다. API/AI worker는 변환하지 않는다.
+원본은 변경하지 않고 H.264/yuv420p + AAC, 긴 변 최대 1920px MP4를 tenant의 비공개
+AI 저장소 경로에 만든다. worker는 source key/현재 삭제 상태를 시작과 게시 직전에
+다시 검사하고 이전 attempt의 늦은 결과를 게시하지 않는다. 입력 100MiB, ffmpeg 600초,
+Batch 900초 한도와 출력 길이 검사를 적용한다. 준비 완료 URL은 10분만 유효하며
+원본 파일이 삭제·교체되면 기존 권한 endpoint에서도 파생물을 발급하지 않는다.
+
+불확실한 업로드·취소된 attempt는 파생 key를 행에서 분리하고 기존 durable storage
+cleanup으로 정리한다. 영구 삭제는 원본과 파생 key의 다른 소유자 참조를 검사한 뒤
+cleanup intent를 남기고 행을 삭제한다. 새 migration은 테이블 추가만 수행하므로 기존
+제출 파일·클라이언트와 호환되며 재업로드나 원본 데이터 이전은 없다. 정상 숙제 제출은
+여전히 자동 채점/AI 분석 작업을 만들지 않는다.
+
+운영은 기존 Video Batch queue/definition을 사용한다. development는 전용
+`HOMEWORK_PREVIEW_BATCH_JOB_QUEUE/DEFINITION`이 정확한 개발 이름·환경 버전으로
+고정된 경우만 허용한다. 일반 `VIDEO_BATCH_*`는 계속 비어 있으며 운영 fallback은 없다.
+preprod는 개발 DB를 사용하는 queue에 제출하지 않는다. 격리 자원·실제 codec canary의
+소유 문서는 [상시 개발 런타임](../operations/persistent-development-runtime.md)이다.
+`test_homework_preview.py`는 권한, 중복, 재시도, 삭제/변환 경합과 파생물 정리를 검증한다.
 
 | Method | Path | 역할 |
 |--------|------|------|

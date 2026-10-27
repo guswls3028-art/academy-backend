@@ -333,8 +333,20 @@ function Ensure-ApiDevelopmentIAM {
         "--output", "json"
     )
     $inlineNames = @($inline.PolicyNames | Sort-Object -Unique)
-    if ($inlineNames.Count -ne 1 -or $inlineNames[0] -ne $ApiDevelopmentPolicyName) {
+    $homeworkPolicyName = 'academy-homework-preview-development'
+    $unexpectedInline = @($inlineNames | Where-Object { $_ -notin @($ApiDevelopmentPolicyName, $homeworkPolicyName) })
+    if ($ApiDevelopmentPolicyName -notin $inlineNames -or $unexpectedInline.Count -gt 0) {
         throw "API development role has unexpected inline policies."
+    }
+    if ($homeworkPolicyName -in $inlineNames) {
+        $homeworkExpected = (Get-Content (Join-Path $TemplatesPath 'policy_homework_preview_development_submit.json') -Raw).
+            Replace('__REGION__', $script:Region).Replace('__ACCOUNT_ID__', $script:AccountId) | ConvertFrom-Json
+        $homeworkActual = Invoke-AwsJson @('iam', 'get-role-policy', '--role-name', $roleName,
+            '--policy-name', $homeworkPolicyName, '--output', 'json')
+        if (($homeworkExpected | ConvertTo-Json -Compress -Depth 10) -ne
+            ($homeworkActual.PolicyDocument | ConvertTo-Json -Compress -Depth 10)) {
+            throw 'Homework preview development grant differs from its exact owned policy.'
+        }
     }
     Assert-DeployLockAcquired -Reg $script:Region
     Write-Ok "API development IAM is dedicated and least-privilege."

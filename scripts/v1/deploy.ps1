@@ -121,7 +121,8 @@ function Invoke-ManualApiDevelopmentGate {
         [Parameter(Mandatory = $true)][string]$ApiImageUri,
         [Parameter(Mandatory = $true)][string]$ToolsImageUri,
         [Parameter(Mandatory = $true)][string]$AiImageUri,
-        [Parameter(Mandatory = $true)][string]$MessagingImageUri
+        [Parameter(Mandatory = $true)][string]$MessagingImageUri,
+        [Parameter(Mandatory = $true)][string]$VideoImageUri
     )
     if ($ApiImageUri -notmatch '@sha256:(?<digest>[0-9a-f]{64})$') {
         throw "API development candidate image is not digest-pinned."
@@ -130,11 +131,13 @@ function Invoke-ManualApiDevelopmentGate {
     Assert-ImmutableEcrImageUri -ImageUri $ToolsImageUri
     Assert-ImmutableEcrImageUri -ImageUri $AiImageUri
     Assert-ImmutableEcrImageUri -ImageUri $MessagingImageUri
+    Assert-ImmutableEcrImageUri -ImageUri $VideoImageUri
     $releaseId = "manual-sha256-$apiDigest"
     $outputPath = [IO.Path]::GetTempFileName()
     try {
         & (Join-Path $ScriptRoot "publish-api-development-env.ps1") `
             -ReleaseId $releaseId `
+            -EnableHomeworkPreview `
             -GithubOutputPath $outputPath `
             -AwsProfile $AwsProfile
         $outputs = @{}
@@ -154,6 +157,11 @@ function Invoke-ManualApiDevelopmentGate {
                 throw "Development env publisher returned no '$required' output."
             }
         }
+        & (Join-Path $ScriptRoot "run-homework-preview-development-canary.ps1") `
+            -VideoImageUri $VideoImageUri -ReleaseId $releaseId `
+            -WorkersEnvVersion ([int]$outputs["workers_parameter_version"]) `
+            -ProductionDatabaseName $outputs["production_database_name"] `
+            -OutputPath (Join-Path $RepoRoot "reports/homework-preview-development-canary.json") -Apply
         & (Join-Path $ScriptRoot "deploy-api-development.ps1") `
             -ApiImageUri $ApiImageUri `
             -ToolsImageUri $ToolsImageUri `
@@ -316,7 +324,8 @@ try {
             -ApiImageUri $apiCanaryImage `
             -ToolsImageUri $toolsCanaryImage `
             -AiImageUri $aiCanaryImage `
-            -MessagingImageUri $messagingCanaryImage
+            -MessagingImageUri $messagingCanaryImage `
+            -VideoImageUri (Get-LatestWorkerImageUri -RepoName $script:VideoWorkerRepo)
         $apiCanaryEnv = Publish-ApiPreprodEnvCandidate -ReleaseId $apiCanaryReleaseId
         & (Join-Path $ScriptRoot "run-api-preprod-canary.ps1") `
             -ImageUri $apiCanaryImage `

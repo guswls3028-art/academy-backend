@@ -6,6 +6,7 @@ param(
     [ValidatePattern('^(?:sha-[0-9a-fA-F]{40}-run-[0-9]+-[0-9]+|manual-sha256-[0-9a-fA-F]{64})$')]
     [string]$ReleaseId,
     [string]$GithubOutputPath = "",
+    [switch]$EnableHomeworkPreview,
     [switch]$Ci = $false,
     [string]$AwsProfile = "default"
 )
@@ -239,6 +240,8 @@ function Set-IsolatedDevelopmentValues {
         MESSAGING_SQS_QUEUE_NAME = $script:ApiDevelopmentMessagingQueueName
         VIDEO_BATCH_JOB_QUEUE = ""
         VIDEO_BATCH_JOB_DEFINITION = ""
+        HOMEWORK_PREVIEW_BATCH_JOB_QUEUE = ""
+        HOMEWORK_PREVIEW_BATCH_JOB_DEFINITION = ""
         REDIS_HOST = "127.0.0.1"
         REDIS_PORT = "6379"
         SOLAPI_MOCK = "true"
@@ -272,25 +275,8 @@ Set-IsolatedDevelopmentValues `
 Set-IsolatedDevelopmentValues `
     -Target $productionWorkers `
     -SettingsModule "apps.api.config.settings.worker"
-$value = $production | ConvertTo-Json -Compress -Depth 20
 $workersJson = $productionWorkers | ConvertTo-Json -Compress -Depth 20
 $workersValue = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($workersJson))
-
-$put = Invoke-AwsJson @(
-    "ssm", "put-parameter",
-    "--name", $script:ApiDevelopmentEnvParameter,
-    "--description", "Versioned environment for the isolated persistent Academy API development instance",
-    "--type", "SecureString",
-    "--tier", "Advanced",
-    "--value", $value,
-    "--overwrite",
-    "--region", $script:Region,
-    "--output", "json"
-)
-if (-not $put -or -not $put.Version) {
-    throw "API development env publication returned no parameter version."
-}
-$version = [int]$put.Version
 
 $workersPut = Invoke-AwsJson @(
     "ssm", "put-parameter",
@@ -307,6 +293,24 @@ if (-not $workersPut -or -not $workersPut.Version) {
     throw "API development workers env publication returned no parameter version."
 }
 $workersVersion = [int]$workersPut.Version
+
+# A unique revision-1 definition pins this exact worker environment and image.
+# The runtime/canary gate registers and proves it before this API env is activated.
+$releaseHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+    [Text.Encoding]::UTF8.GetBytes($ReleaseId))).ToLowerInvariant().Substring(0, 12)
+$homeworkPreviewDefinition = if ($EnableHomeworkPreview) { "academy-development-homework-video-$releaseHash-v${workersVersion}:1" } else { "" }
+$homeworkPreviewQueue = if ($EnableHomeworkPreview) { "academy-development-homework-video-queue" } else { "" }
+$production.HOMEWORK_PREVIEW_BATCH_JOB_QUEUE = $homeworkPreviewQueue
+$production.HOMEWORK_PREVIEW_BATCH_JOB_DEFINITION = $homeworkPreviewDefinition
+$value = $production | ConvertTo-Json -Compress -Depth 20
+$put = Invoke-AwsJson @(
+    "ssm", "put-parameter", "--name", $script:ApiDevelopmentEnvParameter,
+    "--description", "Versioned environment for the isolated persistent Academy API development instance",
+    "--type", "SecureString", "--tier", "Advanced", "--value", $value, "--overwrite",
+    "--region", $script:Region, "--output", "json"
+)
+if (-not $put -or -not $put.Version) { throw "API development env publication returned no parameter version." }
+$version = [int]$put.Version
 
 $readback = Invoke-AwsJson @(
     "ssm", "get-parameter",
@@ -336,6 +340,8 @@ if (
     [string]$actual.TOOLS_SQS_QUEUE_NAME -ne $script:ApiDevelopmentToolsQueueName -or
     [string]$actual.VIDEO_BATCH_JOB_QUEUE -ne "" -or
     [string]$actual.VIDEO_BATCH_JOB_DEFINITION -ne "" -or
+    [string]$actual.HOMEWORK_PREVIEW_BATCH_JOB_QUEUE -ne $homeworkPreviewQueue -or
+    [string]$actual.HOMEWORK_PREVIEW_BATCH_JOB_DEFINITION -ne $homeworkPreviewDefinition -or
     [string]$actual.R2_ENDPOINT -ne $r2Endpoint -or
     [string]$actual.R2_ACCESS_KEY -ne $r2AccessKey -or
     [string]$actual.R2_SECRET_KEY -ne $r2SecretKey -or
@@ -373,6 +379,8 @@ if (
     [string]$actualWorkers.TOOLS_SQS_QUEUE_NAME -ne $script:ApiDevelopmentToolsQueueName -or
     [string]$actualWorkers.VIDEO_BATCH_JOB_QUEUE -ne "" -or
     [string]$actualWorkers.VIDEO_BATCH_JOB_DEFINITION -ne "" -or
+    [string]$actualWorkers.HOMEWORK_PREVIEW_BATCH_JOB_QUEUE -ne "" -or
+    [string]$actualWorkers.HOMEWORK_PREVIEW_BATCH_JOB_DEFINITION -ne "" -or
     [string]$actualWorkers.R2_ENDPOINT -ne $r2Endpoint -or
     [string]$actualWorkers.R2_ACCESS_KEY -ne $r2AccessKey -or
     [string]$actualWorkers.R2_SECRET_KEY -ne $r2SecretKey -or
