@@ -41,6 +41,29 @@ def definition_name(release: str, version: int) -> str:
     return f"academy-development-homework-video-{hashlib.sha256(release.encode()).hexdigest()[:12]}-v{version}"
 
 
+def canary_submission_script(region: str, payload: dict) -> str:
+    # IAM readback can precede regional authorization propagation. Only an
+    # explicit denial proves that SubmitJob did not create a job. SDK retries
+    # are disabled because a timeout or 5xx can instead hide a successful submit.
+    return f'''import boto3,json,time
+from botocore.config import Config
+from botocore.exceptions import ClientError
+client = boto3.client('batch', region_name={region!r},
+    config=Config(connect_timeout=5, read_timeout=20, retries={{'total_max_attempts': 1}}))
+deadline = time.monotonic() + 45
+while True:
+    try:
+        result = client.submit_job(**{payload!r})
+    except ClientError as error:
+        if error.response.get('Error', {{}}).get('Code') not in {{'AccessDenied', 'AccessDeniedException'}} or time.monotonic() >= deadline:
+            raise
+        time.sleep(5)
+    else:
+        print(json.dumps({{'job_id': result['jobId']}}))
+        break
+'''
+
+
 class Runtime:
     def __init__(self, config: dict, image: str, release: str, version: int, apply: bool):
         self.config, self.image, self.release, self.version, self.apply = config, image, release, version, apply
@@ -248,8 +271,8 @@ class Runtime:
         payload = {"jobName": "qa-homework-preview-" + uuid.uuid4().hex, "jobQueue": runtime["queue"], "jobDefinition": runtime["definition"],
             "containerOverrides": {"command": ["python", "-m", "apps.worker.video_worker.homework_preview_canary", self.release, production_database]},
             "tags": {**self.tags, "Purpose": "codec-canary"}, "timeout": {"attemptDurationSeconds": 300}}
-        code = "import boto3,json; r=boto3.client('batch',region_name=" + repr(self.region) + ").submit_job(**" + repr(payload) + "); print(json.dumps({'job_id':r['jobId']}))"
-        command = "set -eu\ntimeout 60 docker exec -i academy-api python - <<'HOMEWORK_CANARY'\n" + code + "\nHOMEWORK_CANARY"
+        code = canary_submission_script(self.region, payload)
+        command = "set -eu\ntimeout 75 docker exec -i academy-api python - <<'HOMEWORK_CANARY'\n" + code + "\nHOMEWORK_CANARY"
         self.instance_id = targets[0]["InstanceId"]
         try:
             job_id = self.remote_json(command)["job_id"]
