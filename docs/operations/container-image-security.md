@@ -694,13 +694,26 @@ PBDS binary heap의 `erase_if` 재할당 뒤 entry pointer를 갱신하는 헤�
 
 ## 빌드 입력과 런타임 패키지
 
-- `requirements/constraints.txt`의 DRF는 3.17.2로 고정한다. 두 공개 보안 수정
-  ([공식 릴리스](https://www.django-rest-framework.org/community/release-notes/#3172))은
-  JSON/URL-encoded 요청의 Django 본문 크기 제한 적용과 AdminRenderer의 GET 권한
-  보호다. Python 3.11과 기존 drf-spectacular/drf-yasg를 유지한다. JSON의 기본
+- `requirements/constraints.txt`의 DRF는 3.18.3으로 고정한다.
+  [공식 3.18.2 보안 수정](https://github.com/encode/django-rest-framework/releases/tag/3.18.2)은
+  큰 Accept 헤더의 과도한 CPU 사용, JSON의 비문자 charset을 통한 본문 제한 우회,
+  TokenProxy 삭제 누락을 해결한다. 3.18.3은 3.18.2에서 잘못 바뀐
+  `order_by_precedence` 반환 형식도 복구한다. 3.18의 목록 검증 오류 형식 변경은
+  `LIST_SERIALIZER_ERRORS_AS_DICT=False`로 기존 행별 오류 배열 계약을 유지한다.
+  이 호환 설정 제거는 API 소비자 전환과 별도 검증 없이 수행하지 않는다.
+  조건부 유일성 필드의 기본값 처리도 달라지므로 강의 `is_system` 기본값은
+  생성 시에만 적용한다. 전체 수정 요청에서 생략한 기존 시스템 강의 표시를
+  `False`로 덮어쓰지 않으며, 생성·전체/부분 수정·명시값 회귀로 이를 검증한다.
+  기존 JSON/URL-encoded 본문 크기 제한과 AdminRenderer 권한 보호,
+  Python 3.11과 drf-spectacular/drf-yasg를 유지한다. JSON의 기본
   2.5 MiB 제한을 해제하지 않으며 multipart 파일은 별도 업로드 검증·디스크 스풀
   경계를 유지한다. `tests/test_drf_request_size_boundary.py`는 정상 한국어 JSON,
-  과대 JSON/Form의 HTTP 400, 3 MiB multipart 파일 성공·스풀을 검증한다.
+  과대 JSON/Form 및 비문자 charset의 HTTP 400, 과대 Content-Type의 415,
+  과대 Accept token의 406과 정상 JSON 협상 복구, 기존 행별 오류 배열,
+  3 MiB multipart 파일 성공·스풀을 검증한다. multipart 파일의 긴 boundary 등
+  전체 Content-Type이 256자를 넘으면 파서 선택 전에 거부되므로 일반 업로드
+  성공 증거를 함께 유지한다. 공통 pin 변경은 모든 이미지 재검증 대상이며,
+  코드 병합만으로 운영 반영 완료로 간주하지 않는다.
 - 공통 Python 이미지는 `docker/Dockerfile.base`의 두 stage 모두 같은 upstream
   OCI index digest로 고정한다. 태그가 이동해도 승인되지 않은 OS 변경이 빌드에
   섞이지 않는다.
