@@ -415,10 +415,36 @@ QA 원격 명령은 curl 각 10초, Docker inspect 15초(+kill 5초), Docker exe
 고정 문서의 소유권 함수 및 실제 `run()` cleanup 분기는
 `scripts/v1/test_frontend_development_qa.py`에서 로컬 fake DB/command로 검사한다.
 타 run/미소유/중복 record의 destroy 호출은 0, 자기 소유만 1, 부재는 0을 요구한다.
-또한 token/activity/R2/process/listener residue가 모두 numeric 0이어야 한다. 실제
+또한 token/activity/R2/process/listener/AIJob/AIResult/AI Redis residue가 모두 numeric 0이어야 한다. 실제
 cleanup 명령 회귀는 scenario command 테스트에서 소유 user token과 seal 이후 activity만
 삭제하고, 타 tenant token·다른 actor·seal 이전 activity·setup seal을 보존하는지
 검증한다. 외부 QA tenant나 실제 DB 행을 삭제하는 회귀가 아니다.
+
+고정 QA의 AI 정리는 `apps/core/services/development_qa_ai_cleanup.py`가 소유한다.
+Redis는 개발 host-local `127.0.0.1:6379`만 허용하며 외부 endpoint나 미설정은 거부한다.
+정확한 `qa-ymath-realuse-fe-*` tenant code/ID와 생성 capability seal을 검증하고,
+seal 이후 생성된 최대 1,000개의 정확한 job ID/사전 건수를 확인한다. DONE/FAILED/
+REJECTED_BAD_INPUT/REVIEW_REQUIRED이면서 완료 시각이 있고 lease/lock이 없는 작업만
+허용한다. 실행 중 작업, payload tenant 불일치, seal 이전 작업, 출처 불명 cache,
+중복 seal은 snapshot/R2/tenant 삭제 전에 거부한다. R2 정리 이후에도 같은 inventory를
+재검사한다. 해당 job의 tenant status/progress와 legacy status/progress 네 키만 삭제하며,
+정확한 AIJob 삭제에 연결된 AIResult만 cascade한다. 일반 사용자 데이터 보존 기간이나
+제품의 AI 결과 보존 정책은 바꾸지 않는다.
+
+`development.qa.ai.cleanup` 감사 receipt에는 기존 owner hash, 정확한 job ID와 사전
+AIJob/AIResult/Redis 건수만 저장한다. setup seal과 receipt는 tenant 삭제 후 SET_NULL로
+보존한다. 별도 Inspect는 원래 capability로 seal을 다시 검증하고 이 ID들의 네 키 및
+정확한 tenant cache namespace를 읽어 `ai_jobs/ai_results/ai_redis_keys`와
+`ai_scope_proven=true`를 반환한다. Redis 연결 실패·불완전 inventory·잔여 건수는 0으로
+간주하지 않는다. DB rollback 후 Redis 삭제는 멱등 재검사가 가능하며, 뒤늦은 cache 쓰기나
+job 생성은 후속 Inspect 실패로 남긴다. AI 내용/결과 payload/비밀값은 출력하지 않는다.
+
+이미 삭제된 과거 QA에 receipt가 없거나 capability 원문을 잃었다면 일반 Cleanup/Inspect로
+소유권을 채택하지 않는다. 과거 tenant ID, capability hash와 release/digest 증거만으로
+원문 권한을 복원할 수 없으며 별도의 정확 대상 복구 검토가 필요하다. 이 변경은 기존
+잔여를 자동 삭제하지 않는다. 회귀는 `apps/core/tests/test_development_qa_ai_cleanup.py`
+및 fixed SSM offline 계약으로 검증한다. 후보 API image에 helper를 포함한 뒤 그 후보와
+고정 SSM 문서를 함께 수렴시켜야 하며, frontend cleanup gate도 세 AI 건수를 요구한다.
 
 ## 최초 구성
 
@@ -555,6 +581,9 @@ DB/R2만 사용하며 일반 강의 Video 파이프라인과 Redis는 활성화�
   opt-in 없이 이전 검증 이미지로 접속 기반을 만든다.
 - 공식 workflow와 수동 `deploy.ps1`은 후보 API 활성화 전에 codec canary를 요구한다.
   현재 active development API container의 instance role로 고정 명령을 SubmitJob한다.
+  제품과 같은 SubmitJob-only 권한으로 검사하며 추가 TagResource 권한을 요구하는 작업
+  태그는 보내지 않는다. 전용 queue/definition, 고유 jobName과 반환된 job ID로 소유권을
+  확인하고 인프라 자원의 기존 소유 태그는 유지한다.
   IAM 정책 readback과 지역별 권한 적용 사이의 전파 지연은 명시적 AccessDenied 응답에만
   최대 45초 동안 5초 간격으로 재시도한다. SDK 자동 재시도는 끄고, timeout·5xx 등
   접수 여부가 불확실한 응답은 재제출하지 않는다. 영구 거부는 계속 release를 차단한다.

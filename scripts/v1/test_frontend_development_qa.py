@@ -660,6 +660,14 @@ class HostBoundaryApplyTests(unittest.TestCase):
 
 class DevelopmentParameterBoundaryTests(unittest.TestCase):
     def setUp(self):
+        self.ai_zero = {"ai_jobs": 0, "ai_results": 0, "ai_redis_keys": 0}
+        self.ai = Mock()
+        self.ai.inspect.return_value = self.ai_zero.copy()
+        self.ai.prepare.return_value = {"job_ids": [], "before": self.ai_zero.copy()}
+        self.ai.delete.return_value = self.ai_zero.copy()
+        self.enterContext(patch.dict(sys.modules, {
+            "apps.core.services.development_qa_ai_cleanup": SimpleNamespace(OwnedQaAI=Mock(return_value=self.ai)),
+        }))
         # Load every unrelated real script normally; fake only the candidate probe.
         self.account_probe = SimpleNamespace(cleanup_snapshots=Mock(), run_probe=Mock())
         probe_spec = SimpleNamespace(loader=SimpleNamespace(exec_module=Mock()))
@@ -1097,9 +1105,17 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
                 destroy.assert_not_called()
                 audit.create.assert_not_called()
             audit.filter.return_value.values_list.return_value = [own_record]
+            self.ai.prepare.side_effect = PermissionError("nonterminal or foreign AI job")
+            with self.assertRaises(PermissionError):
+                namespace["run"]()
+            command._cleanup_qa_r2_objects.assert_not_called()
+            self.account_probe.cleanup_snapshots.assert_not_called()
+            destroy.assert_not_called()
+            self.ai.prepare.side_effect = None
             result = namespace["run"]()
             self.assertEqual(result["remaining"], {"tenants": 0, "users": 0})
             self.assertEqual(result["residue"], {
+                **self.ai_zero,
                 "activity_audits": 0,
                 "listeners": 0,
                 "outstanding_tokens": 0,
@@ -1363,7 +1379,8 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
         self.assertEqual(payload["tenant_id"], 72)
         self.assertEqual(
             set(payload["residue"]),
-            {"activity_audits", "outstanding_tokens", "listeners", "processes", "r2_objects"},
+            {"activity_audits", "outstanding_tokens", "listeners", "processes", "r2_objects",
+             "ai_jobs", "ai_results", "ai_redis_keys"},
         )
         self.assertTrue(all(type(value) is int and value >= 0 for value in payload["residue"].values()))
         self.assertNotIn("secret-token", json.dumps(payload))
@@ -1439,7 +1456,7 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
                          "187f6ac218435d3b3f938d903153c5785db3529ace89f4e79ea9b6e1bde8ddb6")
         for path, expected in (
             ("iam/trust_frontend_development_qa.json", "aa2c1a60b63ad287c2e8caba7257beaafe5d602df66659c3093f917ad670713a"),
-            ("ssm/frontend_development_qa.json", "7ed18de7c587ac7354e8e4f553f1ccf3c950fbf199962c158a77069e690adcb8"),
+            ("ssm/frontend_development_qa.json", "1f744f012ac7baef350bf0e6046d66e8a1774f6da024a8b743a8471dc44f2552"),
             ("ssm/frontend_development_api_port.json", "457d31ebdb1ed4436da3bfdb6f090b0180f8ec5dff7ac1303dfb45fe506f486c"),
         ):
             with self.subTest(path=path):
