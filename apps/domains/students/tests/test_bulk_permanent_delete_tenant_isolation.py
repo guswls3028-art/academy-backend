@@ -1951,6 +1951,42 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
                 self.assertEqual(Revision.objects.filter(comment_id=comment.pk).count(), 2)
                 comment.delete()
 
+    @patch("apps.infrastructure.storage.r2.delete_object_r2_ai")
+    def test_permanent_delete_cleans_homework_preview_and_preserves_other_tenant(self, delete_object):
+        preview_model = django_apps.get_model("submissions", "HomeworkMediaPreview")
+        previews = []
+        for tenant, submission in ((self.tenant_a, self.sub_a), (self.tenant_b, self.sub_b)):
+            prefix = f"tenants/{tenant.pk}/ai/submissions/{submission.pk}"
+            previews.append(preview_model.objects.create(
+                tenant=tenant, submission=submission, source_media_id=f"legacy-{submission.pk}",
+                source_key=f"{prefix}/original.mp4", source_fingerprint="a" * 64,
+                object_key=f"{prefix}/compatible.mp4", status="ready",
+            ))
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self._call(self.tenant_a, self.admin_a, [self.student_a.pk])
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(preview_model.objects.filter(pk=previews[0].pk).exists())
+        self.assertTrue(preview_model.objects.filter(pk=previews[1].pk).exists())
+        self.assertTrue(Submission.objects.filter(pk=self.sub_b.pk).exists())
+        self.assertEqual({call.kwargs["key"] for call in delete_object.call_args_list},
+                         {previews[0].source_key, previews[0].object_key})
+
+    @patch("apps.infrastructure.storage.r2.delete_object_r2_ai")
+    def test_permanent_delete_denies_cross_tenant_homework_preview_before_cleanup(self, delete_object):
+        preview_model = django_apps.get_model("submissions", "HomeworkMediaPreview")
+        preview = preview_model.objects.create(
+            tenant=self.tenant_b, submission=self.sub_a, source_media_id=f"legacy-{self.sub_a.pk}",
+            source_key=f"tenants/{self.tenant_b.pk}/ai/submissions/{self.sub_a.pk}/original.mp4",
+            source_fingerprint="a" * 64,
+        )
+        with self.assertRaises(StudentLifecycleError) as raised:
+            permanently_delete_students(tenant=self.tenant_a, student_ids=[self.student_a.pk])
+        self.assertEqual(raised.exception.code, "cross_tenant_reference")
+        self.assertTrue(preview_model.objects.filter(pk=preview.pk).exists())
+        self.assertTrue(Student.objects.filter(pk=self.student_a.pk).exists())
+        self.assertTrue(Submission.objects.filter(pk=self.sub_a.pk).exists())
+        delete_object.assert_not_called()
+
     def test_permanent_delete_relation_contract_matches_model_graph(self):
         """신규 Student/Submission FK가 수동 삭제 그래프에서 누락되지 않게 한다."""
         student_relations = {

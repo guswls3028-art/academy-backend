@@ -47,7 +47,7 @@ def process_preview(preview_id: str, attempt_token: str) -> bool:
     from django.db import transaction
     from django.utils import timezone
     from django.conf import settings
-    from apps.domains.submissions.models import HomeworkMediaPreview
+    from apps.domains.submissions.models import HomeworkMediaPreview, Submission
     from apps.domains.submissions.services.homework_preview import source_is_current
     from apps.domains.submissions.services.lifecycle import ensure_ai_submission_key_attachable, schedule_unreferenced_ai_object_cleanup
     from apps.infrastructure.storage.r2 import _get_s3_client, upload_fileobj_to_r2
@@ -88,20 +88,27 @@ def process_preview(preview_id: str, attempt_token: str) -> bool:
             finally:
                 body.close()
             convert_video(source, output)
-            # An uncertain upload still needs durable compensation.
-            object_written = True
-            with output.open("rb") as content:
-                upload_fileobj_to_r2(fileobj=content, key=preview.object_key, content_type="video/mp4", timeout_seconds=30)
             with transaction.atomic():
+                # Match permanent deletion's parent -> preview lock order. The
+                # bounded object write must finish before deletion can clean its
+                # key; otherwise a late worker could recreate a deleted object.
+                parent = Submission.objects.select_for_update().filter(pk=preview.submission_id, tenant_id=preview.tenant_id).first()
+                if parent is None:
+                    return False
                 current = HomeworkMediaPreview.objects.select_for_update().select_related("submission").filter(
                     pk=preview.pk, attempt_token=attempt_token, status=HomeworkMediaPreview.Status.PROCESSING,
                 ).first()
                 if current and source_is_current(current):
                     ensure_ai_submission_key_attachable(tenant_id=current.tenant_id, key=current.object_key)
-                    current.status = HomeworkMediaPreview.Status.READY
-                    current.error_code = ""
-                    current.save(update_fields=["status", "error_code", "updated_at"])
-                    success = True
+                    # An uncertain upload still needs durable compensation.
+                    object_written = True
+                    with output.open("rb") as content:
+                        upload_fileobj_to_r2(fileobj=content, key=current.object_key, content_type="video/mp4", timeout_seconds=30)
+                    if source_is_current(current):
+                        current.status = HomeworkMediaPreview.Status.READY
+                        current.error_code = ""
+                        current.save(update_fields=["status", "error_code", "updated_at"])
+                        success = True
     except Exception:
         # Neither source paths, credentials nor ffmpeg's raw stderr enter logs/API.
         HomeworkMediaPreview.objects.filter(pk=preview.pk, attempt_token=attempt_token).update(

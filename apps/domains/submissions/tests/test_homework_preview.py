@@ -194,7 +194,6 @@ class HomeworkPreviewTests(TestCase):
     def test_removed_source_cannot_publish_a_late_conversion(self, cleanup, convert, upload, s3, submit):
         media = self.video()
         preview = self.prepare(media)
-        reserved = preview.object_key
         s3.return_value.get_object.return_value = {"Body": io.BytesIO(b"video"), "ContentLength": 5}
         def finish_after_removal(source, output):
             SubmissionMedia.objects.filter(pk=media.pk).update(removed_at=timezone.now())
@@ -205,4 +204,23 @@ class HomeworkPreviewTests(TestCase):
         preview.refresh_from_db()
         self.assertEqual(preview.status, HomeworkMediaPreview.Status.FAILED)
         self.assertEqual(preview.object_key, "")
-        cleanup.assert_called_once_with(tenant_id=self.tenant.pk, key=reserved)
+        upload.assert_not_called()
+        cleanup.assert_not_called()
+
+    @patch("apps.domains.submissions.services.homework_preview.submit_homework_preview_batch_job", return_value="batch-owned")
+    @patch("apps.infrastructure.storage.r2._get_s3_client")
+    @patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2")
+    @patch("apps.worker.video_worker.homework_preview_main.convert_video")
+    def test_permanent_delete_during_conversion_prevents_late_object_write(self, convert, upload, s3, submit):
+        from apps.domains.submissions.services.lifecycle import delete_submission_storage_for_permanent_delete
+        media = self.video()
+        preview = self.prepare(media)
+        s3.return_value.get_object.return_value = {"Body": io.BytesIO(b"video"), "ContentLength": 5}
+        def finish_after_deletion(source, output):
+            delete_submission_storage_for_permanent_delete(tenant_id=self.tenant.pk, submission_ids=[media.submission_id])
+            output.write_bytes(b"compatible")
+        convert.side_effect = finish_after_deletion
+        with patch.dict("os.environ", {"AWS_BATCH_JOB_ID": "qa-job"}):
+            self.assertFalse(process_preview(str(preview.pk), str(preview.attempt_token)))
+        upload.assert_not_called()
+        self.assertFalse(HomeworkMediaPreview.objects.filter(pk=preview.pk).exists())
