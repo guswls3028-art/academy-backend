@@ -537,6 +537,9 @@ DB/R2만 사용하며 일반 강의 Video 파이프라인과 Redis는 활성화�
   14일 로그 그룹을 사용한다. 기존 development SG의 inbound 0개와 public subnet
   두 개의 IGW 경로를 검증한다. task에만 public IP를 부여하며 ingress를 추가하지 않는다.
   기존 자원의 소유권·설정이 다르면 자동 덮어쓰기 대신 실패한다.
+  Batch readback이 로그 설정에 추가하는 빈 `secretOptions`는 미지정과 같은 값으로
+  비교한다. 비어 있지 않은 로그/컨테이너 secret·mount·volume·ulimit와 이미지·역할·
+  환경 버전·자원 설정 차이는 계속 drift로 거부한다.
 - job role은 정확한 development workers parameter GetParameter만 허용하고 다른
   parameter 읽기·열거·history를 거부한다. execution role은 Video ECR pull과 전용 로그
   쓰기만 허용한다. API role에는 별도 소유 inline policy로 이 queue와 개발 definition

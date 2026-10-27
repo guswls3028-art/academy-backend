@@ -6,6 +6,7 @@ AWS CLI is the only dependency. Secret parameter values never enter this process
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import hashlib
 import json
 import os
@@ -20,6 +21,18 @@ from deployment_lock import DEFAULT_TABLE, assert_owned
 
 MANAGED_BY = "academy-homework-preview-development"
 POLICY_NAME = "academy-homework-preview-development"
+
+
+def container_properties_match(actual: dict, expected: dict) -> bool:
+    """Batch adds an empty log secret list on readback; nonempty grants are drift."""
+    actual = deepcopy(actual)
+    for field in ("volumes", "mountPoints", "ulimits", "secrets"):
+        if actual.get(field, []) != expected.get(field, []):
+            return False
+    log = actual.get("logConfiguration", {})
+    if log.get("secretOptions") == [] and "secretOptions" not in expected.get("logConfiguration", {}):
+        del log["secretOptions"]
+    return all(actual.get(key) == value for key, value in expected.items())
 
 
 def definition_name(release: str, version: int) -> str:
@@ -206,7 +219,7 @@ class Runtime:
             raise RuntimeError("immutable_development_definition_conflict")
         definition = definitions[0]
         self.owned(definition)
-        if (any(definition["containerProperties"].get(k) != v for k, v in properties.items())
+        if (not container_properties_match(definition["containerProperties"], properties)
                 or definition["platformCapabilities"] != ["FARGATE"] or definition["timeout"]["attemptDurationSeconds"] != 900
                 or definition["retryStrategy"]["attempts"] != 1):
             raise RuntimeError("immutable_development_definition_mismatch")

@@ -1,5 +1,6 @@
 """Isolation and failure boundaries for the dedicated preview runtime."""
 import importlib.util
+from copy import deepcopy
 import json
 from pathlib import Path
 import sys
@@ -75,6 +76,31 @@ class HomeworkRuntimeTests(unittest.TestCase):
         owned = [s for s in policy["Statement"] if s["Sid"].startswith("Homework")]
         self.assertFalse(any("batch:SubmitJob" in s["Action"] for s in owned))
         self.assertFalse(any("iam:AttachRolePolicy" in s["Action"] for s in owned))
+
+    def test_aws_empty_log_secrets_readback_is_equivalent_without_relaxing_identity(self):
+        expected = {"image": self.image, "jobRoleArn": "owned-job-role", "executionRoleArn": "owned-execution-role",
+            "environment": [{"name": "BATCH_SSM_ENV", "value": "/academy/workers/development/env:17"}],
+            "resourceRequirements": [{"type": "VCPU", "value": "2"}, {"type": "MEMORY", "value": "4096"}],
+            "networkConfiguration": {"assignPublicIp": "ENABLED"},
+            "logConfiguration": {"logDriver": "awslogs", "options": {"awslogs-group": "/aws/batch/academy-homework-development"}}}
+        # Observed AWS DescribeJobDefinitions response defaults, not caller input.
+        actual = deepcopy(expected)
+        actual.update(volumes=[], mountPoints=[], ulimits=[], secrets=[])
+        actual["logConfiguration"]["secretOptions"] = []
+        self.assertTrue(module.container_properties_match(actual, expected))
+        self.assertIn("secretOptions", actual["logConfiguration"])
+        for field, value in (("image", self.image + ":changed"), ("jobRoleArn", "foreign-role"),
+                ("executionRoleArn", "foreign-role"), ("environment", []), ("resourceRequirements", []),
+                ("networkConfiguration", {"assignPublicIp": "DISABLED"}),
+                ("volumes", [{"name": "foreign-volume"}]), ("secrets", [{"name": "foreign-secret"}]),
+                ("mountPoints", [{"containerPath": "/etc"}]), ("ulimits", [{"name": "core", "hardLimit": -1}])):
+            with self.subTest(field=field):
+                changed = deepcopy(actual)
+                changed[field] = value
+                self.assertFalse(module.container_properties_match(changed, expected))
+        for changed_log in ({**actual["logConfiguration"], "secretOptions": [{"name": "token", "valueFrom": "foreign-secret"}]},
+                            {**actual["logConfiguration"], "options": {"awslogs-group": "foreign-logs"}}):
+            self.assertFalse(module.container_properties_match({**actual, "logConfiguration": changed_log}, expected))
 
 
 if __name__ == "__main__": unittest.main()
