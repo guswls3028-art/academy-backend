@@ -50,6 +50,17 @@ class HomeworkPreviewTests(TestCase):
         self.assertNotEqual(preview.object_key, media.object_key)
         self.assertIn(f"tenants/{self.tenant.pk}/ai/submissions/{media.submission_id}/", preview.object_key)
 
+    @patch("apps.domains.submissions.services.homework_preview.submit_homework_preview_batch_job", return_value="batch-owned")
+    def test_queue_contract_retains_only_registered_active_preview_jobs(self, submit):
+        from apps.domains.submissions.contracts import active_homework_preview_batch_job_ids
+        preview = self.prepare(self.video())
+        self.assertEqual(active_homework_preview_batch_job_ids(), {"batch-owned"})
+        for state, expected in ((HomeworkMediaPreview.Status.PROCESSING, {"batch-owned"}),
+                                (HomeworkMediaPreview.Status.READY, set()), (HomeworkMediaPreview.Status.FAILED, set())):
+            preview.status = state
+            preview.save(update_fields=["status"])
+            self.assertEqual(active_homework_preview_batch_job_ids(), expected)
+
     @override_settings(VIDEO_BATCH_JOB_QUEUE="", VIDEO_BATCH_JOB_DEFINITION="")
     @patch("apps.domains.submissions.services.homework_preview.submit_homework_preview_batch_job")
     def test_unconfigured_isolated_runtime_never_falls_back_to_production(self, submit):

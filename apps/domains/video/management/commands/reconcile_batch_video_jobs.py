@@ -470,10 +470,8 @@ class Command(BaseCommand):
             .values_list("aws_batch_job_id", flat=True)
         )
         # Private homework compatibility jobs share Video Batch, not Video rows.
-        from apps.domains.submissions.models import HomeworkMediaPreview
-        db_aws_ids.update(HomeworkMediaPreview.objects.filter(
-            status__in=[HomeworkMediaPreview.Status.QUEUED, HomeworkMediaPreview.Status.PROCESSING],
-        ).exclude(batch_job_id="").values_list("batch_job_id", flat=True))
+        from apps.domains.submissions.contracts import active_homework_preview_batch_job_ids
+        db_aws_ids.update(active_homework_preview_batch_job_ids())
         now = timezone.now()
         min_runnable_minutes = RECONCILE_ORPHAN_MIN_RUNNABLE_MINUTES
 
