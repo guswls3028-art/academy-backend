@@ -14,6 +14,7 @@ from django.utils import timezone
 from apps.domains.submissions.models import (
     Submission,
     SubmissionMedia,
+    HomeworkMediaPreview,
     SubmissionStorageCleanupIntent,
 )
 from apps.domains.submissions.services.transition import (
@@ -81,6 +82,8 @@ STORAGE_OBJECT_REFERENCE_FIELDS = frozenset({
     ("ai", "exams", "ExamAsset", "file_key"),
     ("ai", "submissions", "Submission", "file_key"),
     ("ai", "submissions", "SubmissionMedia", "object_key"),
+    ("ai", "submissions", "HomeworkMediaPreview", "source_key"),
+    ("ai", "submissions", "HomeworkMediaPreview", "object_key"),
     ("storage", "community", "PostAttachment", "r2_key"),
     ("storage", "exams", "ExamAsset", "file_key"),
     ("storage", "exams", "ExamQuestion", "image_key"),
@@ -211,6 +214,8 @@ def _other_storage_owner_references(
             references = references.exclude(id__in=excluded_submission_ids)
         elif owner == ("submissions", "SubmissionMedia"):
             references = references.exclude(id__in=excluded_submission_media_ids)
+        elif owner == ("submissions", "HomeworkMediaPreview"):
+            references = references.exclude(submission_id__in=excluded_submission_ids)
         elif owner == ("results", "WrongNotePDF"):
             references = references.exclude(id__in=excluded_wrong_note_pdf_ids)
         elif owner == ("inventory", "InventoryFile"):
@@ -577,6 +582,11 @@ def delete_submission_storage_for_permanent_delete(
     exact_submission_ids = tuple(submission.id for submission in submissions)
     if len(exact_submission_ids) != len(ids):
         raise ValueError("submission tenant does not match permanent-delete scope")
+    if HomeworkMediaPreview.objects.filter(submission_id__in=exact_submission_ids).exclude(tenant_id=tenant_id).exists():
+        raise ValueError("homework preview tenant does not match its parent submission")
+    previews = list(HomeworkMediaPreview.objects.select_for_update().filter(
+        tenant_id=tenant_id, submission_id__in=exact_submission_ids,
+    ))
     if SubmissionMedia.objects.filter(submission_id__in=exact_submission_ids).exclude(
         tenant_id=tenant_id
     ).exists():
@@ -622,6 +632,14 @@ def delete_submission_storage_for_permanent_delete(
         ):
             raise ValueError("submission media key is outside its canonical namespace")
         candidate_keys_by_bucket[SubmissionStorageCleanupIntent.Bucket.AI].add(key)
+
+    for preview in previews:
+        for key in (preview.source_key, preview.object_key):
+            if not key:
+                continue
+            if not _submission_owned_object_key(tenant_id=tenant_id, key=key, submission_id=preview.submission_id):
+                raise ValueError("homework preview key is outside its canonical namespace")
+            candidate_keys_by_bucket[SubmissionStorageCleanupIntent.Bucket.AI].add(key)
 
     wrong_note_pdf_model = django_apps.get_model("results", "WrongNotePDF")
     wrong_note_pdfs = list(
@@ -702,6 +720,8 @@ def delete_submission_storage_for_permanent_delete(
             submission_id__in=exact_submission_ids,
             id__in=media_ids,
         ).delete()
+    if previews:
+        HomeworkMediaPreview.objects.filter(tenant_id=tenant_id, id__in=[preview.pk for preview in previews]).delete()
     return tuple(intent_ids)
 
 

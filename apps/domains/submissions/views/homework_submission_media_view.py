@@ -328,8 +328,7 @@ def _preview_target(*, tenant, homework_id: int, media_id: str):
 class HomeworkSubmissionMediaPreviewView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
-    @extend_schema(exclude=True)
-    def get(self, request, homework_id: int, media_id: str):
+    def authorized_target(self, request, homework_id: int, media_id: str):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             raise PermissionDenied("학원 정보를 확인할 수 없습니다.")
@@ -360,6 +359,14 @@ class HomeworkSubmissionMediaPreviewView(APIView):
                 {"code": "HOMEWORK_MEDIA_NOT_READY", "detail": "파일이 아직 준비되지 않았습니다."},
                 status=status.HTTP_409_CONFLICT,
             )
+        return target
+
+    @extend_schema(exclude=True)
+    def get(self, request, homework_id: int, media_id: str):
+        target = self.authorized_target(request, homework_id, media_id)
+        if isinstance(target, Response):
+            return target
+        _, object_key, media_payload = target
         return Response(
             {
                 "url": generate_presigned_get_url(key=object_key, expires_in=600),
@@ -369,3 +376,26 @@ class HomeworkSubmissionMediaPreviewView(APIView):
                 "expires_in": 600,
             }
         )
+
+
+class HomeworkSubmissionCompatiblePreviewView(HomeworkSubmissionMediaPreviewView):
+    @extend_schema(exclude=True)
+    def get(self, request, homework_id: int, media_id: str):
+        from apps.domains.submissions.services.homework_preview import find_preview, preview_payload
+
+        target = self.authorized_target(request, homework_id, media_id)
+        if isinstance(target, Response):
+            return target
+        submission, source_key, _ = target
+        return Response(preview_payload(find_preview(submission=submission, media_id=str(media_id), source_key=source_key)))
+
+    @extend_schema(exclude=True)
+    def post(self, request, homework_id: int, media_id: str):
+        from apps.domains.submissions.services.homework_preview import prepare_preview, preview_payload
+
+        target = self.authorized_target(request, homework_id, media_id)
+        if isinstance(target, Response):
+            return target
+        submission, source_key, payload = target
+        preview = prepare_preview(submission=submission, media_id=str(media_id), source_key=source_key, media_kind=payload["media_kind"])
+        return Response(preview_payload(preview), status=status.HTTP_200_OK if preview.status == "ready" else status.HTTP_202_ACCEPTED)

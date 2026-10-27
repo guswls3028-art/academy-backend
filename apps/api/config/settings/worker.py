@@ -150,6 +150,8 @@ R2_ADMIN_PUBLIC_BASE_URL = os.getenv("R2_ADMIN_PUBLIC_BASE_URL", "")
 # ==================================================
 VIDEO_BATCH_JOB_QUEUE = os.getenv("VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
 VIDEO_BATCH_JOB_DEFINITION = os.getenv("VIDEO_BATCH_JOB_DEFINITION", "academy-v1-video-batch-jobdef")
+HOMEWORK_PREVIEW_BATCH_JOB_QUEUE = os.getenv("HOMEWORK_PREVIEW_BATCH_JOB_QUEUE", "")
+HOMEWORK_PREVIEW_BATCH_JOB_DEFINITION = os.getenv("HOMEWORK_PREVIEW_BATCH_JOB_DEFINITION", "")
 VIDEO_BATCH_COMPUTE_ENV_NAME = os.getenv("VIDEO_BATCH_COMPUTE_ENV_NAME", "academy-v1-video-batch-ce-200gb")
 if os.getenv("ACADEMY_RUNTIME_ENV", "").strip().lower() == "development" and (
     VIDEO_BATCH_JOB_QUEUE or VIDEO_BATCH_JOB_DEFINITION

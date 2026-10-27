@@ -525,11 +525,52 @@ durable outbox 생성, 전용 개발 SQS·mock worker 처리이며 실제 Solapi
 - API·AI worker의 개발 R2 객체 round-trip 성공, 운영 R2 버킷 접근 거부
 - 합성 XLSX 파싱과 PPTX 생성·재열기 성공 및 처리시간 제한 통과
 - `/healthz`, `/health`, 로컬 Redis/Valkey `PONG`
-- Video Batch queue/job definition이 빈 값이고 운영 Batch 제출이 불가능함
+- 일반 `VIDEO_BATCH_JOB_QUEUE/DEFINITION`은 빈 값이고 운영 Batch 제출이 불가능함
+
+## 숙제 호환 영상 전용 development Batch
+
+`run-homework-preview-development-canary.ps1` / `homework_preview_development.py`는
+`params.yaml`의 `homeworkPreviewDevelopment`만 소유한다. 숙제 파생 영상 worker는
+DB/R2만 사용하며 일반 강의 Video 파이프라인과 Redis는 활성화하지 않는다.
+
+- 전용 Fargate CE/queue(최대 4 vCPU), ARM64 작업 2 vCPU/4GiB, 전용 job/execution role,
+  14일 로그 그룹을 사용한다. 기존 development SG의 inbound 0개와 public subnet
+  두 개의 IGW 경로를 검증한다. task에만 public IP를 부여하며 ingress를 추가하지 않는다.
+  기존 자원의 소유권·설정이 다르면 자동 덮어쓰기 대신 실패한다.
+- job role은 정확한 development workers parameter GetParameter만 허용하고 다른
+  parameter 읽기·열거·history를 거부한다. execution role은 Video ECR pull과 전용 로그
+  쓰기만 허용한다. API role에는 별도 소유 inline policy로 이 queue와 개발 definition
+  prefix의 SubmitJob만 추가한다. 기존 parameter deny/runtime policy를 보존하고
+  `Ensure-ApiDevelopmentIAM`도 추가 grant를 exact readback한다.
+- OIDC의 development managed policy에 자원별 권한을 추가한다. main/ref, production
+  environment trust와 production deploy inline policy는 유지한다. 적용 전 기존
+  `converge-api-development-oidc.ps1`의 trust/readback 경로로 수렴한다.
+- publisher의 `-EnableHomeworkPreview`는 workers env를 먼저 한 번 발행하고
+  `academy-development-homework-video-<release SHA256 앞12자>-v<workers env version>:1`을
+  API env에 고정한다. definition은 immutable Video digest와 versioned `BATCH_SSM_ENV`를
+  사용한다. 같은 이름의 다른 revision/image/env는 거부한다. 최초 instance bootstrap은
+  opt-in 없이 이전 검증 이미지로 접속 기반을 만든다.
+- 공식 workflow와 수동 `deploy.ps1`은 후보 API 활성화 전에 codec canary를 요구한다.
+  현재 active development API container의 instance role로 고정 명령을 SubmitJob한다.
+  Batch에서 개발 DB/역할, 운영 DB CONNECT 거부, 운영 worker parameter·R2 거부,
+  합성 HEVC R2 왕복, H.264 변환과 실제 RGB 프레임 디코딩을 검증한다. tenant/user 행은
+  만들지 않고 `qa-homework-preview/<정확한 Batch UUID>/`의 두 객체만 쓴다.
+- 성공·실패 모두 terminal job 확인 뒤 같은 두 key만 SSM으로 삭제하고 prefix 잔여 0을
+  재조회한다. 제출 응답 유실은 고유 jobName으로 재조회하며 중복 제출하지 않는다.
+  timeout은 정확한 job을 terminate하고 terminal 확인 전에는 객체를 지우지 않는다.
+  상태 불명/cleanup 실패는 release를 차단하며 evidence의 job ID로 복구한다.
+
+Plan은 identity/image/network만 조회한다. Apply는 각 mutation마다 기존 shared deployment
+lock의 owner/TTL을 확인하므로 소유 release window에서만 실행한다. nonsecret 결과는
+CI artifact `homework-preview-development-canary`에 보존한다. success, 실제 frame,
+R2 cleanup0 없이는 후보 API 활성화와 preprod로 진행하지 않는다. 기존 XLSX/PPTX/R2,
+preprod 종료, migration/rolling/health, same-artifact frontend QA 게이트는 유지한다.
+앱의 제출→교직원 재생/검수→reload는 별도 disposable tenant의 실제 API journey에서
+확인한다. 일반 Video/Redis canary의 상태는 아래와 같다.
 
 ## Video Batch 개발 canary 준비 계약 [PROPOSED]
 
-전용 development Video Batch 자원이 준비될 때 추가할 canary는 production 이름을
+일반 강의 Video 파이프라인의 development Batch 자원이 준비될 때 추가할 canary는 production 이름을
 거부하고 다음 체인을 한 번의 disposable job으로 증명해야 한다. 현재 구현 및 릴리스
 workflow 연결은 없다.
 

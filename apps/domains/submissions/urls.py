@@ -26,6 +26,7 @@ from .views.homework_submission_media_view import (
     HomeworkSubmissionMediaCollectionView,
     HomeworkSubmissionMediaDetailView,
     HomeworkSubmissionMediaPreviewView,
+    HomeworkSubmissionCompatiblePreviewView,
 )
 
 router = DefaultRouter()
@@ -74,6 +75,11 @@ urlpatterns = [
         "submissions/homework/<int:homework_id>/media/<str:media_id>/",
         HomeworkSubmissionMediaDetailView.as_view(),
         name="homework-submission-media-detail",
+    ),
+    path(
+        "submissions/homework/<int:homework_id>/media/<str:media_id>/preview/compatible/",
+        HomeworkSubmissionCompatiblePreviewView.as_view(),
+        name="homework-submission-compatible-preview",
     ),
     path(
         "submissions/homework/<int:homework_id>/media/<str:media_id>/preview/",

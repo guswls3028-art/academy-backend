@@ -477,6 +477,8 @@ VIDEO_SQS_QUEUE_DELETE_R2 = os.getenv("VIDEO_SQS_QUEUE_DELETE_R2", "academy-vide
 # AWS Batch Video Encoding. long path 폐기 (2026-05-10) — 모든 영상이 short queue로.
 VIDEO_BATCH_JOB_QUEUE = os.getenv("VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
 VIDEO_BATCH_JOB_DEFINITION = os.getenv("VIDEO_BATCH_JOB_DEFINITION", "academy-v1-video-batch-jobdef")
+HOMEWORK_PREVIEW_BATCH_JOB_QUEUE = os.getenv("HOMEWORK_PREVIEW_BATCH_JOB_QUEUE", "")
+HOMEWORK_PREVIEW_BATCH_JOB_DEFINITION = os.getenv("HOMEWORK_PREVIEW_BATCH_JOB_DEFINITION", "")
 VIDEO_BATCH_COMPUTE_ENV_NAME = os.getenv("VIDEO_BATCH_COMPUTE_ENV_NAME", "academy-v1-video-batch-ce-200gb")
 # EventBridge + Ops JobDef. cron 7종 SSOT: backend/docs/infrastructure/video-cron-jobs.md
 VIDEO_RECONCILE_RULE_NAME = os.getenv("VIDEO_RECONCILE_RULE_NAME", "academy-v1-reconcile-video-jobs")

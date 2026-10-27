@@ -49,6 +49,7 @@ PERMANENT_DELETE_STUDENT_RELATIONS = frozenset({
 
 PERMANENT_DELETE_SUBMISSION_RELATIONS = frozenset({
     ("submissions_submissionmedia", "submission_id"),
+    ("submissions_homeworkmediapreview", "submission_id"),
     ("submissions_submissionanswer", "submission_id"),
     ("submissions_omr_recognition_run", "submission_id"),
     ("submissions_omr_detected_answer", "submission_id"),
@@ -769,6 +770,7 @@ def _permanently_delete_selected_students(
         "submissions_omr_detected_answer", "submissions_omr_student_match",
         "submissions_omr_recognition_run", "submissions_submissionanswer",
         "submissions_submissionmedia", "submissions_omruploadbatchitem",
+        "submissions_homeworkmediapreview",
         "submissions_submission",
         "results_student_reported_score", "student_support_session",
         "homework_results_homeworkscore", "homework_assignment", "homework_enrollment",
@@ -866,6 +868,7 @@ def _permanently_delete_selected_students(
                 "submissions_omr_detected_answer",
                 "submissions_omr_student_match",
                 "submissions_submissionmedia",
+                "submissions_homeworkmediapreview",
             ]:
                 if not _table_exists(_safe_tbl(tbl)):
                     continue

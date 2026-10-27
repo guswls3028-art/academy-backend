@@ -119,6 +119,17 @@ apiDevelopment:
   accessMode: ssm-only
   matchProductionCompute: true
 
+homeworkPreviewDevelopment:
+  # Private homework preview only; general lecture Video Batch remains disabled.
+  queueName: academy-development-homework-video-queue
+  computeEnvironmentName: academy-development-homework-video-ce
+  jobDefinitionPrefix: academy-development-homework-video-
+  jobRoleName: academy-development-homework-video-job-role
+  executionRoleName: academy-development-homework-video-execution-role
+  apiPolicyName: academy-homework-preview-development
+  logGroupName: /aws/batch/academy-homework-development
+  maxVcpus: 4
+
 messagingWorker:
   asgName: academy-v1-messaging-worker-asg
   launchTemplateName: academy-v1-messaging-worker-lt

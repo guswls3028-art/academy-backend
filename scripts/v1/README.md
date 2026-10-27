@@ -133,7 +133,10 @@ pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Off -AwsProfile default
 - **상시 development gate**: 최초 1회
   `initialize-api-development.ps1 -AwsProfile <least-privilege-profile>`로
   전용 IAM/DB/SQS/SG와 개발 전용 R2 SecureString을 수렴하고 마지막 검증 release로 active 서버를
-  기동한다. CI는 이후 worker-only release를 포함한 모든 후보에서 API/Tools digest를
+  기동한다. 숙제 호환 영상은 `run-homework-preview-development-canary.ps1`의 전용
+  Fargate/HEVC→H.264/cleanup0 검증을 API 활성화 전에 통과해야 한다. 일반 Video Batch
+  개발 금지는 유지하며 자세한 경계는 `docs/operations/persistent-development-runtime.md`가 소유한다.
+  CI는 이후 worker-only release를 포함한 모든 후보에서 API/Tools digest를
   `deploy-api-development.ps1`의 blue/green 검증에 통과시킨 뒤에만 임시
   preprod로 진행한다. 수동 `deploy.ps1`도 같은 gate를 실행한다.
 - **development 접속**:

@@ -48,6 +48,27 @@ def describe_batch_jobs(*, aws_batch_job_ids: list[str], region: str) -> list[di
     return list(resp.get("jobs") or [])
 
 
+def submit_homework_preview_batch_job(*, preview_id: str, attempt_token: str,
+                                    queue_name: str, job_definition: str, region: str) -> str | None:
+    """Fixed Video-worker command; callers cannot submit arbitrary commands/URLs."""
+    import uuid
+
+    preview_id = str(uuid.UUID(preview_id))
+    attempt_token = str(uuid.UUID(attempt_token))
+    response = _batch_client(region).submit_job(
+        jobName=f"homework-preview-{preview_id[:8]}-{attempt_token[:8]}",
+        jobQueue=queue_name,
+        jobDefinition=job_definition,
+        containerOverrides={
+            "command": ["python", "-m", "apps.worker.video_worker.homework_preview_main", preview_id, attempt_token],
+            "resourceRequirements": [{"type": "VCPU", "value": "2"}, {"type": "MEMORY", "value": "4096"}],
+        },
+        timeout={"attemptDurationSeconds": 900},
+        retryStrategy={"attempts": 1},
+    )
+    return response.get("jobId")
+
+
 def get_batch_queue_primary_compute_environment_desired_vcpus(
     *,
     queue_name: str,

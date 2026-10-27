@@ -1,0 +1,11 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "batch:SubmitJob",
+    "Resource": [
+      "arn:aws:batch:__REGION__:__ACCOUNT_ID__:job-queue/academy-development-homework-video-queue",
+      "arn:aws:batch:__REGION__:__ACCOUNT_ID__:job-definition/academy-development-homework-video-*"
+    ]
+  }]
+}
