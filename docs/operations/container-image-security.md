@@ -701,6 +701,9 @@ PBDS binary heap의 `erase_if` 재할당 뒤 entry pointer를 갱신하는 헤�
   `order_by_precedence` 반환 형식도 복구한다. 3.18의 목록 검증 오류 형식 변경은
   `LIST_SERIALIZER_ERRORS_AS_DICT=False`로 기존 행별 오류 배열 계약을 유지한다.
   이 호환 설정 제거는 API 소비자 전환과 별도 검증 없이 수행하지 않는다.
+  조건부 유일성 필드의 기본값 처리도 달라지므로 강의 `is_system` 기본값은
+  생성 시에만 적용한다. 전체 수정 요청에서 생략한 기존 시스템 강의 표시를
+  `False`로 덮어쓰지 않으며, 생성·전체/부분 수정·명시값 회귀로 이를 검증한다.
   기존 JSON/URL-encoded 본문 크기 제한과 AdminRenderer 권한 보호,
   Python 3.11과 drf-spectacular/drf-yasg를 유지한다. JSON의 기본
   2.5 MiB 제한을 해제하지 않으며 multipart 파일은 별도 업로드 검증·디스크 스풀

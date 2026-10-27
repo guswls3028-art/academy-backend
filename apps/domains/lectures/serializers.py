@@ -18,6 +18,8 @@ class LectureSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         ]
         read_only_fields = ["tenant", "display_order", "active_enrollment_count"]
+        # DRF 3.18 adds condition-field defaults; omitted PUT flags must retain their saved value.
+        extra_kwargs = {"is_system": {"default": serializers.CreateOnlyDefault(False)}}
         ref_name = "Lecture"
 
     def validate(self, attrs):
