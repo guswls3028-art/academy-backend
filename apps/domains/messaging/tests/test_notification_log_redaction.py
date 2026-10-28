@@ -625,3 +625,10 @@ class NotificationLogRedactionTests(TestCase):
         self.assertEqual(failed["status"], "failed")
         self.assertEqual(failed["status_code"], "4001")
         self.assertNotIn("private-message-id", str(failed))
+        message.status = "FAILED"
+        message.status_code = "3058"
+        no_route = get_provider_delivery_status(log)
+        self.assertEqual(no_route["status"], "failed")
+        self.assertIn("전송경로 없음(3058)", no_route["failure_reason"])
+        self.assertIn("단정할 수 없습니다", no_route["failure_reason"])
+        self.assertNotIn("private-message-id", str(no_route))

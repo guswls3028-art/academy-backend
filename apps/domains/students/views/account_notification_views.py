@@ -34,14 +34,25 @@ class StudentAccountNotificationItemSchema(serializers.Serializer):
     failure_reason = serializers.CharField()
     target_id = serializers.CharField()
     target_name = serializers.CharField()
+    provider_delivery_status = serializers.CharField()
+    provider_status_code = serializers.CharField()
+    provider_delivery_checked_at = serializers.DateTimeField(allow_null=True)
+    provider_delivery_updated_at = serializers.DateTimeField(allow_null=True)
+    provider_delivery_failure_reason = serializers.CharField()
+
+
+class InitialAccountNoticeStateSchema(serializers.Serializer):
+    status = serializers.ChoiceField(choices=("not_pending", "awaiting_enrollment", "action_required"))
+    message = serializers.CharField()
 
 
 class StudentAccountNotificationListSchema(serializers.Serializer):
     results = StudentAccountNotificationItemSchema(many=True)
+    initial_notice = InitialAccountNoticeStateSchema()
 
 
 class StudentAccountGuidanceRequestSchema(serializers.Serializer):
-    target = serializers.ChoiceField(choices=("student", "parent"))
+    target = serializers.ChoiceField(choices=("student", "parent", "initial"))
 
 
 class StudentAccountGuidanceResponseSchema(serializers.Serializer):
@@ -83,8 +94,10 @@ class StudentAccountNotificationLogView(APIView):
             min_value=1,
         )
 
+        from apps.domains.students.services.account_notice import initial_account_notice_state
         return Response({
             "results": list_recent_account_notification_logs(student, limit=limit),
+            "initial_notice": initial_account_notice_state(student),
         })
 
     @extend_schema(
@@ -101,6 +114,19 @@ class StudentAccountNotificationLogView(APIView):
 
         payload = StudentAccountGuidanceRequestSchema(data=request.data)
         payload.is_valid(raise_exception=True)
+        if payload.validated_data["target"] == "initial":
+            from apps.domains.students.services.account_notice import dispatch_pending_account_notice
+            result = dispatch_pending_account_notice(student_id=student.id)
+            if result.get("status") == "skip":
+                detail = (
+                    "첫 수강 확정 후 최초 안내를 요청할 수 있습니다."
+                    if result.get("reason") == "enrollment_not_active"
+                    else "대기 중인 최초 안내가 없습니다. 발송 내역을 확인해 주세요."
+                )
+                return Response({"detail": detail}, status=409)
+            if result.get("status") != "enqueued":
+                return Response({"detail": "최초 계정 안내를 접수하지 못했습니다. 등록된 연락처와 알림톡 설정을 확인한 뒤 다시 요청해 주세요."}, status=503)
+            return Response({"message": "최초 계정 안내 발송을 요청했습니다. 발송 내역에서 최종 전달 결과를 확인해 주세요."})
         try:
             account = resolve_staff_account_for_student(
                 student=student,
@@ -114,5 +140,5 @@ class StudentAccountNotificationLogView(APIView):
 
         target_label = "학생" if account.target == "student" else "학부모"
         return Response({
-            "message": f"{target_label} 로그인 정보 알림톡을 발송했습니다. 안내된 아이디와 비밀번호로 로그인할 수 있습니다.",
+            "message": f"{target_label} 로그인 정보 알림톡 발송을 요청했습니다. 안내된 아이디와 비밀번호로 로그인할 수 있습니다. 발송 내역에서 최종 전달 결과를 확인해 주세요.",
         })

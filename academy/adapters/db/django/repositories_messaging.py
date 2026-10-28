@@ -147,6 +147,11 @@ def list_account_notification_logs(
             "failure_reason": log.failure_reason or "",
             "target_id": sanitize_notification_target_id(log.target_id),
             "target_name": log.target_name or "",
+            "provider_delivery_status": "not_checked" if log.provider_message_id else "unavailable",
+            "provider_status_code": "",
+            "provider_delivery_checked_at": None,
+            "provider_delivery_updated_at": None,
+            "provider_delivery_failure_reason": "",
         }
         for log in qs
     ]

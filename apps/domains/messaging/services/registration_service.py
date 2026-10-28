@@ -16,6 +16,7 @@ def _dispatch_registration_durably(
     *,
     business_tenant_id: int,
     trigger: str,
+    first_enrollment_since=None,
     **payload,
 ) -> bool:
     from apps.domains.messaging.models import ScheduledNotification
@@ -25,6 +26,22 @@ def _dispatch_registration_durably(
     )
 
     try:
+        if first_enrollment_since is not None:
+            # Student/account locks in dispatch_pending_account_notice serialize
+            # retries. Reuse durable admission even for historical partial pairs;
+            # a provider-accepted or uncertain send must never be repeated here.
+            existing = ScheduledNotification.objects.filter(
+                tenant_id=business_tenant_id,
+                trigger=trigger,
+                payload__target_id=payload.get("target_id"),
+                created_at__gte=first_enrollment_since,
+            ).order_by("created_at").first()
+            if existing is not None:
+                return existing.status in {
+                    ScheduledNotification.Status.SENT,
+                    ScheduledNotification.Status.PENDING,
+                    ScheduledNotification.Status.DISPATCHING,
+                }
         notification = dispatch_notification_now(
             tenant_id=business_tenant_id,
             trigger=trigger,
@@ -88,6 +105,7 @@ def send_welcome_messages(
     site_url: str = "",
     origin_type: str = "student_account",
     origin_id: str = "",
+    first_enrollment_since=None,
 ):
     """
     가입 안내 알림톡 일괄 발송 (학생 + 학부모).
@@ -183,6 +201,7 @@ def send_welcome_messages(
                 ok = _dispatch_registration_durably(
                     business_tenant_id=tenant_id,
                     trigger="registration_approved_student",
+                    first_enrollment_since=first_enrollment_since,
                     tenant_id=owner_id,
                     to=phone,
                     text=text,
@@ -231,6 +250,7 @@ def send_welcome_messages(
                 ok = _dispatch_registration_durably(
                     business_tenant_id=tenant_id,
                     trigger="registration_approved_parent",
+                    first_enrollment_since=first_enrollment_since,
                     tenant_id=owner_id,
                     to=parent_phone,
                     text=text,

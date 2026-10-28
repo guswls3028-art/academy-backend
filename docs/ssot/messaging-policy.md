@@ -207,6 +207,15 @@ DB 실패·검증 거절·transaction rollback은 receipt/outbox와 커밋 후 �
 복원·재퇴원 거절, 번호/본문 제거와 TTL을 회귀 테스트한다.
 
 ## 안전장치 체계
+
+학생별 계정 안내 내역에서도 공급사 접수와 최종 전달을 구분한다. 교직원의 명시적
+최종 결과 조회는 기존 `logs/{id}/?verify_provider=true`를 사용하며 자동 재발송이나
+비밀번호 변경을 하지 않는다. Solapi `3058`은 “전송경로 없음”으로 표시하고 등록
+번호 확인을 안내한다. 해당 코드만으로 카카오톡 미가입·채널 차단 여부를 단정하지
+않는다. 최종 상태는 SDK의 선택적 `status` 문자열보다 공급사 결과 코드를 기준으로
+판정한다. 근거: [Solapi 상태 코드](https://solapi.com/guides/message-status-codes).
+최초 안내 접수가 누락된 학생의 교직원 복구는 [학생 생성 계약](../domain/student-creation.md)의
+대기 상태·부분 outbox 롤백·기존 접수 재사용 경계를 따른다.
 1. **Tenant.messaging_is_active** — 대표·관리자가 화면에서 직접 제어하는 학원 전체 on/off. 신규·기존 사용 중 학원은 기본 on이며 개인 고객의 선호를 코드나 운영 환경변수에 넣지 않는다.
 2. **AutoSendConfig.enabled** — 트리거별 DB on/off (설정 콘솔에서 제어)
 3. **TRIGGER_POLICY** — 코드 레벨 정책 분류 (SYSTEM_AUTO는 토글 비활성화)

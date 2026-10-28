@@ -4813,6 +4813,30 @@
         ],
         "type": "string"
       },
+      "InitialAccountNoticeStateSchema": {
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InitialAccountNoticeStateSchemaStatusEnum"
+          }
+        },
+        "required": [
+          "message",
+          "status"
+        ],
+        "type": "object"
+      },
+      "InitialAccountNoticeStateSchemaStatusEnum": {
+        "description": "* `not_pending` - not_pending\n* `awaiting_enrollment` - awaiting_enrollment\n* `action_required` - action_required",
+        "enum": [
+          "not_pending",
+          "awaiting_enrollment",
+          "action_required"
+        ],
+        "type": "string"
+      },
       "IntervalMinutesEnum": {
         "description": "* `30` - 30\n* `60` - 60",
         "enum": [
@@ -16869,7 +16893,26 @@
           "notification_type": {
             "type": "string"
           },
+          "provider_delivery_checked_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "provider_delivery_failure_reason": {
+            "type": "string"
+          },
+          "provider_delivery_status": {
+            "type": "string"
+          },
+          "provider_delivery_updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
           "provider_message_id": {
+            "type": "string"
+          },
+          "provider_status_code": {
             "type": "string"
           },
           "recipient_summary": {
@@ -16897,7 +16940,12 @@
           "failure_reason",
           "id",
           "notification_type",
+          "provider_delivery_checked_at",
+          "provider_delivery_failure_reason",
+          "provider_delivery_status",
+          "provider_delivery_updated_at",
           "provider_message_id",
+          "provider_status_code",
           "recipient_summary",
           "sent_at",
           "status",
@@ -16909,6 +16957,9 @@
       },
       "StudentAccountNotificationListSchema": {
         "properties": {
+          "initial_notice": {
+            "$ref": "#/components/schemas/InitialAccountNoticeStateSchema"
+          },
           "results": {
             "items": {
               "$ref": "#/components/schemas/StudentAccountNotificationItemSchema"
@@ -16917,6 +16968,7 @@
           }
         },
         "required": [
+          "initial_notice",
           "results"
         ],
         "type": "object"
@@ -19483,10 +19535,11 @@
         "type": "string"
       },
       "TargetEnum": {
-        "description": "* `student` - student\n* `parent` - parent",
+        "description": "* `student` - student\n* `parent` - parent\n* `initial` - initial",
         "enum": [
           "student",
-          "parent"
+          "parent",
+          "initial"
         ],
         "type": "string"
       },

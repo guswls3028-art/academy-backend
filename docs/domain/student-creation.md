@@ -126,6 +126,28 @@ ID와 복원/삭제 후 재등록은 호환된다. 생명주기 충돌의 사용
 
 ## 3. 불변 조건
 
+### 최초 계정 안내 접수 확인과 복구
+
+교직원은 학생 상세의 계정 안내 내역에서 `initial_notice`를 조회한다.
+`awaiting_enrollment`는 첫 ACTIVE 수강 전, `action_required`는 ACTIVE 수강이
+있지만 최초 안내 접수가 완성되지 않은 상태다. `not_pending`는 최초 안내 대기가
+없다는 의미이며 수신 성공 증거가 아니다. 기존 학생의 추가 수강은 자동 재발송하지
+않는다. 발송 내역의 공급사 접수와 최종 전달은 별도로 확인한다.
+
+같은 학원 교직원만 `POST students/{id}/account-notifications/`의 `target=initial`로
+미완료 최초 안내를 다시 요청할 수 있다. 활성 수강이 없거나 이미 접수된 요청은
+409, 접수 실패는 연락처·설정 확인 안내와 503을 반환한다. 학생/학부모 계정 잠금과
+학생 잠금으로 동시 요청을 직렬화하며, 대기 시작 이후 해당 계정의 기존 outbox를
+재사용한다. 이미 큐에 접수됐거나 공급사 결과가 불명확한 건을 다시 발송하지 않는다.
+새 학생/학부모 outbox 중 하나라도 확보하지 못하면 이번에 만든 부분 outbox와
+on-commit 큐 작업을 롤백하고 암호화된 대기를 유지한다. 모든 outbox 확보 후에만
+대기를 제거한다. 기존 계정 비밀번호·세션과 과거 발송 이력을 보존하며, 운영의
+과거 대기를 일괄 자동 재발송하지 않는다.
+
+검증: `test_account_notice_recovery.py`의 활성 수강 경계, 부분 실패 롤백,
+기존 부분 접수 재사용, 반복 요청·학원 격리 및 계정 비밀번호 보존 회귀.
+화면 동선과 390px 확인은 frontend `docs/MESSAGING-OPERATIONS.md`를 따른다.
+
 - `tenant`는 반드시 caller가 resolve해서 전달한다. tenant fallback은 만들지 않는다.
 - `student_data.ps_number`는 caller 또는 serializer가 확정한다.
 - `password`와 `password_hash`는 동시에 전달하지 않는다. 둘 다 없으면 실제 저장된 학원 학생 정책만 적용하며 미설정은 오류다.
