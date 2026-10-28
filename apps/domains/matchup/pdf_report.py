@@ -698,7 +698,7 @@ def _draw_group_compare_page(c, *, page_w, page_h, margin, inner_w,
 def _draw_cover(c, *, page_w, page_h, margin, inner_w,
                 fn_reg, fn_bold, tenant_name, report_title,
                 document_category, author_label, issued_at,
-                summary_text, curated_count, total_q,
+                summary_text, comment_count, total_q,
                 pinned_count, hit_problem_count, hit_rate,
                 curated_problem_count, curated_progress):
     """표지 — 학원 로고 띠 + 매치업 적중률 헤드라인 + 보고서 제목 + 메타 + 통계."""
@@ -807,15 +807,14 @@ def _draw_cover(c, *, page_w, page_h, margin, inner_w,
             ty -= 5 * mm
 
     # 보조 통계 — 헤드라인과 metric 분리 명시 (혼란 방지).
-    # 헤드라인 분모 = curated_problem_count (sel_ids 1건+ 문항)
-    # 보조 = curated_count (sel_ids OR comment 작성 문항) — 코멘트만 있어도 작성으로 카운트.
+    # 헤드라인 분모 = total_q, 자료 선택과 문항별 코멘트 작성 수는 각각 집계.
     stat_y = 25 * mm
     c.setFont(fn_reg, 11)
     c.setFillColor(HexColor("#64748B"))
     c.drawCentredString(
         page_w / 2, stat_y,
         f"자료 선택: {curated_problem_count} / {total_q} 문항   ·   "
-        f"코멘트 작성: {curated_count} / {total_q} 문항   ·   "
+        f"코멘트 작성: {comment_count} / {total_q} 문항   ·   "
         f"선택된 학원 자료 총 {pinned_count}건",
     )
 
@@ -912,11 +911,11 @@ def generate_curated_hit_report_pdf(report) -> bytes:
             report.id, body_page_count,
         )
 
-    # 표지 통계 — excluded(PDF 제외 토글) entry는 본문/표지 모두에서 빠짐.
-    curated_count = sum(
-        1 for e in entries_by_eid.values()
-        if not getattr(e, "excluded", False)
-        and ((e.selected_problem_ids or []) or (e.comment or "").strip())
+    # 본문에 포함되는 문항의 실제 코멘트만 집계. 자료 선택과 총평은 별도다.
+    comment_count = sum(
+        1 for ep in exam_problems
+        if (entry := entries_by_eid.get(ep.id)) is not None
+        and (entry.comment or "").strip()
     )
     pinned_count = sum(
         len(e.selected_problem_ids or [])
@@ -975,7 +974,7 @@ def generate_curated_hit_report_pdf(report) -> bytes:
         document_category=(document.category or "미분류"),
         author_label=author_label, issued_at=issued_at,
         summary_text=(report.summary or "").strip(),
-        curated_count=curated_count, total_q=len(exam_problems),
+        comment_count=comment_count, total_q=len(exam_problems),
         pinned_count=pinned_count,
         hit_problem_count=hit_problem_count, hit_rate=hit_rate,
         curated_problem_count=curated_problem_count,

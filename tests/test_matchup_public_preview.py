@@ -9,6 +9,9 @@ from PIL import Image
 
 from apps.domains.matchup.views_hit_report import (
     HitReportLandingPublicPreviewView,
+    _get_or_generate_curated_hit_report_pdf,
+    _hit_report_pdf_cache_key,
+    _hit_report_pdf_etag,
     _hit_report_public_preview_pdf_key,
     _prewarm_hit_report_preview_if_public,
 )
@@ -142,6 +145,48 @@ class MatchupPreviewRenderingTests(SimpleTestCase):
             second = _hit_report_public_preview_pdf_key(report)
 
         self.assertNotEqual(first, second)
+
+    def test_comment_count_revision_regenerates_old_pdf_cache_without_changing_report(self):
+        entries = Mock()
+        entries.order_by.return_value.values.return_value = []
+        report = SimpleNamespace(
+            id=42, tenant_id=7, document_id=9, title="Existing report", summary="",
+            entries=entries, updated_at=datetime(2026, 7, 26, tzinfo=timezone.utc),
+            document=SimpleNamespace(updated_at=datetime(2026, 7, 25, tzinfo=timezone.utc)),
+        )
+        before_report = vars(report).copy()
+        with patch(
+            "apps.domains.matchup.views_hit_report._HIT_REPORT_PDF_RENDER_VERSION",
+            "grouped-1n-readable-raw-cosine-v3",
+        ):
+            old_key = _hit_report_pdf_cache_key(report)
+            old_etag = _hit_report_pdf_etag(report)
+            old_preview_key = _hit_report_public_preview_pdf_key(report)
+        objects = {old_key: b"old-selection-as-comment-pdf"}
+
+        def store(*, fileobj, key, content_type):
+            self.assertEqual(content_type, "application/pdf")
+            objects[key] = fileobj.read()
+
+        with (
+            patch(
+                "apps.domains.matchup.views_hit_report.get_object_bytes_r2_storage",
+                side_effect=lambda *, key: objects.get(key),
+            ),
+            patch("apps.domains.matchup.views_hit_report.upload_fileobj_to_r2_storage", side_effect=store),
+            patch(
+                "apps.domains.matchup.pdf_report.generate_curated_hit_report_pdf",
+                return_value=b"correct-comment-count-pdf",
+            ) as generate,
+        ):
+            self.assertEqual(_get_or_generate_curated_hit_report_pdf(report), (b"correct-comment-count-pdf", "miss"))
+            self.assertEqual(_get_or_generate_curated_hit_report_pdf(report), (b"correct-comment-count-pdf", "hit"))
+        generate.assert_called_once_with(report)
+        self.assertNotEqual(_hit_report_pdf_cache_key(report), old_key)
+        self.assertNotEqual(_hit_report_pdf_etag(report), old_etag)
+        self.assertNotEqual(_hit_report_public_preview_pdf_key(report), old_preview_key)
+        self.assertEqual(objects[old_key], b"old-selection-as-comment-pdf")
+        self.assertEqual(vars(report), before_report)
 
 
 class LandingHitReportPreviewViewTests(SimpleTestCase):
