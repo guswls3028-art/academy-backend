@@ -54,8 +54,6 @@ def get_provider_delivery_status(log) -> dict[str, object]:
             "failure_reason": "공급사에서 해당 접수 건의 최종 상태를 찾지 못했습니다.",
         }
 
-    statuses = {str(_message_value(message, "status") or "").upper() for message in messages}
-    statuses.discard("")
     codes = {str(_message_value(message, "status_code") or "") for message in messages}
     codes.discard("")
     updated_values = [
@@ -73,7 +71,7 @@ def get_provider_delivery_status(log) -> dict[str, object]:
     # The current Solapi Python response model drops the documented `status`
     # field, so statusCode remains the production-safe source of truth. 2000
     # means accepted and 3000 means the carrier report is still pending.
-    if (statuses and statuses != {"COMPLETE"}) or codes.intersection({"2000", "3000"}) or not codes:
+    if codes.intersection({"2000", "3000"}) or not codes:
         return {
             "status": "provider_accepted",
             "status_code": status_code,
@@ -94,5 +92,9 @@ def get_provider_delivery_status(log) -> dict[str, object]:
         "status_code": status_code,
         "checked_at": checked_at,
         "updated_at": updated_at,
-        "failure_reason": "공급사가 최종 전달 실패로 보고했습니다.",
+        "failure_reason": (
+            "전송경로 없음(3058): 공급사가 해당 수신번호로 알림톡을 전달할 경로를 찾지 못했습니다. 등록된 번호를 확인해 주세요. 이 결과만으로 카카오톡 미가입이나 차단 여부를 단정할 수 없습니다."
+            if codes == {"3058"}
+            else "공급사가 최종 전달 실패로 보고했습니다."
+        ),
     }

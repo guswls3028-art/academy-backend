@@ -137,6 +137,10 @@ class AccountNoticeCredentialTests(TestCase):
     def test_changed_password_replaces_stale_first_enrollment_values(self):
         result = self.create(password="before1234")
         change_password(result.user, "after5678")
+        from apps.domains.enrollment.test_support import create_enrollment_fixture
+        from apps.domains.lectures.test_support import create_lecture_fixture
+        lecture = create_lecture_fixture(tenant=self.tenant, title="첫 수강", name="첫 수강", subject="MATH")
+        create_enrollment_fixture(tenant=self.tenant, student=result.student, lecture=lecture, status="ACTIVE")
         with patch("apps.support.students.account_notice_dependencies.send_welcome_messages", return_value={"status": "enqueued", "enqueued": 2}) as send:
             response = dispatch_pending_account_notice(student_id=result.student.pk)
         self.assertEqual(response["status"], "enqueued")

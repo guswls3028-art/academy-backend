@@ -109,6 +109,30 @@ def _expected_recipient_count(student: Student) -> int:
     return parent_count + student_count
 
 
+def initial_account_notice_state(student: Student) -> dict:
+    """Explain automatic admission without claiming recipient delivery."""
+    from apps.support.students.account_notice_dependencies import active_student_enrollment_exists
+
+    pending = bool(
+        student.pending_account_notice_student_password_ciphertext
+        or student.pending_account_notice_parent_password_ciphertext
+    )
+    if not pending:
+        return {
+            "status": "not_pending",
+            "message": "첫 수강 계정 안내 대기가 없습니다. 기존 학생의 추가 수강에는 자동으로 다시 보내지 않습니다. 필요하면 학생·학부모 로그인 정보 안내를 요청해 주세요.",
+        }
+    if not active_student_enrollment_exists(tenant_id=student.tenant_id, student_id=student.id):
+        return {
+            "status": "awaiting_enrollment",
+            "message": "첫 수강 확정 전입니다. 수강이 확정되면 학생·학부모 계정 안내를 자동으로 요청합니다.",
+        }
+    return {
+        "status": "action_required",
+        "message": "수강은 확정됐지만 최초 계정 안내 접수가 완료되지 않았습니다. 최초 안내 다시 요청으로 접수되지 않은 안내를 복구할 수 있습니다.",
+    }
+
+
 def dispatch_pending_account_notice(*, student_id: int) -> dict:
     """Create the durable account-notice outbox after enrollment confirmation."""
     from apps.support.students.account_notice_dependencies import send_welcome_messages
@@ -138,6 +162,10 @@ def dispatch_pending_account_notice(*, student_id: int) -> dict:
         if not student_ciphertext or not parent_ciphertext:
             return {"status": "skip", "reason": "no_pending_notice"}
 
+        from apps.support.students.account_notice_dependencies import active_student_enrollment_exists
+        if not active_student_enrollment_exists(tenant_id=student.tenant_id, student_id=student.id):
+            return {"status": "skip", "reason": "enrollment_not_active"}
+
         try:
             student_password = _decrypt(student_ciphertext)
             parent_password = _decrypt(parent_ciphertext)
@@ -164,11 +192,15 @@ def dispatch_pending_account_notice(*, student_id: int) -> dict:
             parent_password_by_phone={student.parent_phone: parent_password},
             origin_type=origin_type,
             origin_id=origin_id,
+            first_enrollment_since=student.pending_account_notice_since,
         )
         if result.get("status") != "enqueued" or result.get("enqueued", 0) < expected:
+            # Discard the new partial pair and its on_commit queue callbacks.
+            # Existing durable rows remain and will be reused by an explicit retry.
+            transaction.set_rollback(True)
             return {
                 "status": "pending",
-                "enqueued": result.get("enqueued", 0),
+                "enqueued": 0,
                 "expected": expected,
             }
 

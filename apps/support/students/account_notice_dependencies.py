@@ -13,6 +13,14 @@ def send_welcome_messages(**kwargs: Any) -> Any:
     return _send(**kwargs)
 
 
+def active_student_enrollment_exists(*, tenant_id: int, student_id: int) -> bool:
+    from apps.domains.enrollment.models import Enrollment
+
+    return Enrollment.objects.filter(
+        tenant_id=tenant_id, student_id=student_id, status="ACTIVE",
+    ).exists()
+
+
 def active_student_account_outbox_exists(*, tenant_id: int, student_id: int) -> bool:
     from apps.domains.messaging.models import ScheduledNotification
 
