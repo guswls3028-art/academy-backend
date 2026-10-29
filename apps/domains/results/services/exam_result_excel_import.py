@@ -878,6 +878,15 @@ def apply_exam_result_import(*, plan: ImportPlan) -> dict[str, Any]:
             attempt.save(update_fields=["meta", "status", "updated_at"])
             continue
 
+        # The result and its enrollment are already locked. Load each existing
+        # item once, then persist this student's snapshots and facts in batches.
+        existing_items = {
+            item.question_id: item
+            for item in ResultItem.objects.select_for_update().filter(result=result)
+        }
+        created_items = []
+        updated_items = []
+        changed_facts = []
         objective_score = 0.0
         item_total = 0.0
         for question_number, mark in planned_row.correctness.items():
@@ -893,11 +902,7 @@ def apply_exam_result_import(*, plan: ImportPlan) -> dict[str, Any]:
             if question.kind == "choice":
                 objective_score += earned
 
-            existing_item = (
-                ResultItem.objects.select_for_update()
-                .filter(result=result, question_id=question.question_id)
-                .first()
-            )
+            existing_item = existing_items.get(question.question_id)
             changed = (
                 existing_item is None
                 or bool(existing_item.is_correct) != bool(is_correct)
@@ -907,7 +912,7 @@ def apply_exam_result_import(*, plan: ImportPlan) -> dict[str, Any]:
                 or abs(float(existing_item.max_score or 0.0) - float(question.max_score)) > 0.0001
             )
             if changed:
-                ResultFact.objects.create(
+                changed_facts.append(ResultFact(
                     target_type="exam",
                     target_id=int(exam.id),
                     enrollment_id=enrollment_id,
@@ -926,19 +931,30 @@ def apply_exam_result_import(*, plan: ImportPlan) -> dict[str, Any]:
                         "imported_at": now.isoformat(),
                         "include_in_wrong_note": include_in_wrong_note,
                     },
-                )
-            ResultItem.objects.update_or_create(
-                result=result,
-                question_id=question.question_id,
-                defaults={
-                    "answer": "",
-                    "is_correct": is_correct,
-                    "include_in_wrong_note": include_in_wrong_note,
-                    "score": float(earned),
-                    "max_score": float(question.max_score),
-                    "source": "excel_import",
-                },
+                ))
+            item = existing_item or ResultItem(
+                result=result, question_id=question.question_id,
             )
+            item.answer = ""
+            item.is_correct = is_correct
+            item.include_in_wrong_note = include_in_wrong_note
+            item.score = float(earned)
+            item.max_score = float(question.max_score)
+            item.source = "excel_import"
+            if existing_item is None:
+                created_items.append(item)
+            else:
+                # bulk_update does not run auto_now; retain update_or_create's
+                # timestamp behavior even when the correctness is unchanged.
+                item.updated_at = now
+                updated_items.append(item)
+
+        ResultFact.objects.bulk_create(changed_facts)
+        ResultItem.objects.bulk_create(created_items)
+        ResultItem.objects.bulk_update(updated_items, [
+            "answer", "is_correct", "include_in_wrong_note", "score",
+            "max_score", "source", "updated_at",
+        ])
 
         objective_adjustment, total_adjustment = _score_adjustments(
             exam=exam,
