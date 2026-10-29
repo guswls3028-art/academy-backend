@@ -156,6 +156,12 @@ Tools worker가 요청 시점의 명단·차시·출결을 새 `.xlsx` 스냅샷
 다시 누르면 과거 완료 작업이나 만료 URL을 재사용하지 않고 새 작업과 새 URL을
 발급해야 한다.
 
+학생명·전화번호·차시 제목·출결 표시는 Excel 문자열 셀로 저장한다. `=1+1`이나
+`#N/A`처럼 수식 또는 오류처럼 보이는 입력도 계산하거나 빈 값으로 바꾸지 않고
+원문 그대로 표시하며, 전화번호의 앞자리 `0`도 보존한다. 저장된 학생·차시 데이터나
+이미 내려받은 파일은 수정하지 않는다. 다시 다운로드하면 같은 테넌트 범위와
+출결 상태·색상·열 순서를 유지한 새 스냅샷에 적용된다.
+
 R2 서명 URL은 `Content-Disposition: attachment`와 RFC 5987 UTF-8 파일명,
 XLSX MIME(`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`)을
 응답 오버라이드로 포함한다. 교차 출처 링크의 `download` 속성을 무시하는 iOS
@@ -177,6 +183,7 @@ Safari에서도 XML 응답 화면으로 이동하지 않고 파일 다운로드�
 python -m pytest apps/domains/attendance/tests/test_attendance_list_ordering.py
 python -m pytest apps/domains/attendance/tests/test_attendance_excel_export.py
 python -m ruff check apps/domains/attendance/views.py `
+  apps/domains/attendance/utils/excel.py `
   apps/domains/attendance/tests/test_attendance_list_ordering.py `
   apps/domains/attendance/tests/test_attendance_excel_export.py `
   apps/infrastructure/storage/r2.py `

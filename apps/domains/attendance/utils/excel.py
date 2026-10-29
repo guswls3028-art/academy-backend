@@ -66,6 +66,7 @@ def build_attendance_excel(lecture):
 
     for col in range(1, len(header) + 1):
         cell = ws.cell(row=1, column=col)
+        cell.data_type = "s"
         cell.font = header_font
         cell.alignment = center
         ws.column_dimensions[get_column_letter(col)].width = 16
@@ -87,6 +88,9 @@ def build_attendance_excel(lecture):
 
         ws.append(row)
         r = ws.max_row
+        # Every exported value is a label; preserve formula/error-like text.
+        for cell in ws[r]:
+            cell.data_type = "s"
 
         for idx, s in enumerate(sessions, start=4):
             att = attendance_map.get((en.id, s.id))
