@@ -337,6 +337,7 @@ jobs:
           TOOLS=false
           changed_matches "^apps/worker/tools_worker/" && TOOLS=true
           changed_matches "^apps/domains/tools/" && TOOLS=true
+          changed_matches "^apps/domains/attendance/utils/excel\.py$" && TOOLS=true
           changed_matches "^apps/domains/ai/queueing/" && TOOLS=true
           # ai_sqs_worker and worker_job_types import these modules outside queueing/.
           changed_matches "^apps/domains/ai/(callbacks|job_types)\.py$" && TOOLS=true

@@ -143,6 +143,31 @@ class AttendanceExcelExportDispatchTests(TestCase):
             ],
         )
 
+    def test_export_preserves_formula_and_error_like_labels_as_literal_text(self):
+        for label in ("=1+1", "+학생", "-학생", "@학생", "#N/A", "일반 학생"):
+            with self.subTest(label=label):
+                type(self.student).objects.filter(pk=self.student.pk).update(name=label)
+                type(self.session).objects.filter(pk=self.session.pk).update(title=label)
+                workbook, _ = build_attendance_excel(self.lecture)
+                buffer = BytesIO()
+                workbook.save(buffer)
+                workbook.close()
+
+                for data_only in (False, True):
+                    parsed = openpyxl.load_workbook(
+                        BytesIO(buffer.getvalue()), read_only=True, data_only=data_only
+                    )
+                    try:
+                        worksheet = parsed["출결"]
+                        for coordinate in ("A2", "D1"):
+                            self.assertEqual(worksheet[coordinate].value, label)
+                            self.assertEqual(worksheet[coordinate].data_type, "s")
+                        self.assertEqual(worksheet["B2"].value, "01011112222")
+                        self.assertEqual(worksheet["C2"].value, "01033334444")
+                        self.assertEqual(worksheet["D2"].value, "현장")
+                    finally:
+                        parsed.close()
+
 
 class ExcelDownloadUrlTests(SimpleTestCase):
     @override_settings(R2_EXCEL_BUCKET="academy-excel-test")

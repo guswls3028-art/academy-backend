@@ -110,6 +110,21 @@ def test_previous_base_source_does_not_reintroduce_already_shipped_app_changes(t
     assert len(outputs) == 7
 
 
+@pytest.mark.parametrize("tools_only", [False, True])
+def test_attendance_export_change_rebuilds_its_tools_consumer(tmp_path, tools_only):
+    path = "apps/domains/attendance/utils/excel.py"
+    outputs = classify(
+        tmp_path,
+        runtime="" if tools_only else path,
+        runtime_diffs={"TOOLS": path} if tools_only else None,
+    )
+    assert outputs["build_tools"] == "true"
+    assert outputs["build_api"] == ("false" if tools_only else "true")
+    assert outputs["build_ai"] == ("false" if tools_only else "true")
+    for unrelated in ("all", "base", "video", "messaging"):
+        assert outputs[f"build_{unrelated}"] == "false"
+
+
 @pytest.mark.parametrize("changed", [
     "apps/domains/results/tests/test_score_draft_edit_lease.py",
     "apps/domains/clinic/tests.py",

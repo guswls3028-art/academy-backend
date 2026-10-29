@@ -105,9 +105,15 @@ git push main
 | Legacy aggregate `requirements/requirements.txt` | API + Video Worker only; it is not a base/AI/Messaging/Tools input |
 | `apps/worker/messaging_worker/`, `apps/support/messaging/`, `apps/domains/messaging/`, `apps/api/config/settings/worker.py`, `docker/messaging-worker/`, `requirements/worker-messaging.txt` | Messaging Worker |
 | `apps/worker/ai_worker/`, `apps/worker/omr/`, `apps/domains/`, `apps/support/ai/`, `apps/api/config/settings/(worker|base).py`, `models/`, runtime `scripts/` except `scripts/codex/`, `academy/`, `libs/queue/`, `docker/ai-worker*`, `requirements/worker-ai*` | AI Worker |
-| `apps/worker/tools_worker/`, `apps/domains/tools/`, `apps/domains/ai/queueing/`, PDF 오답노트 서비스/정답 포맷터/한글 폰트, `apps/support/ai/services/sqs_queue.py`, `academy/(application/use_cases/tools|domain/tools|adapters/tools|framework/workers|adapters/queue/sqs)/`, `docker/tools-worker/`, `requirements/worker-tools.txt` | Tools Worker |
+| `apps/worker/tools_worker/`, `apps/domains/tools/`, `apps/domains/attendance/utils/excel.py`, `apps/domains/ai/queueing/`, PDF 오답노트 서비스/정답 포맷터/한글 폰트, `apps/support/ai/services/sqs_queue.py`, `academy/(application/use_cases/tools|domain/tools|adapters/tools|framework/workers|adapters/queue/sqs)/`, `docker/tools-worker/`, `requirements/worker-tools.txt` | Tools Worker |
 
 The base Dockerfile contains OS/native/common Python dependencies, not application source. Shared code therefore rebuilds every runtime consumer without recompiling an unchanged base. `force_full` remains the six-image rebuild for changed base inputs, unavailable source evidence, or confirmed ECR base absence. `workflow_dispatch` always performs a full build/deploy, with the existing per-run APT security refresh. Every worker Dockerfile imports its actual runtime entrypoint during the immutable build, so a candidate with a missing module or incompatible import cannot reach production deployment. Every release, including worker-only selective releases, still runs the persistent API/Tools development gate before preprod.
+
+Attendance spreadsheet generation is imported by the Tools Excel export pipeline.
+Its formatter must therefore rebuild and refresh Tools even when only that worker's
+last verified source lacks the change. `test_release_base_reuse.py` executes the
+workflow's actual classification block for both a fresh change and a lagged Tools
+image; the base, video and messaging images remain reusable for this isolated change.
 Change predicates use the `changed_matches` here-string helper instead of `echo | grep -q`; this avoids a `pipefail`/SIGPIPE false negative on large multi-commit push ranges.
 Push change detection derives each service's diff base from that image's source commit in the last complete verified release manifest, not from `github.event.before`. Therefore a failed workflow followed by a small hotfix still includes earlier unshipped API/worker changes. Missing, non-ancestor, or malformed image source evidence fails safe to a full build.
 
