@@ -247,6 +247,40 @@ the file-content checks. A renamed file, unrelated MIME, disguised ZIP, or
 corrupt workbook fails closed, and the worker parser remains the final workbook
 and row-validation boundary.
 
+Excel contacts and JSON student/enrollment imports use the same conservative
+`apps/shared/utils/excel_phone.py` normalization. Fullwidth ASCII digits and
+punctuation, presentation dashes, numeric cells missing the leading zero, and
+one explicit relation prefix or suffix (`부`, `모`, `아버지`, `어머니`, `아빠`,
+`엄마`, `부친`, `모친`, `부모`, `학부모`, `보호자`, `학생`, `본인`,
+`father`, `mother`, `parent`, `guardian`) are accepted. Parentheses/brackets
+and a colon following a prefix are supported. `010-0000-0000(부)` therefore
+becomes `01000000000`. Arbitrary text, two contacts in one cell, malformed
+groups, decimal/scientific text, and additional digits fail the row; the parser
+never guesses a recipient. Existing eight-digit student identifiers retain
+their parser-only legacy behavior. Names and manually authored records are
+not rewritten by normalization or duplicate detection.
+
+The worker independently validates the 10 MiB compressed/100 MiB expanded,
+2,000-member OOXML archive, rejects duplicate/encrypted entries and document
+type declarations, and closes all streams. Student files permit 50 sheets,
+10,000 physical rows and 256 columns per selected sheet, with headers in the
+first 100 rows. Selection samples at most 100 rows per sheet, then reads only
+the selected sheet. Untrusted worksheet dimensions neither hide actual rows
+nor allocate an artificial full worksheet. Oversized input fails before any
+registration. Per-row student errors preserve source row numbers for corrected
+retry; ambiguous worksheet selection still requires an explicit active sheet.
+
+Existing-student lecture enrollment also reports `enrolled_rows`,
+`excluded_rows`, `excluded_count`, and `total` alongside the previous counts.
+Every source row in a successful batch is accounted for as enrolled or excluded
+(`invalid_row`, `not_found`, `ambiguous`, `duplicate_in_file`). `enrolled_count`
+includes already-enrolled students, so replay does not imply new accounts.
+An entirely unmatched batch still fails without creating an empty session.
+The browser retains only its tenant-scoped safe result projection, never
+phones, account passwords, or raw workbooks. See [Excel operations](../operations/excel-operations.md)
+for scope, recovery, and verification; frontend interactions remain owned by
+the frontend documentation.
+
 Student app profile photos use only the tenant-scoped R2 key returned by
 `profile_photo_key(tenant_id, student_id, unique_id, ext)` as the readable
 production state. An R2 upload or DB key-save failure returns retryable 503 and

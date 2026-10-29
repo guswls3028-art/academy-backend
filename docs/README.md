@@ -52,6 +52,7 @@ backend/docs/
 
 | 용도 | 경로 |
 |------|------|
+| Excel 전체 경로·입력 한도·장애 복구 | [operations/excel-operations.md](operations/excel-operations.md) |
 | 공개 매치업·분석자료 게시판 | [domain/public-resource-board.md](domain/public-resource-board.md) |
 | 공개 YouTube 영상·대표 영상·지정 게시자 | [domain/public-video-showcase.md](domain/public-video-showcase.md) |
 | 프로그램 표시·기능 설정과 구독 상태 보존 | [domain/program-settings.md](domain/program-settings.md) |

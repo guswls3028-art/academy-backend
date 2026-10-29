@@ -820,6 +820,57 @@ class ExamResultExcelImportTests(TestCase):
         self.assertEqual(plan.rows[0].candidate.enrollment_id, self.enrollment.id)
         self.assertEqual(plan.rows[0].wrong_question_numbers, (2,))
 
+    def test_relation_phone_is_matched_but_arbitrary_text_never_becomes_identity(self):
+        for phone, accepted in (("０１０－１２３４－５６７８(부)", True),
+                                ("abc01012345678", False), ("0101234567.8", False)):
+            with self.subTest(phone=phone):
+                plan = plan_exam_result_import(
+                    exam=self.exam, tenant=self.tenant, filename="phones.xlsx",
+                    workbook_bytes=_workbook_bytes([["학생연락처", 1, 2], [phone, "", "X"]]),
+                )
+                self.assertEqual(plan.can_apply, accepted, plan.errors)
+
+    def test_fractional_enrollment_id_cannot_write_another_students_scores(self):
+        for value in (self.enrollment.id + 0.9, f"{self.enrollment.id}.9", True, "1e0", "9" * 5000):
+            with self.subTest(value=str(value)[:40]):
+                plan = plan_exam_result_import(
+                    exam=self.exam, tenant=self.tenant, filename="ids.xlsx",
+                    workbook_bytes=_workbook_bytes([["수강등록ID", 1, 2], [value, "", "X"]]),
+                )
+                self.assertFalse(plan.can_apply)
+                self.assertEqual(plan.rows, [])
+        self.assertFalse(Result.objects.exists())
+
+    def test_read_only_archive_is_closed_after_success_and_rejected_preview(self):
+        for rows in ([["학생연락처", 1, 2], ["010-1234-5678", "", "X"]], [["설명만 있는 시트"]]):
+            opened = []
+
+            def tracked_load(*args, **kwargs):
+                workbook = load_workbook(*args, **kwargs)
+                opened.append(workbook)
+                return workbook
+
+            with patch("apps.domains.results.services.exam_result_excel_import.load_workbook", side_effect=tracked_load):
+                plan_exam_result_import(
+                    exam=self.exam, tenant=self.tenant, filename="close.xlsx",
+                    workbook_bytes=_workbook_bytes(rows),
+                )
+            self.assertEqual(len(opened), 1)
+            self.assertIsNone(opened[0]._archive.fp)
+
+    def test_dimensionless_far_row_is_rejected_before_materializing_empty_grid(self):
+        workbook = Workbook()
+        workbook.active.append(["학생연락처", 1, 2])
+        workbook.active.cell(1_000_000, 1, "01012345678")
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        plan = plan_exam_result_import(
+            exam=self.exam, tenant=self.tenant, filename="far-row.xlsx",
+            workbook_bytes=_without_worksheet_dimension(buffer.getvalue()),
+        )
+        self.assertFalse(plan.can_apply)
+        self.assertIn("2,000", str(plan.errors))
+
     def test_apply_persists_choice_and_short_answer_correctness(self):
         payload = _workbook_bytes(
             [

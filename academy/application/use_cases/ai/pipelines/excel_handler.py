@@ -8,7 +8,7 @@ import os
 
 from apps.shared.contracts.ai_result import AIResult
 from apps.shared.contracts.ai_job import AIJob
-from academy.application.services.excel_parsing_service import ExcelParsingService
+from academy.application.services.excel_parsing_service import ExcelParsingService, ExcelValidationError
 from academy.adapters.storage.r2_adapter import R2ObjectStorageAdapter
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ def _record_progress(
                 "step_index": step_index,
                 "step_total": EXCEL_PARSING_STEP_TOTAL,
                 "step_name": step,
-                "step_name_display": dict(EXCEL_PARSING_STEPS).get(step, step),
+                "step_name_display": {name: display for _, name, display in EXCEL_PARSING_STEPS}.get(step, step),
                 "step_percent": step_percent if step_percent is not None else 100,
             })
         # ✅ tenant_id 전달 (tenant namespace 키 사용)
@@ -144,7 +144,11 @@ def handle_excel_parsing_job(job: AIJob) -> AIResult:
             payload.get("tenant_id"),
             e,
         )
-        return AIResult.failed(job.id, str(e)[:2000])
+        message = (
+            str(e)[:2000] if isinstance(e, ExcelValidationError)
+            else "엑셀 처리 중 오류가 발생했습니다. 작업 상태를 확인한 뒤 다시 시도해 주세요."
+        )
+        return AIResult.failed(job.id, message)
     finally:
         # Current-claim cleanup only; the service removes its unique local input.
         try:

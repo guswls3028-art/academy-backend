@@ -134,6 +134,11 @@ class ExistingStudentExcelEnrollmentTests(TestCase):
         self.assertEqual(result["enrolled_count"], 1)
         self.assertEqual(result["not_found_students_count"], 1)
         self.assertEqual(result["ambiguous_students_count"], 0)
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(result["enrolled_rows"], [{"row": 1, "name": self.student.name, "student_id": self.student.id}])
+        self.assertEqual(result["excluded_count"], 1)
+        self.assertEqual(result["excluded_rows"][0]["row"], 2)
+        self.assertEqual(result["excluded_rows"][0]["reason_code"], "not_found")
         self.assertTrue(
             Enrollment.objects.filter(
                 tenant=self.tenant,
@@ -155,8 +160,9 @@ class ExistingStudentExcelEnrollmentTests(TestCase):
     def test_duplicate_rows_and_retry_keep_one_enrollment(self, schedule_notice):
         row = {
             "name": self.student.name,
-            "parent_phone": self.student.parent_phone,
+            "parent_phone": self.student.parent_phone + "(부)",
             "phone": self.student.phone,
+            "_excel_row": 7,
         }
 
         first = lecture_enroll_from_excel_rows(
@@ -172,6 +178,9 @@ class ExistingStudentExcelEnrollmentTests(TestCase):
 
         self.assertEqual(first["enrolled_count"], 1)
         self.assertEqual(retry["enrolled_count"], 1)
+        self.assertEqual(first["enrolled_rows"][0]["row"], 7)
+        self.assertEqual(first["excluded_rows"][0]["reason_code"], "duplicate_in_file")
+        self.assertEqual(first["enrolled_count"] + first["excluded_count"], first["total"])
         self.assertEqual(
             Enrollment.objects.filter(
                 tenant=self.tenant,
