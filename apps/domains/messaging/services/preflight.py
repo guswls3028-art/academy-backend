@@ -90,7 +90,7 @@ def _resolve_template_for_manual_send(tenant, data: dict[str, Any]) -> TemplateP
         if not template:
             return TemplatePlan(ok=False, source="missing", detail="선택한 템플릿을 찾을 수 없습니다.")
 
-    body_base = raw_body or ((template.body or "").strip() if template else "")
+    body_base = raw_body if "raw_body" in data else ((template.body or "").strip() if template else "")
     if not body_base:
         return TemplatePlan(ok=False, source="empty_body", detail="발송할 본문이 비어 있습니다.")
 
@@ -168,7 +168,7 @@ def _build_manual_preview_recipients(
         else None
     )
     body_base = (data.get("raw_body") or "").strip()
-    if not body_base and template:
+    if "raw_body" not in data and template:
         body_base = (template.body or "").strip()
 
     shared_context = data.get("alimtalk_extra_vars") or {}
