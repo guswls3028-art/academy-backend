@@ -109,9 +109,11 @@ git push main
 
 The base Dockerfile contains OS/native/common Python dependencies, not application source. Shared code therefore rebuilds every runtime consumer without recompiling an unchanged base. `force_full` remains the six-image rebuild for changed base inputs, unavailable source evidence, or confirmed ECR base absence. `workflow_dispatch` always performs a full build/deploy, with the existing per-run APT security refresh. Every worker Dockerfile imports its actual runtime entrypoint during the immutable build, so a candidate with a missing module or incompatible import cannot reach production deployment. Every release, including worker-only selective releases, still runs the persistent API/Tools development gate before preprod.
 
-Attendance spreadsheet generation is imported by the Tools Excel export pipeline.
-Its formatter must therefore rebuild and refresh Tools even when only that worker's
-last verified source lacks the change. `test_release_base_reuse.py` executes the
+Attendance spreadsheet generation is imported by the Tools Excel export pipeline;
+`apps/domains/landing_public/services/resource_reader.py` is invoked directly by
+the Tools dispatcher for public-resource reader jobs. Both domain handlers must
+rebuild and refresh Tools even when only that worker's last verified source lacks
+the change. `test_release_base_reuse.py` executes the
 workflow's actual classification block for both a fresh change and a lagged Tools
 image; the base, video and messaging images remain reusable for this isolated change.
 Change predicates use the `changed_matches` here-string helper instead of `echo | grep -q`; this avoids a `pipefail`/SIGPIPE false negative on large multi-commit push ranges.
