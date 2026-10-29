@@ -315,7 +315,9 @@ and `__pycache__/`) and frontend dependency/build outputs (`node_modules/`,
 `dist/`, `.vite/`) after verifying every ignored path. Ignored directory roots
 are enumerated with `git ls-files --others --ignored --exclude-standard --directory`,
 so broken links inside a shared cache cannot produce a false changed-state
-refusal. Ordinary tracked/untracked state and ignored roots are independently
+refusal. Pytest/Ruff paths ignored by the cache's own `.gitignore` are normalized
+to their already-allowed cache roots; other ignored paths remain unchanged.
+Ordinary tracked/untracked state and ignored roots are independently
 rechecked before removal. Git unlinks dependency junctions without deleting
 their shared targets. Other ignored data, including
 `.env` files and test evidence, still blocks closure before either paired

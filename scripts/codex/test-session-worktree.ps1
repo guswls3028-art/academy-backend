@@ -215,16 +215,22 @@ try {
     }
 
     $backendExclude = Join-Path $fixtureRoot "backend\.git\info\exclude"
-    Add-Content -LiteralPath $backendExclude -Value ".ruff_cache/" -Encoding UTF8
+    # Pytest and Ruff ignore their contents through an internal .gitignore,
+    # without requiring an entry in the repository's own ignore configuration.
+    foreach ($cacheName in @(".pytest_cache", ".ruff_cache")) {
+        $selfIgnoredCache = Join-Path $backendWorktree $cacheName
+        [void](New-Item -ItemType Directory -Path $selfIgnoredCache)
+        Set-Content -LiteralPath (Join-Path $selfIgnoredCache ".gitignore") -Value "*" -Encoding UTF8
+        Set-Content -LiteralPath (Join-Path $selfIgnoredCache "cache.txt") -Value "rebuildable" -Encoding UTF8
+    }
     $backendCache = Join-Path $backendWorktree ".ruff_cache"
-    [void](New-Item -ItemType Directory -Path $backendCache)
-    Set-Content -LiteralPath (Join-Path $backendCache "cache.txt") -Value "rebuildable" -Encoding UTF8
 
     & $scriptUnderTest -Action Close -Session contract-test -Repository both `
         -WorkspaceRoot $fixtureRoot -WhatIf *> $null
     Assert-True (Test-Path -LiteralPath $backendWorktree) "Close -WhatIf removed the backend worktree."
     Assert-True (Test-Path -LiteralPath $frontendWorktree) "Close -WhatIf removed the frontend worktree."
     Assert-True (Test-Path -LiteralPath (Join-Path $backendCache "cache.txt")) "Close -WhatIf removed ignored caches."
+    Assert-True (Test-Path -LiteralPath (Join-Path $backendWorktree ".pytest_cache\cache.txt")) "Close -WhatIf removed self-ignored pytest data."
     Assert-True (Test-Path -LiteralPath $generatedDir) "Close -WhatIf removed frontend dependencies."
     Assert-True (Test-Path -LiteralPath $scratchRoot) "Close -WhatIf removed disposable scratch."
     Assert-True (
