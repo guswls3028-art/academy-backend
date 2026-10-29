@@ -11,7 +11,6 @@ from django.utils import timezone
 
 from academy.adapters.db.django.repositories_ai import job_create
 from academy.application.services.excel_parsing_service import ExcelParsingService
-from apps.domains.students.models import Student
 from apps.core.models import PendingPasswordReset, Tenant
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.enrollment.services import lecture_enroll_from_excel_rows
@@ -580,7 +579,7 @@ class ExistingStudentExcelEnrollmentTests(TestCase):
                          [(3, "invalid_row"), (4, "duplicate_in_file")])
         self.assertEqual(result["enrolled_rows"][0]["row"], 2)
         self.assertEqual(Enrollment.objects.filter(tenant=self.tenant, lecture=self.lecture).count(), 1)
-        self.assertEqual(Student.objects.filter(tenant=self.tenant).count(), 1)
+        self.assertEqual(type(self.student).objects.filter(tenant=self.tenant).count(), 1)
         job.refresh_from_db()
         self.assertEqual(job.status, "DONE")
 
