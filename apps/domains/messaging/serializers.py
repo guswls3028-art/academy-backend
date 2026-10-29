@@ -446,6 +446,8 @@ class SendMessageRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 "detail": "발송 요청 크기가 너무 큽니다. 대상을 나누어 다시 시도해 주세요.",
             })
+        if "raw_body" in attrs and not attrs["raw_body"].strip():
+            raise serializers.ValidationError({"raw_body": "발송할 본문이 비어 있습니다. 내용을 작성해 주세요."})
         if not attrs.get("template_id") and not (attrs.get("raw_body") or "").strip():
             raise serializers.ValidationError(
                 {"raw_body": "직접 입력 본문을 넣거나 템플릿을 선택해 주세요."}

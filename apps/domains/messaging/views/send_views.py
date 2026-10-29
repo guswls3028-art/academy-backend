@@ -189,7 +189,7 @@ class SendMessageView(APIView):
             tpl_body = t.body or ""
             if body_base and any(marker in tpl_body for marker in CONTENT_PLACEHOLDERS):
                 user_custom_content = body_base
-            if not body_base:
+            if "raw_body" not in data:
                 body_base = (t.body or "").strip()
             if not subject_base:
                 subject_base = (t.subject or "").strip()

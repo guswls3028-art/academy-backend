@@ -11,6 +11,7 @@ from apps.core.models import Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
 from apps.domains.messaging.models import MessageTemplate, NotificationLog, ScheduledNotification
 from apps.domains.messaging.views.send_views import SendMessageView
+from apps.domains.messaging.views.operations_views import SendMessagePreflightView
 from apps.domains.messaging.views.template_views import MessageTemplateListCreateView
 
 
@@ -141,6 +142,63 @@ class SendMessageViewTests(TestCase):
         self.assertNotIn("공지내용", replacements)
         self.assertNotIn("내용", replacements)
         self.assertNotIn("선생님메모1", replacements)
+
+    def test_explicitly_cleared_body_never_revives_selected_template_or_schedules_send(self):
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant, category="attendance", name="저장 문구", body="삭제한 옛 본문",
+        )
+        with patch("apps.domains.messaging.services.enqueue_alimtalk") as enqueue:
+            for body in ("", " \n\t "):
+                for scheduled in (None, timezone.now() + timedelta(hours=1)):
+                    for view in (SendMessageView, SendMessagePreflightView):
+                        with self.subTest(body=body, scheduled=bool(scheduled), view=view.__name__):
+                            payload = {
+                                "student_ids": [self.student.id], "send_to": "student",
+                                "template_id": template.id, "block_category": "attendance", "raw_body": body,
+                            }
+                            if scheduled:
+                                payload["scheduled_send_at"] = scheduled.isoformat()
+                            request = self.factory.post("/api/v1/messaging/send/", data=payload, format="json")
+                            force_authenticate(request, user=self.admin)
+                            request.tenant = self.tenant
+                            response = view.as_view()(request)
+                            self.assertEqual(response.status_code, 400)
+                            self.assertIn("raw_body", response.data)
+            enqueue.assert_not_called()
+        self.assertFalse(ScheduledNotification.objects.exists())
+        self.assertFalse(NotificationLog.objects.exists())
+        template.refresh_from_db()
+        self.assertEqual(template.body, "삭제한 옛 본문")
+
+    def test_explicit_template_selection_and_edited_body_match_preview_and_queue(self):
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant, category="attendance", name="선택한 문구", body="저장한 안내",
+        )
+        with (
+            patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://example.test"),
+            patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as enqueue,
+        ):
+            for override, expected in (({}, "저장한 안내"), ({"raw_body": "직접 수정한 안내"}, "직접 수정한 안내")):
+                with self.subTest(override=override):
+                    payload = {
+                        "student_ids": [self.student.id], "send_to": "student",
+                        "template_id": template.id, "block_category": "attendance", **override,
+                    }
+                    request = self.factory.post("/api/v1/messaging/send/preflight/", data=payload, format="json")
+                    force_authenticate(request, user=self.admin)
+                    request.tenant = self.tenant
+                    preview = SendMessagePreflightView.as_view()(request)
+                    self.assertEqual(preview.status_code, 200)
+                    self.assertTrue(preview.data["can_send"])
+                    self.assertIn(expected, preview.data["preview_recipients"][0]["full_message_body"])
+                    request = self.factory.post("/api/v1/messaging/send/", data=payload, format="json")
+                    force_authenticate(request, user=self.admin)
+                    request.tenant = self.tenant
+                    response = self._send(request)
+                    self.assertEqual(response.status_code, 200)
+                    replacements = {item["key"]: item["value"] for item in enqueue.call_args.kwargs["alimtalk_replacements"]}
+                    self.assertEqual(replacements["선생님메모"], expected)
+        self.assertEqual(enqueue.call_count, 2)
 
     def test_manual_send_blocks_when_source_business_tenant_quota_is_full(self):
         provider_owner = Tenant.objects.create(code="msg-send-provider", name="Provider", is_active=True)
