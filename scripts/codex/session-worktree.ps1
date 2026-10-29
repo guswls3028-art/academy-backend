@@ -404,6 +404,14 @@ function Invoke-Sync {
     }
 }
 
+function Get-IgnoredPaths([string]$Root) {
+    # Enumerate ignored directory roots without traversing dependency junctions.
+    # `status --ignored` can emit warnings for broken links inside shared caches.
+    Invoke-GitChecked -Root $Root -Arguments @(
+        "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"
+    )
+}
+
 function Assert-ClosePlanUnchanged($Plan, [switch]$CachesRemoved) {
     $registered = @(@(Get-WorktreePaths $Plan.Root) | Where-Object {
         [string]::Equals(
@@ -423,13 +431,15 @@ function Assert-ClosePlanUnchanged($Plan, [switch]$CachesRemoved) {
         throw "Session branch or HEAD changed after close preflight; preserving worktree: $($Plan.Path)"
     }
     $status = @(Invoke-GitChecked -Root $Plan.Path -Arguments @(
-        "status", "--ignored", "--porcelain=v1", "--untracked-files=normal"
+        "status", "--porcelain=v1", "--untracked-files=normal"
     ))
-    $expectedStatus = @()
+    $ignoredPaths = @(Get-IgnoredPaths $Plan.Path)
+    $expectedIgnoredPaths = @()
     if (-not $CachesRemoved) {
-        $expectedStatus = @($Plan.IgnoredPaths | ForEach-Object { "!! $_" })
+        $expectedIgnoredPaths = @($Plan.IgnoredPaths)
     }
-    if (($status -join "`n") -cne ($expectedStatus -join "`n")) {
+    if ($status.Count -gt 0 -or
+        ($ignoredPaths -join "`n") -cne ($expectedIgnoredPaths -join "`n")) {
         throw "Session clean/ignored state changed after close preflight; preserving worktree: $($Plan.Path)"
     }
 }
@@ -567,10 +577,7 @@ function Invoke-Close {
         if ($integration -eq "unmerged") {
             throw "Session branch is not merged into origin/main and will be preserved: $branch"
         }
-        $ignored = @(Invoke-GitChecked -Root $path -Arguments @(
-            "status", "--ignored", "--porcelain=v1", "--untracked-files=normal"
-        ) | Where-Object { [string]$_ -like "!! *" })
-        $ignoredPaths = @($ignored | ForEach-Object { ([string]$_).Substring(3) })
+        $ignoredPaths = @(Get-IgnoredPaths $path)
         $unexpected = @($ignoredPaths | Where-Object {
             if ($name -eq "frontend") {
                 $_ -notin @("node_modules/", "dist/", ".vite/")

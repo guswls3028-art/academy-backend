@@ -244,6 +244,32 @@ try {
     Assert-True ((Get-Content -LiteralPath (Join-Path $sharedPackage "keep.txt")) -eq "shared package") "Dependency and scratch junction targets must be preserved."
     Write-Output "SESSION_WORKTREE_CASE_PASS frontend-cache-and-owned-scratch"
     if ($IsWindows) {
+        & $scriptUnderTest -Action Start -Session broken-cache-root -Repository frontend `
+            -WorkspaceRoot $fixtureRoot -AllowLowDisk *> $null
+        $brokenCacheWorktree = Join-Path $fixtureRoot "_worktrees\sessions\broken-cache-root\frontend"
+        $sharedRootCache = Join-Path $fixtureRoot "shared-root-cache"
+        $missingPackage = Join-Path $fixtureRoot "missing-package"
+        [void](New-Item -ItemType Directory -Path $sharedRootCache, $missingPackage)
+        Set-Content -LiteralPath (Join-Path $sharedRootCache "keep.txt") -Value "shared root cache" -Encoding UTF8
+        [void](New-Item -ItemType Junction -Path (Join-Path $sharedRootCache "broken-package") -Target $missingPackage)
+        Remove-Item -LiteralPath $missingPackage
+        [void](New-Item -ItemType Junction -Path (Join-Path $brokenCacheWorktree "node_modules") -Target $sharedRootCache)
+
+        & $scriptUnderTest -Action Close -Session broken-cache-root -Repository frontend `
+            -WorkspaceRoot $fixtureRoot -WhatIf *> $null
+        Assert-True (Test-Path -LiteralPath $brokenCacheWorktree) "WhatIf removed a worktree with a shared root cache."
+        Assert-True (Test-Path -LiteralPath (Join-Path $brokenCacheWorktree "node_modules")) "WhatIf unlinked the shared root cache."
+
+        $brokenClose = @(& $scriptUnderTest -Action Close -Session broken-cache-root `
+            -Repository frontend -WorkspaceRoot $fixtureRoot)
+        Assert-True (@($brokenClose -match "SESSION_WORKTREE_CLOSED").Count -eq 1) "Broken ignored package links must not strand a merged session."
+        Assert-True (-not (Test-Path -LiteralPath $brokenCacheWorktree)) "Merged worktree with a shared root cache remains."
+        Assert-True ((Get-Content -LiteralPath (Join-Path $sharedRootCache "keep.txt")) -eq "shared root cache") "Closing a root junction must preserve shared package data."
+        $preservedBrokenLink = Get-Item -LiteralPath (Join-Path $sharedRootCache "broken-package") -Force
+        Assert-True (($preservedBrokenLink.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) "Closing a root junction must not alter its shared target's links."
+        Write-Output "SESSION_WORKTREE_CASE_PASS broken-ignored-root-junction"
+    }
+    if ($IsWindows) {
         $linkedRoot = Join-Path $fixtureRoot "_artifacts\sessions\linked-scratch-test"
         [void](New-Item -ItemType Directory -Path $linkedRoot -Force)
         [void](New-Item -ItemType Junction -Path (Join-Path $linkedRoot "scratch") -Target $sharedPackage)
