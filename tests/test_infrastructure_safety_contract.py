@@ -1056,6 +1056,7 @@ def test_selective_build_covers_cross_domain_worker_import_edges() -> None:
         ),
         "MSG": ("apps/domains/video/redis_status_cache.py",),
         "TOOLS": (
+            "apps/domains/attendance/utils/excel.py",
             "apps/domains/ai/callbacks.py",
             "apps/domains/ai/job_types.py",
             "apps/domains/ai/gateway.py",
