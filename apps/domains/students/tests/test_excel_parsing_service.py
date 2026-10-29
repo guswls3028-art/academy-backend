@@ -334,7 +334,7 @@ def test_nonselected_sheets_are_only_sampled(tmp_path, monkeypatch):
     monkeypatch.setattr(parser, "_read_worksheet_rows", observe)
     rows, _ = parse_student_excel_file(str(path))
     assert len(rows) == 200
-    assert visits == [(True, 100)] * 4 + [(False, 201)]
+    assert visits == [(True, 150)] * 4 + [(False, 201)]
 
 
 def test_international_student_with_invalid_contact_is_reported_not_dropped(tmp_path):

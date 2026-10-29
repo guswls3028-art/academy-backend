@@ -264,7 +264,8 @@ The worker independently validates the 10 MiB compressed/100 MiB expanded,
 2,000-member OOXML archive, rejects duplicate/encrypted entries and document
 type declarations, and closes all streams. Student files permit 50 sheets,
 10,000 physical rows and 256 columns per selected sheet, with headers in the
-first 100 rows. Selection samples at most 100 rows per sheet, then reads only
+first 100 rows. Selection samples at most 150 rows per sheet (100 header rows
+plus 50 data rows), then reads only
 the selected sheet. Untrusted worksheet dimensions neither hide actual rows
 nor allocate an artificial full worksheet. Oversized input fails before any
 registration. Per-row student errors preserve source row numbers for corrected
@@ -275,6 +276,8 @@ Existing-student lecture enrollment also reports `enrolled_rows`,
 Every source row in a successful batch is accounted for as enrolled or excluded
 (`invalid_row`, `not_found`, `ambiguous`, `duplicate_in_file`). `enrolled_count`
 includes already-enrolled students, so replay does not imply new accounts.
+Mixed valid/invalid workbooks enroll the matched valid rows and merge parser
+errors into the same excluded-row ledger before atomic job completion.
 An entirely unmatched batch still fails without creating an empty session.
 The browser retains only its tenant-scoped safe result projection, never
 phones, account passwords, or raw workbooks. See [Excel operations](../operations/excel-operations.md)

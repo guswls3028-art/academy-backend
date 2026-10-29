@@ -7,7 +7,7 @@ _RELATION = r"(?:학부모|보호자|아버지|어머니|아빠|엄마|부친|�
 _LABEL = rf"(?:\(\s*{_RELATION}\s*\)|\[\s*{_RELATION}\s*\]|{_RELATION})"
 _PREFIX = re.compile(rf"^{_LABEL}\s*:?\s*", re.IGNORECASE)
 _SUFFIX = re.compile(rf"\s*{_LABEL}$", re.IGNORECASE)
-_PHONE = re.compile(r"(?:010|10|\(010\))[\s.-]*[0-9]{4}[\s.-]*[0-9]{4}")
+_PHONE = re.compile(r"(?:010|10|\(010\))(?:\s*[-.]?\s*)[0-9]{4}(?:\s*[-.]?\s*)[0-9]{4}")
 _WIDTH = str.maketrans({chr(code): chr(code - 0xFEE0) for code in range(0xFF01, 0xFF5F)})
 _DASHES = str.maketrans({char: "-" for char in "‐‑‒–—―−"})
 

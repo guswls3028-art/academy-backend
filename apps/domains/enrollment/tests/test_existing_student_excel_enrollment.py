@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from academy.adapters.db.django.repositories_ai import job_create
 from academy.application.services.excel_parsing_service import ExcelParsingService
+from apps.domains.students.models import Student
 from apps.core.models import PendingPasswordReset, Tenant
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.enrollment.services import lecture_enroll_from_excel_rows
@@ -560,3 +561,38 @@ class ExistingStudentExcelEnrollmentTests(TestCase):
         self.assertEqual(result["created_students_count"], 0)
         self.assertNotIn("credentials", result)
         _recover_password.assert_not_called()
+
+    @patch("apps.domains.enrollment.services.schedule_pending_account_notice")
+    def test_worker_mixed_workbook_persists_valid_registration_and_every_excluded_row(self, _notice):
+        job = job_create(job_id="mixed-enrollment-job", job_type="excel_parsing", status="RUNNING",
+                         tenant_id=str(self.tenant.id), payload={})
+        result = ExcelParsingService(_WorkbookStorage([
+            ["이름", "학부모전화번호"],
+            [self.student.name, self.student.parent_phone + "(부)"],
+            ["오류학생", "0101234567.8"],
+            [self.student.name, self.student.parent_phone],
+        ])).run(job.job_id, {
+            "tenant_id": self.tenant.id, "lecture_id": self.lecture.id,
+            "file_key": "excel/synthetic-mixed.xlsx",
+        })
+        self.assertEqual((result["enrolled_count"], result["excluded_count"], result["total"]), (1, 2, 3))
+        self.assertEqual([(row["row"], row["reason_code"]) for row in result["excluded_rows"]],
+                         [(3, "invalid_row"), (4, "duplicate_in_file")])
+        self.assertEqual(result["enrolled_rows"][0]["row"], 2)
+        self.assertEqual(Enrollment.objects.filter(tenant=self.tenant, lecture=self.lecture).count(), 1)
+        self.assertEqual(Student.objects.filter(tenant=self.tenant).count(), 1)
+        job.refresh_from_db()
+        self.assertEqual(job.status, "DONE")
+
+    def test_worker_all_invalid_workbook_creates_no_session_or_enrollment(self):
+        from academy.application.services.excel_parsing_service import ExcelValidationError
+
+        with self.assertRaises(ExcelValidationError) as raised:
+            ExcelParsingService(_WorkbookStorage([
+                ["이름", "학부모전화번호"], [self.student.name, "번호오류"],
+            ])).run("all-invalid-job", {
+                "tenant_id": self.tenant.id, "lecture_id": self.lecture.id,
+                "file_key": "excel/synthetic-invalid.xlsx",
+            })
+        self.assertEqual(raised.exception.errors[0]["row"], 2)
+        self.assertFalse(Enrollment.objects.filter(tenant=self.tenant, lecture=self.lecture).exists())

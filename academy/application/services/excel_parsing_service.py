@@ -401,7 +401,7 @@ def _select_worksheet_rows(workbook) -> tuple[list[list[Any]], str]:
 
 
 def _read_worksheet_rows(worksheet, *, sample: bool = False) -> list[list[Any]]:
-    limit = HEADER_SCAN_ROWS if sample else MAX_STUDENT_EXCEL_ROWS + 1
+    limit = HEADER_SCAN_ROWS + 50 if sample else MAX_STUDENT_EXCEL_ROWS + 1
     rows = []
     iterator = worksheet.iter_rows(max_row=limit, values_only=True)
     try:
@@ -901,11 +901,16 @@ class ExcelParsingService:
             parsing_errors: list[dict[str, Any]] = []
             rows, lecture_title = parse_student_excel_file(
                 str(local_path),
-                validation_errors_out=parsing_errors if lecture_id is None else None,
+                validation_errors_out=parsing_errors,
                 validate_profile=lecture_id is None,
             )
             if not rows and not parsing_errors:
                 raise ExcelValidationError("등록할 학생 데이터가 없습니다.")
+            if lecture_id is not None and not rows:
+                raise ExcelValidationError(
+                    f"학생 명단 검증 실패: {len(parsing_errors)}건. 표시된 행의 입력값을 확인해 주세요.",
+                    errors=parsing_errors,
+                )
 
             if lecture_id is not None:
                 from apps.domains.enrollment.services import EnrollmentImportError, lecture_enroll_from_excel_rows
@@ -927,6 +932,14 @@ class ExcelParsingService:
                         )
                     except EnrollmentImportError as exc:
                         raise ExcelValidationError(str(exc)) from exc
+                    if parsing_errors:
+                        result["excluded_rows"].extend({
+                            "row": error["row"], "name": error.get("name") or "(이름 없음)",
+                            "error": error["reason"], "reason_code": "invalid_row",
+                        } for error in parsing_errors)
+                        result["excluded_rows"].sort(key=lambda item: item["row"])
+                        result["excluded_count"] += len(parsing_errors)
+                        result["total"] += len(parsing_errors)
                     if isinstance(result, dict) and lecture_title:
                         result["lecture_title"] = lecture_title
                     if not DjangoAIJobRepository().mark_done(
