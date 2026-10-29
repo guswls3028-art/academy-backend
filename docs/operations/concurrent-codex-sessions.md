@@ -312,8 +312,12 @@ bundle data, recovery-ref races, WhatIf and successful recoverability.
 
 `Close` clears ignored backend Python caches (`.pytest_cache/`, `.ruff_cache/`,
 and `__pycache__/`) and frontend dependency/build outputs (`node_modules/`,
-`dist/`, `.vite/`) after verifying every ignored path. Git unlinks dependency
-junctions without deleting their shared targets. Other ignored data, including
+`dist/`, `.vite/`) after verifying every ignored path. Ignored directory roots
+are enumerated with `git ls-files --others --ignored --exclude-standard --directory`,
+so broken links inside a shared cache cannot produce a false changed-state
+refusal. Ordinary tracked/untracked state and ignored roots are independently
+rechecked before removal. Git unlinks dependency junctions without deleting
+their shared targets. Other ignored data, including
 `.env` files and test evidence, still blocks closure before either paired
 worktree is removed. Move needed test evidence into the session's durable
 artifact directory before closing; never discard a failing gate's evidence.
