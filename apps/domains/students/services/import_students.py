@@ -93,7 +93,7 @@ def _valid_student_phone(value: Any) -> str | None:
     if not text:
         return None
     if not re.fullmatch(r"010[0-9]{8}", text):
-        raise StudentImportRowError("학생 전화번호는 비우거나 010 포함 11자리로 입력해 주세요.")
+        raise StudentImportRowError("학생 전화번호는 010XXXXXXXX 11자리여야 합니다.")
     try:
         return normalize_student_phone(
             text,
