@@ -111,8 +111,11 @@ def test_previous_base_source_does_not_reintroduce_already_shipped_app_changes(t
 
 
 @pytest.mark.parametrize("tools_only", [False, True])
-def test_attendance_export_change_rebuilds_its_tools_consumer(tmp_path, tools_only):
-    path = "apps/domains/attendance/utils/excel.py"
+@pytest.mark.parametrize("path", [
+    "apps/domains/attendance/utils/excel.py",
+    "apps/domains/landing_public/services/resource_reader.py",
+])
+def test_domain_formatter_change_rebuilds_its_tools_consumer(tmp_path, tools_only, path):
     outputs = classify(
         tmp_path,
         runtime="" if tools_only else path,
