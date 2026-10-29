@@ -407,9 +407,15 @@ function Invoke-Sync {
 function Get-IgnoredPaths([string]$Root) {
     # Enumerate ignored directory roots without traversing dependency junctions.
     # `status --ignored` can emit warnings for broken links inside shared caches.
-    Invoke-GitChecked -Root $Root -Arguments @(
+    $ignored = @(Invoke-GitChecked -Root $Root -Arguments @(
         "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"
-    )
+    ))
+    $ignored | ForEach-Object {
+        # These tools place `*` in their own .gitignore. Git then reports the
+        # ignored contents instead of the already-allowed cache directory root.
+        if ($_ -match '^(\.(?:pytest|ruff)_cache)/') { "$($Matches[1])/" }
+        else { $_ }
+    } | Sort-Object -Unique
 }
 
 function Assert-ClosePlanUnchanged($Plan, [switch]$CachesRemoved) {
