@@ -9,8 +9,11 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from openpyxl import Workbook, load_workbook
+from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -857,6 +860,91 @@ class ExamResultExcelImportTests(TestCase):
             ).count(),
             2,
         )
+
+    def test_apply_query_count_is_bounded_as_question_count_grows(self):
+        def make_plan(numbers, marks):
+            return plan_exam_result_import(
+                exam=self.exam,
+                tenant=self.tenant,
+                filename="query-scaling.xlsx",
+                workbook_bytes=_workbook_bytes([
+                    ["수강등록ID", "이름", *numbers],
+                    [self.enrollment.id, "김학생", *marks],
+                ]),
+            )
+
+        first = make_plan([1, 2], ["O", "X"])
+        self.assertTrue(first.can_apply, first.errors)
+        with CaptureQueriesContext(connection) as small_queries:
+            apply_exam_result_import(plan=first)
+        result = Result.objects.get(target_id=self.exam.id, enrollment=self.enrollment)
+        original_items = {
+            item.question_id: (item.pk, item.created_at, item.updated_at)
+            for item in result.items.all()
+        }
+
+        ExamQuestion.objects.bulk_create([
+            ExamQuestion(sheet=self.sheet, number=number, score=5)
+            for number in range(3, 23)
+        ])
+        self.sheet.total_questions = 22
+        self.sheet.essay_count = 21
+        self.sheet.save(update_fields=["total_questions", "essay_count"])
+        self.exam.max_score = 200
+        self.exam.save(update_fields=["max_score"])
+        self.exam.refresh_from_db()
+        expanded = make_plan(list(range(1, 23)), ["O", "X", *(["O"] * 20)])
+        self.assertTrue(expanded.can_apply, expanded.errors)
+        with CaptureQueriesContext(connection) as expanded_queries:
+            apply_exam_result_import(plan=expanded)
+
+        self.assertLessEqual(len(expanded_queries), len(small_queries) + 5)
+        result.refresh_from_db()
+        self.assertEqual(result.total_score, 140)
+        self.assertEqual(result.max_score, 200)
+        self.assertEqual(result.items.count(), 22)
+        self.assertEqual(ResultFact.objects.filter(target_id=self.exam.id).count(), 22)
+        for question_id, (pk, created_at, updated_at) in original_items.items():
+            item = result.items.get(question_id=question_id)
+            self.assertEqual((item.pk, item.created_at), (pk, created_at))
+            self.assertGreater(item.updated_at, updated_at)
+
+        with CaptureQueriesContext(connection) as repeated_queries:
+            apply_exam_result_import(plan=expanded)
+        self.assertLessEqual(len(repeated_queries), len(small_queries) + 5)
+        self.assertEqual(ResultFact.objects.filter(target_id=self.exam.id).count(), 22)
+        changed = make_plan(list(range(1, 23)), ["O"] * 22)
+        apply_exam_result_import(plan=changed)
+        result.refresh_from_db()
+        self.assertEqual(result.total_score, 200)
+        self.assertEqual(result.items.count(), 22)
+        self.assertEqual(ResultFact.objects.filter(target_id=self.exam.id).count(), 23)
+
+    def test_late_roster_change_rolls_back_all_imported_rows_and_facts(self):
+        second = self._create_enrollment(
+            name="두번째학생", username="excel-student-second", ps_number="EX-002",
+            phone="01012345679", parent_phone="01098765431",
+        )
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=second)
+        plan = plan_exam_result_import(
+            exam=self.exam, tenant=self.tenant, filename="roster-changed.xlsx",
+            workbook_bytes=_workbook_bytes([
+                ["수강등록ID", "이름", 1, 2],
+                [self.enrollment.id, "김학생", "O", "X"],
+                [second.id, "두번째학생", "O", "O"],
+            ]),
+        )
+        self.assertTrue(plan.can_apply, plan.errors)
+        ExamEnrollment.objects.filter(exam=self.exam, enrollment=second).delete()
+        SessionEnrollment.objects.filter(enrollment=second).delete()
+
+        with self.assertRaises(ValidationError):
+            apply_exam_result_import(plan=plan)
+
+        self.assertFalse(Result.objects.filter(target_id=self.exam.id).exists())
+        self.assertFalse(ResultFact.objects.filter(target_id=self.exam.id).exists())
+        self.assertFalse(ExamAttempt.objects.filter(exam=self.exam).exists())
+        self.assertFalse(ResultItem.objects.exists())
 
     def test_apply_absence_uses_not_submitted_contract_and_excludes_stats(self):
         scored_payload = _workbook_bytes(
