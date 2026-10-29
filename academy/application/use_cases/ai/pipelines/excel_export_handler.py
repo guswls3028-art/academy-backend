@@ -43,11 +43,24 @@ def _upload_and_presign(
     )
 
 
+def _export_tenant_id(job: AIJob, payload: object) -> str | None:
+    tenant_id = str(job.tenant_id or "")
+    if (
+        not isinstance(payload, dict)
+        or not tenant_id.isascii() or not tenant_id.isdigit() or int(tenant_id) <= 0
+        or (payload.get("tenant_id") is not None and str(payload["tenant_id"]) != tenant_id)
+    ):
+        return None
+    return tenant_id
+
+
 def handle_attendance_excel_export(job: AIJob) -> AIResult:
     """출석 엑셀 내보내기: lecture_id → DB 조회 → openpyxl → R2 → download_url."""
     payload = job.payload or {}
+    tenant_id = _export_tenant_id(job, payload)
+    if tenant_id is None:
+        return AIResult.failed(job.id, "invalid Excel tenant context")
     lecture_id = payload.get("lecture_id")
-    tenant_id = str(payload.get("tenant_id") or job.tenant_id or "")
 
     if not lecture_id or not tenant_id:
         return AIResult.failed(job.id, "payload.lecture_id and tenant_id required")
@@ -95,11 +108,13 @@ def handle_attendance_excel_export(job: AIJob) -> AIResult:
 def handle_staff_excel_export(job: AIJob) -> AIResult:
     """직원 급여 엑셀 내보내기: year, month → DB 조회 → openpyxl → R2 → download_url."""
     payload = job.payload or {}
+    tenant_id = _export_tenant_id(job, payload)
+    if tenant_id is None:
+        return AIResult.failed(job.id, "invalid Excel tenant context")
     year = payload.get("year")
     month = payload.get("month")
     snapshot_ids = payload.get("snapshot_ids")
     expected_revision = payload.get("revision")
-    tenant_id = str(payload.get("tenant_id") or job.tenant_id or "")
 
     if (
         not year
