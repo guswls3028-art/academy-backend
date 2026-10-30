@@ -82,7 +82,7 @@ class QuestionStatsService:
         - 정답 수
         - 정답률
         - 평균 점수
-        - 최대 점수
+        - 최대 득점과 저장된 문항 배점
         """
 
         qs = _current_question_facts(
@@ -97,7 +97,8 @@ class QuestionStatsService:
                 attempts=Count("id"),
                 correct=Count("id", filter=Q(is_correct=True)),
                 avg_score=Avg("score"),
-                max_score=Max("score"),
+                highest_earned_score=Max("score"),
+                max_possible_score=Max("max_score"),
             )
             .annotate(
                 accuracy=ExpressionWrapper(
@@ -121,7 +122,8 @@ class QuestionStatsService:
                 "correct": int(row["correct"] or 0),
                 "accuracy": round(float(row["accuracy"] or 0.0), 4),
                 "avg_score": float(row["avg_score"] or 0.0),
-                "max_score": float(row["max_score"] or 0.0),
+                "max_score": float(row["highest_earned_score"] or 0.0),
+                "max_possible_score": float(row["max_possible_score"] or 0.0),
             }
             for row in sorted(
                 rows,
