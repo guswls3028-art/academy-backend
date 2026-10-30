@@ -456,17 +456,16 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             enrollment_id__in=enrollment_ids,
             source_type="homework",
             source_id__in=homework_ids,
-            resolved_at__isnull=False,
-            resolution_type__in=["EXAM_PASS", "HOMEWORK_PASS", "MANUAL_OVERRIDE"],
         ).order_by(
             "enrollment_id",
             "source_id",
-            "-resolved_at",
+            "-cycle_no",
             "-id",
-        ).values("enrollment_id", "source_id", "resolution_type"):
+        ).values("enrollment_id", "source_id", "resolved_at", "resolution_type"):
             key = (link["enrollment_id"], link["source_id"])
             if key not in resolved_homework_links:
-                resolved_homework_links[key] = link["resolution_type"]
+                # A reopened current cycle supersedes every historical pass.
+                resolved_homework_links[key] = link["resolution_type"] if link["resolved_at"] else None
 
     homework_retake_counts = {}
     if homework_ids and enrollment_ids:

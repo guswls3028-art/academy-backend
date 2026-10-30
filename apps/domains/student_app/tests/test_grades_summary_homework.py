@@ -849,6 +849,175 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertIsNone(parent_response.data["homeworks"][0]["score"])
         self.assertNotIn("correction_note", parent_response.data["homeworks"][0])
 
+    def _homework_cycle_fixture(self):
+        self.ClinicLink = django_apps.get_model("progress", "ClinicLink")
+        homework = Homework.objects.create(
+            tenant=self.tenant, session=self.session, title="기준 변경 과제",
+            meta={"default_max_score": 100}, cutline_mode="PERCENT",
+            cutline_value=90, round_unit_percent=1,
+        )
+        HomeworkAssignment.objects.create(
+            tenant=self.tenant, homework=homework, session=self.session,
+            enrollment=self.enrollment,
+        )
+        score = HomeworkScore.objects.create(
+            enrollment=self.enrollment, session=self.session, homework=homework,
+            attempt_index=1, score=92, max_score=100, passed=True,
+        )
+        history = self.ClinicLink.objects.create(
+            tenant=self.tenant, enrollment=self.enrollment, session=self.session,
+            source_type="homework", source_id=homework.id, cycle_no=1,
+            reason="AUTO_FAILED", resolved_at=timezone.now(),
+            resolution_type="HOMEWORK_PASS", resolution_evidence={"score": 92},
+        )
+        self.cycle_parent_user = User.objects.create_user(
+            username="homework-cycle-parent", password="pw1234", tenant=self.tenant,
+        )
+        TenantMembership.ensure_active(
+            tenant=self.tenant, user=self.cycle_parent_user, role="parent",
+        )
+        Parent = django_apps.get_model("parents", "Parent")
+        self.student.parent = Parent.objects.create(
+            tenant=self.tenant, user=self.cycle_parent_user,
+            name="학부모", phone="01099998888",
+        )
+        self.student.save(update_fields=["parent", "updated_at"])
+        return homework, score, history
+
+    def _assert_homework_cycle_summary(self, *, passed, achievement, teacher_resolved=False, score=92):
+        before = list(self.ClinicLink.objects.order_by("id").values())
+        for user in (self.user, self.cycle_parent_user):
+            with self.subTest(role="student" if user == self.user else "parent"):
+                request = self.factory.get(
+                    "/api/v1/student/grades/", HTTP_X_STUDENT_ID=str(self.student.id),
+                )
+                request.tenant = self.tenant
+                force_authenticate(request, user=user)
+                response = MyGradesSummaryView.as_view()(request)
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertEqual(len(response.data["homeworks"]), 1)
+                row = response.data["homeworks"][0]
+                self.assertEqual(row["score"], score)
+                self.assertEqual(row["passed"], passed)
+                self.assertEqual(row["achievement"], achievement)
+                self.assertEqual(row["teacher_resolved"], teacher_resolved)
+        self.assertEqual(list(self.ClinicLink.objects.order_by("id").values()), before)
+
+    def test_homework_current_cycle_reopens_after_cutline_increase_and_passes_after_decrease(self):
+        from apps.support.homework.view_dependencies import recalc_scores_for_homework_change
+
+        homework, score, history = self._homework_cycle_fixture()
+        history_before = self.ClinicLink.objects.filter(pk=history.pk).values().get()
+        for cutoff, passed, achievement in ((95, False, "FAIL"), (90, True, "PASS"), (95, False, "FAIL")):
+            with self.subTest(cutoff=cutoff, achievement=achievement):
+                homework.cutline_value = cutoff
+                homework.save(update_fields=["cutline_value", "updated_at"])
+                recalc_scores_for_homework_change(homework=homework)
+                score.refresh_from_db()
+                self.assertEqual(score.score, 92)
+                self.assertEqual(score.passed, passed)
+                self.assertEqual(score.clinic_required, not passed)
+                current = self.ClinicLink.objects.order_by("-cycle_no", "-id").first()
+                self.assertEqual(current.resolved_at is not None, passed)
+                self._assert_homework_cycle_summary(passed=passed, achievement=achievement)
+        self.assertEqual(self.ClinicLink.objects.filter(pk=history.pk).values().get(), history_before)
+        self.assertEqual(self.ClinicLink.objects.count(), 3)
+
+    def test_homework_current_cycle_manual_completion_wins_over_later_historical_timestamp(self):
+        homework, score, history = self._homework_cycle_fixture()
+        score.passed = False
+        score.save(update_fields=["passed"])
+        self.ClinicLink.objects.filter(pk=history.pk).update(resolved_at=timezone.now() + timedelta(days=1))
+        correction = self.AssessmentCorrection.objects.create(
+            tenant=self.tenant, enrollment=self.enrollment, session=self.session,
+            source_type="homework", source_id=homework.id, completed=True,
+            completed_at=timezone.now(), updated_by=self.user,
+        )
+        self.ClinicLink.objects.create(
+            tenant=self.tenant, enrollment=self.enrollment, session=self.session,
+            source_type="homework", source_id=homework.id, cycle_no=2,
+            reason="AUTO_FAILED", resolved_at=timezone.now(), resolution_type="MANUAL_OVERRIDE",
+            resolution_evidence={"assessment_correction_id": correction.id},
+        )
+        self._assert_homework_cycle_summary(passed=False, achievement="REMEDIATED", teacher_resolved=True)
+
+    def test_homework_current_cycle_unresolved_does_not_restore_cancelled_unscored_completion(self):
+        homework, score, history = self._homework_cycle_fixture()
+        score.delete()
+        correction = self.AssessmentCorrection.objects.create(
+            tenant=self.tenant, enrollment=self.enrollment, session=self.session,
+            source_type="homework", source_id=homework.id, completed=False,
+            updated_by=self.user,
+        )
+        self.ClinicLink.objects.filter(pk=history.pk).update(
+            resolution_type="MANUAL_OVERRIDE",
+            resolution_evidence={"assessment_correction_id": correction.id},
+        )
+        self.ClinicLink.objects.create(
+            tenant=self.tenant, enrollment=self.enrollment, session=self.session,
+            source_type="homework", source_id=homework.id, cycle_no=2, reason="AUTO_FAILED",
+        )
+        self._assert_homework_cycle_summary(passed=False, achievement="NOT_SUBMITTED", score=None)
+
+    def test_homework_current_cycle_nonpassing_resolution_does_not_restore_historical_pass(self):
+        homework, score, _ = self._homework_cycle_fixture()
+        score.passed = False
+        score.save(update_fields=["passed"])
+        current = self.ClinicLink.objects.create(
+            tenant=self.tenant, enrollment=self.enrollment, session=self.session,
+            source_type="homework", source_id=homework.id, cycle_no=2,
+            reason="AUTO_FAILED", resolved_at=timezone.now(), resolution_type="WAIVED",
+        )
+        for reason in ("WAIVED", "SOURCE_REMOVED", "GRADING_RETRACTED"):
+            with self.subTest(reason=reason):
+                current.resolution_type = reason
+                current.save(update_fields=["resolution_type"])
+                self._assert_homework_cycle_summary(passed=False, achievement="FAIL")
+
+    def test_homework_current_cycle_retake_completion_preserves_initial_score(self):
+        from apps.support.homework_results.score_dependencies import resolve_homework_clinic_pass
+
+        homework, score, _ = self._homework_cycle_fixture()
+        score.passed = False
+        score.save(update_fields=["passed"])
+        current = self.ClinicLink.objects.create(
+            tenant=self.tenant, enrollment=self.enrollment, session=self.session,
+            source_type="homework", source_id=homework.id, cycle_no=2, reason="AUTO_FAILED",
+        )
+        HomeworkScore.objects.create(
+            enrollment=self.enrollment, session=self.session, homework=homework,
+            attempt_index=2, score=98, max_score=100, passed=True,
+        )
+        resolve_homework_clinic_pass(
+            enrollment_id=self.enrollment.id, session_id=self.session.id,
+            homework_id=homework.id, score=98, max_score=100,
+        )
+        current.refresh_from_db()
+        self.assertEqual(current.resolution_type, "HOMEWORK_PASS")
+        self.assertIsNotNone(current.resolved_at)
+        self._assert_homework_cycle_summary(passed=False, achievement="REMEDIATED")
+
+    def test_homework_current_cycle_ignores_foreign_tenant_and_other_sources(self):
+        homework, score, _ = self._homework_cycle_fixture()
+        score.passed = False
+        score.save(update_fields=["passed"])
+        self.ClinicLink.objects.create(
+            tenant=self.tenant, enrollment=self.enrollment, session=self.session,
+            source_type="homework", source_id=homework.id, cycle_no=2, reason="AUTO_FAILED",
+        )
+        foreign_tenant = Tenant.objects.create(code="foreign-homework-cycle", name="Foreign")
+        for overrides in (
+            {"tenant": foreign_tenant}, {"source_type": "exam"}, {"source_id": homework.id + 1000},
+        ):
+            fields = dict(
+                tenant=self.tenant, enrollment=self.enrollment, session=self.session,
+                source_type="homework", source_id=homework.id, cycle_no=99,
+                reason="AUTO_FAILED", resolved_at=timezone.now(), resolution_type="HOMEWORK_PASS",
+            )
+            fields.update(overrides)
+            self.ClinicLink.objects.create(**fields)
+        self._assert_homework_cycle_summary(passed=False, achievement="FAIL")
+
     def test_submitted_ungraded_homework_is_visible_as_waiting_for_review(self):
         homework = Homework.objects.create(
             tenant=self.tenant,
