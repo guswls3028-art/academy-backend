@@ -1573,6 +1573,40 @@ class ExamResultExcelImportTests(TestCase):
         self.assertEqual(answers.cell(5, 8).value, "1번")
         self.assertEqual(answers.cell(6, 8).value, "'=1+1")
 
+    def test_analysis_export_preserves_question_points_when_all_answers_are_wrong(self):
+        apply_exam_result_import(
+            plan=plan_exam_result_import(
+                exam=self.exam,
+                tenant=self.tenant,
+                filename="analysis-all-wrong.xlsx",
+                workbook_bytes=_workbook_bytes([
+                    ["수강등록ID", "이름", 1, 2],
+                    [self.enrollment.id, "김학생", "X", "X"],
+                ]),
+            )
+        )
+        # Analysis describes the recorded first attempt, even after question edits.
+        self.choice_question.score = 1
+        self.choice_question.save(update_fields=["score"])
+        self.short_question.score = 2
+        self.short_question.save(update_fields=["score"])
+
+        workbook = load_workbook(
+            io.BytesIO(build_exam_analysis_export(exam=self.exam, tenant=self.tenant)),
+            data_only=True,
+        )
+        questions = workbook["문항 우선순위"]
+        rows = {questions.cell(row, 2).value: row for row in (6, 7)}
+        for number, points in ((1, 40), (2, 60)):
+            row = rows[number]
+            self.assertEqual(questions.cell(row, 3).value, 0)
+            self.assertEqual(questions.cell(row, 6).value, 0)
+            self.assertEqual(questions.cell(row, 7).value, points)
+
+        stats = QuestionStatsService.per_question_stats(exam_id=self.exam.id)
+        self.assertEqual([row["max_score"] for row in stats], [0, 0])
+        self.assertEqual([row["max_possible_score"] for row in stats], [40, 60])
+
     def test_analysis_export_uses_confirmed_first_attempt_total_for_score_and_rank(self):
         second_enrollment = self._create_enrollment(
             name="박학생",

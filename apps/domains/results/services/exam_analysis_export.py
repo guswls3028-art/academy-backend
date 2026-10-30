@@ -636,7 +636,7 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
             int(row_data.get("correct") or 0),
             int(row_data.get("attempts") or 0),
             float(row_data.get("avg_score") or 0.0),
-            float(row_data.get("max_score") or 0.0),
+            float(row_data.get("max_possible_score") or 0.0),
             action,
         ]
         for column, value in enumerate(values, start=1):
