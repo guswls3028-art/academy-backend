@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from django.db import transaction
+from apps.shared.utils.excel_phone import normalize_excel_phone
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from apps.support.enrollment.import_dependencies import (
@@ -19,6 +21,10 @@ from apps.support.enrollment.lifecycle_dependencies import (
 from ..models import Enrollment, SessionEnrollment
 
 logger = logging.getLogger(__name__)
+
+
+class EnrollmentImportError(ValueError):
+    """User-safe enrollment input/identity error, without infrastructure details."""
 
 
 def _mask_phone(phone: str) -> str:
@@ -73,11 +79,11 @@ def lecture_enroll_from_excel_rows(
     """
     tenant = enroll_repo.get_tenant_by_id(tenant_id)
     if not tenant:
-        raise ValueError("tenant_id not found")
+        raise EnrollmentImportError("학원 정보를 확인할 수 없습니다.")
 
     lecture = enroll_repo.get_lecture_by_id_tenant_id(lecture_id, tenant)
     if not lecture:
-        raise ValueError("해당 학원의 강의가 아닙니다.")
+        raise EnrollmentImportError("해당 학원의 강의가 아닙니다.")
 
     with transaction.atomic():
         student_ids: list[int] = []
@@ -85,19 +91,27 @@ def lecture_enroll_from_excel_rows(
         seen_student_ids: set[int] = set()
         not_found_students_count = 0
         ambiguous_students_count = 0
+        excluded_rows: list[dict] = []
+        enrolled_rows: list[dict] = []
 
         skipped_reasons: list[str] = []
         for row_index, item in enumerate(students_data, start=1):
             raw = dict(item) if isinstance(item, dict) else {}
             ps_number = _existing_student_ps_number(raw)
-            name = (raw.get("name") or "").strip()
+            name = str(raw.get("name") or "").strip()
+            source_row = raw.get("_excel_row")
+            display_row = source_row if type(source_row) is int and source_row > 0 else row_index
+
+            def exclude(reason_code: str, error: str) -> None:
+                excluded_rows.append({"row": display_row, "name": name or "(이름 없음)",
+                                      "reason_code": reason_code, "error": error})
+
             parent_phone = (raw.get("parent_phone") or raw.get("parentPhone") or "")
-            parent_phone = "".join(c for c in str(parent_phone) if c.isdigit())
+            parent_phone = normalize_excel_phone(parent_phone)
 
             if not ps_number and (
                 not name
-                or len(parent_phone) != 11
-                or not parent_phone.startswith("010")
+                or not re.fullmatch(r"010[0-9]{8}", parent_phone)
             ):
                 reason = []
                 if not name:
@@ -108,6 +122,7 @@ def lecture_enroll_from_excel_rows(
                     reason.append("phone_not_010")
                 reason_str = ",".join(reason) or "unknown"
                 skipped_reasons.append(f"row{row_index}:{reason_str}")
+                exclude("invalid_row", "학생 이름과 학부모 전화번호(010 포함 11자리)를 확인해 주세요.")
                 logger.debug(
                     "[lecture_enroll_excel] row=%s skip name=%r parent_phone_len=%s reason=%s",
                     row_index,
@@ -122,6 +137,7 @@ def lecture_enroll_from_excel_rows(
                 else ("name_parent", name, parent_phone)
             )
             if key in seen:
+                exclude("duplicate_in_file", "이 파일에서 이미 처리한 학생입니다.")
                 logger.debug(
                     "[lecture_enroll_excel] row=%s skip name=%r parent=%s reason=duplicate",
                     row_index,
@@ -140,6 +156,7 @@ def lecture_enroll_from_excel_rows(
                     for_update=True,
                 )
             except StudentImportIdentityAmbiguousError:
+                exclude("ambiguous", "학생 명부에 일치하는 학생이 여러 명입니다. 학생번호로 구분해 주세요.")
                 ambiguous_students_count += 1
                 skipped_reasons.append(f"row{row_index}:student_identity_ambiguous")
                 logger.warning(
@@ -152,6 +169,7 @@ def lecture_enroll_from_excel_rows(
                 )
                 continue
             if student is None:
+                exclude("not_found", "학생 명부에서 찾지 못했습니다. 먼저 학생 등록과 입력값을 확인해 주세요.")
                 not_found_students_count += 1
                 skipped_reasons.append(f"row{row_index}:student_not_found")
                 logger.debug(
@@ -164,6 +182,7 @@ def lecture_enroll_from_excel_rows(
                 )
                 continue
             if student.id in seen_student_ids:
+                exclude("duplicate_in_file", "이 파일에서 이미 처리한 학생입니다.")
                 logger.debug(
                     "[lecture_enroll_excel] row=%s student_id=%s skip=resolved_student_duplicate",
                     row_index,
@@ -172,6 +191,7 @@ def lecture_enroll_from_excel_rows(
                 continue
             seen_student_ids.add(student.id)
             student_ids.append(student.id)
+            enrolled_rows.append({"row": display_row, "name": name or student.name, "student_id": student.id})
             logger.debug(
                 "[lecture_enroll_excel] row=%s ps_number=%r name=%r student_id=%s matched_existing=true",
                 row_index,
@@ -190,16 +210,16 @@ def lecture_enroll_from_excel_rows(
                 "; ".join(skipped_reasons[:10]),
             )
             if ambiguous_students_count:
-                raise ValueError(
+                raise EnrollmentImportError(
                     "학생 명부에 동일한 이름·학부모 전화번호가 중복되어 등록 대상을 "
                     "확정할 수 없습니다. 학생 명부를 정리한 뒤 다시 시도해 주세요."
                 )
             if not_found_students_count:
-                raise ValueError(
+                raise EnrollmentImportError(
                     "학생 명부에서 등록할 수 있는 학생을 찾지 못했습니다. "
                     "먼저 학생 등록을 완료한 뒤 이름·학부모 전화번호가 같은지 확인해 주세요."
                 )
-            raise ValueError(
+            raise EnrollmentImportError(
                 f"등록할 수 있는 학생이 없습니다. "
                 f"전체 {total_rows}행 중 {skipped_count}행 건너뜀. "
                 f"이름·학부모 전화번호(010 11자리)를 확인해 주세요."
@@ -208,8 +228,8 @@ def lecture_enroll_from_excel_rows(
         enrollments_created: list = []
         for sid in student_ids:
             if not enroll_repo.active_student_exists(sid, tenant):
-                logger.warning("[lecture_enroll_excel] student_id=%s not active in tenant, skip", sid)
-                continue
+                # Do not report a matched row as enrolled if the final guard fails.
+                raise EnrollmentImportError("등록 중 학생 상태가 변경되었습니다. 명부를 새로고침한 뒤 다시 시도해 주세요.")
             obj, created = enroll_repo.enrollment_get_or_create_ret(
                 tenant=tenant,
                 lecture=lecture,
@@ -227,7 +247,7 @@ def lecture_enroll_from_excel_rows(
         if session_id:
             target_session = enroll_repo.get_session_by_id_lecture(session_id, lecture)
             if not target_session:
-                raise ValueError("해당 차시가 이 강의의 차시가 아닙니다.")
+                raise EnrollmentImportError("해당 차시가 이 강의의 차시가 아닙니다.")
         else:
             target_session = enroll_repo.get_session_by_lecture_order(lecture, 1)
             if not target_session:
@@ -261,6 +281,10 @@ def lecture_enroll_from_excel_rows(
             "created_students_count": 0,
             "not_found_students_count": not_found_students_count,
             "ambiguous_students_count": ambiguous_students_count,
+            "total": len(students_data),
+            "enrolled_rows": enrolled_rows,
+            "excluded_rows": excluded_rows,
+            "excluded_count": len(excluded_rows),
             "session_id": target_session.id,
         }
         return result

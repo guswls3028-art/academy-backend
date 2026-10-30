@@ -1,4 +1,7 @@
 from pathlib import Path
+from io import BytesIO
+import re
+import zipfile
 
 import pytest
 from openpyxl import Workbook
@@ -193,7 +196,7 @@ def test_numeric_contacts_and_explicit_school_type_survive_real_workbook(tmp_pat
     assert rows[0]["grade"] == "6"
 
 
-@pytest.mark.parametrize("bad_phone", [0, False, "0101234567", "오타", "abc01012345678", "010123456789", "010１２３４５６７８"])
+@pytest.mark.parametrize("bad_phone", [0, False, "0101234567", "오타", "abc01012345678", "010123456789", "0101234567.8"])
 def test_malformed_student_contact_is_reported_without_creating_phone_less_row(tmp_path, bad_phone):
     path = tmp_path / "mixed-contacts.xlsx"
     wb = Workbook()
@@ -277,3 +280,66 @@ def test_active_roster_wins_tie_and_preserves_worksheet_row_numbers(tmp_path):
     rows, _ = parse_student_excel_file(str(path))
 
     assert [(row["name"], row["_excel_row"]) for row in rows] == [("등록할 명단", 3)]
+
+
+@pytest.mark.parametrize("dimension", [b'<dimension ref="A1:A1"/>', b'<dimension ref="A1:XFD1048576"/>', b''])
+def test_stale_or_missing_dimensions_do_not_hide_students_or_allocate_empty_grid(tmp_path, dimension):
+    path = tmp_path / "dimensions.xlsx"
+    _write_student_excel(path, name="관계학생", parent_phone="010-0000-0000(부)")
+    buffer = BytesIO()
+    with zipfile.ZipFile(path) as source, zipfile.ZipFile(buffer, "w") as target:
+        for member in source.infolist():
+            data = source.read(member)
+            if member.filename == "xl/worksheets/sheet1.xml":
+                data = re.sub(rb'<dimension[^>]*/>', dimension, data)
+            target.writestr(member, data)
+    path.write_bytes(buffer.getvalue())
+    rows, _ = parse_student_excel_file(str(path))
+    assert [(row["_excel_row"], row["parent_phone"]) for row in rows] == [(2, "01000000000")]
+
+
+@pytest.mark.parametrize("row,column", [(10_001, 1), (20_000, 1), (2, 257)])
+def test_actual_rows_and_columns_over_limit_fail_without_partial_import(tmp_path, row, column):
+    path = tmp_path / "too-large.xlsx"
+    wb = Workbook()
+    wb.active.append(["이름", "학부모전화번호"])
+    wb.active.append(["정상학생", "01077778888"])
+    wb.active.cell(row, column, "범위초과")
+    wb.save(path)
+    errors = []
+    with pytest.raises(ExcelValidationError, match="이하"):
+        parse_student_excel_file(str(path), validation_errors_out=errors)
+    assert errors == []
+
+
+def test_nonselected_sheets_are_only_sampled(tmp_path, monkeypatch):
+    from academy.application.services import excel_parsing_service as parser
+
+    path = tmp_path / "many-sheets.xlsx"
+    wb = Workbook()
+    for index in range(4):
+        sheet = wb.active if index == 0 else wb.create_sheet()
+        sheet.append(["이름", "학부모전화번호"])
+        for number in range(200):
+            sheet.append([f"학생{index}-{number}", "01077778888"])
+    wb.save(path)
+    visits = []
+    original = parser._read_worksheet_rows
+
+    def observe(sheet, *, sample=False):
+        rows = original(sheet, sample=sample)
+        visits.append((sample, len(rows)))
+        return rows
+
+    monkeypatch.setattr(parser, "_read_worksheet_rows", observe)
+    rows, _ = parse_student_excel_file(str(path))
+    assert len(rows) == 200
+    assert visits == [(True, 150)] * 4 + [(False, 201)]
+
+
+def test_international_student_with_invalid_contact_is_reported_not_dropped(tmp_path):
+    path = tmp_path / "international.xlsx"
+    _write_student_excel(path, name="Alex Kim", parent_phone="01012345678 or 01087654321")
+    errors = []
+    assert parse_student_excel_file(str(path), validation_errors_out=errors)[0] == []
+    assert [(error["row"], error["name"]) for error in errors] == [(2, "Alex Kim")]

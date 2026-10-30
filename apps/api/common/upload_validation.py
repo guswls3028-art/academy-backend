@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from xml.etree import ElementTree
-import zipfile
+from apps.shared.utils.excel_workbook import validate_xlsx_archive
 
 from rest_framework.exceptions import ValidationError
 
@@ -19,8 +18,6 @@ OMR_EXTENSIONS = {"jpg", "jpeg", "png", "tif", "tiff", "pdf"}
 OMR_CONTENT_TYPES = {"image/jpeg", "image/png", "image/tiff", "application/pdf"}
 DEFAULT_MAX_EXCEL_SIZE = 10 * 1024 * 1024
 DEFAULT_MAX_OMR_SIZE = 10 * 1024 * 1024
-_MAX_XLSX_ARCHIVE_MEMBERS = 2_000
-_MAX_XLSX_UNCOMPRESSED_SIZE = 100 * 1024 * 1024
 
 
 def _extension(upload_file) -> str:
@@ -59,33 +56,9 @@ def _validate_excel_content(upload_file, ext: str, label: str) -> None:
     if ext == "xlsx":
         if not prefix.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
             raise ValidationError({"detail": f"{label} 파일 내용을 읽을 수 없습니다."})
-        data = _read_bytes(upload_file)
         try:
-            from io import BytesIO
-
-            with zipfile.ZipFile(BytesIO(data)) as archive:
-                members = archive.infolist()
-                if (
-                    len(members) > _MAX_XLSX_ARCHIVE_MEMBERS
-                    or sum(member.file_size for member in members) > _MAX_XLSX_UNCOMPRESSED_SIZE
-                    or archive.testzip() is not None
-                ):
-                    raise ValidationError({"detail": f"{label} 파일 내용을 읽을 수 없습니다."})
-                names = {member.filename for member in members}
-                has_content_types = "[Content_Types].xml" in names
-                has_workbook = "xl/workbook.xml" in names
-                if not (has_content_types and has_workbook):
-                    raise ValidationError({"detail": f"{label} 파일 내용을 읽을 수 없습니다."})
-                ElementTree.fromstring(archive.read("[Content_Types].xml"))
-                ElementTree.fromstring(archive.read("xl/workbook.xml"))
-        except (
-            ElementTree.ParseError,
-            KeyError,
-            OSError,
-            RuntimeError,
-            zipfile.BadZipFile,
-            zipfile.LargeZipFile,
-        ):
+            validate_xlsx_archive(upload_file)
+        except (ValueError, OSError):
             raise ValidationError({"detail": f"{label} 파일 내용을 읽을 수 없습니다."})
         return
 

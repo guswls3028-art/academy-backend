@@ -3,9 +3,11 @@ from __future__ import annotations
 import io
 import logging
 import re
-import zipfile
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from typing import Any
+from apps.shared.utils.excel_phone import normalize_excel_phone
+from apps.shared.utils.excel_workbook import validate_xlsx_archive
 
 from django.db import transaction
 from django.db.models import Max
@@ -532,11 +534,23 @@ def build_exam_wrong_note_export(*, exam: Any, tenant: Any) -> bytes:
 
 
 def plan_exam_result_import(
+    *, exam: Any, tenant: Any, filename: str, workbook_bytes: bytes,
+) -> ImportPlan:
+    # Every return/error path closes the read-only ZIP, including rejected previews.
+    with ExitStack() as resources:
+        return _plan_exam_result_import(
+            exam=exam, tenant=tenant, filename=filename,
+            workbook_bytes=workbook_bytes, resources=resources,
+        )
+
+
+def _plan_exam_result_import(
     *,
     exam: Any,
     tenant: Any,
     filename: str,
     workbook_bytes: bytes,
+    resources: ExitStack,
 ) -> ImportPlan:
     questions = _question_specs(exam=exam, tenant=tenant)
     plan = ImportPlan(exam=exam, filename=filename, questions=questions)
@@ -563,6 +577,7 @@ def plan_exam_result_import(
             by_id=by_id,
             by_name=by_name,
             by_phone=by_phone,
+            resources=resources,
         )
     except ExamResultWorkbookError as exc:
         plan.errors.append(_error(None, "file", str(exc)))
@@ -1094,18 +1109,15 @@ def _candidate_from_record(
     )
 
 
-def _load_worksheets(workbook_bytes: bytes):
+def _load_worksheets(workbook_bytes: bytes, resources: ExitStack):
     if not workbook_bytes:
         raise ExamResultWorkbookError("비어 있는 파일입니다.")
     if len(workbook_bytes) > MAX_UPLOAD_BYTES:
         raise ExamResultWorkbookError("엑셀 파일은 10MB 이하만 업로드할 수 있습니다.")
     try:
-        with zipfile.ZipFile(io.BytesIO(workbook_bytes)) as archive:
-            total_size = sum(info.file_size for info in archive.infolist())
-            if total_size > MAX_UNCOMPRESSED_BYTES:
-                raise ExamResultWorkbookError("압축을 푼 엑셀 파일이 너무 큽니다.")
-    except zipfile.BadZipFile as exc:
-        raise ExamResultWorkbookError("올바른 .xlsx 파일이 아닙니다.") from exc
+        validate_xlsx_archive(io.BytesIO(workbook_bytes), max_uncompressed_bytes=MAX_UNCOMPRESSED_BYTES)
+    except (ValueError, OSError) as exc:
+        raise ExamResultWorkbookError(str(exc)) from exc
 
     try:
         workbook = load_workbook(
@@ -1116,16 +1128,35 @@ def _load_worksheets(workbook_bytes: bytes):
         )
     except Exception as exc:
         raise ExamResultWorkbookError("엑셀 파일을 열 수 없습니다.") from exc
+    resources.callback(workbook.close)
     if not workbook.worksheets:
         raise ExamResultWorkbookError("엑셀 시트를 찾을 수 없습니다.")
+    if len(workbook.worksheets) > 50:
+        raise ExamResultWorkbookError("엑셀 시트는 50개 이하로 나누어 업로드해 주세요.")
+    nonempty_worksheets = []
     for worksheet in workbook.worksheets:
-        if worksheet.max_row is None or worksheet.max_column is None:
-            worksheet.calculate_dimension(force=True)
-        if worksheet.max_row > MAX_ROWS or worksheet.max_column > MAX_COLUMNS:
-            raise ExamResultWorkbookError(
-                f"'{worksheet.title}' 시트는 2,000행·600열 이하로 작성해 주세요."
-            )
-    return workbook.worksheets
+        worksheet.reset_dimensions()
+        iterator = worksheet.iter_rows(max_row=MAX_ROWS + 1, values_only=True)
+        actual_rows = actual_columns = 0
+        try:
+            for row_number, row in enumerate(iterator, start=1):
+                actual_rows = row_number
+                actual_columns = max(actual_columns, len(row))
+                if row_number > MAX_ROWS or len(row) > MAX_COLUMNS:
+                    raise ExamResultWorkbookError(
+                        f"'{worksheet.title}' 시트는 2,000행·600열 이하로 작성해 주세요."
+                    )
+        finally:
+            iterator.close()
+        if not actual_columns:
+            continue
+        # ReadOnlyWorksheet.calculate_dimension() writes these same fields, but
+        # would parse the whole XML again. Use our already-validated dimensions
+        # (openpyxl is pinned; real dimension/blank/sparse workbook tests cover it).
+        worksheet._max_row = actual_rows
+        worksheet._max_column = actual_columns
+        nonempty_worksheets.append(worksheet)
+    return nonempty_worksheets
 
 
 def _select_worksheets_for_import(
@@ -1136,8 +1167,9 @@ def _select_worksheets_for_import(
     by_id: dict[int, Candidate],
     by_name: dict[str, list[Candidate]],
     by_phone: dict[str, list[Candidate]],
+    resources: ExitStack,
 ):
-    worksheets = _load_worksheets(workbook_bytes)
+    worksheets = _load_worksheets(workbook_bytes, resources)
     expected_numbers = {question.number for question in questions}
     parsed: list[tuple[Any, int, dict[str, Any]]] = []
     for worksheet in worksheets:
@@ -1658,21 +1690,24 @@ def _normalize_name(value: Any) -> str:
 
 
 def _normalize_phone(value: Any) -> str:
-    if value is None:
-        return ""
     if isinstance(value, float) and value.is_integer():
         value = int(value)
-    digits = "".join(character for character in str(value) if character.isdigit())
-    if len(digits) == 10 and digits.startswith("10"):
-        digits = f"0{digits}"
-    return digits
+    # Preserve invalid input as a nonmatching token, never fall back to name-only.
+    return normalize_excel_phone(value)
 
 
 def _positive_int(value: Any) -> int | None:
-    try:
-        number = int(float(value))
-    except (TypeError, ValueError):
+    if isinstance(value, bool):
         return None
+    if isinstance(value, float):
+        if not value.is_integer():
+            return None
+        value = int(value)
+    text = str(value).strip()
+    # IDs are opaque integers: decimal/scientific text must never select another row.
+    if not re.fullmatch(r"[0-9]{1,19}", text):
+        return None
+    number = int(text)
     return number if number > 0 else None
 
 

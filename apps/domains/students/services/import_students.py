@@ -19,6 +19,7 @@ from typing import Any, Callable, Literal
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Q
+from apps.shared.utils.excel_phone import normalize_excel_phone
 
 from academy.adapters.db.django import repositories_core as core_repo
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
@@ -88,11 +89,11 @@ def _digits(value: Any) -> str:
 
 
 def _valid_student_phone(value: Any) -> str | None:
-    text = "" if value is None else str(value).strip()
+    text = normalize_excel_phone(value)
     if not text:
         return None
-    if not re.fullmatch(r"[0-9\s.()-]+", text):
-        raise StudentImportRowError("학생 전화번호는 비우거나 010 포함 11자리로 입력해 주세요.")
+    if not re.fullmatch(r"010[0-9]{8}", text):
+        raise StudentImportRowError("학생 전화번호는 010XXXXXXXX 11자리여야 합니다.")
     try:
         return normalize_student_phone(
             text,
@@ -106,8 +107,8 @@ def _valid_student_phone(value: Any) -> str | None:
 
 
 def _valid_parent_phone(value: Any) -> str:
-    text = "" if value is None else str(value).strip()
-    if text and not re.fullmatch(r"[0-9\s.()-]+", text):
+    text = normalize_excel_phone(value)
+    if text and not re.fullmatch(r"010[0-9]{8}", text):
         raise StudentImportRowError("학부모 전화번호는 010XXXXXXXX 11자리여야 합니다.")
     try:
         phone = normalize_student_phone(

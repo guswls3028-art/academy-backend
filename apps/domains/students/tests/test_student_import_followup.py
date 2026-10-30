@@ -89,7 +89,7 @@ class StudentImportResultContractTests(TestCase):
 
     def test_json_import_rejects_contact_coercion_before_any_account_is_created(self):
         for field in ("phone", "studentPhone", "parent_phone", "parentPhone"):
-            for value in (0, False, "번호오류", "abc01080000001", "010８００００００１"):
+            for value in (0, False, "번호오류", "abc01080000001", "0108000000.1"):
                 with self.subTest(field=field, value=value):
                     row = {"name": "연락처오류학생", "parent_phone": "01070000001"}
                     if field == "parentPhone":
@@ -109,8 +109,8 @@ class StudentImportResultContractTests(TestCase):
             workbook = Workbook()
             sheet = workbook.active
             sheet.append(["이름", "학부모전화번호", "학생전화번호", "학교유형", "학년", "성별"])
-            sheet.append(["첫째학생", 1070000001, 1080000001, "MIDDLE", "2학년", "남자"])
-            sheet.append(["둘째학생", 1070000001, "", "MIDDLE", "１ 학년", "여자"])
+            sheet.append(["첫째학생", "010-7000-0001(부)", "０１０－８０００－０００１", "MIDDLE", "2학년", "남자"])
+            sheet.append(["둘째학생", "부: 01070000001", "", "MIDDLE", "１ 학년", "여자"])
             sheet.append(["오류학생", 1070000001, "0101234567", "MIDDLE", 1])
             workbook.save(path)
             errors = []

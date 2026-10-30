@@ -14,8 +14,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 from academy.application.ports.storage import IObjectStorage
+from apps.shared.utils.excel_phone import normalize_excel_phone
 
 logger = logging.getLogger(__name__)
+
+MAX_STUDENT_EXCEL_ROWS = 10_000
+MAX_STUDENT_EXCEL_COLUMNS = 256
+MAX_STUDENT_EXCEL_SHEETS = 50
+HEADER_SCAN_ROWS = 100
 
 
 class ExcelValidationError(ValueError):
@@ -305,7 +311,7 @@ def _worksheet_candidate_score(
     *,
     is_active: bool,
 ) -> tuple[int, int, int, int, int, int] | None:
-    header_idx = _find_header_row(rows)
+    header_idx = _find_header_row(rows[:HEADER_SCAN_ROWS])
     strict_header = header_idx >= 0
     if header_idx < 0:
         header_idx = _find_header_row_fallback(rows)
@@ -340,22 +346,24 @@ def _worksheet_candidate_score(
 
 
 def _select_worksheet_rows(workbook) -> tuple[list[list[Any]], str]:
-    candidates: list[tuple[tuple[int, ...], int, list[list[Any]], str]] = []
+    # Read a bounded sample per sheet, then only materialize the selected sheet.
+    # Ignore stale OOXML dimensions (including A1:A1 and inflated formatting).
+    if len(workbook.worksheets) > MAX_STUDENT_EXCEL_SHEETS:
+        raise ExcelValidationError(f"엑셀 시트는 {MAX_STUDENT_EXCEL_SHEETS}개 이하로 나누어 업로드해 주세요.")
+    candidates = []
     active = workbook.active
     for position, worksheet in enumerate(workbook.worksheets):
-        rows = [
-            list(row) if row else []
-            for row in worksheet.iter_rows(values_only=True)
-        ]
+        worksheet.reset_dimensions()
+        rows = _read_worksheet_rows(worksheet, sample=True)
         score = _worksheet_candidate_score(
             rows,
             is_active=worksheet is active,
         )
         if score is not None:
-            candidates.append((score, position, rows, str(worksheet.title)))
+            candidates.append((score, position, worksheet, str(worksheet.title)))
 
     if candidates:
-        score, _position, rows, title = max(
+        score, _position, selected, title = max(
             candidates,
             key=lambda item: (item[0], -item[1]),
         )
@@ -369,7 +377,7 @@ def _select_worksheet_rows(workbook) -> tuple[list[list[Any]], str]:
                 candidate for candidate in same_quality if candidate[0][-1] == 1
             ]
             if len(active_matches) == 1:
-                score, _position, rows, title = active_matches[0]
+                score, _position, selected, title = active_matches[0]
             else:
                 titles = ", ".join(candidate[3] for candidate in same_quality)
                 raise ExcelValidationError(
@@ -382,14 +390,31 @@ def _select_worksheet_rows(workbook) -> tuple[list[list[Any]], str]:
             score,
             len(candidates),
         )
-        return rows, title
+        return _read_worksheet_rows(selected), title
 
     if active is None:
         raise ValueError("No active sheet")
     return (
-        [list(row) if row else [] for row in active.iter_rows(values_only=True)],
+        _read_worksheet_rows(active),
         str(active.title),
     )
+
+
+def _read_worksheet_rows(worksheet, *, sample: bool = False) -> list[list[Any]]:
+    limit = HEADER_SCAN_ROWS + 50 if sample else MAX_STUDENT_EXCEL_ROWS + 1
+    rows = []
+    iterator = worksheet.iter_rows(max_row=limit, values_only=True)
+    try:
+        for row_number, row in enumerate(iterator, start=1):
+            if row_number > MAX_STUDENT_EXCEL_ROWS or len(row) > MAX_STUDENT_EXCEL_COLUMNS:
+                raise ExcelValidationError(
+                    f"'{worksheet.title}' 시트는 {MAX_STUDENT_EXCEL_ROWS:,}행·"
+                    f"{MAX_STUDENT_EXCEL_COLUMNS}열 이하로 나누어 업로드해 주세요."
+                )
+            rows.append(list(row))
+    finally:
+        iterator.close()
+    return rows
 
 
 def _cell_str(row: list[Any], col_index: int | None) -> str:
@@ -417,15 +442,7 @@ def _is_known_template_example_row(
 
 
 def _to_raw_phone(v: str) -> str:
-    value = str(v or "").strip()
-    # Excel numeric cells lose the leading zero. Match the upload preview,
-    # but never turn arbitrary text into somebody else's valid login number.
-    if value and not re.fullmatch(r"[0-9\s.()-]+", value):
-        return value
-    digits = re.sub(r"\D", "", value)
-    if len(digits) == 10 and digits.startswith("10"):
-        digits = "0" + digits
-    return digits
+    return normalize_excel_phone(v)
 
 
 def _mask_phone_for_ai(v: str) -> str:
@@ -497,6 +514,10 @@ def _row_looks_like_student(
         return False
     if name and re.match(r"^\d+$", name):
         return False
+    # A contact-bearing record must produce a row error even for non-Korean names.
+    # Otherwise a misspelled phone could silently remove an international student.
+    if name and (parent_phone_raw or student_phone_raw):
+        return True
     has_phone = (
         (len(parent_phone_raw) == 11 and parent_phone_raw.startswith("010"))
         or (len(student_phone_raw) == 11 and student_phone_raw.startswith("010"))
@@ -608,7 +629,14 @@ def parse_student_excel_file(
     if not path.exists():
         raise FileNotFoundError(f"File not found: {local_path}")
 
-    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    # Jobs can outlive API validation; verify archive/resource limits at the worker too.
+    from apps.shared.utils.excel_workbook import validate_xlsx_archive
+
+    try:
+        validate_xlsx_archive(path)
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True, keep_links=False)
+    except (ValueError, OSError, KeyError) as exc:
+        raise ExcelValidationError("엑셀 파일을 열 수 없습니다. 올바른 .xlsx 파일로 다시 저장해 주세요.") from exc
     try:
         rows, _worksheet_title = _select_worksheet_rows(wb)
     finally:
@@ -617,14 +645,14 @@ def parse_student_excel_file(
     if not rows:
         return [], ""
 
-    header_idx = _find_header_row(rows)
+    header_idx = _find_header_row(rows[:HEADER_SCAN_ROWS])
     used_fallback = False
     if header_idx < 0:
         header_idx = _find_header_row_fallback(rows)
         used_fallback = header_idx >= 0
     if header_idx < 0:
-        raise ValueError(
-            "헤더 행을 찾을 수 없습니다. 첫 행에 '이름'(또는 성명/학생명), '연락처'(또는 학부모전화/전화번호) 등 컬럼명이 있어야 합니다."
+        raise ExcelValidationError(
+            "헤더 행을 찾을 수 없습니다. 첫 100행 안에 '이름'(또는 성명/학생명), '연락처'(또는 학부모전화/전화번호) 등 컬럼명이 있어야 합니다."
         )
     if used_fallback:
         logger.info(
@@ -873,14 +901,19 @@ class ExcelParsingService:
             parsing_errors: list[dict[str, Any]] = []
             rows, lecture_title = parse_student_excel_file(
                 str(local_path),
-                validation_errors_out=parsing_errors if lecture_id is None else None,
+                validation_errors_out=parsing_errors,
                 validate_profile=lecture_id is None,
             )
             if not rows and not parsing_errors:
-                raise ValueError("등록할 학생 데이터가 없습니다.")
+                raise ExcelValidationError("등록할 학생 데이터가 없습니다.")
+            if lecture_id is not None and not rows:
+                raise ExcelValidationError(
+                    f"학생 명단 검증 실패: {len(parsing_errors)}건. 표시된 행의 입력값을 확인해 주세요.",
+                    errors=parsing_errors,
+                )
 
             if lecture_id is not None:
-                from apps.domains.enrollment.services import lecture_enroll_from_excel_rows
+                from apps.domains.enrollment.services import EnrollmentImportError, lecture_enroll_from_excel_rows
                 from django.db import transaction
                 from django.utils import timezone
                 from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
@@ -889,13 +922,24 @@ class ExcelParsingService:
                     on_progress("enrolling", 50)
                 with transaction.atomic():
                     self._lock_worker_claim(job_id, tenant_id, expected_locked_at)
-                    result = lecture_enroll_from_excel_rows(
-                        tenant_id=int(tenant_id),
-                        lecture_id=int(lecture_id),
-                        students_data=rows,
-                        session_id=int(session_id) if session_id is not None else None,
-                        source_job_id=str(job_id),
-                    )
+                    try:
+                        result = lecture_enroll_from_excel_rows(
+                            tenant_id=int(tenant_id),
+                            lecture_id=int(lecture_id),
+                            students_data=rows,
+                            session_id=int(session_id) if session_id is not None else None,
+                            source_job_id=str(job_id),
+                        )
+                    except EnrollmentImportError as exc:
+                        raise ExcelValidationError(str(exc)) from exc
+                    if parsing_errors:
+                        result["excluded_rows"].extend({
+                            "row": error["row"], "name": error.get("name") or "(이름 없음)",
+                            "error": error["reason"], "reason_code": "invalid_row",
+                        } for error in parsing_errors)
+                        result["excluded_rows"].sort(key=lambda item: item["row"])
+                        result["excluded_count"] += len(parsing_errors)
+                        result["total"] += len(parsing_errors)
                     if isinstance(result, dict) and lecture_title:
                         result["lecture_title"] = lecture_title
                     if not DjangoAIJobRepository().mark_done(
