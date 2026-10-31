@@ -55,7 +55,7 @@ checked_in_at, checked_out_at`. 반복 요청은 기존 시각을 반환한다. 
 인쇄된 고정 QR은 사진 공유가 가능하므로 물리적인 현장 존재를 증명하지는 않는다.
 노출된 표지를 교체/중지할 수 있으며 출석은 본인 계정과 등록/예약 경계로 제한한다.
 
-`apps/domains/attendance/tests/test_qr_attendance.py`는 발급/교체/중지, 출석 저장과
+`tests/test_qr_attendance.py`는 발급/교체/중지, 출석 저장과
 재조회/중복, 역할·학원·날짜·등록·수동 상태 보호, 클리닉 등원/하원·미완료 보존,
 취소/대기/장소/시간과 자정 경계를 검증한다. DB 잠금 보장은 PostgreSQL 검증이 필요하다.
 실사용은 격리 development의 합성 학생·강의·예약으로 인쇄→인식→저장→양 역할 재조회와

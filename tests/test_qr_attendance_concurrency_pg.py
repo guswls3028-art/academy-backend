@@ -17,7 +17,7 @@ class QrAttendanceConcurrencyPostgresTests(TransactionTestCase):
         super().setUpClass()
 
     def setUp(self):
-        from apps.domains.attendance.tests.test_qr_attendance import AttendanceQrTests
+        from tests.test_qr_attendance import AttendanceQrTests
         AttendanceQrTests.setUp(self)
 
     def simultaneous(self, *, clinic=False, action="check_in"):

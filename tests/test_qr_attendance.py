@@ -1,3 +1,5 @@
+"""Cross-domain QR API journey: student auth, enrollment, attendance and clinic."""
+
 import datetime
 import uuid
 from unittest.mock import patch
