@@ -5,6 +5,36 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+<a id="glibc-approval-20261101"></a>
+
+## 2026-11-01 QR 출석 배포의 신규 glibc High 한시 승인
+
+QR 출석 PR707의 배포41178314899는 신규 `CVE-2026-84243`가 기존 High 2건에
+추가되어 development 진입 전에 실패했다. 기존 두 항목의 무기한 승인은
+이 신규 CVE를 포함하지 않았다.
+
+사용자는 `glibc / 2.41-12+deb13u4`와 기존 여섯 이미지 저장소에 한정해
+**2026-11-08 09:00 KST까지** 서비스 장애·코드 실행 위험을 수용한다는 질문에
+**“해당 범위와 기한의 위험 수용을 승인”**이라고 직접 답했다.
+이 승인에 따라 `ecr-high-risk-baseline.json`에 신규 exact identity 한 건을
+추가하고 여섯 저장소의 High 상한을 2에서 3으로 맞춘다.
+게이트가 UTC 날짜로 판정하므로 `expiresOn: 2026-11-07`로 기록해
+11월 8일 00:00 UTC부터 만료된다. 기존 두 무기한 항목과 Critical 정책은 유지한다.
+
+[Debian CVE-2026-84243](https://security-tracker.debian.org/tracker/CVE-2026-84243)는
+확인 당시 trixie의 해당 버전을 vulnerable로 기록하며 수정 패키지가 없다.
+공격자가 LANGUAGE/locale 환경과 읽을 수 있는 악성 메시지 카탈로그를 제어하면
+gettext 경로에서 장애 또는 코드 실행이 가능하다. Academy 런타임의 실제 악용
+가능성이나 비도달성은 입증하지 않았으며, 이 승인은 취약점 수정 완료를 뜻하지 않는다.
+
+실패 실행의 다섯 서비스 digest와 재사용 base
+`sha256:dd3f865315c4bbb6bc703b759e59c0f3a4f08261eef74941131a70e4d42427f3`의
+완료 scan에서 각각 High 3·Critical 0을 확인했다. 새 후보는 신선한 여섯 exact
+scan부터 격리 개발 실사용·preprod·임시 인스턴스 종료·운영 승인·rolling·실사용·
+cleanup0을 모두 통과해야 한다. 다른 CVE/버전/저장소 수용, 자동 연장 또는
+기존 glibc 교체·취약 입력 재현 HOLD 해제는 포함하지 않는다.
+승인과 readback은 `_artifacts/sessions/deploy-hardening-01a19314/`에 보존한다.
+
 ## 2026-10-25 Brotli stable 보안 수정
 
 출결 이름 정렬 PR674의 배포40155954828은 후보 scan에서
