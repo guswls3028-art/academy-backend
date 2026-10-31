@@ -53,6 +53,14 @@
         ],
         "type": "string"
       },
+      "ActionEnum": {
+        "description": "* `check_in` - check_in\n* `check_out` - check_out",
+        "enum": [
+          "check_in",
+          "check_out"
+        ],
+        "type": "string"
+      },
       "ActorModeEnum": {
         "description": "* `student` - student\n* `support` - support",
         "enum": [
@@ -5170,6 +5178,14 @@
         ],
         "type": "string"
       },
+      "KindEnum": {
+        "description": "* `class` - 수업\n* `clinic` - 클리닉",
+        "enum": [
+          "class",
+          "clinic"
+        ],
+        "type": "string"
+      },
       "Lecture": {
         "properties": {
           "active_enrollment_count": {
@@ -5325,6 +5341,12 @@
             "readOnly": true,
             "type": "string"
           },
+          "qr_checked_in_at": {
+            "format": "date-time",
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
           "session": {
             "type": "integer"
           },
@@ -5352,6 +5374,7 @@
           "parent_phone",
           "phone",
           "profile_photo_url",
+          "qr_checked_in_at",
           "session",
           "student_id",
           "student_memo"
@@ -10303,6 +10326,31 @@
         },
         "type": "object"
       },
+      "PatchedQrPointRequest": {
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/KindEnum"
+          },
+          "label": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "lecture_id": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "location": {
+            "maxLength": 100,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "PatchedQuestionRequest": {
         "description": "🔧 PATCH:\n- ExamQuestion.region_meta(bbox)가 이미 모델/서비스에서 저장되는데\n  serializer에서 누락되면 프론트에서 하이라이트/오답노트 영역표시 불가.",
         "properties": {
@@ -13302,6 +13350,235 @@
         },
         "required": [
           "view_count"
+        ],
+        "type": "object"
+      },
+      "QrChoice": {
+        "properties": {
+          "can_check_in": {
+            "type": "boolean"
+          },
+          "can_check_out": {
+            "type": "boolean"
+          },
+          "checked_in_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "checked_out_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          },
+          "start_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "can_check_in",
+          "can_check_out",
+          "checked_in_at",
+          "checked_out_at",
+          "date",
+          "id",
+          "label",
+          "start_time",
+          "status"
+        ],
+        "type": "object"
+      },
+      "QrPayloadRequest": {
+        "properties": {
+          "token": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "type": "object"
+      },
+      "QrPoint": {
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/KindEnum"
+          },
+          "label": {
+            "maxLength": 100,
+            "type": "string"
+          },
+          "lecture_id": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "location": {
+            "maxLength": 100,
+            "type": "string"
+          },
+          "token": {
+            "format": "uuid",
+            "readOnly": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "label",
+          "token"
+        ],
+        "type": "object"
+      },
+      "QrPointInfo": {
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "label"
+        ],
+        "type": "object"
+      },
+      "QrPointRequest": {
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/KindEnum"
+          },
+          "label": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "lecture_id": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "location": {
+            "maxLength": 100,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "label"
+        ],
+        "type": "object"
+      },
+      "QrReceipt": {
+        "properties": {
+          "already_recorded": {
+            "type": "boolean"
+          },
+          "checked_in_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "checked_out_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "target_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "already_recorded",
+          "checked_in_at",
+          "checked_out_at",
+          "detail",
+          "kind",
+          "recorded_at",
+          "status",
+          "target_id"
+        ],
+        "type": "object"
+      },
+      "QrRecordPayloadRequest": {
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ActionEnum"
+          },
+          "target_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "token": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "target_id",
+          "token"
+        ],
+        "type": "object"
+      },
+      "QrResolution": {
+        "properties": {
+          "choices": {
+            "items": {
+              "$ref": "#/components/schemas/QrChoice"
+            },
+            "type": "array"
+          },
+          "point": {
+            "$ref": "#/components/schemas/QrPointInfo"
+          }
+        },
+        "required": [
+          "choices",
+          "point"
         ],
         "type": "object"
       },
@@ -36239,6 +36516,180 @@
         ]
       }
     },
+    "/api/v1/lectures/attendance-qr/": {
+      "get": {
+        "operationId": "lectures_attendance_qr_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/QrPoint"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "lectures"
+        ]
+      },
+      "post": {
+        "operationId": "lectures_attendance_qr_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QrPointRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/QrPointRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/QrPointRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QrPoint"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "lectures"
+        ]
+      }
+    },
+    "/api/v1/lectures/attendance-qr/{id}/": {
+      "patch": {
+        "operationId": "lectures_attendance_qr_partial_update",
+        "parameters": [
+          {
+            "description": "attendance qr point을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedQrPointRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedQrPointRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedQrPointRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QrPoint"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "lectures"
+        ]
+      }
+    },
+    "/api/v1/lectures/attendance-qr/{id}/rotate/": {
+      "post": {
+        "operationId": "lectures_attendance_qr_rotate_create",
+        "parameters": [
+          {
+            "description": "attendance qr point을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QrPoint"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "lectures"
+        ]
+      }
+    },
     "/api/v1/lectures/attendance/": {
       "get": {
         "description": "lectures/attendance",
@@ -48589,6 +49040,102 @@
         ],
         "tags": [
           "staffs"
+        ]
+      }
+    },
+    "/api/v1/student/attendance/qr/record/": {
+      "post": {
+        "operationId": "student_attendance_qr_record_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QrRecordPayloadRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/QrRecordPayloadRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/QrRecordPayloadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QrReceipt"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "student"
+        ]
+      }
+    },
+    "/api/v1/student/attendance/qr/resolve/": {
+      "post": {
+        "operationId": "student_attendance_qr_resolve_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QrPayloadRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/QrPayloadRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/QrPayloadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QrResolution"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "student"
         ]
       }
     },

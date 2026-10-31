@@ -77,6 +77,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
             "enrollment_id",
             "student_id",
             "status",
+            "qr_checked_in_at",
             "memo",
             "lecture_memo",
             "lecture_memo_updated_at",
@@ -93,6 +94,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
             "confirm_secession",
             "secession_scope",
         ]
+        read_only_fields = ["qr_checked_in_at"]
 
     def get_student_memo(self, obj) -> str:
         return obj.enrollment.student.memo or ""
