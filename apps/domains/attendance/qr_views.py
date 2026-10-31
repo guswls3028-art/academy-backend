@@ -29,6 +29,8 @@ class QrPointSerializer(serializers.ModelSerializer):
             for field in ("kind", "lecture_id", "location"):
                 if field in attrs and attrs[field] != getattr(self.instance, field):
                     raise serializers.ValidationError("QR의 대상을 바꾸려면 새 QR을 만들어 주세요.")
+            # An archived lecture must not prevent staff from revoking its printed sign.
+            return attrs
         kind = attrs.get("kind", getattr(self.instance, "kind", None))
         lecture_id = attrs.get("lecture_id", getattr(self.instance, "lecture_id", None))
         location = attrs.get("location", getattr(self.instance, "location", ""))

@@ -36,6 +36,7 @@
 `POST {id}/rotate/`. class에는 `lecture_id`, clinic에는 `location`을 지정한다.
 빈 location은 학원 전체 장소를 뜻한다. 발급 후 대상 범위는 바꿀 수 없으며 새 표지를
 만든다. 교체는 이전 토큰을 즉시 폐기한다. 중지/교체는 이미 저장된 출결을 삭제하지 않는다.
+강의 운영이 중지된 후에도 기존 인쇄물의 QR을 중지할 수 있다.
 
 학생 `POST /api/v1/student/attendance/qr/resolve/ {token}`은 표지와 가능한 차시/예약을
 반환한다. `POST .../record/ {token,target_id,action}`은 class 차시 ID 또는 clinic 참가자

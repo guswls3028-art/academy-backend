@@ -214,4 +214,9 @@ class AttendanceQrTests(TestCase):
         self.assertNotEqual(rotated.data["token"], old_token)
         disabled = staff_call("patch", {"active": False}, "partial_update", point_id)
         self.assertFalse(disabled.data["active"])
+        self.lecture.is_active = False
+        self.lecture.save(update_fields=["is_active"])
+        revoked_after_archive = staff_call("patch", {"active": False}, "partial_update", point_id)
+        self.assertEqual(revoked_after_archive.status_code, 200)
+        self.assertFalse(revoked_after_archive.data["active"])
         self.assertEqual(staff_call("post", {"label": "오류", "kind": "class", "lecture_id": 999999}, "create").status_code, 400)
