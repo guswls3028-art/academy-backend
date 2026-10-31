@@ -1,5 +1,6 @@
 # PATH: C:\academy\apps\domains\student_app\urls.py
 from django.urls import path
+from apps.support.student_app.attendance_qr_dependencies import StudentQrRecordView, StudentQrResolveView
 
 from .dashboard.views import StudentDashboardView
 from .sessions.views import (
@@ -44,6 +45,8 @@ from .media.views import (
 )
 
 urlpatterns = [
+    path("attendance/qr/resolve/", StudentQrResolveView.as_view()),
+    path("attendance/qr/record/", StudentQrRecordView.as_view()),
     # 내 프로필 (학생 전용) — GET/PATCH
     path("me/", StudentProfileView.as_view()),
 

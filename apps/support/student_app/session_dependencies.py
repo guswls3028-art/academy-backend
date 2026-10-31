@@ -193,6 +193,7 @@ def get_student_attendance_payload(*, student: Any, tenant: Any) -> tuple[dict, 
             "session_title": session.title or session.display_label,
             "date": session.date.isoformat() if session.date else None,
             "status": attendance.status,
+            "qr_checked_in_at": attendance.qr_checked_in_at,
             "can_view_session": session.id in accessible_session_ids,
         })
 

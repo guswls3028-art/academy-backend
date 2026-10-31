@@ -1,5 +1,7 @@
 # PATH: apps/domains/attendance/models.py
 
+import uuid
+
 from django.db import models
 from apps.core.models import Tenant
 
@@ -68,6 +70,7 @@ class Attendance(models.Model):
         help_text="보강 학생의 예정 등원 시간. 날짜만 정해진 경우 비워둘 수 있다.",
     )
     recorded_at = models.DateTimeField(auto_now_add=True)
+    qr_checked_in_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         indexes = [
@@ -82,3 +85,26 @@ class Attendance(models.Model):
 
     def __str__(self):
         return f"{self.enrollment.student.name} / {self.session.title} / {self.status}"
+
+
+class AttendanceQrPoint(models.Model):
+    """Revocable, reusable sign; never embeds student identity or grants membership."""
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    label = models.CharField(max_length=100)
+    kind = models.CharField(max_length=10, choices=[("class", "수업"), ("clinic", "클리닉")])
+    lecture = models.ForeignKey("lectures.Lecture", null=True, blank=True, on_delete=models.CASCADE)
+    location = models.CharField(max_length=100, blank=True, default="")
+    token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(models.Q(kind="class", lecture__isnull=False, location="")
+                           | models.Q(kind="clinic", lecture__isnull=True)),
+                name="attendance_qr_valid_scope",
+            ),
+        ]
