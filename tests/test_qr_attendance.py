@@ -182,6 +182,15 @@ class AttendanceQrTests(TestCase):
         self.assertEqual(self.clinic_post(extra={"target_id": self.participant.pk + 10000}).status_code, 404)
         self.assertEqual(self.clinic_post().status_code, 200)
 
+    def test_clinic_next_day_start_allows_arrival_within_sixty_minutes(self):
+        self.clinic.start_time = "00:30"
+        self.clinic.save()
+        with patch("django.utils.timezone.now", return_value=datetime.datetime(2026, 10, 30, 14, 45, tzinfo=datetime.timezone.utc)):
+            self.assertEqual(self.clinic_post().status_code, 200)
+        self.participant.refresh_from_db()
+        self.assertIsNotNone(self.participant.checked_in_at)
+        self.assertIsNone(self.participant.checked_out_at)
+
     def test_inactive_student_and_corrupt_session_tenant_cannot_write(self):
         self.clinic.tenant = self.other
         self.clinic.save()

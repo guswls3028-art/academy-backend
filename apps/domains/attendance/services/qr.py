@@ -52,7 +52,8 @@ def class_roster(*, tenant, student, point, now):
 def clinic_candidates(*, tenant, student, point, now):
     rows = SessionParticipant.objects.filter(
         tenant=tenant, student=student, student__tenant=tenant,
-        session__tenant=tenant, session__date__range=(now.date() - timedelta(days=1), now.date()),
+        session__tenant=tenant,
+        session__date__range=(now.date() - timedelta(days=1), now.date() + timedelta(days=1)),
         status__in=["booked", "attended"],
     ).filter(
         Q(enrollment__isnull=True) | Q(
