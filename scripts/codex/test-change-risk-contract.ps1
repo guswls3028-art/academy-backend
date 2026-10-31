@@ -90,6 +90,12 @@ Assert-Contains $backendReadiness.Gates "frontend-e2e" "backend readiness must r
 Assert-Contains $backendReadiness.Gates "frontend-deployment-contracts" "backend readiness must retain deployment contracts"
 Assert-True (-not $backendReadiness.DocsOnly) "executable readiness is not documentation-only"
 
+$iphoneLoginQa = Get-AcademyChangeRiskPlan -BackendPaths @() `
+    -FrontendPaths @("scripts/run-iphone-safari-login-uat.mjs")
+Assert-Contains $iphoneLoginQa.Gates "frontend-e2e" "iPhone login QA must retain frontend E2E gates"
+Assert-Contains $iphoneLoginQa.Gates "frontend-deployment-contracts" "iPhone login QA must retain deployment contracts"
+Assert-True (-not $iphoneLoginQa.DocsOnly) "executable login QA is not documentation-only"
+
 $apiSourcePin = Get-AcademyChangeRiskPlan -BackendPaths @() `
     -FrontendPaths @("scripts/openapi-backend-source.json")
 Assert-Contains $apiSourcePin.Risks "frontend-runtime-build" "API source pin is a generated build contract"
