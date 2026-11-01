@@ -407,6 +407,17 @@ OMR 답안의 점수 영향 여부를 다시 계산한다. 정확히 일치하�
    conditional unique constraint로 경합까지 직렬화하고 `duplicate`로 완료 처리한다.
    새 Submission/R2 object/worker dispatch를 만들지 않으며 파일명이 같아도 바이트가
    다르면 정상 신규 접수다.
+   다만 연결된 제출이 `SUPERSEDED`이거나 `FAILED`와 명시적 폐기 표식
+   (`meta.discarded` 객체 또는 기존 `discarded:` 오류 코드)을 함께 가지면,
+   새 batch 접수 시 해당 item과 tenant·시험 범위의 Submission을 잠근 뒤 과거
+   item을 `failed/submission_archived`로 표시해 unique 예약만 해제한다. 원본
+   SHA-256, Submission 연결, R2 파일, 답안과 교사 결과 이력은 그대로 보존한다.
+   새 batch는 새 Submission으로 정상 접수하며 이후 같은 파일은 새 활성 제출로
+   중복 처리한다. 일반 worker 실패·처리 중·완료 제출의 중복 차단은 유지한다.
+   동시 신규 접수는 기존 partial unique 제약으로 한 건만 수락한다. 충돌한 요청은
+   자기 업로드만 정리하고 같은 잠금·범위·폐기 판정으로 활성 소유자를 재조회한다.
+   그 사이 소유자도 폐기됐다면 과거 제출로 연결하지 않고 명시적 접수 실패와
+   파일 재접수 경로를 남긴다. 교차 tenant·시험 연결은 재사용하지 않는다.
 4. 요청 응답이 끊겨도 detail GET의 `pending_admission_ordinals`와
    `admission_failed_ordinals`로 미접수 파일만 다시 선택한다. 이미 성공한 ordinal은
    재전송하지 않는다. `SUPERSEDED` 또는 `FAILED`이면서 명시적 폐기 표식
@@ -419,16 +430,21 @@ OMR 답안의 점수 영향 여부를 다시 계산한다. 정확히 일치하�
    `needs_identification`, 처리 실패는 `failed`로 서로 구분한다. 업로드 성공을 AI 완료로
    표시하지 않는다.
 
-이 보호 단계(A)는 기존 hash 예약과 중복 판정을 유지한다. 따라서 폐기 후 같은 파일을
-새 batch로 다시 보내는 동작은 아직 중복 처리된다. 예약 해제 단계(B)는 별도 후보로
-배포하며, A가 모든 API 인스턴스에 적용됐다는 정확한 revision 확인과 이전 요청의 종료
-확인 후에만 활성화한다. B가 남기는 `failed/submission_archived` 항목도 A는 원본
-hash·Submission 연결을 불변으로 취급한다. `test_omr_receipt_guards.py`는 그 향후
-저장 형태를 fixture로 만들어 재전송·오류·retry·summary 및 교사 답안 보존을 검사한다.
-이 fixture 검사는 B의 실제 재등록이나 배포 중 동작 검증을 대신하지 않는다.
-API 복구는 [운영 절차](../../scripts/v1/README.md)에 따라 새 immutable 이미지로
-roll-forward하며, A의 보호 코드를 최소 호환 기준으로 유지한다. 구버전 이미지의
-직접 rollback이나 보호 코드 제거는 허용하지 않는다.
+예약 해제 활성화(B)의 선행 조건은 원본·중복 ordinal 불변과 폐기 retry 제외를 갖춘
+보호 단계(A)의 전량 배포다. 모든 API 인스턴스의 정확한 A revision과 이전 요청 종료를
+운영 담당자가 확인한 뒤에만 B를 정상 rolling한다. A 이전 코드가 남아 있으면 B가
+보관 상태로 바꾼 과거 ordinal을 재전송할 때 원본 연결이 훼손될 수 있다.
+각 후보의 필수 CI와 같은 artifact의 격리 개발환경 batch HTTP 접수·폐기·재등록·
+재조회·원본 보존·cleanup zero를 확인한다. 다른 readiness canary로 대체하지 않는다.
+API 복구는 [운영 절차](../../scripts/v1/README.md)의 새 immutable 이미지
+roll-forward만 사용하고, A 보호 코드는 이후 복구 소스에도 유지한다. 이는 구버전
+이미지 직접 rollback 허가가 아니다. A 수준의 소스로 복구하면 원본은 보존되지만
+재등록 동작은 다시 중복 처리될 수 있으므로 해당 흐름의 검증이 필요하다.
+
+폐기 API → 새 batch 접수 → detail 재조회와 원본/교사 fact 보존은
+`test_omr_readmission.py`, 실제 row lock·unique 충돌과 discard commit/rollback
+경합은 `test_omr_readmission_concurrency_pg.py`가 검증한다. SQLite 기능 통과를
+PostgreSQL 경합 증거로 대체하지 않는다.
 
 `counts.completed`, `terminal`, `overall_status`는 기존 파일 접수·OMR 처리 계약을
 유지한다. 따라서 혼합 시험은 객관식 인식이 끝나면 `overall_status=completed`이면서
@@ -652,16 +668,24 @@ A의 대표가 이미 별도 교사 성적이면 그대로 보존한다. B의 �
 결과를 잠그며, 충돌·중간 오류·진척 갱신 실패는 학생 연결·답안·매칭·성적·
 감사 Fact를 함께 rollback한다. 기존 운영 데이터의 일괄 재배정/삭제는 없다.
 
-배포는 expand migration `results.0022`와 호환 reader를 먼저 적용한다.
-`OMR_SCORED_REASSIGNMENT_ENABLED`는 기본 false다. 모든 API/AI reader와 writer가
-cutoff/최초 일반 응시 계약을 읽는 정확한 후보 revision으로 수렴한 뒤에만 같은
-후보의 정정 쓰기를 활성화한다. 비활성 상태의 충돌 응답은 정상 기능 검증 완료가
-아니며, 활성화 후 실제 학생 정정→재조회→양쪽 역할/통계→cleanup까지 확인해야
-완료다. 활성화 후에는 쓰기만 끌 수 있고 과거 cutoff를 무시하는 이미지로
-rollback하지 않는다. 현재 HOLD와 다른 OMR 단계 배포 순서를 자동 확장하지 않는다.
+보호 단계(A)는 expand migration `results.0022`와 호환 reader를 먼저 적용하며
+정정 쓰기의 기본값은 false다. 모든 API/AI/Tools reader와 writer가 cutoff/최초
+일반 응시 계약을 읽는 정확한 A 이상 revision으로 수렴하고, A 이전 요청·작업이
+종료됐다는 확인 후에만 단계(B)를 병합·배포한다. B에서는
+`OMR_SCORED_REASSIGNMENT_ENABLED`의 API/독립 worker 기본값이 모두 true다.
+같은 B immutable artifact를 격리 개발환경에서 활성 상태로 실검증하고 preprod와
+임시 인스턴스 종료 확인을 거쳐 정상 rolling한다. 운영 환경에 명시 override가
+없는지 배포 직전에 다시 확인하고, false override가 있으면 기본값 변경만으로
+활성화됐다고 판단하지 않는다. 명시적 `false`/`0`은 정정 쓰기를 끄는 옵션으로 유지한다.
+A false와 B true의 혼재는 모든 실행 주체가 A 이상 호환 버전일 때만 허용한다.
+별도 운영 SSM 쓰기나 추가 활성화 workflow는 필요하지 않으며 기존 배포 잠금과
+승인·검증 경계를 유지한다. 비활성 상태의 충돌 응답은 정상 기능 검증 완료가 아니다.
+실제 B runtime의 effective true와 학생 정정→재조회→양쪽 역할/통계→cleanup까지
+확인해야 완료다. 활성화 후에는 쓰기만 끌 수 있고 과거 cutoff를 무시하는 이미지로
+rollback하지 않는다. 현재 HOLD와 다른 OMR 단계 배포 순서는 그대로 유지한다.
 
 설정은 API `apps/api/config/settings/base.py`와 독립 worker 설정
-`apps/api/config/settings/worker.py`가 같은 환경 변수·기본 false를 읽는다.
+`apps/api/config/settings/worker.py`가 같은 환경 변수·단계 B 기본 true를 읽는다.
 환경 전달은 운영 `/academy/api/env`와 `/academy/workers/env`, 격리 개발
 `/academy/api/development/env`와 `/academy/workers/development/env`의 기존
 버전 고정 배포 경계를 사용한다. 개발 전용 opt-in은

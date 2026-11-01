@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
@@ -42,6 +42,55 @@ class _TierQueue:
 
 
 class AIWorkerIdleScaleInTests(SimpleTestCase):
+    def test_idle_baseline_keeps_polling_but_burst_scale_in_exits(self):
+        for desired, expected_polls in ((1, 2), (3, 1)):
+            with self.subTest(desired=desired):
+                autoscaling = Mock()
+                autoscaling.describe_auto_scaling_groups.return_value = {
+                    "AutoScalingGroups": [{"MinSize": 1, "DesiredCapacity": desired, "MaxSize": 5}]
+                }
+                queue = _Queue({"visible": 0, "not_visible": 0, "delayed": 0})
+                polls = 0
+
+                def poll(*args, **kwargs):
+                    nonlocal polls
+                    polls += 1
+                    if polls == 2:
+                        ai_sqs_worker._shutdown = True
+                    return None, "basic"
+
+                with (
+                    patch.object(ai_sqs_worker, "_shutdown", False),
+                    patch.object(ai_sqs_worker, "IDLE_SCALE_IN_ENABLED", True),
+                    patch.object(ai_sqs_worker, "IDLE_EMPTY_POLLS_BEFORE_SCALE_IN", 1),
+                    patch.object(ai_sqs_worker, "IDLE_SCALE_IN_COUNT_TIERS", ("basic",)),
+                    patch.object(ai_sqs_worker, "IDLE_SCALE_IN_CONFIRM_SECONDS", 0),
+                    patch.object(ai_sqs_worker, "_active_running_ai_jobs_exist", return_value=False),
+                    patch("academy.adapters.compute.ec2_control._aws_client", return_value=autoscaling),
+                    patch.object(ai_sqs_worker, "_weighted_poll", side_effect=poll),
+                    patch.object(ai_sqs_worker, "prepare_ai_job") as claim,
+                    patch.object(ai_sqs_worker, "SQSVisibilityExtender") as extender,
+                    patch.object(ai_sqs_worker, "close_old_connections"),
+                    patch.object(ai_sqs_worker, "_release_db_connections"),
+                    patch.object(ai_sqs_worker.signal, "signal"),
+                    patch("apps.shared.utils.heartbeat.beat") as heartbeat,
+                ):
+                    self.assertEqual(ai_sqs_worker.run_ai_sqs_worker(queue=queue), 0)
+
+                self.assertEqual(polls, expected_polls)
+                self.assertEqual(heartbeat.call_count, expected_polls)
+                autoscaling.describe_auto_scaling_groups.assert_called_once()
+                claim.assert_not_called()
+                extender.return_value.stop.assert_called_once()
+                if desired == 1:
+                    autoscaling.set_desired_capacity.assert_not_called()
+                else:
+                    autoscaling.set_desired_capacity.assert_called_once_with(
+                        AutoScalingGroupName="academy-v1-ai-worker-asg",
+                        DesiredCapacity=1,
+                        HonorCooldown=False,
+                    )
+
     def test_queue_counts_are_idle_only_when_all_depths_zero(self):
         self.assertTrue(
             ai_sqs_worker._queue_counts_are_idle(

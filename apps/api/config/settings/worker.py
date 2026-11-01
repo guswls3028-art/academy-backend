@@ -24,10 +24,10 @@ BASE_DIR = Path(__file__).resolve().parents[3]
 SECRET_KEY = os.getenv("SECRET_KEY", "worker-dev-secret")
 DEBUG = False
 
-# Keep the compatibility-stage default aligned with API settings. Activation is
-# an explicit environment rollout after every reader/writer is compatible.
+# Stage B follows full stage-A compatibility; keep its default aligned with API.
+# An explicit false still disables writes without discarding attribution history.
 OMR_SCORED_REASSIGNMENT_ENABLED = os.getenv(
-    "OMR_SCORED_REASSIGNMENT_ENABLED", "false",
+    "OMR_SCORED_REASSIGNMENT_ENABLED", "true",
 ).lower() in ("1", "true", "yes")
 
 # ==================================================

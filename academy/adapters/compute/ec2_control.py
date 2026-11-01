@@ -257,7 +257,7 @@ def scale_down_ai_worker_asg_to_baseline_if_idle(queue_counts: dict[str, int]) -
         max_size = int(group.get("MaxSize") or 0)
         baseline = min(max_size, max(1, min_size))
         if desired <= baseline:
-            return True
+            return False
 
         logger.info(
             "[AI] idle queue confirmed → ASG desired=%d to warm baseline=%d",

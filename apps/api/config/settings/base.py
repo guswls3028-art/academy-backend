@@ -545,10 +545,10 @@ CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED = os.getenv(
     "CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED", "true",
 ).lower() in ("1", "true", "yes")
 
-# Enable only after all API/AI readers understand attribution fact cutoffs.
+# Stage B is deployed only after all stage-A readers/writers and old work converge.
 # Disabling writes is safe; rolling back to readers that ignore cutoffs is not.
 OMR_SCORED_REASSIGNMENT_ENABLED = os.getenv(
-    "OMR_SCORED_REASSIGNMENT_ENABLED", "false",
+    "OMR_SCORED_REASSIGNMENT_ENABLED", "true",
 ).lower() in ("1", "true", "yes")
 
 # ==================================================
