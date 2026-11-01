@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from django.db.models import Q
+from django.db.models import F
 
 logger = logging.getLogger(__name__)
 
@@ -65,16 +65,14 @@ def _candidate_enrollments(*, exam_id: int, tenant):
 
     return (
         Enrollment.objects.filter(
-            Q(
-                exam_enrollments__exam_id=exam_id,
-                exam_enrollments__exam__tenant=tenant,
-            )
-            | Q(
-                session_enrollments__session__exams__id=exam_id,
-                session_enrollments__session__exams__tenant=tenant,
-            ),
+            session_enrollments__tenant=tenant,
+            session_enrollments__session__exams__id=exam_id,
+            session_enrollments__session__exams__tenant=tenant,
+            session_enrollments__session__lecture__tenant=tenant,
+            session_enrollments__session__lecture_id=F("lecture_id"),
             tenant=tenant,
             status="ACTIVE",
+            student__tenant=tenant,
             student__deleted_at__isnull=True,
         )
         .select_related("student")
@@ -176,97 +174,22 @@ def lock_exam_enrollment_candidate(*, tenant, exam_id: int, enrollment_id: int |
     if not enrollment_id:
         return False
 
-    from apps.domains.enrollment.models import SessionEnrollment
     from apps.domains.exams.models import ExamEnrollment
+    from apps.support.exams.enrollment_candidates import ensure_legacy_exam_roster_candidate
 
-    if (
-        ExamEnrollment.objects.select_for_update()
-        .filter(
-            exam_id=int(exam_id),
-            exam__tenant=tenant,
-            enrollment_id=int(enrollment_id),
-            enrollment__tenant=tenant,
-        )
-        .exists()
+    if not ensure_legacy_exam_roster_candidate(
+        tenant=tenant, exam_id=exam_id, enrollment_id=enrollment_id,
     ):
-        return True
-
-    if ExamEnrollment.objects.filter(
-        exam_id=int(exam_id),
-        exam__tenant=tenant,
-    ).exists():
         return False
-
-    in_session = SessionEnrollment.objects.filter(
-        tenant=tenant,
-        session__exams__id=int(exam_id),
-        session__exams__tenant=tenant,
-        session__lecture__tenant=tenant,
-        enrollment_id=int(enrollment_id),
-        enrollment__tenant=tenant,
-        enrollment__status="ACTIVE",
-        enrollment__student__deleted_at__isnull=True,
+    return ExamEnrollment.objects.select_for_update().filter(
+        exam_id=int(exam_id), exam__tenant=tenant,
+        enrollment_id=int(enrollment_id), enrollment__tenant=tenant,
     ).exists()
-    if not in_session:
-        return False
-
-    ExamEnrollment.objects.get_or_create(
-        exam_id=int(exam_id),
-        enrollment_id=int(enrollment_id),
-    )
-    return (
-        ExamEnrollment.objects.select_for_update()
-        .filter(
-            exam_id=int(exam_id),
-            exam__tenant=tenant,
-            enrollment_id=int(enrollment_id),
-            enrollment__tenant=tenant,
-        )
-        .exists()
-    )
 
 
 def ensure_exam_enrollment_candidate(*, tenant, exam_id: int, enrollment_id: int) -> bool:
-    from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-    from apps.domains.exams.models import ExamEnrollment
+    from apps.support.exams.enrollment_candidates import ensure_legacy_exam_roster_candidate
 
-    enrollment_exists = Enrollment.objects.filter(
-        id=int(enrollment_id),
-        tenant=tenant,
-    ).exists()
-    if not enrollment_exists:
-        return False
-
-    in_exam = ExamEnrollment.objects.filter(
-        exam_id=int(exam_id),
-        exam__tenant=tenant,
-        enrollment_id=int(enrollment_id),
-        enrollment__tenant=tenant,
-    ).exists()
-    if in_exam:
-        return True
-
-    if ExamEnrollment.objects.filter(
-        exam_id=int(exam_id),
-        exam__tenant=tenant,
-    ).exists():
-        return False
-
-    in_session = SessionEnrollment.objects.filter(
-        tenant=tenant,
-        session__exams__id=int(exam_id),
-        session__exams__tenant=tenant,
-        session__lecture__tenant=tenant,
-        enrollment_id=int(enrollment_id),
-        enrollment__tenant=tenant,
-        enrollment__status="ACTIVE",
-        enrollment__student__deleted_at__isnull=True,
-    ).exists()
-    if not in_session:
-        return False
-
-    ExamEnrollment.objects.get_or_create(
-        exam_id=int(exam_id),
-        enrollment_id=int(enrollment_id),
+    return ensure_legacy_exam_roster_candidate(
+        tenant=tenant, exam_id=exam_id, enrollment_id=enrollment_id,
     )
-    return True

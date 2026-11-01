@@ -1446,6 +1446,54 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
             ).exists()
         )
 
+    def test_sequential_scores_preserve_both_session_and_attendance_roster(self):
+        ExamEnrollment.objects.filter(exam=self.exam).delete()
+        Attendance.objects.create(
+            tenant=self.tenant, session=self.session,
+            enrollment=self.attendance_roster_enrollment, status="PRESENT",
+        )
+        for enrollment, score in (
+            (self.session_roster_enrollment, 10), (self.attendance_roster_enrollment, 20),
+        ):
+            response = self._patch(
+                AdminExamTotalScoreView, {"score": score, "max_score": 100}, enrollment=enrollment,
+            )
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(Result.objects.get(
+                target_type="exam", target_id=self.exam.id, enrollment=enrollment,
+            ).total_score, score)
+        self.assertEqual(set(ExamEnrollment.objects.filter(exam=self.exam).values_list(
+            "enrollment_id", flat=True,
+        )), {self.session_roster_enrollment.id, self.attendance_roster_enrollment.id})
+
+    def test_first_omr_match_preserves_attendance_only_students_score_access(self):
+        from apps.support.omr.candidate_matching import ensure_exam_enrollment_candidate
+
+        ExamEnrollment.objects.filter(exam=self.exam).delete()
+        Attendance.objects.create(
+            tenant=self.tenant, session=self.session,
+            enrollment=self.attendance_roster_enrollment, status="PRESENT",
+        )
+        self.assertTrue(ensure_exam_enrollment_candidate(
+            tenant=self.tenant, exam_id=self.exam.id,
+            enrollment_id=self.session_roster_enrollment.id,
+        ))
+        detail_request = self.factory.get("/results/admin/exams/detail/")
+        detail_request.tenant = self.tenant
+        force_authenticate(detail_request, user=self.admin)
+        detail = AdminExamResultDetailView.as_view()(
+            detail_request, exam_id=self.exam.id, enrollment_id=self.attendance_roster_enrollment.id,
+        )
+        self.assertEqual(detail.status_code, 200, detail.data)
+        saved = self._patch(
+            AdminExamTotalScoreView, {"score": 20, "max_score": 100},
+            enrollment=self.attendance_roster_enrollment,
+        )
+        self.assertEqual(saved.status_code, 200, saved.data)
+        self.assertEqual(Result.objects.get(
+            target_type="exam", target_id=self.exam.id, enrollment=self.attendance_roster_enrollment,
+        ).total_score, 20)
+
     def test_attendance_from_another_lecture_is_not_a_score_roster_assignment(self):
         other_lecture = Lecture.objects.create(
             tenant=self.tenant,
