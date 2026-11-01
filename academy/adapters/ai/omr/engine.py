@@ -483,6 +483,44 @@ def _compute_bubble_score(
     raw_mean = float(np.mean(raw_pixels)) if raw_pixels.size > 0 else 255.0
     raw_darkness = 1.0 - (raw_mean / 255.0)
 
+    # Printed digits and outlines darken the mean even in an empty choice.
+    # Pen/pencil ink also darkens the interior beyond the printed numeral. Compare
+    # those pixels with nearby paper so shadows do not masquerade as ink.
+    interior_contrast = None
+    if mask is not None:
+        paper_pixels = raw_roi[mask == 0]
+        raw_center = raw_roi[margin_y:roi_h - margin_y, margin_x:roi_w - margin_x]
+        if paper_pixels.size and raw_center.size:
+            paper_level = float(np.percentile(paper_pixels, 75))
+            interior_contrast = max(0.0, (
+                paper_level - float(np.percentile(raw_center, 60))
+            ) / 255.0)
+            # A slash, cross or sparse pencil stroke need not cover most of
+            # the centre. Sample inside the circle but outside the numeral
+            # as well, so partial ink is not absorbed into the print baseline.
+            yy, xx = np.ogrid[:roi_h, :roi_w]
+            nx = (xx - roi_w / 2) / max(1, roi_w / 2)
+            ny = (yy - roi_h / 2) / max(1, roi_h / 2)
+            peripheral = ((nx * nx + ny * ny) <= 0.64) & (
+                (np.abs(ny) >= 0.45) | (np.abs(nx) >= 0.55)
+            )
+            if np.any(peripheral):
+                peripheral_pixels = raw_roi[peripheral].astype(float)
+                # Printed PDF bubbles can have a light interior background.
+                # Partial-stroke evidence is relative to that local paper,
+                # while broad ink remains covered by the centre statistic.
+                peripheral_paper = min(paper_level, float(np.percentile(raw_center, 85)))
+                peripheral_contrast = float(np.mean(np.maximum(
+                    0.0, peripheral_paper - peripheral_pixels,
+                ))) / 255.0
+                # A stroke occupies only part of this band; allow its mean
+                # contrast the same weight as broad interior ink, capped at
+                # the observed ink contrast so faint erasure is not amplified.
+                ink_contrast = max(0.0, (
+                    peripheral_paper - float(np.min(peripheral_pixels))
+                ) / 255.0)
+                interior_contrast = max(interior_contrast, min(ink_contrast, 2.0 * peripheral_contrast))
+
     # --- v10: Border density (부분 마킹/오염 구분) ---
     border_density = 0.0
     if config.use_border_density and roi_h > 4 and roi_w > 4:
@@ -497,13 +535,21 @@ def _compute_bubble_score(
     else:
         score = 0.20 * fill_ratio + 0.15 * darkness + 0.15 * uniformity + 0.50 * raw_darkness
 
-    return score, {
+    details = {
         "fill_ratio": round(fill_ratio, 4),
         "darkness": round(darkness, 4),
         "uniformity": round(uniformity, 4),
         "border_density": round(border_density, 4),
         "raw_darkness": round(raw_darkness, 4),
     }
+    if interior_contrast is not None:
+        details["interior_contrast"] = round(interior_contrast, 4)
+        details["composite_score"] = round(score, 4)
+        # Printed numerals can have a higher mean darkness than faint pencil.
+        # Give the paper-relative ink evidence priority while retaining
+        # the original fill/texture features for partial and noisy marks.
+        score = 0.75 * interior_contrast + 0.25 * score
+    return score, details
 
 
 def _detect_single_question(
@@ -658,7 +704,21 @@ def _detect_single_question(
         noise_std = (n_q3 - n_q1) / 1.35
     else:
         noise_std = 0.0
-    median_score = noise_median  # noise 바닥을 비교 baseline으로
+    # Correction fluid can remove the printed circle/digit completely. The
+    # two lightest choices then describe erased paper, not normal empty print.
+    # Restore the print baseline from choices lacking broad interior ink. Use
+    # their upper half so erased choices cannot pull the reference down again.
+    # This calibrates the existing relative rule; it does not pick only the
+    # darkest answer or impose an absolute minimum score on faint pencil ink.
+    unfilled_scores = sorted(
+        score for _, score, details in fills
+        if details.get("interior_contrast", 1.0) < 0.03
+    )
+    print_baseline = (
+        float(np.median(unfilled_scores[len(unfilled_scores) // 2:]))
+        if unfilled_scores else noise_median
+    )
+    median_score = max(noise_median, print_baseline)
     relative_top = top_score - median_score
 
     # Blank: 최고 점수가 noise floor 대비 유의미하게 높지 않으면 blank
