@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from apps.domains.submissions.models import Submission
@@ -11,6 +12,7 @@ from apps.domains.submissions.omr_pipeline.services.facts import (
     write_readiness_meta,
 )
 from apps.domains.submissions.services.lifecycle import reopen_for_regrade_in_memory
+from apps.support.submissions.grading_contract_dependencies import has_submission_grading_result
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,32 @@ def grade_omr_submission_if_ready(
             .get(id=int(submission_id))
         )
         readiness = evaluate_omr_grade_readiness(submission)
+        configuration_missing = {"answer_key", "sheet", "grading_configuration"}
+        missing_configuration = set(readiness.missing) & configuration_missing
+        if missing_configuration and (
+            submission.status == Submission.Status.DONE
+            or has_submission_grading_result(
+                tenant_id=int(submission.tenant_id), exam_id=int(submission.target_id),
+                submission_id=int(submission.id),
+            )
+        ):
+            # Editing existing scored answers must stay atomic with regrading.
+            # A pending setup response must not leave old published scores.
+            raise ValidationError(
+                "Existing OMR results require valid grading configuration.",
+                code="omr_grading_configuration_conflict",
+                params={"missing": sorted(missing_configuration)},
+            )
+        if (
+            readiness.missing
+            and set(readiness.missing) <= configuration_missing
+            and submission.status not in (Submission.Status.DONE, Submission.Status.ANSWERS_READY)
+        ):
+            # Identity and recognized answers are durable even before the key
+            # is configured. The normal key-save regrade consumes this state.
+            reopen_for_regrade_in_memory(submission, actor=actor)
+            submission.save(update_fields=["status", "error_message", "updated_at"])
+            readiness = replace(readiness, status=str(submission.status))
         write_readiness_meta(
             submission=submission,
             readiness=readiness,

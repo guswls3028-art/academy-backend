@@ -23,6 +23,7 @@ from academy.adapters.db.django import repositories_submissions as submissions_r
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.api.common.query_params import parse_query_int
 from apps.infrastructure.storage.r2 import generate_presigned_get_url
+from apps.support.submissions.grading_contract_dependencies import omr_grading_configuration_missing
 
 
 logger = logging.getLogger(__name__)
@@ -166,6 +167,7 @@ class PendingSubmissionsView(APIView):
 
         # ── Build response items ────────────────────────────────
         items: list[Dict[str, Any]] = []
+        configuration_by_exam: dict[int, list[str]] = {}
         for s in submissions:
             enrollment_id = s.enrollment_id
             enrollment = (
@@ -223,6 +225,24 @@ class PendingSubmissionsView(APIView):
                 str(discarded_meta.get("reason") or "") if is_discarded else None
             ) or None
 
+            # Recompute setup blockers for this read; persisted readiness can
+            # precede the latest answer-key save. Validate each exam once/page.
+            omr_readiness = None
+            recovery = None
+            if (
+                s.source == "omr_scan" and s.target_type == SUBMISSION_TARGET_EXAM
+                and target_resolved and not is_discarded
+            ):
+                exam_id = int(s.target_id)
+                if exam_id not in configuration_by_exam:
+                    configuration_by_exam[exam_id] = omr_grading_configuration_missing(
+                        tenant_id=int(tenant.id), exam_id=exam_id,
+                    )
+                missing = configuration_by_exam[exam_id]
+                if missing and "exam" not in missing:
+                    omr_readiness = {"can_grade": False, "missing": missing}
+                    recovery = {"action": "configure_exam", "exam_id": exam_id}
+
             items.append(
                 {
                     "id": s.id,
@@ -243,6 +263,8 @@ class PendingSubmissionsView(APIView):
                     "session_id": target_info.get("session_id"),
                     "target_resolved": target_resolved,
                     "target_resolved_reason": target_resolved_reason,
+                    "omr_readiness": omr_readiness,
+                    "recovery": recovery,
                     "is_discarded": is_discarded,
                     "discard_reason": discard_reason_value,
                     "has_file": bool(file_key),

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
 
@@ -868,7 +869,41 @@ class SubmissionViewSet(ModelViewSet):
                 actor=f"admin.manual_edit.user_{getattr(request.user, 'id', '?')}",
                 allow_done_regrade=True,
             )
-        except Exception:
+        except Exception as exc:
+            if isinstance(exc, DjangoValidationError) and getattr(exc, "code", None) == "omr_grading_configuration_conflict":
+                transaction.set_rollback(True)
+                return Response(
+                    {
+                        "submission_id": submission.id,
+                        "code": "OMR_GRADING_CONFIGURATION_CONFLICT",
+                        "detail": "정답·문항 설정을 먼저 확인해 주세요. 기존 답안과 성적은 변경되지 않았습니다.",
+                        "missing": (exc.params or {}).get("missing", []),
+                        "recovery": {"action": "configure_exam", "exam_id": int(submission.target_id)},
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if isinstance(exc, DjangoValidationError) and getattr(exc, "code", None) in {
+                "retake_not_allowed", "max_attempts_exceeded",
+            }:
+                transaction.set_rollback(True)
+                return Response(
+                    {
+                        "submission_id": submission.id,
+                        "code": "OMR_ATTEMPT_CONFLICT",
+                        "reason": exc.code,
+                        "detail": (
+                            "기존 미응시 판정이나 성적, 허용 응시 횟수를 확인해 주세요. "
+                            "기존 결과를 확인·정정한 뒤 다시 배정할 수 있습니다. "
+                            "답안과 배정 정보는 변경되지 않았습니다."
+                        ),
+                        "recovery": {
+                            "action": "review_existing_result",
+                            "exam_id": int(submission.target_id),
+                            "enrollment_id": int(submission.enrollment_id),
+                        },
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
             logger.exception(
                 "OMR manual grading failed tenant_id=%s submission_id=%s",
                 getattr(tenant, "id", None),
@@ -888,6 +923,9 @@ class SubmissionViewSet(ModelViewSet):
 
         submission.refresh_from_db(fields=["status", "enrollment_id"])
         if not decision.graded:
+            configuration_required = bool(set(decision.readiness.missing) & {
+                "answer_key", "sheet", "grading_configuration",
+            })
             return Response(
                 {
                     "submission_id": submission.id,
@@ -901,6 +939,14 @@ class SubmissionViewSet(ModelViewSet):
                     "total_score": None,
                     "max_score": None,
                     "readiness": readiness_payload(decision.readiness),
+                    **({
+                        "code": "OMR_GRADING_CONFIGURATION_REQUIRED",
+                        "detail": "학생 배정과 답안을 저장했습니다. 시험의 정답·문항 설정을 완료해 주세요.",
+                        "recovery": {
+                            "action": "configure_exam",
+                            "exam_id": int(submission.target_id),
+                        },
+                    } if configuration_required else {}),
                 }
             )
 

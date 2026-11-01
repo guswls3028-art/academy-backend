@@ -88,10 +88,10 @@ class ExamAttemptService:
         # 4️⃣ 정책 강제
         # -------------------------------------------------
         if not allow_retake and next_index > 1:
-            raise ValidationError("Retake is not allowed for this exam.")
+            raise ValidationError("Retake is not allowed for this exam.", code="retake_not_allowed")
 
         if allow_retake and next_index > max_attempts:
-            raise ValidationError("Max attempts exceeded.")
+            raise ValidationError("Max attempts exceeded.", code="max_attempts_exceeded")
 
         # -------------------------------------------------
         # 5️⃣ 대표 attempt 교체 (원자적: lock 범위 내)

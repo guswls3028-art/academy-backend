@@ -158,6 +158,7 @@ class ExamGradingService:
 
         sheet, answer_key = GradingContractGuard.validate_exam_for_grading(
             exam, require_online_answers=submission.source == "online",
+            require_omr_answers=is_omr_scan_submission(submission),
         )
 
         existing = (
