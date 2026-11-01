@@ -13,7 +13,7 @@ from apps.domains.results.services.manual_subjective_score import is_consumed_ma
 from apps.domains.results.services.question_stats_service import _current_question_facts
 from apps.domains.results.utils.initial_exam_score import load_initial_exam_scores
 from apps.support.results.tests.omr_subjective_completion_fixtures import (
-    SubmissionViewSet, apply_omr_ai_result, dispatch_progress_pipeline,
+    SubmissionViewSet, apply_omr_ai_result, dispatch_progress_pipeline, make_omr_review_fixture,
 )
 from apps.support.student_app.exam_dependencies import (
     student_exam_queryset, submission_status_map_for_student_exams,
@@ -22,11 +22,8 @@ from apps.support.student_app.exam_dependencies import (
 
 @pytest.fixture
 def scored_paper(db, settings):
-    from apps.domains.submissions.tests.test_omr_tenant_realuse_flow import OMRMapperReviewPolicyTests
-
     settings.OMR_SCORED_REASSIGNMENT_ENABLED = True
-    fixture = OMRMapperReviewPolicyTests(methodName="runTest")
-    tenant, exam, first, submission = fixture._make_exam(peer_phone="01099887766")
+    tenant, exam, first, submission = make_omr_review_fixture(peer_phone="01099887766")
     second = apps.get_model("enrollment", "Enrollment").objects.get(
         tenant=tenant, lecture=first.lecture, student__phone="01099887766",
     )

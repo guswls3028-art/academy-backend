@@ -33,7 +33,15 @@ from apps.domains.submissions.views.exam_omr_batch_upload_view import (
 from apps.domains.submissions.views.submission_view import SubmissionViewSet
 from apps.domains.submissions.services.ai_omr_result_mapper import apply_omr_ai_result
 
+
+def make_omr_review_fixture(*, peer_phone):
+    from apps.domains.submissions.tests.test_omr_tenant_realuse_flow import OMRMapperReviewPolicyTests
+
+    return OMRMapperReviewPolicyTests(methodName="runTest")._make_exam(peer_phone=peer_phone)
+
+
 __all__ = [
+    "make_omr_review_fixture",
     "AnswerKey",
     "AssessmentCorrection",
     "ClinicLink",
