@@ -926,7 +926,7 @@ class LearningTodoEligibilityPostgresTests(TransactionTestCase):
         self.assertEqual(resolved, enrollment)
         self.assertEqual(tenant, self.tenant)
 
-    @patch("apps.domains.student_app.exams.views.dispatch_student_exam_submission")
+    @patch("apps.support.student_app.exam_dependencies.dispatch_student_exam_submission")
     def test_cross_lecture_shared_exam_requires_an_eligible_selected_enrollment(self, dispatch):
         absent_enrollment = self.enrollments["ABSENT"]
         other_lecture = Lecture.objects.create(

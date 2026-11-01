@@ -49,6 +49,10 @@ from apps.domains.submissions.services.lifecycle import (
 )
 from apps.domains.submissions.services.homework_media import HomeworkMediaConflict
 from apps.support.homework.review_lock import lock_homework_review_target
+from apps.support.student_app.exam_dependencies import (
+    StudentExamSubmitError,
+    submit_online_exam_for_enrollment,
+)
 from apps.support.submissions.dependencies import (
     allowed_manual_exam_question_ids,
     create_exam_enrollment_assignment,
@@ -106,6 +110,8 @@ class SubmissionViewSet(ModelViewSet):
     def create(self, request, *args, **kwargs):
         try:
             return super().create(request, *args, **kwargs)
+        except StudentExamSubmitError as exc:
+            return Response({"detail": exc.detail, "code": exc.code}, status=exc.status_code)
         except SubmissionUploadCleanupRequired as exc:
             schedule_unreferenced_ai_object_cleanup(
                 tenant_id=exc.tenant_id,
@@ -437,6 +443,15 @@ class SubmissionViewSet(ModelViewSet):
                 ensure_exam_enrollment=True,
             ):
                 raise PermissionDenied("해당 시험/과제에 등록되지 않은 수강 정보입니다.")
+        if target_type == Submission.TargetType.EXAM and source == Submission.Source.ONLINE:
+            serializer.instance = submit_online_exam_for_enrollment(
+                request_user=self.request.user, tenant=tenant,
+                exam_id=target_id, enrollment_id=enrollment_id,
+                answers=(serializer.validated_data.get("payload") or {}).get("answers"),
+                client_request_id=serializer.validated_data.get("client_request_id"),
+                expected_attempt_count=serializer.validated_data.get("expected_attempt_count"),
+            )
+            return
         try:
             with transaction.atomic():
                 if target_type == Submission.TargetType.HOMEWORK and source in {

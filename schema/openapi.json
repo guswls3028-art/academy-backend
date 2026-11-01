@@ -19707,9 +19707,20 @@
       },
       "SubmissionCreateRequest": {
         "properties": {
+          "client_request_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string",
+            "writeOnly": true
+          },
           "enrollment_id": {
             "nullable": true,
             "type": "integer"
+          },
+          "expected_attempt_count": {
+            "minimum": 0,
+            "type": "integer",
+            "writeOnly": true
           },
           "file": {
             "format": "binary",

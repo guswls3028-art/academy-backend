@@ -158,7 +158,7 @@ class ParentExamChildSelectionTests(TestCase):
         self.assertEqual(response.status_code, 403, response.data)
         self.assertEqual(response.data["detail"], "자녀를 선택한 뒤 다시 시도해 주세요.")
 
-    @patch("apps.domains.student_app.exams.views.dispatch_student_exam_submission")
+    @patch("apps.support.student_app.exam_dependencies.dispatch_student_exam_submission")
     def test_parent_stale_deleted_child_selection_cannot_submit(self, mock_dispatch):
         self.student_b.deleted_at = timezone.now()
         self.student_b.save(update_fields=["deleted_at", "updated_at"])
@@ -186,7 +186,7 @@ class ParentExamChildSelectionTests(TestCase):
         )
         mock_dispatch.assert_not_called()
 
-    @patch("apps.domains.student_app.exams.views.dispatch_student_exam_submission")
+    @patch("apps.support.student_app.exam_dependencies.dispatch_student_exam_submission")
     def test_submit_rejects_max_attempts_before_superseding_current_done(self, mock_dispatch):
         self.exam_b.allow_retake = True
         self.exam_b.max_attempts = 2
@@ -256,7 +256,7 @@ class ParentExamChildSelectionTests(TestCase):
         )
         mock_dispatch.assert_not_called()
 
-    @patch("apps.domains.student_app.exams.views.dispatch_student_exam_submission")
+    @patch("apps.support.student_app.exam_dependencies.dispatch_student_exam_submission")
     def test_unlinked_lecture_blocks_student_exam_endpoints(self, mock_dispatch):
         own_session = self.exam_a.sessions.get(lecture=self.enrollment_a.lecture)
         self.exam_a.sessions.add(self.exam_b.sessions.get())

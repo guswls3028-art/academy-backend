@@ -526,6 +526,33 @@ class HomeworkSubmissionMediaTests(TestCase):
         upload_fileobj_to_r2.assert_called_once()
 
     @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
+    def test_reselected_failed_content_with_new_client_id_reuses_original_object(self, upload):
+        upload.side_effect = [RuntimeError("storage unavailable"), None]
+        first_id = str(uuid.uuid4())
+        self.assertEqual(self._post(file=_jpeg("same.jpg", body=b"same"), client_file_id=first_id).status_code, 503)
+        original = SubmissionMedia.objects.get(client_upload_id=first_id)
+        original_key = original.object_key
+        retry = self._post(file=_jpeg("same.jpg", body=b"same"), client_file_id=str(uuid.uuid4()))
+        self.assertEqual(retry.status_code, 201, retry.data)
+        self.assertEqual(int(retry.data["id"]), original.pk)
+        original.refresh_from_db()
+        self.assertEqual(original.object_key, original_key)
+        self.assertEqual(original.status, SubmissionMedia.Status.UPLOADED)
+        self.assertEqual(SubmissionMedia.objects.count(), 1)
+
+    @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
+    def test_same_name_and_size_different_content_never_overwrites_failed_original(self, upload):
+        upload.side_effect = [RuntimeError("storage unavailable"), None]
+        self.assertEqual(self._post(file=_jpeg("same.jpg", body=b"old!"), position=0).status_code, 503)
+        original = SubmissionMedia.objects.get()
+        replacement = self._post(file=_jpeg("same.jpg", body=b"new!"), position=1)
+        self.assertEqual(replacement.status_code, 201, replacement.data)
+        self.assertNotEqual(replacement.data["id"], original.pk)
+        original.refresh_from_db()
+        self.assertEqual(original.status, SubmissionMedia.Status.FAILED)
+        self.assertEqual(SubmissionMedia.objects.count(), 2)
+
+    @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
     def test_failed_file_retry_reuses_object_identity_and_keeps_successful_file(
         self,
         upload_fileobj_to_r2,

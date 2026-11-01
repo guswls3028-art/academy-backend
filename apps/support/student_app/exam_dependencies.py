@@ -7,6 +7,7 @@ this support boundary while broader domain cutover is in progress.
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import timedelta
 
 from django.db.models import F, Max, Q, Subquery, Value
@@ -20,10 +21,11 @@ MISSING_EXAM_ENROLLMENT: tuple[None, None] = (None, None)
 
 
 class StudentExamSubmitError(Exception):
-    def __init__(self, detail: str, status_code: int):
+    def __init__(self, detail: str, status_code: int, code: str = "online_submission_rejected"):
         super().__init__(detail)
         self.detail = detail
         self.status_code = status_code
+        self.code = code
 
 
 def _missing_exam_enrollment(reason: str) -> tuple[None, None]:
@@ -31,7 +33,7 @@ def _missing_exam_enrollment(reason: str) -> tuple[None, None]:
     return MISSING_EXAM_ENROLLMENT
 
 
-def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0):
+def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0, include_closed: bool = False):
     from django.db.models import Exists, OuterRef
 
     from apps.domains.attendance.models import Attendance
@@ -117,7 +119,7 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0):
         )
         .filter(
             Q(open_at__isnull=True) | Q(open_at__lte=latest_open_at),
-            Q(close_at__isnull=True) | Q(close_at__gte=now),
+            Q() if include_closed else Q(close_at__isnull=True) | Q(close_at__gte=now),
         )
         .annotate(
             student_session_id=Subquery(Session.objects.filter(
@@ -342,6 +344,8 @@ def create_online_exam_submission(
     exam,
     enrollment,
     answers,
+    client_request_id=None,
+    expected_attempt_count=None,
 ):
     from django.db import IntegrityError, transaction
 
@@ -351,12 +355,22 @@ def create_online_exam_submission(
     from apps.domains.submissions.services.lifecycle import (
         IN_PROGRESS_STATUSES,
         fail_submission,
+        retry_failed_submission,
     )
     from apps.support.results.grading_dependencies import (
         lock_exam_and_score_edit_scope_for_grading,
     )
 
-    validate_online_exam_readiness(exam)
+    if client_request_id is not None:
+        try:
+            client_request_id = uuid.UUID(str(client_request_id))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise StudentExamSubmitError("제출 식별자가 올바르지 않습니다.", 400) from exc
+    answers = sorted(answers, key=lambda row: row["exam_question_id"])
+    if expected_attempt_count is not None and (
+        type(expected_attempt_count) is not int or expected_attempt_count < 0
+    ):
+        raise StudentExamSubmitError("응시 상태가 올바르지 않습니다.", 400)
     try:
         with transaction.atomic():
             # Share grading's outer lock before touching attempts/submissions.
@@ -365,10 +379,43 @@ def create_online_exam_submission(
             lock_exam_and_score_edit_scope_for_grading(
                 exam_id=int(exam.id), tenant_id=int(tenant.id),
             )
-            ExamEnrollment.objects.select_for_update().only("id").get(
+            assignment = ExamEnrollment.objects.select_for_update().only("id").filter(
                 exam_id=int(exam.id),
                 enrollment_id=enrollment.id,
-            )
+            ).first()
+            if not assignment:
+                raise StudentExamSubmitError("해당 시험에 응시할 수 없습니다.", 403)
+            existing = None
+            if client_request_id is not None:
+                existing = Submission.objects.select_for_update().filter(
+                    tenant=tenant, enrollment=enrollment,
+                    target_type=Submission.TargetType.EXAM, target_id=exam.id,
+                    source=Submission.Source.ONLINE, client_request_id=client_request_id,
+                ).first()
+                if existing:
+                    if (existing.payload or {}).get("answers") != answers:
+                        raise StudentExamSubmitError(
+                            "이 제출의 답안이 변경되었습니다. 저장된 제출을 먼저 확인해 주세요.", 409,
+                            "online_request_conflict",
+                        )
+                    if existing.status in (Submission.Status.DONE, Submission.Status.SUPERSEDED):
+                        return existing
+                    if existing.status == Submission.Status.SUBMITTED:
+                        return existing
+                    if existing.status != Submission.Status.FAILED:
+                        raise StudentExamSubmitError("답안을 처리 중입니다. 잠시 후 다시 확인해 주세요.", 409,
+                                                     "online_submission_processing")
+                    if ExamAttempt.objects.filter(submission_id=existing.id).exists():
+                        raise StudentExamSubmitError("이미 채점된 답안입니다. 결과를 확인해 주세요.", 409)
+
+            # Read current policy after the same lock used by teacher edits.
+            exam.refresh_from_db()
+            validate_online_exam_readiness(exam)
+            received_at = existing.created_at if existing else timezone.now()
+            if exam.open_at and received_at < exam.open_at:
+                raise StudentExamSubmitError("아직 시험 응시 시간이 아닙니다.", 409)
+            if exam.close_at and received_at > exam.close_at:
+                raise StudentExamSubmitError("시험이 마감되었습니다.", 409)
             attempt_indexes = list(
                 ExamAttempt.objects.select_for_update()
                 .filter(exam_id=int(exam.id), enrollment_id=enrollment.id)
@@ -376,6 +423,7 @@ def create_online_exam_submission(
             )
             prev_submissions = list(
                 Submission.objects.select_for_update().filter(
+                    tenant=tenant,
                     enrollment_id=enrollment.id,
                     target_type=Submission.TargetType.EXAM,
                     target_id=int(exam.id),
@@ -400,16 +448,28 @@ def create_online_exam_submission(
                     )
             in_progress = [s for s in prev_submissions if s.status in IN_PROGRESS_STATUSES]
             done_submissions = [s for s in prev_submissions if s.status == Submission.Status.DONE]
+            attempt_count = max(attempt_indexes, default=len(done_submissions))
+
+            if expected_attempt_count is not None and expected_attempt_count != attempt_count:
+                raise StudentExamSubmitError(
+                    "다른 화면에서 제출한 답안이 있습니다. 최신 결과를 확인해 주세요.", 409,
+                    "online_attempt_changed",
+                )
 
             if in_progress:
                 raise StudentExamSubmitError("이미 제출된 시험입니다.", 409)
 
+            # Teacher-entered placeholders may attach to the first real
+            # submission; the grading service owns that compatibility policy.
             if done_submissions:
                 allow_retake = getattr(exam, "allow_retake", False)
                 max_attempts = getattr(exam, "max_attempts", 1) or 1
-                attempt_count = max(attempt_indexes, default=len(done_submissions))
                 if not allow_retake or attempt_count >= max_attempts:
                     raise StudentExamSubmitError("재응시가 허용되지 않는 시험입니다.", 409)
+
+            if existing:
+                retry_failed_submission(existing, actor="student.exam_submit.request_retry")
+                return existing
 
             submission_user = request_student.user if request_student.user_id else request_user
             submission_meta = None
@@ -423,6 +483,7 @@ def create_online_exam_submission(
                 target_id=int(exam.id),
                 source=Submission.Source.ONLINE,
                 payload={"answers": answers},
+                client_request_id=client_request_id,
                 meta=submission_meta,
                 status=Submission.Status.SUBMITTED,
             )
@@ -438,8 +499,17 @@ def dispatch_student_exam_submission(submission) -> None:
     from apps.domains.submissions.models import Submission
     from apps.domains.submissions.services.dispatcher import dispatch_submission
     from apps.domains.submissions.services.lifecycle import supersede_done_submissions
+    from apps.support.results.grading_dependencies import lock_exam_and_score_edit_scope_for_grading
 
     with transaction.atomic():
+        lock_exam_and_score_edit_scope_for_grading(
+            exam_id=int(submission.target_id), tenant_id=int(submission.tenant_id),
+        )
+        # An admitted duplicate may wait while the original and a later retake
+        # finish. Only a newly processed submission may supersede prior results.
+        submission.refresh_from_db(fields=["status"])
+        if submission.status in (Submission.Status.DONE, Submission.Status.SUPERSEDED):
+            return
         dispatch_submission(submission)
         submission.refresh_from_db(fields=["status"])
         if submission.status == Submission.Status.DONE:
@@ -452,6 +522,49 @@ def dispatch_student_exam_submission(submission) -> None:
                 ).exclude(pk=submission.pk),
                 actor="student.exam_submit.retake",
             )
+
+
+def submit_online_exam(*, request_user, request_student, tenant, exam, enrollment,
+                       answers, client_request_id=None, expected_attempt_count=None):
+    """Shared admission, idempotent dispatch and durable failure for both APIs."""
+    answers = normalize_student_exam_answers(exam=exam, answers=answers)
+    submission = create_online_exam_submission(
+        request_user=request_user, request_student=request_student, tenant=tenant,
+        exam=exam, enrollment=enrollment, answers=answers, client_request_id=client_request_id,
+        expected_attempt_count=expected_attempt_count,
+    )
+    try:
+        dispatch_student_exam_submission(submission)
+    except Exception as exc:
+        logger.exception("Online exam submission dispatch failed: submission=%s", submission.id)
+        fail_student_exam_submission(submission)
+        raise StudentExamSubmitError(
+            "제출 처리 중 오류가 발생했습니다. 입력한 답안으로 다시 제출해 주세요.", 500,
+            "online_submission_retry",
+        ) from exc
+    submission.refresh_from_db(fields=["status"])
+    return submission
+
+
+def submit_online_exam_for_enrollment(*, request_user, tenant, exam_id, enrollment_id,
+                                    answers, client_request_id=None, expected_attempt_count=None):
+    """Legacy transport enters here only after its existing owner/role checks."""
+    from apps.domains.enrollment.models import Enrollment
+    from apps.domains.exams.models import Exam
+
+    enrollment = Enrollment.objects.select_related("student__user").filter(
+        id=enrollment_id, tenant=tenant, status="ACTIVE", student__deleted_at__isnull=True,
+    ).first()
+    if not enrollment:
+        raise StudentExamSubmitError("해당 수강 정보에 접근할 수 없습니다.", 403)
+    exam = Exam.objects.filter(id=exam_id, tenant=tenant).first()
+    if not exam:
+        raise StudentExamSubmitError("시험을 찾을 수 없습니다.", 404)
+    return submit_online_exam(
+        request_user=request_user, request_student=enrollment.student, tenant=tenant,
+        exam=exam, enrollment=enrollment, answers=answers, client_request_id=client_request_id,
+        expected_attempt_count=expected_attempt_count,
+    )
 
 
 def validate_online_exam_readiness(exam) -> None:

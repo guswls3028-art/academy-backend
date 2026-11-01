@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from django.core.exceptions import ValidationError
@@ -40,6 +41,7 @@ class ExamAttemptService:
         enrollment_id: int,
         submission_id: int,
         enforce_availability_window: bool = True,
+        submission_received_at: datetime | None = None,
     ) -> ExamAttempt:
 
         # -------------------------------------------------
@@ -53,7 +55,9 @@ class ExamAttemptService:
         # 2️⃣ open_at / close_at 정책 강제
         # -------------------------------------------------
         if exam and enforce_availability_window:
-            now = timezone.now()
+            # Online processing/recovery may finish after the deadline. Its
+            # server-recorded receipt time owns availability, not dispatch time.
+            now = submission_received_at or timezone.now()
             open_at = getattr(exam, "open_at", None)
             close_at = getattr(exam, "close_at", None)
 
@@ -115,6 +119,72 @@ class ExamAttemptService:
             ) from e
 
         return attempt
+
+    @staticmethod
+    @transaction.atomic
+    def attach_absence_placeholder_for_submission(
+        *, exam_id: int, enrollment_id: int, submission_id: int,
+        submission_created_at,
+    ) -> ExamAttempt | None:
+        """A pre-scan absence with no actual work is not an exam attempt.
+
+        Only a confirmed OMR can replace this unused first-attempt placeholder.
+        Later teacher decisions, answer/score history, and real attempts remain
+        protected. Keep the absence event and its metadata for audit.
+        """
+        attempts = ExamAttempt.objects.select_for_update().filter(
+            exam_id=int(exam_id), enrollment_id=int(enrollment_id),
+        )
+        placeholder = attempts.filter(
+            submission_id=0, attempt_index=1, is_retake=False,
+            is_representative=True, status="done",
+        ).first()
+        if placeholder is None or attempts.exclude(pk=placeholder.pk).exists():
+            return None
+        meta = dict(placeholder.meta or {})
+        if meta.get("status") != "NOT_SUBMITTED":
+            return None
+        if submission_created_at is None or placeholder.updated_at > submission_created_at:
+            return None
+        tenant_id = int(placeholder.enrollment.tenant_id)
+        if int(placeholder.exam.tenant_id) != tenant_id:
+            return None
+        if not has_confirmed_current_omr_identity(
+            tenant_id=tenant_id, exam_id=exam_id,
+            enrollment_id=enrollment_id, submission_id=submission_id,
+        ):
+            return None
+
+        from apps.domains.results.models import Result, ResultFact, ResultItem
+
+        result = Result.objects.select_for_update().filter(
+            target_type="exam", target_id=int(exam_id),
+            enrollment_id=int(enrollment_id), attempt_id=placeholder.id,
+        ).first()
+        if result is None or result.submitted_at is not None:
+            return None
+        if result.total_score != 0 or result.objective_score != 0:
+            return None
+        if ResultItem.objects.filter(result=result).exists():
+            return None
+        if ResultFact.objects.filter(attempt=placeholder).exclude(
+            source="manual_not_submitted", question_id=0, answer="", score=0,
+        ).exists():
+            return None
+
+        meta["absence_placeholder"] = {
+            "previous_meta": dict(meta),
+            "attached_submission_id": int(submission_id),
+            "attached_at": timezone.now().isoformat(),
+        }
+        meta.pop("status")
+        # The actual first answer establishes the initial score, not absence.
+        meta.pop("initial_snapshot", None)
+        placeholder.submission_id = int(submission_id)
+        placeholder.status = "pending"
+        placeholder.meta = meta
+        placeholder.save(update_fields=["submission_id", "status", "meta", "updated_at"])
+        return placeholder
 
     @staticmethod
     @transaction.atomic

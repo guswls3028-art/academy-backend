@@ -60,7 +60,7 @@ class OnlineSubmissionRecoveryTests(TestCase):
                 self.assertFalse(apps.get_model("submissions", "Submission").objects.exists())
 
     def test_dispatch_failure_preserves_answer_and_allows_retry(self):
-        with patch("apps.domains.student_app.exams.views.dispatch_student_exam_submission",
+        with patch("apps.support.student_app.exam_dependencies.dispatch_student_exam_submission",
                    side_effect=RuntimeError("injected grading failure")):
             response = self.submit()
         self.assertEqual(response.status_code, 500)

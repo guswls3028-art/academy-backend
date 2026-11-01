@@ -311,20 +311,31 @@ def _prepare_media(
             )
             return reused_anywhere, False
 
-        uploaded_duplicate = (
+        content_duplicate = (
             SubmissionMedia.objects.select_for_update()
             .filter(
                 tenant=tenant,
                 submission=parent,
                 fingerprint=validated.fingerprint,
-                status=SubmissionMedia.Status.UPLOADED,
+                status__in=[SubmissionMedia.Status.UPLOADED, SubmissionMedia.Status.FAILED],
                 removed_at__isnull=True,
             )
             .order_by("position", "id")
             .first()
         )
-        if uploaded_duplicate:
-            return uploaded_duplicate, True
+        if content_duplicate:
+            if content_duplicate.status == SubmissionMedia.Status.UPLOADED:
+                return content_duplicate, True
+            # A device may have lost its local draft ID. Match actual content,
+            # never a filename/size guess, and retain the original object key.
+            content_duplicate.status = SubmissionMedia.Status.UPLOADING
+            content_duplicate.error_message = ""
+            content_duplicate.failed_at = None
+            content_duplicate.upload_started_at = timezone.now()
+            content_duplicate.save(update_fields=[
+                "status", "error_message", "failed_at", "upload_started_at", "updated_at",
+            ])
+            return content_duplicate, False
 
         active_media = SubmissionMedia.objects.filter(
             submission=parent,
