@@ -111,6 +111,16 @@ class OnlineSubmissionIdempotencyTests(TestCase):
             self.assertEqual(self.submit(key).status_code, 500)
         saved = apps.get_model("submissions", "Submission").objects.get(client_request_id=key)
         self.assertEqual(saved.status, "failed")
+        original_key = self.answer_key.answers
+        self.answer_key.answers = {}
+        self.answer_key.save(update_fields=["answers"])
+        rejected = self.submit(key)
+        self.assertEqual(rejected.status_code, 409, rejected.data)
+        saved.refresh_from_db()
+        self.assertEqual(saved.status, "failed")
+        self.assertEqual(self.attempts().count(), 0)
+        self.answer_key.answers = original_key
+        self.answer_key.save(update_fields=["answers"])
         # Admission was accepted on time; a processing outage must not turn the
         # deadline into loss of that accepted answer snapshot.
         type(saved).objects.filter(pk=saved.pk).update(created_at=timezone.now() - timedelta(minutes=1))
