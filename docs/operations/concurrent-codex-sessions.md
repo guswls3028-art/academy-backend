@@ -39,6 +39,45 @@ Compatible patches do not wait for a default 04:00 slot. Use the current
 technical holds until their actual release conditions pass. Historical task
 windows and old automation snapshots are not current release evidence.
 
+## Delivery completion and continuation
+
+A request to deploy remains open through the requested production rollout and
+affected-flow verification. A commit, green PR, merge, handoff, worktree cleanup,
+or a chat turn ending is not delivery completion. Documentation-only work ends
+with applicable validation, required CI and publication; it does not require a
+product deployment. Respect explicit read-only, local-only and PR-only scope.
+
+- The task accepting the user's request owns its outcome until completion or an
+  acknowledged transfer of that responsibility. A handoff names the receiving
+  owner, exact PR/SHA, remaining acceptance criteria and next action. Confirm
+  receipt and tracking in the existing coordination record; sending a message
+  or naming a busy release owner alone does not transfer responsibility.
+- Keep one release executor for each coordinated rollout. Feature owners hand
+  over their candidate and continue assigned fixes and affected-flow verification.
+  The coordinator tracks every requested item through candidate inclusion,
+  required checks, deployment run, exact live revision, verification and cleanup.
+  Reconcile squash/cherry-pick inclusion; retain omitted items for the next run.
+  Use existing task artifacts/monitor state, not another registry or new chats.
+- A failed gate triggers diagnosis, an in-scope correction and relevant
+  revalidation. Continue independent work while another owner or CI runs. An
+  active run, handoff or local repair is not an external blocker. A shared
+  provider failure does not suspend unrelated repairs or independently releasable
+  work that satisfies its own gates. Never omit a required gate or manufacture a
+  passing result to claim delivery.
+- For a genuine external blocker, retain the exact failure, owner, release
+  condition and next observable check in the existing authorized continuation.
+  Verify that continuation is active before leaving work unattended. Resume
+  runnable stopped work on the same owner and confirm its new turn/progress;
+  do not repeatedly wake active owners or retry unchanged failing inputs. If no
+  continuation is available, report that limitation and the necessary external
+  action plainly; never imply background work is running. Do not ask the user
+  to repeat deployment authorization. Managed denials and current HOLDs remain.
+- Before a final completion report, reconcile the original request with actual
+  included changes and live evidence. Name any unresolved item as incomplete,
+  with its owner and continuation; a blocker/status report must not retire it.
+  End an authorized completion monitor only when its entire tracked scope has
+  delivery evidence or the user explicitly cancels/narrows that scope.
+
 ## Execution efficiency
 
 Optimize verified completion including rework, not prompt length alone. Reuse
@@ -131,8 +170,10 @@ Reference: [official configuration](https://developers.openai.com/codex/config-r
   `C:\academy\_worktrees\sessions\<session>\backend|frontend`.
 - A worktree belongs to exactly one task. Other tasks may inspect it read-only
   but never stage, commit, reset, clean, rebase, or run generators in it.
-- Exactly one task is the release owner. Other tasks stop at a reviewed branch
-  or PR plus CI evidence and hand the exact commit SHA to the release owner.
+- Exactly one task executes each coordinated release. Other tasks hand off a
+  reviewed branch/PR and exact SHA/CI, then retain their assigned fixes and
+  verification until the receiving owner acknowledges outcome responsibility.
+  Follow Delivery completion and continuation; an execution handoff is not done.
 
 The Git branch and registered worktree are the ownership record. Do not create
 a parallel session registry, memory file, or shared scratch branch.
@@ -206,8 +247,10 @@ alternate baseline/current runs; wall-clock timing is diagnostic, not a release 
 
 ## Finish or hand off
 
-A task is not complete merely because existing changes were “preserved.” Pick
-one explicit terminal state:
+These are repository/worktree disposition states, not completion of the user's
+deployment request. Apply Delivery completion and continuation separately; a
+merged or removed worktree may still have an undelivered product change. Record
+one explicit repository state:
 
 1. **Merged:** branch is contained in `origin/main`, or no exclusive merge commit
    remains and its ordinary commits are patch-equivalent or its complete tracked
