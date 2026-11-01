@@ -290,6 +290,21 @@ attempt를 잠그기 전에 같은 `Exam` -> `Session` 순서를 따른다. 공�
 이 순서를 바꾸면 최초 결과의 FK 생성이나 공개 재채점과 수기 입력이 서로의 잠금을
 기다리는 교착이 생길 수 있으므로 각 경로를 PostgreSQL 동시성 회귀로 고정한다.
 
+### 미응시 후 첫 스캔과 채점 재시도
+
+스캔 전에 만든 미응시 임시 기록(`submission_id=0`, 첫 응시)은 실제 시험을
+치른 횟수가 아니다. 같은 tenant·시험·수강생으로 확정된 OMR이 도착하면,
+임시 기록 하나만 있고 문항 점수·실제 답안 이력이 없으며 스캔 이후 교사의
+변경도 없는 경우에만 첫 응시에 연결한다. 이전 미응시 메타와 감사 이벤트는
+보존한다. 기존 실제 응시, 수기 점수·답안, 스캔 후 미응시 판정은 자동으로
+대체하지 않으며 재응시 제한도 그대로 적용한다. 이 경계는
+`apps/domains/results/tests/test_submission_scope_guard.py`가 검증한다.
+
+인식 결과 저장 뒤 채점이 실패하면 콜백은 성공으로 처리하지 않는다. 기존 SQS
+재시도 경로가 인식 결과를 보존하고 채점만 다시 시도하며, 동일 제출의 응시·점수
+생성은 기존 멱등성·트랜잭션 경계를 유지한다. 수기 보정과 성적 입력 동선은
+[프런트 계약](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/GRADING-WRONG-NOTE-WORKFLOW.md)이 소유한다.
+
 ### 5분 상태 복구 안전 계약
 
 EventBridge 규칙 `academy-v1-recover-stuck-omr`은 5분마다

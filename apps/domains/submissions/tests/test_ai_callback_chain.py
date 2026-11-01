@@ -91,6 +91,21 @@ class TestHandleSubmission:
 
     @patch(_GRADE_GATE_MOCK)
     @patch(f"{_MOD}.apply_ai_result")
+    def test_grading_failure_is_retryable_after_answers_are_persisted(self, m_apply, m_gate):
+        m_apply.return_value = 42
+        m_gate.side_effect = [
+            RuntimeError("grading transaction failed"),
+            _decision(graded=True, status="done", reason="graded"),
+        ]
+        kwargs = dict(job_id="j1", submission_id=42, status="DONE",
+                      result_payload={}, error=None, tier="basic")
+        with pytest.raises(RuntimeError, match="grading transaction failed"):
+            _handle_submission_ai_result(**kwargs)
+        _handle_submission_ai_result(**kwargs)
+        assert m_gate.call_count == 2
+
+    @patch(_GRADE_GATE_MOCK)
+    @patch(f"{_MOD}.apply_ai_result")
     def test_done_calls_apply_with_correct_payload(self, m_apply, m_gate):
         """DONE 결과 → apply_ai_result 호출, submission_id/status 포함 확인."""
         m_apply.return_value = 42

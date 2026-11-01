@@ -309,6 +309,80 @@ class SubmissionScopeGuardTests(TestCase):
         self.assertEqual(float(result.objective_score), 10.0)
         self.assertEqual(ExamAttempt.objects.filter(exam=self.exam, enrollment=self.enrollment).count(), 1)
 
+    def _absence_before_confirmed_scan(self):
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
+        attempt = ExamAttempt.objects.create(
+            exam=self.exam, enrollment=self.enrollment, submission_id=0,
+            attempt_index=1, is_representative=True, status="done",
+            meta={"status": "NOT_SUBMITTED", "synced_from_result": True},
+        )
+        result = Result.objects.create(
+            target_type="exam", target_id=self.exam.id, enrollment=self.enrollment,
+            attempt=attempt, total_score=0, objective_score=0, max_score=10,
+        )
+        fact = ResultFact.objects.create(
+            target_type="exam", target_id=self.exam.id, enrollment=self.enrollment,
+            attempt=attempt, submission_id=0, question_id=0, answer="",
+            is_correct=False, score=0, max_score=10, source="manual_not_submitted",
+            meta={"status": "NOT_SUBMITTED"},
+        )
+        submission = self._submission_for_exam(self.exam, self.question)
+        submission.source = Submission.Source.OMR_SCAN
+        submission.save(update_fields=["source", "updated_at"])
+        OMRStudentMatch.objects.create(
+            tenant=self.tenant, submission=submission, enrollment=self.enrollment,
+            status=OMRStudentMatch.Status.CONFIRMED,
+            method=OMRStudentMatch.Method.AUTO_IDENTIFIER,
+            identifier_status="matched", actor="test.absence", is_current=True,
+        )
+        return attempt, result, fact, submission
+
+    def test_first_scan_after_unused_absence_completes_without_retake(self):
+        attempt, result, fact, submission = self._absence_before_confirmed_scan()
+        self.assertFalse(self.exam.allow_retake)
+        original_fact = ResultFact.objects.filter(pk=fact.pk).values().get()
+        for _ in range(2):
+            grade_submission(submission.id)
+            submission.refresh_from_db()
+            result.refresh_from_db()
+            attempt.refresh_from_db()
+            self.assertEqual(submission.status, Submission.Status.DONE)
+            self.assertEqual(result.total_score, 10)
+            self.assertEqual(result.attempt_id, attempt.id)
+            self.assertEqual(attempt.submission_id, submission.id)
+            self.assertEqual(attempt.attempt_index, 1)
+            self.assertFalse(attempt.is_retake)
+            self.assertNotIn("status", attempt.meta)
+            self.assertEqual(attempt.meta["absence_placeholder"]["previous_meta"]["status"], "NOT_SUBMITTED")
+            self.assertEqual(attempt.meta["initial_snapshot"]["total_score"], 10)
+            self.assertEqual(ResultItem.objects.get(result=result).answer, "1")
+            self.assertEqual(ResultFact.objects.filter(pk=fact.pk).values().get(), original_fact)
+        self.assertEqual(ExamAttempt.objects.filter(exam=self.exam, enrollment=self.enrollment).count(), 1)
+
+    def test_absence_decision_after_scan_is_not_automatically_replaced(self):
+        attempt, result, _fact, submission = self._absence_before_confirmed_scan()
+        attempt.save(update_fields=["updated_at"])
+        with self.assertRaisesMessage(DjangoValidationError, "Retake is not allowed"):
+            grade_submission(submission.id)
+        attempt.refresh_from_db()
+        result.refresh_from_db()
+        self.assertEqual(attempt.submission_id, 0)
+        self.assertEqual(attempt.meta["status"], "NOT_SUBMITTED")
+        self.assertEqual(result.total_score, 0)
+
+    def test_absence_placeholder_with_prior_answer_history_is_preserved(self):
+        attempt, result, _fact, submission = self._absence_before_confirmed_scan()
+        ResultFact.objects.create(
+            target_type="exam", target_id=self.exam.id, enrollment=self.enrollment,
+            attempt=attempt, submission_id=0, question_id=self.question.id,
+            answer="1", is_correct=True, score=10, max_score=10, source="manual",
+        )
+        with self.assertRaisesMessage(DjangoValidationError, "Retake is not allowed"):
+            grade_submission(submission.id)
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.submission_id, 0)
+        self.assertEqual(attempt.meta["status"], "NOT_SUBMITTED")
+
     def test_sync_attaches_zero_manual_component_placeholders_to_real_submission(self):
         ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
 
