@@ -25,6 +25,30 @@ def assessment_options(session, tenant):
     return exams, homeworks
 
 
+def _assessment_options_by_session(*, tenant, session_ids):
+    """Use the canonical live exam predicate and ordering for a batch of sessions."""
+    from apps.domains.exams.models import Exam
+    from apps.support.results.progress_read_dependencies import EXAM_SESSION_ORDERING, live_regular_exam_filter
+
+    exams = {sid: [] for sid in session_ids}
+    homeworks = {sid: [] for sid in session_ids}
+    for row in Exam.objects.filter(
+        tenant=tenant, sessions__id__in=session_ids, sessions__lecture__tenant=tenant,
+        **live_regular_exam_filter(),
+    ).order_by(*EXAM_SESSION_ORDERING).values("sessions__id", "id", "title", "max_score"):
+        exams[row["sessions__id"]].append({
+            "exam_id": row["id"], "title": row["title"], "max_score": row["max_score"],
+        })
+    for hw in Homework.objects.filter(
+        session_id__in=session_ids, session__lecture__tenant=tenant, tenant=tenant, homework_type="regular",
+    ).exclude(meta__removed_from_session_at__isnull=False).order_by("display_order", "created_at", "id"):
+        homeworks[hw.session_id].append({
+            "homework_id": hw.id, "title": hw.title, "max_score": hw.default_max_score,
+            "grading_mode": hw.grading_mode,
+        })
+    return exams, homeworks
+
+
 def read_total_config(*, session_id, tenant):
     session = get_object_or_404(Session, pk=session_id, lecture__tenant=tenant)
     exams, homeworks = assessment_options(session, tenant)
@@ -64,8 +88,8 @@ def student_exam_session_pairs(*, tenant, enrollment_ids):
     """Find unscored sessions through the same roster and target rules as staff."""
     from apps.domains.enrollment.models import Enrollment, SessionEnrollment
     from apps.domains.attendance.models import Attendance
-    from apps.support.results.progress_read_dependencies import session_score_enrollment_ids
-    from apps.support.progress.session_calculator_dependencies import get_exam_target_enrollment_pairs_for_session
+    from apps.support.results.progress_read_dependencies import session_score_enrollment_ids_by_session
+    from apps.support.progress.session_calculator_dependencies import get_exam_target_enrollment_pairs_by_session
 
     authorized = set(Enrollment.objects.filter(
         id__in=enrollment_ids, tenant=tenant, lecture__tenant=tenant,
@@ -77,27 +101,36 @@ def student_exam_session_pairs(*, tenant, enrollment_ids):
     scope = {"tenant": tenant, "enrollment_id__in": authorized, "session__lecture__tenant": tenant}
     session_ids = set(SessionEnrollment.objects.filter(**scope).values_list("session_id", flat=True))
     session_ids.update(Attendance.objects.filter(**scope).values_list("session_id", flat=True))
-    pairs = set()
-    for session in Session.objects.filter(id__in=session_ids, lecture__tenant=tenant).select_related("lecture"):
-        roster = authorized.intersection(session_score_enrollment_ids(tenant=tenant, session=session))
-        if not roster:
-            continue
-        targets = get_exam_target_enrollment_pairs_for_session(session=session, enrollment_ids=list(roster))
-        live_ids = set(get_exams_for_session(session).filter(tenant=tenant).values_list("id", flat=True))
-        pairs.update((eid, session.id) for eid, exam_id in targets if exam_id in live_ids)
-    return pairs
+    sessions = list(Session.objects.filter(id__in=session_ids, lecture__tenant=tenant))
+    rosters = session_score_enrollment_ids_by_session(tenant=tenant, sessions=sessions)
+    exams, _ = _assessment_options_by_session(tenant=tenant, session_ids={session.id for session in sessions})
+    targets = get_exam_target_enrollment_pairs_by_session(
+        exam_ids_by_session={sid: [row["exam_id"] for row in rows] for sid, rows in exams.items()},
+        enrollment_ids_by_session={sid: authorized.intersection(roster) for sid, roster in rosters.items()},
+    )
+    return {(eid, sid) for sid, pairs in targets.items() for eid, _ in pairs}
 
 
 def student_session_totals(*, tenant, exam_rows, homework_rows, absent_learning_pairs=frozenset(), session_pairs=frozenset()):
     """Summarize the same first-attempt values already authorized for this child."""
     from apps.domains.results.services.assessment_totals import row_totals
-    from apps.support.progress.session_calculator_dependencies import get_exam_target_enrollment_pairs_for_session
+    from apps.support.progress.session_calculator_dependencies import get_exam_target_enrollment_pairs_by_session
     from apps.domains.homework.models import HomeworkAssignment
 
     pairs = {(int(row["session_id"]), int(row["enrollment_id"]))
              for row in [*exam_rows, *homework_rows] if row.get("session_id") is not None}
     pairs.update((sid, eid) for eid, sid in session_pairs)
     sessions = Session.objects.filter(id__in={pair[0] for pair in pairs}, lecture__tenant=tenant).select_related("lecture").order_by("-order", "-id")
+    exams_by_session, homeworks_by_session = _assessment_options_by_session(
+        tenant=tenant, session_ids={pair[0] for pair in pairs},
+    )
+    enrollment_ids_by_session = {}
+    for sid, eid in pairs:
+        enrollment_ids_by_session.setdefault(sid, set()).add(eid)
+    targets_by_session = get_exam_target_enrollment_pairs_by_session(
+        exam_ids_by_session={sid: [row["exam_id"] for row in rows] for sid, rows in exams_by_session.items()},
+        enrollment_ids_by_session=enrollment_ids_by_session,
+    )
     exam_lookup = {(row["enrollment_id"], row["exam_id"]): row for row in exam_rows}
     homework_targets = set(HomeworkAssignment.objects.filter(
         tenant=tenant, session_id__in={pair[0] for pair in pairs},
@@ -132,10 +165,10 @@ def student_session_totals(*, tenant, exam_rows, homework_rows, absent_learning_
         ).values_list("enrollment_id", "session_id", "source_id"))
     summaries = []
     for session in sessions:
-        exams, homeworks = assessment_options(session, tenant)
+        exams, homeworks = exams_by_session[session.id], homeworks_by_session[session.id]
         config = total_config(session, exams, homeworks)
-        enrollment_ids = [eid for sid, eid in pairs if sid == session.id]
-        targets = get_exam_target_enrollment_pairs_for_session(session=session, enrollment_ids=enrollment_ids)
+        enrollment_ids = enrollment_ids_by_session[session.id]
+        targets = targets_by_session[session.id]
         meta = {"exams": exams, "homeworks": homeworks, "total_config": config}
         for enrollment_id in enrollment_ids:
             exam_entries = []

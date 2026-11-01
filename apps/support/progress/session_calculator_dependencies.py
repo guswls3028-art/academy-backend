@@ -77,14 +77,26 @@ def get_exam_target_enrollment_pairs_for_session(
     enrollment_ids: list[int] | set[int],
 ) -> set[tuple[int, int]]:
     """Return canonical ``(enrollment_id, exam_id)`` target pairs for a session."""
-    from apps.domains.exams.models import ExamEnrollment
     from apps.domains.results.utils.session_exam import get_exam_ids_for_session
 
     exam_ids = get_ids_for_session_as_ints(get_exam_ids_for_session(session))
-    roster_ids = {int(enrollment_id) for enrollment_id in enrollment_ids}
-    if not exam_ids or not roster_ids:
-        return set()
+    return get_exam_target_enrollment_pairs_by_session(
+        exam_ids_by_session={session.id: exam_ids},
+        enrollment_ids_by_session={session.id: enrollment_ids},
+    )[session.id]
 
+
+def get_exam_target_enrollment_pairs_by_session(*, exam_ids_by_session, enrollment_ids_by_session):
+    """Resolve already-scoped live exams without repeating target reads per session.
+
+    Explicit targeting is exam-wide, including assignments outside this child's
+    roster. Only exams with no explicit assignments use the session roster.
+    """
+    from apps.domains.exams.models import ExamEnrollment
+
+    exam_ids = {int(eid) for ids in exam_ids_by_session.values() for eid in ids}
+    rosters = {sid: {int(eid) for eid in ids} for sid, ids in enrollment_ids_by_session.items()}
+    roster_ids = {eid for ids in rosters.values() for eid in ids}
     explicit_rows = list(
         ExamEnrollment.objects.filter(
             exam_id__in=exam_ids,
@@ -96,17 +108,18 @@ def get_exam_target_enrollment_pairs_for_session(
         .values_list("exam_id", flat=True)
         .distinct()
     )
-    pairs = {
-        (int(enrollment_id), int(exam_id))
-        for enrollment_id, exam_id in explicit_rows
-    }
-    pairs.update(
-        (enrollment_id, exam_id)
-        for enrollment_id in roster_ids
-        for exam_id in exam_ids
-        if exam_id not in explicitly_targeted_exam_ids
-    )
-    return pairs
+    explicit_by_exam = {}
+    for enrollment_id, exam_id in explicit_rows:
+        explicit_by_exam.setdefault(int(exam_id), set()).add(int(enrollment_id))
+    result = {}
+    for sid, ids in exam_ids_by_session.items():
+        roster = rosters.get(sid, set())
+        pairs = set()
+        for exam_id in ids:
+            targets = roster.intersection(explicit_by_exam.get(exam_id, ())) if exam_id in explicitly_targeted_exam_ids else roster
+            pairs.update((eid, int(exam_id)) for eid in targets)
+        result[sid] = pairs
+    return result
 
 
 def get_ids_for_session_as_ints(exam_ids) -> list[int]:
