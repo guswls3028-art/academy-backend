@@ -1,5 +1,6 @@
 """Student totals must not issue another set of queries for every session."""
 from django.apps import apps
+from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
@@ -20,8 +21,9 @@ class StudentTotalsQueryBudgetTests(TestCase):
         self.peer = self._enrollment("two")
 
     def _enrollment(self, name):
+        user = get_user_model().objects.create_user(username=f"totals-{name}", tenant=self.tenant)
         student = apps.get_model("students", "Student").objects.create(
-            tenant=self.tenant, name=name, ps_number=name,
+            tenant=self.tenant, user=user, name=name, ps_number=name,
         )
         return apps.get_model("enrollment", "Enrollment").objects.create(
             tenant=self.tenant, lecture=self.lecture, student=student, status="ACTIVE",
