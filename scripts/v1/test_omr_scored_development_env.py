@@ -6,6 +6,8 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -64,6 +66,20 @@ Write-Output '12 isolated transformation cases passed'
             for value, expected in (("true", True), ("false", False), ("1", True), ("invalid", False)):
                 os.environ["OMR_SCORED_REASSIGNMENT_ENABLED"] = value
                 self.assertIs(runpy.run_path(str(path))["OMR_SCORED_REASSIGNMENT_ENABLED"], expected)
+
+    def test_normal_candidate_workflow_enables_only_isolated_development(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/v1-build-and-push-latest.yml").read_text(encoding="utf-8"))
+        calls = [(job_id, step.get("run", ""))
+                 for job_id, job in workflow["jobs"].items()
+                 for step in job.get("steps", [])
+                 if "-EnableOmrScoredReassignment" in step.get("run", "")]
+        self.assertEqual(len(calls), 1)
+        job_id, command = calls[0]
+        self.assertEqual(job_id, "verify-api-development")
+        self.assertIn("./scripts/v1/publish-api-development-env.ps1", command)
+        self.assertIn('-ReleaseId "${{ env.RELEASE_IMAGE_TAG }}"', command)
+        self.assertIn("-GithubOutputPath $env:GITHUB_OUTPUT", command)
+        self.assertIn("-Ci", command)
 
 
 if __name__ == "__main__":

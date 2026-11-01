@@ -509,6 +509,11 @@ lock/mutation job은 environment subject를 사용한다.
    readback에서 flag도 대조하고, 반환된 `parameter_version`과
    `workers_parameter_version`을 기존 배포기의 각각의 expected version으로
    전달한다. 게시만으로 기존 컨테이너 환경이 갱신되지는 않는다.
+   정식 빌드/배포 workflow의 `verify-api-development`는 이 옵션을 명시한다.
+   따라서 동일 candidate의 API·AI·Tools가 개발 환경에서 활성 상태로 검증되며,
+   운영 환경과 옵션 없는 수동 게시의 기존 기본 동작은 유지한다. 개발 blue/green
+   교체의 새 컨테이너 기동 및 이전 개발 인스턴스 종료를 확인한 뒤에만 실제 OMR
+   합성 fixture를 쓴다. 별도 수동 개발 rollout으로 이 순서를 중복 실행하지 않는다.
    실행 전 API/AI의 manifest digest·release/source·개발 DB/role·실제 Django
    flag=true와 API 8000 listener 소유 컨테이너를 확인한다. SSM version은
    publisher readback과 고정된 bootstrap으로 증명하며 컨테이너에서 직접

@@ -1137,6 +1137,7 @@ jobs:
           ./scripts/v1/publish-api-development-env.ps1 `
             -ReleaseId "${{ env.RELEASE_IMAGE_TAG }}" `
             -EnableHomeworkPreview `
+            -EnableOmrScoredReassignment `
             -GithubOutputPath $env:GITHUB_OUTPUT `
             -Ci
 
