@@ -18,7 +18,7 @@ def latest_subjective_grading_facts(
     by_attempt = {int(row.attempt_id): row for row in results if row.attempt_id}
     if not by_attempt:
         return {}
-    facts = ResultFact.objects.filter(
+    facts = ResultFact.objects.current().filter(
         target_type="exam",
         attempt_id__in=by_attempt,
         target_id__in={row.target_id for row in by_attempt.values()},
@@ -35,7 +35,7 @@ def latest_subjective_grading_facts(
         "attempt_id", "target_id", "enrollment_id",
     ).annotate(latest_id=Max("id")).values("latest_id")
     latest = {}
-    for fact in ResultFact.objects.filter(id__in=latest_ids):
+    for fact in ResultFact.objects.current().filter(id__in=latest_ids):
         row = by_attempt[int(fact.attempt_id)]
         if fact.target_id == row.target_id and fact.enrollment_id == row.enrollment_id:
             latest.setdefault(int(fact.attempt_id), fact)
@@ -59,7 +59,9 @@ def is_consumed_manual_total_placeholder(*, fact: ResultFact, attempt) -> bool:
         parse_datetime(str(placeholder.get("attached_at") or ""))
         if isinstance(placeholder, dict) else None
     )
-    return attached_at is not None and fact.created_at < attached_at
+    origin = (fact.meta or {}).get("attribution_origin") or {}
+    original_created_at = parse_datetime(str(origin.get("original_created_at") or ""))
+    return attached_at is not None and (original_created_at or fact.created_at) < attached_at
 
 
 def explicit_manual_total_score_for_result(
@@ -69,7 +71,7 @@ def explicit_manual_total_score_for_result(
     score_shape,
 ) -> float | None:
     """Keep an explicit total only until the next manual score edit."""
-    fact = ResultFact.objects.filter(
+    fact = ResultFact.objects.current().filter(
         target_type="exam",
         target_id=result.target_id,
         enrollment_id=result.enrollment_id,

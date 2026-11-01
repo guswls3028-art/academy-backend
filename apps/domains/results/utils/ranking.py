@@ -72,9 +72,9 @@ def _first_attempt_state(
         [int(x) for x in enrollment_ids]
         if enrollment_ids is not None
         else list(
-            ExamAttempt.objects.filter(
+            ExamAttempt.objects.initial().filter(
                 exam_id__in=exam_ids_int,
-                attempt_index=1,
+
             ).values_list("enrollment_id", flat=True)
         )
     )

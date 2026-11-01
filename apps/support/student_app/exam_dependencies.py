@@ -10,7 +10,7 @@ import logging
 import uuid
 from datetime import timedelta
 
-from django.db.models import F, Max, Q, Subquery, Value
+from django.db.models import Count, F, Q, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -130,9 +130,13 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0, in
             ).order_by("date", "order", "id").values("id")[:1]),
             learning_todo_eligible=Exists(eligible_session),
             has_historical_result=Exists(historical_result),
-            recorded_result_attempt_count=Subquery(recorded_result.annotate(
-                recorded_attempt=Coalesce("attempt__attempt_index", Value(1)),
-            ).order_by("-recorded_attempt").values("recorded_attempt")[:1]),
+            recorded_result_attempt_count=Coalesce(
+                Subquery(historical_attempt.regular().filter(
+                    Q(meta__status__isnull=True) | ~Q(meta__status="NOT_SUBMITTED"),
+                ).order_by().values("exam_id").annotate(count=Count("id")).values("count")[:1]),
+                Subquery(recorded_result.annotate(recorded_attempt=Value(1)).values("recorded_attempt")[:1]),
+                Value(0),
+            ),
             has_historical_attempt=Exists(historical_attempt),
             has_historical_submission=Exists(historical_submission),
             has_absent_linked_attendance=Exists(absent_linked_attendance),
@@ -190,13 +194,13 @@ def submission_status_map_for_student_exams(*, tenant, student, exams, current_c
             entry["submission_pending"] = True
     from apps.domains.results.models import ExamAttempt
 
-    for row in ExamAttempt.objects.filter(
+    for row in ExamAttempt.objects.regular().filter(
         exam_id__in=exam_ids,
         enrollment_id__in=enrollment_ids,
         enrollment__tenant=tenant,
     ).filter(
         Q(meta__status__isnull=True) | ~Q(meta__status="NOT_SUBMITTED"),
-    ).values("exam_id").annotate(attempt_count=Max("attempt_index")):
+    ).values("exam_id").annotate(attempt_count=Count("id")):
         entry = submission_status_map.setdefault(
             int(row["exam_id"]),
             {"has_result": False, "attempt_count": 0, "submission_pending": False},
@@ -417,7 +421,7 @@ def create_online_exam_submission(
             if exam.close_at and received_at > exam.close_at:
                 raise StudentExamSubmitError("시험이 마감되었습니다.", 409)
             attempt_indexes = list(
-                ExamAttempt.objects.select_for_update()
+                ExamAttempt.objects.regular().select_for_update()
                 .filter(exam_id=int(exam.id), enrollment_id=enrollment.id)
                 .values_list("attempt_index", flat=True)
             )
@@ -448,7 +452,7 @@ def create_online_exam_submission(
                     )
             in_progress = [s for s in prev_submissions if s.status in IN_PROGRESS_STATUSES]
             done_submissions = [s for s in prev_submissions if s.status == Submission.Status.DONE]
-            attempt_count = max(attempt_indexes, default=len(done_submissions))
+            attempt_count = max(len(attempt_indexes), len(done_submissions))
 
             if expected_attempt_count is not None and expected_attempt_count != attempt_count:
                 raise StudentExamSubmitError(

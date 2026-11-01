@@ -234,9 +234,9 @@ def highest_current_or_initial_exam_score(*, exam) -> float | None:
         ).only("enrollment_id", "total_score")
     )
     first_attempts = list(
-        ExamAttempt.objects.filter(
+        ExamAttempt.objects.initial().filter(
             exam=exam,
-            attempt_index=1,
+
             enrollment__tenant=exam.tenant,
         ).only("meta")
     )

@@ -617,3 +617,51 @@ HTML·PDF 출력 및 사용자 업로드 우선순위를 회귀 검사한다.
 | v14 | 2026-04 | reportlab 기반 `pdf_renderer.py`로 재구현. `/omr/defaults/`, `/omr/preview/`, `/omr/pdf/` 3종 엔드포인트 추가. `generate-omr/`은 deprecated. |
 | v7 | 2026-03-19 | HTML SSOT 기반 전면 재설계. 기존 v245_final.py 삭제. |
 | v245_final | ~ 2026-03-18 | 구 reportlab 기반 PDF 렌더러 (삭제됨) |
+
+## 채점된 종이의 학생 귀속 정정
+
+교사가 기존 OMR 검토의 학생 선택을 잘못된 A에서 같은 테넌트·시험의 적격 B로
+바꾸면, 이미 채점된 종이의 `ExamAttempt`는 같은 제출 ID를 유지하면서 현재
+학생 귀속을 정정한다. 학생 변경만 저장한 경우 객관식·문항·서술형·총점의 교사
+수정과 복습 표시를 그대로 옮긴다. 답안도 함께 바꾼 경우 기존 재채점 정책을
+적용한다. 온라인 제출의 학생 귀속 변경에는 이 예외를 적용하지 않는다.
+검토 화면이 답안을 전부 다시 전송해도 저장된 값과 실제로 다른 답안만 변경으로
+판정한다. API의 `updated` 처리 개수는 유지하며 감사 메타의
+`changed_answers_count`와 명시적 채점 문맥으로 동일 내용 재전송을 구분한다.
+정답키 변경 등 별도 재채점은 이 보존 문맥을 자동으로 상속하지 않는다.
+
+정정 전에 `ResultFact(source=omr_reassignment, question_id=0)`에 원/대상 학생,
+응시 차수, 대표 여부, 교사·시각, 원 점수·문항·메타 스냅샷을 추가한다. 과거
+Fact는 수정하거나 삭제하지 않는다. `ExamAttempt.current_fact_after_id` 이전의
+Fact는 감사 조회에 남고, 현재 통계·수기 채점·대표 복원에는 `ResultFact.current()`로
+현재 귀속과 cutoff 이후 Fact만 사용한다. 새 귀속의 Fact는 원 Fact ID·원 시각·
+교사 provenance를 보존하며 추가된다. A→B→A에서도 이전 사실이 다시 집계되지
+않으며, 이미 소비된 수기 0점 placeholder가 새 교사 총점으로 부활하지 않는다.
+
+A의 현재 Result가 해당 종이를 가리키면 남은 유효 일반 응시의 대표 스냅샷으로
+복원하고, 남은 성적이 없으면 현재 Result/ResultItem만 제거해 미채점으로 돌린다.
+A의 대표가 이미 별도 교사 성적이면 그대로 보존한다. B의 별도 수동·승인 성적은
+자동 병합하거나 대체하지 않는다. 재응시 정책과 횟수를 넘으면 기존
+`409 OMR_ATTEMPT_CONFLICT`로 전체 작업을 되돌리고, 교사는 올바른 대상을 다시
+선택해 저장할 수 있다. 이 작업에 별도 성적 대체 확인 UI는 포함하지 않는다.
+
+최초 성적은 숫자 차수 1 고정 대신 현재 귀속의 가장 이른 일반 응시로 판정한다.
+클리닉 재시도는 최초 성적·석차·일반 응시 한도에 포함하지 않으며, 기존 차수와
+클리닉 이력은 바꾸지 않는다. 빈 A의 응시 기회를 복구하고 양쪽 학생의 현재
+성적·차시/강의 진척을 동기 갱신한다. 시험→차시→제출 잠금 안에서 양쪽 학생과
+결과를 잠그며, 충돌·중간 오류·진척 갱신 실패는 학생 연결·답안·매칭·성적·
+감사 Fact를 함께 rollback한다. 기존 운영 데이터의 일괄 재배정/삭제는 없다.
+
+배포는 expand migration `results.0022`와 호환 reader를 먼저 적용한다.
+`OMR_SCORED_REASSIGNMENT_ENABLED`는 기본 false다. 모든 API/AI reader와 writer가
+cutoff/최초 일반 응시 계약을 읽는 정확한 후보 revision으로 수렴한 뒤에만 같은
+후보의 정정 쓰기를 활성화한다. 비활성 상태의 충돌 응답은 정상 기능 검증 완료가
+아니며, 활성화 후 실제 학생 정정→재조회→양쪽 역할/통계→cleanup까지 확인해야
+완료다. 활성화 후에는 쓰기만 끌 수 있고 과거 cutoff를 무시하는 이미지로
+rollback하지 않는다. 현재 HOLD와 다른 OMR 단계 배포 순서를 자동 확장하지 않는다.
+
+검증: `results/tests/test_omr_reassignment.py`(정상 정정/되돌리기, 교사 점수·원본,
+기존 성적 충돌 후 재선택, 중간 실패 rollback, 클리닉 최초성적 제외),
+`test_omr_reassignment_pg.py`(실제 PostgreSQL 잠금 대기, commit/rollback 뒤 정정).
+실환경의 정확한 revision·활성화·격리 QA 증거는 배포 담당의 별도 릴리스 기록이
+소유한다. 채점 일반 정책은 [exam-grading.md](exam-grading.md)를 따른다.

@@ -765,13 +765,19 @@ class SubmissionViewSet(ModelViewSet):
                 return Response({"detail": "해당 시험의 대상 학생이 아닙니다."}, status=400)
 
         updated = 0
+        answers_changed = 0
 
         for eqid, ans in validated_answers:
-            SubmissionAnswer.objects.update_or_create(
-                submission=submission,
-                exam_question_id=eqid,
-                defaults={"answer": ans, "tenant": submission.tenant},
-            )
+            existing_answer = SubmissionAnswer.objects.filter(
+                submission=submission, exam_question_id=eqid,
+            ).first()
+            if existing_answer is None or existing_answer.answer != ans:
+                SubmissionAnswer.objects.update_or_create(
+                    submission=submission,
+                    exam_question_id=eqid,
+                    defaults={"answer": ans, "tenant": submission.tenant},
+                )
+                answers_changed += 1
             updated += 1
 
         meta = dict(submission.meta or {})
@@ -785,6 +791,7 @@ class SubmissionViewSet(ModelViewSet):
                 "by_user_id": getattr(request.user, "id", None),
                 "note": note,
                 "updated_answers_count": updated,
+                "changed_answers_count": answers_changed,
                 "identifier": identifier,
                 "resolved_enrollment_id": resolved_enrollment_id,
                 "exam_enrollment_created": exam_enrollment_created,
@@ -875,6 +882,7 @@ class SubmissionViewSet(ModelViewSet):
                 int(submission.id),
                 actor=f"admin.manual_edit.user_{getattr(request.user, 'id', '?')}",
                 allow_done_regrade=True,
+                preserve_current_omr_grade=(answers_changed == 0),
             )
         except Exception as exc:
             if isinstance(exc, DjangoValidationError) and getattr(exc, "code", None) == "omr_grading_configuration_conflict":

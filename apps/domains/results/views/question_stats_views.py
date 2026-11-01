@@ -79,10 +79,10 @@ def _finalized_representative_scope(
     results = list(result_queryset)
     enrollment_ids = [int(result.enrollment_id) for result in results]
     first_attempts = list(
-        ExamAttempt.objects.filter(
+        ExamAttempt.objects.initial().filter(
             exam_id=int(exam_id),
             enrollment_id__in=enrollment_ids,
-            attempt_index=1,
+
         ).only("id", "enrollment_id", "status", "meta")
     )
     first_enrollment_ids = {int(attempt.enrollment_id) for attempt in first_attempts}

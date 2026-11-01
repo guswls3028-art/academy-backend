@@ -14,6 +14,17 @@ def get_enrollment_for_tenant(*, enrollment_id: int, tenant: Any) -> Any | None:
     return Enrollment.objects.filter(id=int(enrollment_id), tenant=tenant).first()
 
 
+def lock_omr_reassignment_enrollments(*, enrollment_ids: list[int], tenant_id: int):
+    from apps.domains.enrollment.models import Enrollment
+
+    return {
+        int(row.id): row
+        for row in Enrollment.objects.select_for_update().filter(
+            id__in=sorted(set(enrollment_ids)), tenant_id=int(tenant_id),
+        ).order_by("id")
+    }
+
+
 def exam_enrollment_exists(*, exam_id: int, enrollment_id: int) -> bool:
     from apps.domains.exams.models import ExamEnrollment
 

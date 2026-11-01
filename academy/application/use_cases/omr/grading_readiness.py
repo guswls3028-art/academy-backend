@@ -30,6 +30,7 @@ def grade_omr_submission_if_ready(
     *,
     actor: str = "omr.readiness",
     allow_done_regrade: bool = False,
+    preserve_current_omr_grade: bool = False,
 ) -> OMRGradeDecision:
     """
     Run OMR grading only after durable student-match and answer facts exist.
@@ -110,6 +111,7 @@ def grade_omr_submission_if_ready(
     result = grade_submission(
         int(submission_id),
         force_regrade=allow_done_regrade,
+        **({"preserve_current_omr_grade": True} if preserve_current_omr_grade else {}),
     )
     status = (
         Submission.objects

@@ -439,7 +439,7 @@ def build_teacher_enterprise_analytics(*, tenant: Any, days: int = 180) -> dict[
                 pass_count += 1
 
     manual_rows = list(
-        ResultFact.objects
+        ResultFact.objects.current()
         .filter(
             target_type="exam",
             target_id__in=clean_exam_ids,

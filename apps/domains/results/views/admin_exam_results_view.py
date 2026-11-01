@@ -272,7 +272,7 @@ class AdminExamResultsView(ListAPIView):
         # enrollment_id → 최신 attempt/submission 맵 (exam 전체 기준)
         # -------------------------------------------------
         fact_qs = (
-            ResultFact.objects
+            ResultFact.objects.current()
             .filter(target_type="exam", target_id=exam_id, enrollment__tenant=request.tenant)
             .exclude(attempt_id__isnull=True)
             .order_by("-attempt_id", "-id")
