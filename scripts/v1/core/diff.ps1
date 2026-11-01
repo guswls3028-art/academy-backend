@@ -70,14 +70,9 @@ function Add-UnexpectedBatchResourceRows {
         [scriptblock]$ActualLabel
     )
 
-    $expectedSet = @{}
-    foreach ($name in @($ExpectedNames | Where-Object { $_ })) {
-        $expectedSet[$name] = $true
-    }
-
     foreach ($name in @($ActualNames | Where-Object { $_ })) {
         if ($name -notlike "academy-*") { continue }
-        if ($expectedSet.ContainsKey($name)) { continue }
+        if ($ExpectedNames -ccontains $name) { continue }
 
         $actual = & $ActualLabel $name
         [void]$Rows.Add([PSCustomObject]@{
@@ -189,7 +184,7 @@ function Get-StructuralDrift {
         $preview["queueName"] -ceq "academy-development-homework-video-queue") {
         $developmentCE = [string]$preview["computeEnvironmentName"]
         $developmentQueue = [string]$preview["queueName"]
-    } elseif ($null -ne $preview) {
+    } else {
         [void]$rows.Add([PSCustomObject]@{ ResourceType = "Development Batch configuration"; Name = "homeworkPreviewDevelopment"; Expected = "explicit owned CE and queue"; Actual = "missing or invalid names"; Action = "Review" })
     }
     $expectedCEs = @($script:SSOT_CE) + @($developmentCE | Where-Object { $_ })

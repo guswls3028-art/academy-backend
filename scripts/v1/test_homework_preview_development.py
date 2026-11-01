@@ -357,8 +357,32 @@ $rows = @(Get-StructuralDrift)
             with self.subTest(declaration=declaration):
                 self.fixture["params"] = {} if declaration is None else {"homeworkPreviewDevelopment": declaration}
                 rows = self.drift()
+                self.assertEqual(rows["homeworkPreviewDevelopment"], "Review")
                 self.assertEqual(rows[self.CE], "Review")
                 self.assertEqual(rows[self.QUEUE], "Review")
+
+    def test_case_only_unknown_names_do_not_inherit_declared_exemption(self):
+        unknown_names = []
+        for group, field, name in (("ces", "computeEnvironmentName", self.CE), ("queues", "jobQueueName", self.QUEUE)):
+            extra = deepcopy(self.fixture[group][-1])
+            extra[field] = name.rsplit("-", 1)[0] + "-" + name.rsplit("-", 1)[1].upper()
+            extra["state"] = "DISABLED"
+            unknown_names.append(extra[field])
+            self.fixture[group].append(extra)
+        rows = self.drift()
+        for name in (self.CE, self.QUEUE):
+            self.assertEqual(rows[name], "NoOp")
+        for name in unknown_names:
+            self.assertEqual(rows[name], "Review")
+
+    def test_missing_configuration_and_resources_still_require_review(self):
+        self.fixture["params"] = {}
+        self.fixture["ces"] = self.fixture["ces"][:2]
+        self.fixture["queues"] = self.fixture["queues"][:2]
+        rows = self.drift()
+        self.assertEqual(rows["homeworkPreviewDevelopment"], "Review")
+        self.assertNotIn(self.CE, rows)
+        self.assertNotIn(self.QUEUE, rows)
 
     def test_production_repair_classification_is_unchanged(self):
         self.fixture["ces"][0]["status"] = "INVALID"
