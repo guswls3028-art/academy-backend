@@ -668,16 +668,24 @@ A의 대표가 이미 별도 교사 성적이면 그대로 보존한다. B의 �
 결과를 잠그며, 충돌·중간 오류·진척 갱신 실패는 학생 연결·답안·매칭·성적·
 감사 Fact를 함께 rollback한다. 기존 운영 데이터의 일괄 재배정/삭제는 없다.
 
-배포는 expand migration `results.0022`와 호환 reader를 먼저 적용한다.
-`OMR_SCORED_REASSIGNMENT_ENABLED`는 기본 false다. 모든 API/AI reader와 writer가
-cutoff/최초 일반 응시 계약을 읽는 정확한 후보 revision으로 수렴한 뒤에만 같은
-후보의 정정 쓰기를 활성화한다. 비활성 상태의 충돌 응답은 정상 기능 검증 완료가
-아니며, 활성화 후 실제 학생 정정→재조회→양쪽 역할/통계→cleanup까지 확인해야
-완료다. 활성화 후에는 쓰기만 끌 수 있고 과거 cutoff를 무시하는 이미지로
-rollback하지 않는다. 현재 HOLD와 다른 OMR 단계 배포 순서를 자동 확장하지 않는다.
+보호 단계(A)는 expand migration `results.0022`와 호환 reader를 먼저 적용하며
+정정 쓰기의 기본값은 false다. 모든 API/AI/Tools reader와 writer가 cutoff/최초
+일반 응시 계약을 읽는 정확한 A 이상 revision으로 수렴하고, A 이전 요청·작업이
+종료됐다는 확인 후에만 단계(B)를 병합·배포한다. B에서는
+`OMR_SCORED_REASSIGNMENT_ENABLED`의 API/독립 worker 기본값이 모두 true다.
+같은 B immutable artifact를 격리 개발환경에서 활성 상태로 실검증하고 preprod와
+임시 인스턴스 종료 확인을 거쳐 정상 rolling한다. 운영 환경에 명시 override가
+없는지 배포 직전에 다시 확인하고, false override가 있으면 기본값 변경만으로
+활성화됐다고 판단하지 않는다. 명시적 `false`/`0`은 정정 쓰기를 끄는 옵션으로 유지한다.
+A false와 B true의 혼재는 모든 실행 주체가 A 이상 호환 버전일 때만 허용한다.
+별도 운영 SSM 쓰기나 추가 활성화 workflow는 필요하지 않으며 기존 배포 잠금과
+승인·검증 경계를 유지한다. 비활성 상태의 충돌 응답은 정상 기능 검증 완료가 아니다.
+실제 B runtime의 effective true와 학생 정정→재조회→양쪽 역할/통계→cleanup까지
+확인해야 완료다. 활성화 후에는 쓰기만 끌 수 있고 과거 cutoff를 무시하는 이미지로
+rollback하지 않는다. 현재 HOLD와 다른 OMR 단계 배포 순서는 그대로 유지한다.
 
 설정은 API `apps/api/config/settings/base.py`와 독립 worker 설정
-`apps/api/config/settings/worker.py`가 같은 환경 변수·기본 false를 읽는다.
+`apps/api/config/settings/worker.py`가 같은 환경 변수·단계 B 기본 true를 읽는다.
 환경 전달은 운영 `/academy/api/env`와 `/academy/workers/env`, 격리 개발
 `/academy/api/development/env`와 `/academy/workers/development/env`의 기존
 버전 고정 배포 경계를 사용한다. 개발 전용 opt-in은

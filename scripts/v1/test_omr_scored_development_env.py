@@ -58,14 +58,17 @@ Write-Output '12 isolated transformation cases passed'
         self.assertIn('"$($script:ApiDevelopmentEnvParameter):$version"', source)
         self.assertIn('"$($script:ApiDevelopmentWorkersEnvParameter):$workersVersion"', source)
 
-    def test_worker_effective_setting_is_explicit_and_defaults_off(self):
+    def test_api_and_worker_stage_b_default_on_and_explicit_disable_remains_effective(self):
         with patch.dict(os.environ, {"SENTRY_DSN": ""}):
-            os.environ.pop("OMR_SCORED_REASSIGNMENT_ENABLED", None)
-            path = ROOT / "apps/api/config/settings/worker.py"
-            self.assertIs(runpy.run_path(str(path))["OMR_SCORED_REASSIGNMENT_ENABLED"], False)
-            for value, expected in (("true", True), ("false", False), ("1", True), ("invalid", False)):
-                os.environ["OMR_SCORED_REASSIGNMENT_ENABLED"] = value
-                self.assertIs(runpy.run_path(str(path))["OMR_SCORED_REASSIGNMENT_ENABLED"], expected)
+            for module in ("base.py", "worker.py"):
+                path = ROOT / "apps/api/config/settings" / module
+                os.environ.pop("OMR_SCORED_REASSIGNMENT_ENABLED", None)
+                self.assertIs(runpy.run_path(str(path))["OMR_SCORED_REASSIGNMENT_ENABLED"], True)
+                for value, expected in (("true", True), ("false", False), ("1", True),
+                                        ("yes", True), ("0", False), ("off", False),
+                                        ("FALSE", False), ("invalid", False), ("", False)):
+                    os.environ["OMR_SCORED_REASSIGNMENT_ENABLED"] = value
+                    self.assertIs(runpy.run_path(str(path))["OMR_SCORED_REASSIGNMENT_ENABLED"], expected)
 
     def test_normal_candidate_workflow_enables_only_isolated_development(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/v1-build-and-push-latest.yml").read_text(encoding="utf-8"))

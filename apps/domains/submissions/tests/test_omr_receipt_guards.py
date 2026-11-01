@@ -93,17 +93,24 @@ class OmrReceiptGuardTests(OmrReceiptFixture, TestCase):
                 self.assertEqual(detail.data["counts"]["superseded" if superseded else "failed"], 1)
                 self.assertEqual(OmrUploadBatchItem.objects.filter(pk=item.pk).values().get(), before)
 
-    def test_phase_a_does_not_release_hash_reservations_or_enable_readmission(self):
+    def test_readmission_releases_archived_hash_claim_but_preserves_original_receipt(self):
         item, _ = self.upload()
         self.discard(item.submission)
         before = OmrUploadBatchItem.objects.filter(pk=item.pk).values().get()
+        replacement, response = self.upload()
+        self.assertEqual(response.data["created_count"], 1)
+        self.assertNotEqual(replacement.submission_id, item.submission_id)
+        after = OmrUploadBatchItem.objects.filter(pk=item.pk).values().get()
+        self.assertEqual(after["admission_status"], OmrUploadBatchItem.AdmissionStatus.FAILED)
+        self.assertEqual(after["failure_code"], "submission_archived")
+        mutable = {"admission_status", "failure_code", "failure_message", "updated_at"}
+        self.assertEqual({key: value for key, value in after.items() if key not in mutable},
+                         {key: value for key, value in before.items() if key not in mutable})
         duplicate, response = self.upload()
         self.assertEqual(response.data["created_count"], 0)
-        self.assertEqual(response.data["counts"]["duplicate"], 1)
-        self.assertEqual(duplicate.duplicate_of_submission_id, item.submission_id)
-        self.assertEqual(OmrUploadBatchItem.objects.filter(pk=item.pk).values().get(), before)
-        self.assertEqual(self.storage.call_count, 1)
-        self.assertEqual(self.dispatch.call_count, 1)
+        self.assertEqual(duplicate.duplicate_of_submission_id, replacement.submission_id)
+        self.assertEqual(self.storage.call_count, 2)
+        self.assertEqual(self.dispatch.call_count, 2)
 
     def test_ordinary_worker_failure_remains_retryable(self):
         item, _ = self.upload()
