@@ -40,7 +40,8 @@ fresh scan, 격리 실사용 및 운영 readback을 대신하는 배포 완료 �
   library hash·C API source ID·기존 심볼/옵션과 Python `_sqlite3`의 실제 연결을
   재확인한다. Messaging은 Python 의존성 설치 뒤 확인한다. 설치 단계에서 이전
   라이브러리가 돌아오거나 다른 Python SQLite에 연결되면 이미지 빌드를 중단한다.
-- 기존 보안 수용 정책은 수정하지 않는다. 다른 CVE 또는 새 패키지 버전의 finding은
+- 라이브러리 교체 자체는 기존 보안 수용 정책을 변경하지 않았다. 배포 후 종료한
+  SQLite 예외는 아래 기록을 따른다. 다른 CVE 또는 새 패키지 버전의 finding은
   이전 exact 승인을 승계하지 않는다. 여섯 fresh COMPLETE scan, native arm64/amd64,
   기존 development/preprod·운영 검증을 모두 통과해야 한다. 호환성 실패는
   원인을 수정하고 재검증하며 실패 조건을 완화하지 않는다.
@@ -48,9 +49,46 @@ fresh scan, 격리 실사용 및 운영 readback을 대신하는 배포 완료 �
 소스 검증은 `tests/test_native_sqlite_security.py`, 빌드 검증은
 `verify-sqlite.py`, 최종 공통 native 검증은 `verify-fixed-libs.sh`가 소유한다.
 
+## 2026-11-02 배포 후 SQLite 한시 예외 종료
+
+배포 [41337097224](https://github.com/guswls3028-art/academy-backend/actions/runs/41337097224)의
+소스 `64dba2aece826d53a51641ecfd9b4b0cdbbda6a1`은 공식 production 성공과
+운영 반영·소유 자원 정리를 완료했다. 공통 base와 다섯 서비스의 exact digest에
+연결된 여섯 COMPLETE scan은 각각 기존 glibc High 3건·Critical 0건이며,
+`CVE-2026-119373`, `CVE-2026-119374`, `CVE-2026-119379`,
+`CVE-2026-119586`은 관측되지 않았다. 배포된 native 패키지는 위 소스 계약의
+`3.54.1-1+academy1`이다. 이는 해당 후보의 관측 결과이며 CLI 취약점의 보편적
+수정·비도달성이나 이후 후보의 안전을 선언하지 않는다.
+
+따라서 `ecr-high-risk-baseline.json`에서 이전 exact identity
+`CVE-2026-119586 / sqlite3 / 3.46.1-7+deb13u2` 한 건을 제거하고 기존 여섯
+저장소의 High 상한을 4에서 3으로 되돌린다. 기존 glibc 세 항목은 내용·범위·기한을
+그대로 보존하며 Critical 정책·기존 HOLD도 변경하지 않는다. 원래 승인과 거부
+이력은 다음 절에 보존한다. 라이브러리 재업그레이드나 새 위험 수용은 없다.
+운영 데이터와 이미지에는 변경을 가하지 않으며, 정책 적용 후에는 이전 SQLite
+identity가 다시 나타나도 차단한다. 새 버전의 SQLite finding도 자동 승계하지 않는다.
+이전 이미지로 되돌리는 경우에도 fresh scan과 현재 정책을 통과해야 한다.
+
+증거는 workspace `_artifacts/backend716-01a1954c/release-evidence.json` 및
+같은 경로의 `deploy-41337097224/` 아래 `release-manifest.successful.json`,
+`all-six-image-scan-readback.json`, `academy-*-scan.json`,
+`live-probes.sanitized.json`, `ownership-close-readback.json`에 보존한다.
+독립 exact digest 감사는 `_artifacts/deploy-resume-01a18f8d/scan64dba-root-audit.json`이다.
+정책 검증은 `tests/test_ecr_critical_scan_gate.py`가 여섯 저장소의 glibc 세 항목
+허용, 상한 3, 이전·새 SQLite identity 거부, glibc 기한 및 Critical 차단을 확인한다.
+
+이 JSON 변경은 Markdown 전용 변경이 아니므로 필수 CI 전체를 유지한다.
+main 반영은 `v1-build-and-push-latest.yml`을 시작하고 새 scan 정책을 적용한다.
+이 변경 자체는 Docker/native 입력을 바꾸지 않지만, 실제 이미지 재사용·빌드와
+rollout은 당시 누적 diff 및 기존 워크플로가 결정한다. 배포 담당자가 다른 릴리스와
+통합 시점을 정하며 기존 release lock·승인·실사용·cleanup 게이트는 생략하지 않는다.
+
 <a id="sqlite-delegated-review-20261101"></a>
 
-## 2026-11-01 OMR 복구 배포의 SQLite 한시 결정
+## 2026-11-01 OMR 복구 배포의 SQLite 한시 결정 (종료 이력)
+
+다음은 당시 승인 범위와 근거를 보존한 기록이다. 위 2026-11-02 종료 이후의
+현재 정책은 SQLite 예외를 허용하지 않는다.
 
 OMR 복구 PR716의 배포41303507718은 `CVE-2026-119586` / `sqlite3` /
 `3.46.1-7+deb13u2` High로 development 진입 전에 중단됐다. 새 서비스 이미지
@@ -61,7 +99,7 @@ OMR 복구 PR716의 배포41303507718은 `CVE-2026-119586` / `sqlite3` /
 `01a19337-27eb-7933-98df-77ba41319935`와 후속 배포 지시를 근거로 제안됐다.
 자동 승인 검토는 새 SQLite 위험의 구체적인 동의 범위가 확인되지 않았다는 이유로
 그 경로를 거부했다. 이 거부와 상시 위임의 재해석에 대한 거부 이력은 보존하며,
-현재의 SQLite 승인을 이전 상시 위임에서 추론하지 않는다.
+당시 SQLite 승인을 이전 상시 위임에서 추론하지 않는다.
 
 이후 사용자가 기존 여섯 이미지의 `CVE-2026-119586` / `sqlite3` /
 `3.46.1-7+deb13u2`, **2026-11-08 09:00 KST** 만료, 해결되지 않은 취약점과
@@ -79,8 +117,8 @@ OMR 복구 PR716의 배포41303507718은 `CVE-2026-119586` / `sqlite3` /
 해석하지 않는다.
 
 이 직접 승인에 따른 한시 결정은 위 SQLite exact identity 한 건을 기존 여섯
-저장소에만 추가하며 High 상한을 3에서 4로 맞춘다. **2026-11-08 09:00 KST까지**로
-제한하고 `expiresOn: 2026-11-07`로 기록해 다음 날 00:00 UTC부터 실패한다.
+저장소에만 추가하고 High 상한을 3에서 4로 맞췄다. **2026-11-08 09:00 KST까지**로
+제한하고 `expiresOn: 2026-11-07`로 기록했으며, 위 종료 조치로 먼저 제거했다.
 기존 glibc 세 항목의 범위·기한과 Critical 정책·기존 HOLD는 변경하지 않는다.
 다른 CVE/패키지/버전/저장소와 자동 연장은 이 결정에 포함하지 않는다.
 
