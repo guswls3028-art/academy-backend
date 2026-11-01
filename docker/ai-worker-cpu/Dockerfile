@@ -66,6 +66,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && python /usr/local/bin/verify-aligned-new.py \
     && python /usr/local/bin/verify-tiff.py \
     && python /usr/local/bin/verify-krb5.py --package \
+    && python /usr/local/bin/verify-sqlite.py --package \
     && python /usr/local/bin/verify-sasl.py
 
 # opencv-python-headless deliberately has no GUI/GLib runtime dependency.
