@@ -430,12 +430,16 @@ OMR 답안의 점수 영향 여부를 다시 계산한다. 정확히 일치하�
    `needs_identification`, 처리 실패는 `failed`로 서로 구분한다. 업로드 성공을 AI 완료로
    표시하지 않는다.
 
-보호 단계(A)의 원본 hash·Submission 연결 불변성과 retry 보호를 유지하면서,
-예약 해제 단계(B)는 폐기된 파일의 새 batch 접수를 허용한다. A가 모든 API에
-적용됐다는 정확한 revision과 이전 요청 종료 확인 후에만 B를 배포한다.
-API 복구는 [운영 절차](../../scripts/v1/README.md)에 따라 새 immutable 이미지로
-roll-forward하며 A를 최소 호환 기준으로 유지한다. 구버전 이미지로 직접
-rollback하거나 보호 코드를 제거하지 않는다.
+예약 해제 활성화(B)의 선행 조건은 원본·중복 ordinal 불변과 폐기 retry 제외를 갖춘
+보호 단계(A)의 전량 배포다. 모든 API 인스턴스의 정확한 A revision과 이전 요청 종료를
+운영 담당자가 확인한 뒤에만 B를 정상 rolling한다. A 이전 코드가 남아 있으면 B가
+보관 상태로 바꾼 과거 ordinal을 재전송할 때 원본 연결이 훼손될 수 있다.
+각 후보의 필수 CI와 같은 artifact의 격리 개발환경 batch HTTP 접수·폐기·재등록·
+재조회·원본 보존·cleanup zero를 확인한다. 다른 readiness canary로 대체하지 않는다.
+API 복구는 [운영 절차](../../scripts/v1/README.md)의 새 immutable 이미지
+roll-forward만 사용하고, A 보호 코드는 이후 복구 소스에도 유지한다. 이는 구버전
+이미지 직접 rollback 허가가 아니다. A 수준의 소스로 복구하면 원본은 보존되지만
+재등록 동작은 다시 중복 처리될 수 있으므로 해당 흐름의 검증이 필요하다.
 
 폐기 API → 새 batch 접수 → detail 재조회와 원본/교사 fact 보존은
 `test_omr_readmission.py`, 실제 row lock·unique 충돌과 discard commit/rollback
