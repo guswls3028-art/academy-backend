@@ -407,6 +407,17 @@ OMR 답안의 점수 영향 여부를 다시 계산한다. 정확히 일치하�
    conditional unique constraint로 경합까지 직렬화하고 `duplicate`로 완료 처리한다.
    새 Submission/R2 object/worker dispatch를 만들지 않으며 파일명이 같아도 바이트가
    다르면 정상 신규 접수다.
+   다만 연결된 제출이 `SUPERSEDED`이거나 `FAILED`와 명시적 폐기 표식
+   (`meta.discarded` 객체 또는 기존 `discarded:` 오류 코드)을 함께 가지면,
+   새 batch 접수 시 해당 item과 tenant·시험 범위의 Submission을 잠근 뒤 과거
+   item을 `failed/submission_archived`로 표시해 unique 예약만 해제한다. 원본
+   SHA-256, Submission 연결, R2 파일, 답안과 교사 결과 이력은 그대로 보존한다.
+   새 batch는 새 Submission으로 정상 접수하며 이후 같은 파일은 새 활성 제출로
+   중복 처리한다. 일반 worker 실패·처리 중·완료 제출의 중복 차단은 유지한다.
+   동시 신규 접수는 기존 partial unique 제약으로 한 건만 수락한다. 충돌한 요청은
+   자기 업로드만 정리하고 같은 잠금·범위·폐기 판정으로 활성 소유자를 재조회한다.
+   그 사이 소유자도 폐기됐다면 과거 제출로 연결하지 않고 명시적 접수 실패와
+   파일 재접수 경로를 남긴다. 교차 tenant·시험 연결은 재사용하지 않는다.
 4. 요청 응답이 끊겨도 detail GET의 `pending_admission_ordinals`와
    `admission_failed_ordinals`로 미접수 파일만 다시 선택한다. 이미 성공한 ordinal은
    재전송하지 않는다. `SUPERSEDED` 또는 `FAILED`이면서 명시적 폐기 표식
@@ -419,16 +430,17 @@ OMR 답안의 점수 영향 여부를 다시 계산한다. 정확히 일치하�
    `needs_identification`, 처리 실패는 `failed`로 서로 구분한다. 업로드 성공을 AI 완료로
    표시하지 않는다.
 
-이 보호 단계(A)는 기존 hash 예약과 중복 판정을 유지한다. 따라서 폐기 후 같은 파일을
-새 batch로 다시 보내는 동작은 아직 중복 처리된다. 예약 해제 단계(B)는 별도 후보로
-배포하며, A가 모든 API 인스턴스에 적용됐다는 정확한 revision 확인과 이전 요청의 종료
-확인 후에만 활성화한다. B가 남기는 `failed/submission_archived` 항목도 A는 원본
-hash·Submission 연결을 불변으로 취급한다. `test_omr_receipt_guards.py`는 그 향후
-저장 형태를 fixture로 만들어 재전송·오류·retry·summary 및 교사 답안 보존을 검사한다.
-이 fixture 검사는 B의 실제 재등록이나 배포 중 동작 검증을 대신하지 않는다.
+보호 단계(A)의 원본 hash·Submission 연결 불변성과 retry 보호를 유지하면서,
+예약 해제 단계(B)는 폐기된 파일의 새 batch 접수를 허용한다. A가 모든 API에
+적용됐다는 정확한 revision과 이전 요청 종료 확인 후에만 B를 배포한다.
 API 복구는 [운영 절차](../../scripts/v1/README.md)에 따라 새 immutable 이미지로
-roll-forward하며, A의 보호 코드를 최소 호환 기준으로 유지한다. 구버전 이미지의
-직접 rollback이나 보호 코드 제거는 허용하지 않는다.
+roll-forward하며 A를 최소 호환 기준으로 유지한다. 구버전 이미지로 직접
+rollback하거나 보호 코드를 제거하지 않는다.
+
+폐기 API → 새 batch 접수 → detail 재조회와 원본/교사 fact 보존은
+`test_omr_readmission.py`, 실제 row lock·unique 충돌과 discard commit/rollback
+경합은 `test_omr_readmission_concurrency_pg.py`가 검증한다. SQLite 기능 통과를
+PostgreSQL 경합 증거로 대체하지 않는다.
 
 `counts.completed`, `terminal`, `overall_status`는 기존 파일 접수·OMR 처리 계약을
 유지한다. 따라서 혼합 시험은 객관식 인식이 끝나면 `overall_status=completed`이면서
