@@ -1976,12 +1976,12 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         )
 
     def _make_idcard_parent(self, students):
-        from apps.domains.parents.models import Parent
+        from django.apps import apps as django_apps
 
         user = self.make_user(f"idcard_parent_{self.tenant.code}")
         user.tenant = self.tenant
         user.save(update_fields=["tenant"])
-        parent = Parent.objects.create(
+        parent = django_apps.get_model("parents", "Parent").objects.create(
             tenant=self.tenant, user=user, name="패스카드 학부모", phone="01012345678",
         )
         TenantMembership.ensure_active(tenant=self.tenant, user=user, role="parent")
