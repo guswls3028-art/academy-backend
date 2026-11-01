@@ -32,19 +32,20 @@ class AIWorkerCapacityControlTests(SimpleTestCase):
 
     def test_idle_worker_does_not_scale_below_configured_minimum(self):
         autoscaling = Mock()
-        autoscaling.describe_auto_scaling_groups.return_value = {
-            "AutoScalingGroups": [
-                {"MinSize": 2, "DesiredCapacity": 2, "MaxSize": 5}
-            ]
-        }
-
-        with patch(
-            "academy.adapters.compute.ec2_control._aws_client",
-            return_value=autoscaling,
-        ):
-            assert scale_down_ai_worker_asg_to_baseline_if_idle(
-                {"visible": 0, "not_visible": 0, "delayed": 0}
-            )
+        for minimum, desired in ((1, 1), (2, 2), (2, 1)):
+            with self.subTest(minimum=minimum, desired=desired):
+                autoscaling.describe_auto_scaling_groups.return_value = {
+                    "AutoScalingGroups": [
+                        {"MinSize": minimum, "DesiredCapacity": desired, "MaxSize": 5}
+                    ]
+                }
+                with patch(
+                    "academy.adapters.compute.ec2_control._aws_client",
+                    return_value=autoscaling,
+                ):
+                    self.assertFalse(scale_down_ai_worker_asg_to_baseline_if_idle(
+                        {"visible": 0, "not_visible": 0, "delayed": 0}
+                    ))
 
         autoscaling.set_desired_capacity.assert_not_called()
 
