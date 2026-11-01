@@ -660,6 +660,25 @@ cutoff/최초 일반 응시 계약을 읽는 정확한 후보 revision으로 수
 완료다. 활성화 후에는 쓰기만 끌 수 있고 과거 cutoff를 무시하는 이미지로
 rollback하지 않는다. 현재 HOLD와 다른 OMR 단계 배포 순서를 자동 확장하지 않는다.
 
+설정은 API `apps/api/config/settings/base.py`와 독립 worker 설정
+`apps/api/config/settings/worker.py`가 같은 환경 변수·기본 false를 읽는다.
+환경 전달은 운영 `/academy/api/env`와 `/academy/workers/env`, 격리 개발
+`/academy/api/development/env`와 `/academy/workers/development/env`의 기존
+버전 고정 배포 경계를 사용한다. 개발 전용 opt-in은
+[persistent-development-runtime.md](../operations/persistent-development-runtime.md)가 소유한다.
+운영 설정 변경은 기존 공유 잠금·정확한 source/manifest·승인된 배포 경로에서
+수행하며 이 기능의 배포만으로 기존 HOLD가 해제되지는 않는다.
+
+호환성 확인 대상은 교사/학생/학부모 API(현재 성적·최초 성적·응시 한도·통계),
+AI OMR 콜백/채점 writer, Tools의 성적·문항 통계 내보내기 reader, 같은 결과·진척
+서비스를 실행하는 관리 명령/예약 작업이다. API 인스턴스 전부와 해당 worker의
+실제 digest/source를 확인하고, 이전 코드로 시작한 요청·작업이 종료된 뒤 같은
+artifact의 정정 쓰기를 켠다. 단일 인스턴스 health만으로 이 조건을 대신하지 않는다.
+첫 정정 후 장애가 나면 flag를 내려 새 정정만 멈추고 호환 reader를 유지한 채
+수정 후보로 전진한다. 이미 쌓인 cutoff/감사 Fact를 제거하거나 예전 이미지로
+되돌리지 않는다. 최초 호환 단계는 archived 재접수 기능을 포함하지 않으며,
+재접수는 별도 단계의 모든 기존 worker 수렴·in-flight 종료 조건을 통과해야 한다.
+
 검증: `results/tests/test_omr_reassignment.py`(정상 정정/되돌리기, 교사 점수·원본,
 기존 성적 충돌 후 재선택, 중간 실패 rollback, 클리닉 최초성적 제외),
 `test_omr_reassignment_pg.py`(실제 PostgreSQL 잠금 대기, commit/rollback 뒤 정정).

@@ -24,6 +24,12 @@ BASE_DIR = Path(__file__).resolve().parents[3]
 SECRET_KEY = os.getenv("SECRET_KEY", "worker-dev-secret")
 DEBUG = False
 
+# Keep the compatibility-stage default aligned with API settings. Activation is
+# an explicit environment rollout after every reader/writer is compatible.
+OMR_SCORED_REASSIGNMENT_ENABLED = os.getenv(
+    "OMR_SCORED_REASSIGNMENT_ENABLED", "false",
+).lower() in ("1", "true", "yes")
+
 # ==================================================
 # URL / WSGI / ASGI — Worker는 HTTP 서버 아님
 # ==================================================

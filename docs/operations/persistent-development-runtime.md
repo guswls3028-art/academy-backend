@@ -501,6 +501,21 @@ lock/mutation job은 environment subject를 사용한다.
    없으며, Matchup만 필요한 최소 fixture 호출을 수행한다. 키 값은 로그·Git·보고서에
    남기지 않는다. DB·R2·큐·Redis 격리와 정확한 생성물 정리 검증은 그대로 필수다.
    이 개발 worker 예외는 preprod에 적용하지 않으며 preprod는 Gemini도 제거한다.
+   채점된 OMR 학생 정정의 격리 실검증은 이 publisher의
+   `-EnableOmrScoredReassignment`를 명시해 API와 worker 개발 복사본에만
+   `OMR_SCORED_REASSIGNMENT_ENABLED=true`를 넣는다. 옵션이 없으면 기존 원본
+   값/기본값 전달 동작을 유지하며 운영 SSM 값을 수정하지 않는다. 새 secret,
+   운영 자원 접근, IAM 권한은 추가하지 않는다. 두 parameter의 정확한 버전
+   readback에서 flag도 대조하고, 반환된 `parameter_version`과
+   `workers_parameter_version`을 기존 배포기의 각각의 expected version으로
+   전달한다. 게시만으로 기존 컨테이너 환경이 갱신되지는 않는다.
+   실행 전 API/AI의 manifest digest·release/source·개발 DB/role·실제 Django
+   flag=true와 API 8000 listener 소유 컨테이너를 확인한다. SSM version은
+   publisher readback과 고정된 bootstrap으로 증명하며 컨테이너에서 직접
+   관측했다고 표기하지 않는다. 검증 후 동일 컨테이너/이미지와 합성 tenant
+   cleanup zero를 재확인한다. HTTP timeout으로 서버 작업 종료가 불명확하면
+   임의 삭제나 zero 판정을 하지 않고 정확한 소유 scope를 복구 담당에게 남긴다.
+   운영 활성화의 호환성/이력 보존 조건은 [OMR 소유 문서](../domain/omr.md#채점된-종이의-학생-귀속-정정)를 따른다.
 3. `deploy-api-development.ps1`이 새 candidate 인스턴스를 만들고 migration, DB 역할,
    운영 DB 접근 거부, 개발 큐, 개발 R2와 운영 R2 접근 거부, Redis, `/healthz`,
    `/health`, 정확한 API/Tools/AI digest를 검증한다.

@@ -7,6 +7,7 @@ param(
     [string]$ReleaseId,
     [string]$GithubOutputPath = "",
     [switch]$EnableHomeworkPreview,
+    [switch]$EnableOmrScoredReassignment,
     [switch]$Ci = $false,
     [string]$AwsProfile = "default"
 )
@@ -263,6 +264,11 @@ function Set-IsolatedDevelopmentValues {
     foreach ($entry in $values.GetEnumerator()) {
         $Target | Add-Member -NotePropertyName $entry.Key -NotePropertyValue $entry.Value -Force
     }
+    # Only the two isolated development copies are changed. Without this opt-in,
+    # preserve the existing source-value/default behavior.
+    if ($EnableOmrScoredReassignment) {
+        $Target | Add-Member -NotePropertyName OMR_SCORED_REASSIGNMENT_ENABLED -NotePropertyValue "true" -Force
+    }
     if ($SettingsModule -eq "apps.api.config.settings.development") {
         $Target | Add-Member -NotePropertyName YOUTUBE_DATA_API_KEY -NotePropertyValue $developmentYoutubeKey -Force
     }
@@ -330,6 +336,7 @@ if (
     [string]$actual.DB_PASSWORD -ne $credentialPassword -or
     [string]$actual.DJANGO_SETTINGS_MODULE -ne "apps.api.config.settings.development" -or
     [string]$actual.ACADEMY_RUNTIME_ENV -ne "development" -or
+    [string]$actual.OMR_SCORED_REASSIGNMENT_ENABLED -cne [string]$production.OMR_SCORED_REASSIGNMENT_ENABLED -or
     [string]$actual.YOUTUBE_DATA_API_KEY -cne $developmentYoutubeKey -or
     [string]$actual.CDN_HLS_BASE_URL -ne "https://cdn.hakwonplus.com" -or
     [string]$actual.CDN_HLS_SIGNING_SECRET -ne $script:ApiDevelopmentCdnSigningSecret -or
@@ -369,6 +376,7 @@ if (
     [string]$actualWorkers.DB_NAME -ne $developmentDatabaseName -or
     [string]$actualWorkers.DB_USER -ne $developmentDatabaseUser -or
     [string]$actualWorkers.DJANGO_SETTINGS_MODULE -ne "apps.api.config.settings.worker" -or
+    [string]$actualWorkers.OMR_SCORED_REASSIGNMENT_ENABLED -cne [string]$productionWorkers.OMR_SCORED_REASSIGNMENT_ENABLED -or
     [string]$actualWorkers.YOUTUBE_DATA_API_KEY -or
     [string]$actualWorkers.CDN_HLS_BASE_URL -ne "https://cdn.hakwonplus.com" -or
     [string]$actualWorkers.CDN_HLS_SIGNING_SECRET -ne $script:ApiDevelopmentCdnSigningSecret -or
