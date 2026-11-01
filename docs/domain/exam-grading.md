@@ -1116,7 +1116,8 @@ ID이고 `total`은 해당 필터 전체 건수다. 식별되지 않은 답안, 
 답안이 달라지면 409로 거부한다. 완료 뒤 응답 유실, 마감 이후 확인, 재응시로
 대체된 이전 요청도 응시 횟수나 현재 대표 성적을 바꾸지 않는다. 접수 직후
 프로세스가 끊긴 요청과 채점 실패 요청은 같은 식별자로 즉시 재처리하며,
-답안·저장 행을 보존한다. `expected_attempt_count`가 현재 응시 횟수와 다르면
+답안·저장 행을 보존한다. 마감 전에 접수된 같은 요청의 실패 복구는 마감 후에도
+허용하지만 새 요청의 마감 검사는 유지한다. `expected_attempt_count`가 현재 응시 횟수와 다르면
 새 접수를 409로 거부하여 여러 탭의 오래된 화면이 새 재응시를 소모하지 않는다.
 두 값은 순차 배포 호환을 위해 선택 사항이며, 이전 클라이언트의 실제 재응시
 의미는 바꾸지 않는다. 신규 nullable 식별자와 유일 인덱스만 추가하고 기존
@@ -1125,6 +1126,11 @@ ID이고 `total`은 해당 필터 전체 건수다. 식별되지 않은 답안, 
 기존 행과 구버전 API의 null 쓰기는 제약에서 제외되는 호환성을 확인한 뒤,
 정확한 병합 main 후보를 `allow_contract_migrations=true`로 dispatch한다.
 development/preprod migration·health와 운영 rolling 검증은 그대로 필수다.
+PostgreSQL에서는 migration을 비원자적으로 실행하고 unique 인덱스를
+`CONCURRENTLY`로 만들어 전체 인덱스 스캔 동안 제출 쓰기를 막지 않는다.
+기본값 없는 nullable 열 추가는 짧은 DDL 잠금만 사용하며 데이터 재작성은 없다.
+앱 rollback은 추가 스키마를 유지한다. DB rollback은 별도 검토 대상이며,
+인덱스 역연산은 concurrent 삭제를 사용하고 열 제거 시 요청 식별자가 사라진다.
 검증: `test_online_submission_idempotency.py`, PostgreSQL의
 `test_concurrent_same_request_dispatches_one_attempt`, 프런트엔드
 `numeric-short-answer.spec.ts`의 응답 유실·reload·마감 후 확인 흐름.

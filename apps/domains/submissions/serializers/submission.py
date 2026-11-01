@@ -113,6 +113,9 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data.pop("expected_attempt_count", None)
+        # Online exam admission consumes this field in its owning service.
+        # File submissions retain their own upload identity contract.
+        validated_data.pop("client_request_id", None)
         upload_file = validated_data.pop("file", None)
         tenant = validated_data.pop("tenant", None)
         user = validated_data.pop("user", None)

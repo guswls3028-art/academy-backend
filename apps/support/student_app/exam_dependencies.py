@@ -412,9 +412,9 @@ def create_online_exam_submission(
             exam.refresh_from_db()
             validate_online_exam_readiness(exam)
             now = timezone.now()
-            if exam.open_at and now < exam.open_at:
+            if not existing and exam.open_at and now < exam.open_at:
                 raise StudentExamSubmitError("아직 시험 응시 시간이 아닙니다.", 409)
-            if exam.close_at and now > exam.close_at:
+            if not existing and exam.close_at and now > exam.close_at:
                 raise StudentExamSubmitError("시험이 마감되었습니다.", 409)
             attempt_indexes = list(
                 ExamAttempt.objects.select_for_update()

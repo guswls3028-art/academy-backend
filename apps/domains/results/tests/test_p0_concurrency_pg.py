@@ -13,6 +13,7 @@ import threading
 import time
 import uuid
 import unittest
+from importlib import import_module
 from unittest.mock import patch
 
 import pytest
@@ -113,6 +114,34 @@ class TestP0ConcurrencyPG(TransactionTestCase):
         self.assertEqual(len(set(accepted)), 1)
         self.assertEqual(ExamAttempt.objects.filter(exam=exam, enrollment=enrollment).count(), 1)
         self.assertEqual(Submission.objects.get(pk=accepted[0]).status, Submission.Status.DONE)
+
+    def test_request_index_preserves_legacy_null_writes_and_can_rebuild_concurrently(self):
+        tenant, enrollment, exam = self._setup_data()
+        fields = dict(tenant=tenant, user=enrollment.student.user, enrollment=enrollment,
+                      target_type=Submission.TargetType.EXAM, target_id=exam.pk,
+                      source=Submission.Source.ONLINE, status=Submission.Status.FAILED,
+                      payload={"answers": [{"exam_question_id": 1, "answer": "1"}]})
+        original = Submission.objects.create(**fields)
+        # Execute an old-instance INSERT that has no knowledge of the new column.
+        columns = ", ".join(connection.ops.quote_name(field.column) for field in Submission._meta.local_fields
+                            if not field.primary_key and field.name != "client_request_id")
+        table = connection.ops.quote_name(Submission._meta.db_table)
+        with connection.cursor() as cursor:
+            cursor.execute(f"INSERT INTO {table} ({columns}) SELECT {columns} FROM {table} WHERE id = %s", [original.pk])
+        migration = import_module("apps.domains.submissions.migrations.0014_submission_client_request_id")
+        with connection.schema_editor(atomic=False) as editor:
+            migration.remove_request_index(django_apps, editor)
+            migration.create_request_index(django_apps, editor)
+        self.assertEqual(Submission.objects.filter(client_request_id__isnull=True).count(), 2)
+        original.refresh_from_db()
+        self.assertEqual(original.payload, fields["payload"])
+        key = uuid.uuid4()
+        Submission.objects.create(**fields, client_request_id=key)
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Submission.objects.create(**fields, client_request_id=key)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT indisvalid, indisunique FROM pg_index WHERE indexrelid = 'unique_submission_client_request'::regclass")
+            self.assertEqual(cursor.fetchone(), (True, True))
 
     def test_concurrent_legal_retake_creates_one_active_submission(self):
         tenant, enrollment, exam = self._setup_data()

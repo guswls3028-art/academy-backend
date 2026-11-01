@@ -111,10 +111,15 @@ class OnlineSubmissionIdempotencyTests(TestCase):
             self.assertEqual(self.submit(key).status_code, 500)
         saved = apps.get_model("submissions", "Submission").objects.get(client_request_id=key)
         self.assertEqual(saved.status, "failed")
+        # Admission was accepted on time; a processing outage must not turn the
+        # deadline into loss of that accepted answer snapshot.
+        self.exam.close_at = timezone.now() - timedelta(seconds=1)
+        self.exam.save(update_fields=["close_at"])
         response = self.submit(key)
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(response.data["submission_id"], saved.pk)
         self.assertEqual(self.attempts().count(), 1)
+        self.assertEqual(self.submit(uuid.uuid4()).status_code, 409)
 
     def test_retry_resumes_interrupted_admission_without_thirty_minute_wait(self):
         key = uuid.uuid4()
