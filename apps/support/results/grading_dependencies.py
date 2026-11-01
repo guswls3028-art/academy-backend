@@ -54,18 +54,12 @@ def linked_session_enrollment_exists(*, exam: Any, enrollment_id: int) -> bool:
 
 
 def materialize_exam_enrollment_from_linked_session(*, exam: Any, enrollment_id: int) -> bool:
-    from apps.domains.exams.models import ExamEnrollment
+    from apps.support.exams.enrollment_candidates import ensure_legacy_exam_roster_candidate
 
-    if exam_has_explicit_targets(exam_id=exam.id):
-        return False
-    if not linked_session_enrollment_exists(exam=exam, enrollment_id=enrollment_id):
-        return False
-
-    ExamEnrollment.objects.get_or_create(
-        exam_id=exam.id,
-        enrollment_id=int(enrollment_id),
+    return ensure_legacy_exam_roster_candidate(
+        tenant=exam.tenant, exam_id=exam.id, enrollment_id=int(enrollment_id),
+        include_attendance=True,
     )
-    return True
 
 
 def get_active_submission_enrollment(*, submission: Any) -> Any | None:
