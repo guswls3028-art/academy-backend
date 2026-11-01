@@ -1994,6 +1994,7 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         student = self.make_student(self.tenant, "idcard_without_enrollment")
         student.user.tenant = self.tenant
         student.user.save(update_fields=["tenant"])
+        TenantMembership.ensure_active(tenant=self.tenant, user=student.user, role="student")
         parent = self._make_idcard_parent([student, self.student])
         counts = (Enrollment.objects.count(), ClinicLink.objects.count(), SessionParticipant.objects.count())
         for user, selection in ((student.user, {}), (parent, {"HTTP_X_STUDENT_ID": str(student.id)})):
