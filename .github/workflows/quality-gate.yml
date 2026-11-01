@@ -329,9 +329,17 @@ jobs:
       - name: Full backend regression on PostgreSQL
         if: needs.change-scope.outputs.prose_only != 'true'
         run: |
-          python -m pytest -q --tb=short \
+          python -m pytest -q --tb=short --junitxml=test-results/postgresql.xml \
             apps/api apps/billing apps/core apps/shared apps/support apps/domains tests \
             apps/domains/tools/problem_studio/test_conversions.py
+      - name: Preserve PostgreSQL test results
+        if: always() && needs.change-scope.outputs.prose_only != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: postgresql-test-results
+          path: test-results/postgresql.xml
+          retention-days: 7
+          if-no-files-found: error
       - name: Record unchanged PostgreSQL test scope
         if: needs.change-scope.outputs.prose_only == 'true'
         run: echo "Known Markdown-only diff; no application, test, schema, runtime, dependency or executable policy changes."
