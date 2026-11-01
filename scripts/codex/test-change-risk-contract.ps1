@@ -96,6 +96,17 @@ Assert-Contains $iphoneLoginQa.Gates "frontend-e2e" "iPhone login QA must retain
 Assert-Contains $iphoneLoginQa.Gates "frontend-deployment-contracts" "iPhone login QA must retain deployment contracts"
 Assert-True (-not $iphoneLoginQa.DocsOnly) "executable login QA is not documentation-only"
 
+foreach ($diagnostic in @("provider", "native")) {
+    $providerDiagnostic = Get-AcademyChangeRiskPlan -FrontendPaths @("scripts/public-video-$diagnostic-diagnostic.mjs")
+    Assert-Contains $providerDiagnostic.Gates "frontend-e2e" "public video diagnostics must retain frontend E2E"
+    Assert-Contains $providerDiagnostic.Gates "frontend-deployment-contracts" "public video diagnostics must retain deployment contracts"
+    Assert-True (-not $providerDiagnostic.DocsOnly) "executable diagnostics are not documentation-only"
+    Assert-True (-not $providerDiagnostic.RequiresProductionReleaseBundle) "diagnostics alone do not introduce application release changes"
+}
+Assert-Throws {
+    Get-AcademyChangeRiskPlan -FrontendPaths @("scripts/public-video-provider-diagnostic-unsafe.mjs") | Out-Null
+} "Unclassified non-documentation path"
+
 $apiSourcePin = Get-AcademyChangeRiskPlan -BackendPaths @() `
     -FrontendPaths @("scripts/openapi-backend-source.json")
 Assert-Contains $apiSourcePin.Risks "frontend-runtime-build" "API source pin is a generated build contract"

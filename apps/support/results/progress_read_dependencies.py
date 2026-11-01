@@ -253,27 +253,30 @@ def session_progress_queryset_for_session(session: Any):
 
 def session_score_enrollment_ids(*, tenant: Any, session: Any) -> list[int]:
     """Return the attendance-first active roster shared by session score reads."""
+    return sorted(session_score_enrollment_ids_by_session(tenant=tenant, sessions=[session])[session.id])
+
+
+def session_score_enrollment_ids_by_session(*, tenant: Any, sessions: Iterable[Any]) -> dict[int, set[int]]:
+    """Read class-wide attendance precedence once for an entire session history."""
+    from django.db.models import F
     from apps.domains.attendance.models import Attendance
     from apps.domains.enrollment.models import SessionEnrollment
 
+    session_ids = {session.id for session in sessions}
     roster_filter = {
         "tenant": tenant,
-        "session": session,
-        "enrollment__lecture": session.lecture,
+        "session_id__in": session_ids,
+        "session__lecture__tenant": tenant,
+        "enrollment__lecture_id": F("session__lecture_id"),
         "enrollment__status": "ACTIVE",
         "enrollment__student__deleted_at__isnull": True,
     }
-    session_enrollment_ids = list(
-        SessionEnrollment.objects.filter(**roster_filter)
-        .values_list("enrollment_id", flat=True)
-        .distinct()
-    )
-    attendance_enrollment_ids = list(
-        Attendance.objects.filter(**roster_filter)
-        .values_list("enrollment_id", flat=True)
-        .distinct()
-    )
-    return attendance_enrollment_ids or session_enrollment_ids
+    enrolled = {sid: set() for sid in session_ids}
+    attended = {sid: set() for sid in session_ids}
+    for model, grouped in ((SessionEnrollment, enrolled), (Attendance, attended)):
+        for sid, eid in model.objects.filter(**roster_filter).values_list("session_id", "enrollment_id").distinct():
+            grouped[sid].add(eid)
+    return {sid: attended[sid] or enrolled[sid] for sid in session_ids}
 
 
 def session_progress_count_for_session_ids(session_ids: Iterable[int]) -> int:
