@@ -318,6 +318,7 @@ $rows = @(Get-StructuralDrift)
         data = json.loads(lines[0].split("=", 1)[1])
         self.assertEqual(data["productionCE"], ["academy-video-ce", "academy-ops-ce"])
         self.assertEqual(data["productionQueue"], ["academy-video-queue", "academy-ops-queue"])
+        self.drift_rows = {row["Name"]: row for row in data["rows"]}
         return {row["Name"]: row["Action"] for row in data["rows"]}
 
     def test_only_declared_healthy_resources_are_noop(self):
@@ -374,6 +375,7 @@ $rows = @(Get-StructuralDrift)
             self.assertEqual(rows[name], "NoOp")
         for name in unknown_names:
             self.assertEqual(rows[name], "Review")
+            self.assertEqual(self.drift_rows[name]["Actual"], "VALID/DISABLED")
 
     def test_missing_configuration_and_resources_still_require_review(self):
         self.fixture["params"] = {}

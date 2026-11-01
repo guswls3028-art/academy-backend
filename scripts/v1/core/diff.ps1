@@ -257,7 +257,7 @@ function Get-StructuralDrift {
         -ExpectedNames $expectedCEs `
         -ActualLabel {
             param($name)
-            $ce = $ceArr | Where-Object { $_.computeEnvironmentName -eq $name } | Select-Object -First 1
+            $ce = $ceArr | Where-Object { $_.computeEnvironmentName -ceq $name } | Select-Object -First 1
             if (-not $ce) { return "exists" }
             return "$($ce.status)/$($ce.state)"
         }
@@ -301,7 +301,7 @@ function Get-StructuralDrift {
         -ExpectedNames $expectedQueues `
         -ActualLabel {
             param($name)
-            $queue = $qArr | Where-Object { $_.jobQueueName -eq $name } | Select-Object -First 1
+            $queue = $qArr | Where-Object { $_.jobQueueName -ceq $name } | Select-Object -First 1
             if (-not $queue) { return "exists" }
             return "$($queue.status)/$($queue.state)"
         }
