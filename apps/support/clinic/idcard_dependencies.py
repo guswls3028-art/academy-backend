@@ -5,12 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 
-def student_for_idcard_user(*, tenant: Any, user: Any) -> Any | None:
-    from apps.domains.students.selectors import student_for_tenant_user
-
-    return student_for_tenant_user(tenant, user, deleted="active")
-
-
 def active_enrollments_for_student(*, tenant: Any, student: Any) -> list[Any]:
     from apps.domains.enrollment.selectors import enrollments_for_tenant
 

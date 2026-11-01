@@ -511,6 +511,19 @@ description into scope. `source_title` is the tenant-scoped Exam/Homework title,
 `source_scope` stays `null` until that source domain owns a dedicated unit/range value;
 clients render the missing scope explicitly instead of hiding the rest of the target.
 The passcard keeps the unresolved `ClinicLink` verdict in `current_result` and returns
+the same selected-student projection for a student and their authorized parent.
+`GET /clinic/idcard/` uses the shared student-app request resolver: a student always
+reads their own active profile; a parent must explicitly select an active linked
+child with `X-Student-Id`. Switching children recomputes targets, bookings and the
+verdict from that child's enrollments. Missing/invalid selection, another parent's
+child, another tenant, deleted students, and non-student/non-parent callers fail
+with `403`; an unresolved identity must never become an empty `SUCCESS` passcard.
+The existing client error/retry state handles rejection, and selecting an authorized
+child restores the ordinary passcard journey. No student, grade, enrollment or
+clinic records are migrated or changed by this read-side correction. Regression
+coverage in `StudentClinicPermissionAPITest` verifies repeated GETs, child switching,
+two unresolved homework targets, booking confirmation, resolution and isolation.
+The response also returns
 the separate `passcard_state` (`PASSED`, `CLINIC_REQUIRED`, or
 `BOOKING_CONFIRMED`). A future-or-today `booked` reservation yields
 `BOOKING_CONFIRMED` without resolving any `ClinicLink`. After check-in, `attended`
