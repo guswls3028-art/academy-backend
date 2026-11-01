@@ -485,6 +485,320 @@ class SubmissionScopeGuardTests(TestCase):
         self.assertEqual(caught.exception.code, "max_attempts_exceeded")
         self.assertEqual(ExamAttempt.objects.get(exam=self.exam).submission_id, 77)
 
+    def test_mixed_omr_assignment_without_key_preserves_answers_then_key_save_grades(self):
+        from django.urls import resolve
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from apps.core.models import TenantMembership
+
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.admin, role="teacher")
+        self.exam.max_score = 100
+        self.exam.save(update_fields=["max_score"])
+        self.sheet.total_questions = 20
+        self.sheet.choice_count = 19
+        self.sheet.essay_count = 1
+        self.sheet.save(update_fields=["total_questions", "choice_count", "essay_count"])
+        self.question.score = 5
+        self.question.save(update_fields=["score"])
+        choices = [self.question] + [
+            ExamQuestion.objects.create(sheet=self.sheet, number=number, score=5)
+            for number in range(2, 20)
+        ]
+        essay = ExamQuestion.objects.create(sheet=self.sheet, number=20, score=5)
+        AnswerKey.objects.filter(exam=self.exam).delete()
+        submission = self._submission_for_exam(self.exam, self.question)
+        submission.source = Submission.Source.OMR_SCAN
+        submission.enrollment_id = None
+        submission.status = Submission.Status.NEEDS_IDENTIFICATION
+        submission.file_key = f"tenants/{self.tenant.id}/qa/omr-existing.png"
+        submission.save(update_fields=["source", "enrollment_id", "status", "file_key", "updated_at"])
+        SubmissionAnswer.objects.bulk_create([
+            SubmissionAnswer(tenant=self.tenant, submission=submission, exam_question_id=q.id, answer="1")
+            for q in choices[1:]
+        ])
+        OMRRecognitionRun.objects.create(
+            tenant=self.tenant, submission=submission, status="DONE", answer_count=19,
+            answer_status_counts={"ok": 19},
+            contract_snapshot={"choice_count": 19, "essay_count": 1, "auto_detect_count": 19},
+        )
+        original_answers = list(submission.answers.order_by("id").values("id", "answer"))
+        original_file = submission.file_key
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
+
+        def post(path, payload):
+            request = APIRequestFactory().post(path, payload, format="json")
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            route = resolve(path)
+            return route.func(request, **route.kwargs)
+
+        for _ in range(2):
+            response = post(
+                f"/api/v1/submissions/submissions/{submission.id}/manual-edit/",
+                {"identifier": {"enrollment_id": self.enrollment.id}, "answers": []},
+            )
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertFalse(response.data["graded"])
+            self.assertEqual(response.data["code"], "OMR_GRADING_CONFIGURATION_REQUIRED")
+            self.assertIn("answer_key", response.data["readiness"]["missing"])
+            self.assertEqual(response.data["readiness"]["answer_count"], 19)
+            submission.refresh_from_db()
+            self.assertEqual(submission.status, Submission.Status.ANSWERS_READY)
+            self.assertEqual(submission.enrollment_id, self.enrollment.id)
+            self.assertEqual(submission.file_key, original_file)
+            self.assertEqual(list(submission.answers.order_by("id").values("id", "answer")), original_answers)
+            self.assertFalse(Result.objects.filter(target_id=self.exam.id).exists())
+            self.assertFalse(ExamAttempt.objects.filter(exam=self.exam).exists())
+
+        def inbox_row():
+            path = "/api/v1/submissions/submissions/pending/"
+            request = APIRequestFactory().get(path)
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            route = resolve(path)
+            response = route.func(request, **route.kwargs)
+            self.assertEqual(response.status_code, 200, response.data)
+            return next(row for row in response.data if row["id"] == submission.id)
+
+        for _ in range(2):
+            row = inbox_row()
+            self.assertEqual(row["omr_readiness"], {"can_grade": False, "missing": ["answer_key"]})
+            self.assertEqual(row["recovery"], {"action": "configure_exam", "exam_id": self.exam.id})
+
+        discarded = Submission.objects.create(
+            tenant=self.tenant, user=self.admin, enrollment_id=self.enrollment.id,
+            target_type=Submission.TargetType.EXAM, target_id=self.exam.id,
+            source=Submission.Source.OMR_SCAN, status=Submission.Status.FAILED,
+            file_key=f"tenants/{self.tenant.id}/qa/discarded-original.png",
+            error_message="discarded:operator_discarded",
+            meta={"discarded": {"reason": "operator_discarded"}},
+        )
+        SubmissionAnswer.objects.create(
+            tenant=self.tenant, submission=discarded, exam_question_id=self.question.id, answer="2",
+        )
+        discarded_before = list(Submission.objects.filter(pk=discarded.id).values())
+        discarded_answers = list(discarded.answers.values())
+
+        # Only the teacher's authoritative key completes the existing uploads.
+        response = post("/api/v1/exams/answer-keys/", {
+            "exam": self.exam.id, "answers": {str(q.id): "1" for q in choices},
+        })
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["regrade"][0]["graded"], 1)
+        self.assertEqual(response.data["regrade"][0]["skipped"], 1)
+        self.assertEqual(response.data["regrade"][0]["failed"], [])
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.DONE)
+        self.assertEqual(submission.file_key, original_file)
+        self.assertEqual(list(submission.answers.order_by("id").values("id", "answer")), original_answers)
+        result = Result.objects.get(target_id=self.exam.id, enrollment=self.enrollment)
+        self.assertEqual(result.objective_score, 95)
+        self.assertEqual(ExamAttempt.objects.filter(exam=self.exam).count(), 1)
+        self.assertEqual(ExamResult.objects.get(submission=submission).status, ExamResult.Status.DRAFT)
+        self.assertFalse(ResultItem.objects.filter(result=result, question=essay, source="manual").exists())
+        self.assertIsNone(inbox_row()["omr_readiness"])
+        self.assertIsNone(inbox_row()["recovery"])
+
+        # The teacher's item score completes both the mixed exam and its stats.
+        from apps.domains.results.models import ScoreEditDraft
+
+        ScoreEditDraft.objects.create(
+            tenant=self.tenant, session=self.session, editor_user=self.admin,
+            client_id="mixed-key-recovery", payload={"client_id": "mixed-key-recovery", "changes": []},
+        )
+        path = f"/api/v1/results/admin/exams/{self.exam.id}/enrollments/{self.enrollment.id}/items/{essay.id}/"
+        request = APIRequestFactory().patch(
+            path, {"score": 5}, format="json",
+            HTTP_X_SCORE_EDITOR_CLIENT="mixed-key-recovery", HTTP_X_SCORE_SESSION_ID=str(self.session.id),
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        route = resolve(path)
+        response = route.func(request, **route.kwargs)
+        self.assertEqual(response.status_code, 200, response.data)
+        result.refresh_from_db()
+        canonical = ExamResult.objects.get(submission=submission)
+        self.assertEqual((result.objective_score, result.total_score), (95, 100))
+        self.assertEqual((canonical.status, canonical.total_score), (ExamResult.Status.FINAL, 100))
+        stats = QuestionStatsService.per_question_stats(exam_id=self.exam.id)
+        objective_stats = [row for row in stats if row["question_id"] in {q.id for q in choices}]
+        self.assertEqual(len(objective_stats), 19)
+        self.assertEqual({(row["attempts"], row["avg_score"]) for row in objective_stats}, {(1, 5)})
+        self.assertEqual(len(stats), 20)
+        essay_stats = next(row for row in stats if row["question_id"] == essay.id)
+        self.assertEqual(
+            (essay_stats["attempts"], essay_stats["avg_score"], essay_stats["correct"], essay_stats["accuracy"]),
+            (1, 5, 1, 1.0),
+        )
+        self.assertEqual(list(Submission.objects.filter(pk=discarded.id).values()), discarded_before)
+        self.assertEqual(list(discarded.answers.values()), discarded_answers)
+        self.assertFalse(ExamResult.objects.filter(submission=discarded).exists())
+        self.assertFalse(ExamAttempt.objects.filter(submission_id=discarded.id).exists())
+
+    def test_existing_omr_results_reject_invalid_configuration_without_saving_changed_answers(self):
+        from django.urls import resolve
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from apps.core.models import TenantMembership
+
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.admin, role="teacher")
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
+        submission = self._submission_for_exam(self.exam, self.question)
+        submission.source = Submission.Source.OMR_SCAN
+        submission.save(update_fields=["source"])
+        grade_submission(submission.id)
+
+        def post(path, payload):
+            request = APIRequestFactory().post(path, payload, format="json")
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            route = resolve(path)
+            return route.func(request, **route.kwargs)
+
+        def snapshot():
+            submission.refresh_from_db()
+            return {
+                "answers": list(submission.answers.order_by("id").values()),
+                "meta": submission.meta,
+                "enrollment_id": submission.enrollment_id,
+                "status": submission.status,
+                "results": list(Result.objects.filter(target_id=self.exam.id).values()),
+                "canonical": list(ExamResult.objects.filter(submission=submission).values()),
+                "facts": list(ResultFact.objects.filter(target_id=self.exam.id).order_by("id").values()),
+                "stats": QuestionStatsService.per_question_stats(exam_id=self.exam.id),
+            }
+
+        path = f"/api/v1/submissions/submissions/{submission.id}/manual-edit/"
+        for invalid_key in (None, [], {str(self.question.id + 1000): "1"}):
+            with self.subTest(key=invalid_key):
+                AnswerKey.objects.filter(exam=self.exam).delete()
+                if invalid_key is not None:
+                    AnswerKey.objects.create(exam=self.exam, answers=invalid_key)
+                    # A result must also protect a submission reopened by another flow.
+                    Submission.objects.filter(pk=submission.pk).update(status=Submission.Status.ANSWERS_READY)
+                before = snapshot()
+                response = post(path, {"answers": [{"question_id": self.question.id, "answer": "2"}]})
+                self.assertEqual(response.status_code, 409, response.data)
+                self.assertEqual(response.data["code"], "OMR_GRADING_CONFIGURATION_CONFLICT")
+                self.assertEqual(response.data["missing"], ["answer_key"])
+                self.assertEqual(snapshot(), before)
+
+        key = AnswerKey.objects.get(exam=self.exam)
+        key_path = f"/api/v1/exams/answer-keys/{key.id}/"
+        request = APIRequestFactory().patch(
+            key_path, {"answers": {str(self.question.id): "1"}}, format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        route = resolve(key_path)
+        response = route.func(request, **route.kwargs)
+        self.assertEqual(response.status_code, 200, response.data)
+        response = post(path, {"answers": [{"question_id": self.question.id, "answer": "2"}]})
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["graded"])
+        self.assertEqual(submission.answers.get().answer, "2")
+        self.assertEqual(Result.objects.get(target_id=self.exam.id).total_score, 0)
+        self.assertEqual(ExamResult.objects.get(submission=submission).status, ExamResult.Status.FINAL)
+        self.assertEqual(QuestionStatsService.per_question_stats(exam_id=self.exam.id)[0]["avg_score"], 0)
+        self.assertEqual(ExamAttempt.objects.filter(exam=self.exam).count(), 1)
+
+    def test_pending_configuration_is_fresh_cached_per_exam_and_has_no_foreign_recovery(self):
+        from unittest.mock import patch
+        from django.urls import resolve
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from apps.core.models import TenantMembership
+        from apps.support.submissions.grading_contract_dependencies import omr_grading_configuration_missing
+
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.admin, role="teacher")
+        rows = []
+        for _ in range(2):
+            submission = self._submission_for_exam(self.exam, self.question)
+            submission.source = Submission.Source.OMR_SCAN
+            submission.meta = {"omr_readiness": {"can_grade": True, "missing": []}}
+            submission.save(update_fields=["source", "meta"])
+            rows.append(submission)
+
+        def get():
+            path = "/api/v1/submissions/submissions/pending/"
+            request = APIRequestFactory().get(path)
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            route = resolve(path)
+            response = route.func(request, **route.kwargs)
+            self.assertEqual(response.status_code, 200, response.data)
+            return response.data
+
+        AnswerKey.objects.filter(exam=self.exam).update(answers=[])
+        before = list(Submission.objects.order_by("id").values())
+        with patch(
+            "apps.domains.submissions.views.pending_submissions_view.omr_grading_configuration_missing",
+            wraps=omr_grading_configuration_missing,
+        ) as check:
+            response = get()
+        check.assert_called_once_with(tenant_id=self.tenant.id, exam_id=self.exam.id)
+        self.assertEqual([r["omr_readiness"]["missing"] for r in response], [["answer_key"], ["answer_key"]])
+        self.assertEqual(list(Submission.objects.order_by("id").values()), before)
+        AnswerKey.objects.filter(exam=self.exam).update(answers={str(self.question.id): "1"})
+        self.assertTrue(all(r["omr_readiness"] is None and r["recovery"] is None for r in get()))
+
+        foreign = Tenant.objects.create(code="pending-foreign-key", name="Foreign")
+        foreign_exam = Exam.objects.create(tenant=foreign, title="Foreign", exam_type=Exam.ExamType.REGULAR)
+        Submission.objects.filter(pk=rows[0].id).update(target_id=foreign_exam.id)
+        Submission.objects.filter(pk=rows[1].id).update(meta={"discarded": {"reason": "duplicate"}})
+        AnswerKey.objects.filter(exam=self.exam).delete()
+        self.assertTrue(all(r["omr_readiness"] is None and r["recovery"] is None for r in get()))
+
+    def test_key_save_preserves_teacher_result_entered_after_pending_assignment(self):
+        from django.urls import resolve
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from apps.core.models import TenantMembership
+
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.admin, role="teacher")
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
+        AnswerKey.objects.filter(exam=self.exam).delete()
+        submission = self._submission_for_exam(self.exam, self.question)
+        submission.source = Submission.Source.OMR_SCAN
+        submission.enrollment_id = None
+        submission.save(update_fields=["source", "enrollment_id"])
+
+        def post(path, payload):
+            request = APIRequestFactory().post(path, payload, format="json")
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            route = resolve(path)
+            return route.func(request, **route.kwargs)
+
+        response = post(f"/api/v1/submissions/submissions/{submission.id}/manual-edit/", {
+            "identifier": {"enrollment_id": self.enrollment.id}, "answers": [],
+        })
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data["graded"])
+        # A later independent teacher score is authoritative, even while the
+        # older scan is waiting for its key. It must not become an OMR result.
+        attempt = ExamAttempt.objects.create(
+            exam=self.exam, enrollment=self.enrollment, submission_id=0,
+            attempt_index=1, is_representative=True, status="done",
+            meta={"initial_snapshot": {"source": "admin_manual_total", "total_score": 7, "max_score": 10}},
+        )
+        result = Result.objects.create(
+            target_type="exam", target_id=self.exam.id, enrollment=self.enrollment,
+            attempt=attempt, total_score=7, objective_score=7, max_score=10,
+        )
+        original = {
+            "submission": list(Submission.objects.filter(pk=submission.id).values()),
+            "answers": list(submission.answers.values()),
+            "result": list(Result.objects.filter(pk=result.id).values()),
+            "attempt": list(ExamAttempt.objects.filter(pk=attempt.id).values()),
+        }
+        response = post("/api/v1/exams/answer-keys/", {
+            "exam": self.exam.id, "answers": {str(self.question.id): "1"},
+        })
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(list(Submission.objects.filter(pk=submission.id).values()), original["submission"])
+        self.assertEqual(list(submission.answers.values()), original["answers"])
+        self.assertEqual(list(Result.objects.filter(pk=result.id).values()), original["result"])
+        self.assertEqual(list(ExamAttempt.objects.filter(pk=attempt.id).values()), original["attempt"])
+        self.assertFalse(AnswerKey.objects.filter(exam=self.exam).exists())
+        self.assertFalse(ExamResult.objects.filter(submission=submission).exists())
+
     def test_late_roster_assignment_retries_unknown_errors_and_persists_without_answer_changes(self):
         from unittest.mock import patch
         from django.urls import resolve
@@ -534,6 +848,24 @@ class SubmissionScopeGuardTests(TestCase):
             self.assertEqual(Result.objects.get(target_id=self.exam.id).total_score, 10)
             self.assertEqual(ExamResult.objects.get(submission=submission).status, ExamResult.Status.FINAL)
         self.assertEqual(ExamAttempt.objects.filter(exam=self.exam).count(), 1)
+
+    def test_omr_configuration_validates_the_existing_key_contract_in_the_same_tenant(self):
+        from apps.support.submissions.grading_contract_dependencies import omr_grading_configuration_missing
+
+        def missing(exam_id):
+            return omr_grading_configuration_missing(tenant_id=self.tenant.id, exam_id=exam_id)
+
+        for answers in (None, [], {str(self.question.id + 1000): "1"}):
+            AnswerKey.objects.filter(exam=self.exam).delete()
+            if answers is not None:
+                AnswerKey.objects.create(exam=self.exam, answers=answers)
+            self.assertIn("answer_key", missing(self.exam.id))
+        AnswerKey.objects.filter(exam=self.exam).update(answers={str(self.question.id): "1"})
+        self.assertEqual(missing(self.exam.id), [])
+        other_tenant = Tenant.objects.create(code="omr-other-config", name="Other Config")
+        foreign_exam = Exam.objects.create(tenant=other_tenant, title="Other", exam_type=Exam.ExamType.REGULAR)
+        self.assertEqual(missing(foreign_exam.id), ["exam"])
+        self.assertFalse(ExamAttempt.objects.filter(exam=self.exam).exists())
 
     def test_sync_attaches_zero_manual_component_placeholders_to_real_submission(self):
         ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)

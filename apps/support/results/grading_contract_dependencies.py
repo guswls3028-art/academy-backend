@@ -20,14 +20,14 @@ def validate_exam_grading_contract(exam: Any, *, require_online_answers: bool = 
 
     sheet = getattr(template_exam, "sheet", None)
     if not isinstance(sheet, Sheet):
-        raise ValidationError("template exam must have a valid sheet")
+        raise ValidationError("template exam must have a valid sheet", code="sheet")
 
     answer_key = getattr(template_exam, "answer_key", None)
     if not isinstance(answer_key, AnswerKey):
-        raise ValidationError("template exam must have an answer_key")
+        raise ValidationError("template exam must have an answer_key", code="answer_key")
 
     if not isinstance(answer_key.answers, dict):
-        raise ValidationError("answer_key.answers must be a dict")
+        raise ValidationError("answer_key.answers must be a dict", code="answer_key")
 
     def has_answer_value(value: Any) -> bool:
         if isinstance(value, list):
@@ -47,7 +47,7 @@ def validate_exam_grading_contract(exam: Any, *, require_online_answers: bool = 
     }
 
     if unknown_key_ids:
-        raise ValidationError("answer_key contains unknown question ids")
+        raise ValidationError("answer_key contains unknown question ids", code="answer_key")
 
     if require_online_answers:
         from apps.support.omr.score_shape import get_exam_score_shape

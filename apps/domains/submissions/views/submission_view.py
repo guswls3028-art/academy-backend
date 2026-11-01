@@ -870,6 +870,18 @@ class SubmissionViewSet(ModelViewSet):
                 allow_done_regrade=True,
             )
         except Exception as exc:
+            if isinstance(exc, DjangoValidationError) and getattr(exc, "code", None) == "omr_grading_configuration_conflict":
+                transaction.set_rollback(True)
+                return Response(
+                    {
+                        "submission_id": submission.id,
+                        "code": "OMR_GRADING_CONFIGURATION_CONFLICT",
+                        "detail": "정답·문항 설정을 먼저 확인해 주세요. 기존 답안과 성적은 변경되지 않았습니다.",
+                        "missing": (exc.params or {}).get("missing", []),
+                        "recovery": {"action": "configure_exam", "exam_id": int(submission.target_id)},
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
             if isinstance(exc, DjangoValidationError) and getattr(exc, "code", None) in {
                 "retake_not_allowed", "max_attempts_exceeded",
             }:
@@ -911,6 +923,9 @@ class SubmissionViewSet(ModelViewSet):
 
         submission.refresh_from_db(fields=["status", "enrollment_id"])
         if not decision.graded:
+            configuration_required = bool(set(decision.readiness.missing) & {
+                "answer_key", "sheet", "grading_configuration",
+            })
             return Response(
                 {
                     "submission_id": submission.id,
@@ -924,6 +939,14 @@ class SubmissionViewSet(ModelViewSet):
                     "total_score": None,
                     "max_score": None,
                     "readiness": readiness_payload(decision.readiness),
+                    **({
+                        "code": "OMR_GRADING_CONFIGURATION_REQUIRED",
+                        "detail": "학생 배정과 답안을 저장했습니다. 시험의 정답·문항 설정을 완료해 주세요.",
+                        "recovery": {
+                            "action": "configure_exam",
+                            "exam_id": int(submission.target_id),
+                        },
+                    } if configuration_required else {}),
                 }
             )
 

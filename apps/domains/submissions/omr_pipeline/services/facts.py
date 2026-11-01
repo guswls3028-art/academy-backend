@@ -22,6 +22,7 @@ from apps.domains.submissions.models import (
     SubmissionAnswer,
 )
 from apps.support.omr.exam_structure import OmrExamStructure
+from apps.support.submissions.grading_contract_dependencies import omr_grading_configuration_missing
 
 
 @dataclass(frozen=True)
@@ -190,6 +191,10 @@ def evaluate_omr_grade_readiness(submission: Submission) -> OMRGradeReadiness:
         missing.append("not_omr_scan")
     if submission.target_type != Submission.TargetType.EXAM:
         missing.append("not_exam")
+    if submission.source == Submission.Source.OMR_SCAN and submission.target_type == Submission.TargetType.EXAM:
+        missing.extend(omr_grading_configuration_missing(
+            tenant_id=int(submission.tenant_id), exam_id=int(submission.target_id),
+        ))
     if submission.status in (
         Submission.Status.FAILED,
         Submission.Status.GRADING,
