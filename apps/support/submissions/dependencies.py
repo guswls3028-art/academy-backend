@@ -150,6 +150,13 @@ def rebind_representative_omr_submission(
     from apps.domains.submissions.models import Submission
 
     with transaction.atomic():
+        # A teacher correcting an already graded paper's student is not
+        # replacing the destination student's scan. Results owns the atomic
+        # attribution correction and its grade/history/conflict policy.
+        if ExamAttempt.objects.select_for_update().filter(
+            exam_id=int(exam_id), submission_id=int(replacement_submission_id),
+        ).exclude(enrollment_id=int(enrollment_id)).exists():
+            return None
         attempt = (
             ExamAttempt.objects.select_for_update()
             .filter(
@@ -673,9 +680,10 @@ def target_enrollment_assignment_exists(
             enrollment__student__deleted_at__isnull=True,
         ).exists()
         if in_session and ensure_exam_enrollment:
-            ExamEnrollment.objects.get_or_create(
-                exam_id=target_id_i,
-                enrollment_id=enrollment_id_i,
+            from apps.support.exams.enrollment_candidates import ensure_legacy_exam_roster_candidate
+
+            return ensure_legacy_exam_roster_candidate(
+                tenant=tenant, exam_id=target_id_i, enrollment_id=enrollment_id_i,
             )
         return in_session
 
@@ -814,7 +822,10 @@ def validate_exam_enrollment_candidate(
     from apps.domains.enrollment.models import Enrollment, SessionEnrollment
     from apps.domains.exams.models import ExamEnrollment
 
-    if not Enrollment.objects.filter(id=enrollment_id, tenant=tenant).exists():
+    if not Enrollment.objects.filter(
+        id=enrollment_id, tenant=tenant, student__tenant=tenant,
+        status="ACTIVE", student__deleted_at__isnull=True,
+    ).exists():
         return ExamEnrollmentCandidate(
             ok=False,
             detail=f"enrollment_id={enrollment_id}는 현재 학원의 학생이 아닙니다.",
@@ -854,14 +865,19 @@ def validate_exam_enrollment_candidate(
     return ExamEnrollmentCandidate(ok=True, should_create=True)
 
 
-def create_exam_enrollment_assignment(*, exam_id: int, enrollment_id: int) -> bool:
+def create_exam_enrollment_assignment(*, tenant, exam_id: int, enrollment_id: int) -> bool:
+    from django.core.exceptions import ValidationError
     from apps.domains.exams.models import ExamEnrollment
+    from apps.support.exams.enrollment_candidates import ensure_legacy_exam_roster_candidate
 
-    _, created = ExamEnrollment.objects.get_or_create(
-        exam_id=int(exam_id),
-        enrollment_id=int(enrollment_id),
-    )
-    return bool(created)
+    already_assigned = ExamEnrollment.objects.filter(
+        exam_id=int(exam_id), exam__tenant=tenant, enrollment_id=int(enrollment_id),
+    ).exists()
+    if not ensure_legacy_exam_roster_candidate(
+        tenant=tenant, exam_id=exam_id, enrollment_id=enrollment_id,
+    ):
+        raise ValidationError("해당 시험의 대상 학생이 아닙니다.")
+    return not already_assigned
 
 
 def exam_question_number_by_id(*, tenant, question_ids: list[int]) -> dict[int, int]:

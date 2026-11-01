@@ -135,7 +135,19 @@ flowchart LR
   정본이다. 비대상 학생은 같은 차시에 있어도 후보·성적·미응시·클리닉 판정에
   포함하지 않는다.
 - 명시 대상자가 전혀 없는 기존 시험만 연결 차시의 `SessionEnrollment` roster를
-  호환 대상으로 사용하며, 실제 OMR 매칭/수동 입력 시 `ExamEnrollment`를 만든다.
+  호환 대상으로 사용한다. 최초 OMR 매칭/수동 입력 시 해당 시험의 `Exam` 행을
+  잠근 뒤 유효한 전체 명단을 한 번에 `ExamEnrollment`로 고정한다. 첫 학생만
+  추가해 다음 학생을 대상에서 제외하지 않는다. OMR의 최초 선택 학생은 기존
+  차시 등록 후보여야 하며, 고정되는 전체 명단에는 같은 학원·연결 차시·강의의
+  활성 수강생 중 차시 등록 또는 출결로 이미 수기 성적 조회·입력이 가능한 학생을
+  포함해 기존 권한을 보존한다. 삭제 학생·비활성/다른 학원·강의의 수강은 제외한다.
+  기존 명시 명단이 하나라도 있으면 비활성 학생만 남은 경우에도 자동 확장하지 않는다.
+  명단 편집 API와 동일한 시험 잠금으로 최초 두 매칭과 교사의 명단 변경을 직렬화한다.
+  명단이 비어 있음을 확인한 뒤 출결·수강 처리에서 같은 유효 학생을 동시에 등록해도
+  이미 생성된 행은 보존하고 나머지 명단을 추가해 OMR 저장을 완료한다.
+  유효하지 않은 최초 후보나 수기 답안의 400 검증 실패는 명단을 만들지 않는다.
+  기존에 축소된 명단은 명시 선택과 구분할 수 없으므로 배포 시 일괄 확장하지 않고,
+  권한 있는 교사가 기존 시험 응시 대상자 편집에서 확인·정정한다.
 - 후보 학생은 항상 같은 tenant, 활성 `Enrollment`, 삭제되지 않은 학생으로 제한한다. 다른 tenant나 시험이 연결되지 않은 차시의 학생으로 fallback하지 않는다.
 - 성적탭 row 모수는 차시 출석/수강 roster다. 각 시험 점수 셀은 명시 대상자에게만
   보이고, 명시 명단이 없는 기존 시험에 한해 차시 roster 전체에 보인다.
@@ -243,6 +255,23 @@ OMR 사용이 어려운 혼합형 시험은 같은 성적 저장 경로에 엑�
 정확도 수치가 아니다. PDF·claim의 공통 경계는 [AI 작업 실행](ai-job-execution.md)에 있다.
 
 ## 자동채점 파이프라인
+
+워커 콜백은 명시된 양의 정수 학원·제출 ID로 범위를 먼저 확인한 후
+`Exam → Session → Submission` 순서로 잠근다. 누락·잘못된 학원이나 다른 학원의
+응답은 계약 오류 메타를 포함해 제출에 아무 것도 기록하지 않는다. 운영 콜백은
+저장된 AI job의 학원 ID를, 늦은 답안 복구는 조회한 제출의 학원 ID를 명시한다.
+폐기된 제출의 지연 응답은 처리 완료로 수신하되 답안·매칭·상태·메타와 채점을
+변경하지 않는다. 완료·대체된 제출에 뒤늦은 잘못된 버전/답안이 와도 검토 표시를
+다시 켜지 않는다. 완료 제출의 답안이 비어 있는 기존 복구 경로는 유효한 응답에만
+허용하며, 잘못된 비어 있지 않은 응답도 원본을 보존한다. 미완료 제출의 실제 계약
+오류는 기존 검토 필요 표시를 유지한다.
+
+검증: `test_candidate_matching.py` 및 `test_omr_tenant_realuse_flow.py`의 연속 두
+학생 식별·채점/수기 입력, 명시 명단·tenant·비활성 경계, 실패 원자성, 지연 콜백
+보존과 정상 복구를 사용한다. `test_manual_score_assignment_guard.py`는 OMR 최초
+매칭 후 출결 전용 학생의 성적 조회·저장을 검증한다.
+`tests/test_omr_roster_concurrency_pg.py`는 동시 첫 매칭, 정식 대상자 PUT과의
+경합, 채점과 콜백의 잠금 순서를 실제 PostgreSQL에서 검사한다.
 
 ```
 1. 선생님: OMR 답안지 인쇄/PDF 생성
@@ -370,21 +399,36 @@ OMR 답안의 점수 영향 여부를 다시 계산한다. 정확히 일치하�
 1. 클라이언트가 시험·차시와 총 파일 수로 batch를 먼저 생성한다.
 2. 서버는 `1..total_count` ordinal을 원자적으로 만들고, 클라이언트는 그 batch id와
    ordinal을 붙여 파일 전체를 한 multipart 요청으로 보낸다.
-3. 각 ordinal은 별도 transaction에서 `Submission`에 연결된다. 이미 연결된 ordinal을
-   다시 보내면 서버가 item row를 먼저 잠그고 파일 검증보다 앞서 `RECEIVED`를 확인해
-   no-op 처리한다. 따라서 같은 ordinal의 늦은 잘못된 파일이나 동시 재전송이 기존
-   Submission 연결을 실패 상태로 되돌리지 않고, 워커도 중복 dispatch하지 않는다.
+3. 각 ordinal은 별도 transaction에서 `Submission`에 연결된다. 원본 또는 중복 제출에
+   연결된 ordinal은 item row를 먼저 잠근 뒤 파일 검증보다 앞서 no-op 처리한다.
+   접수 상태와 관계없이 과거 ordinal의 재전송·늦은 오류·unique 충돌 복구가 기존
+   SHA-256과 제출 연결을 바꾸지 않으며 워커도 중복 dispatch하지 않는다.
    같은 tenant·시험에서 다른 batch/ordinal로 동일 바이트가 다시 오면 SHA-256과 DB
    conditional unique constraint로 경합까지 직렬화하고 `duplicate`로 완료 처리한다.
    새 Submission/R2 object/worker dispatch를 만들지 않으며 파일명이 같아도 바이트가
    다르면 정상 신규 접수다.
 4. 요청 응답이 끊겨도 detail GET의 `pending_admission_ordinals`와
    `admission_failed_ordinals`로 미접수 파일만 다시 선택한다. 이미 성공한 ordinal은
-   재전송하지 않는다.
+   재전송하지 않는다. `SUPERSEDED` 또는 `FAILED`이면서 명시적 폐기 표식
+   (`meta.discarded` 객체 또는 기존 `discarded:` 오류 코드)이 있는 제출은
+   `failed_ordinals`와 `admission_failed_ordinals`에서 제외한다. retry API도 이 제출과
+   중복 ordinal을 건너뛰며, 일반 worker 실패는 기존 원본으로 재시도한다.
+   폐기·대체 항목과 교사 답안 이력은 그대로 보관한다.
 5. batch 진행 상태는 기존 Submission/AI worker 상태를 집계한다. 파일 수신은
    `received`, AI 작업 중은 `processing`, OMR 처리 완료는 `completed`, 학생 확인 필요는
    `needs_identification`, 처리 실패는 `failed`로 서로 구분한다. 업로드 성공을 AI 완료로
    표시하지 않는다.
+
+이 보호 단계(A)는 기존 hash 예약과 중복 판정을 유지한다. 따라서 폐기 후 같은 파일을
+새 batch로 다시 보내는 동작은 아직 중복 처리된다. 예약 해제 단계(B)는 별도 후보로
+배포하며, A가 모든 API 인스턴스에 적용됐다는 정확한 revision 확인과 이전 요청의 종료
+확인 후에만 활성화한다. B가 남기는 `failed/submission_archived` 항목도 A는 원본
+hash·Submission 연결을 불변으로 취급한다. `test_omr_receipt_guards.py`는 그 향후
+저장 형태를 fixture로 만들어 재전송·오류·retry·summary 및 교사 답안 보존을 검사한다.
+이 fixture 검사는 B의 실제 재등록이나 배포 중 동작 검증을 대신하지 않는다.
+API 복구는 [운영 절차](../../scripts/v1/README.md)에 따라 새 immutable 이미지로
+roll-forward하며, A의 보호 코드를 최소 호환 기준으로 유지한다. 구버전 이미지의
+직접 rollback이나 보호 코드 제거는 허용하지 않는다.
 
 `counts.completed`, `terminal`, `overall_status`는 기존 파일 접수·OMR 처리 계약을
 유지한다. 따라서 혼합 시험은 객관식 인식이 끝나면 `overall_status=completed`이면서
@@ -573,3 +617,70 @@ HTML·PDF 출력 및 사용자 업로드 우선순위를 회귀 검사한다.
 | v14 | 2026-04 | reportlab 기반 `pdf_renderer.py`로 재구현. `/omr/defaults/`, `/omr/preview/`, `/omr/pdf/` 3종 엔드포인트 추가. `generate-omr/`은 deprecated. |
 | v7 | 2026-03-19 | HTML SSOT 기반 전면 재설계. 기존 v245_final.py 삭제. |
 | v245_final | ~ 2026-03-18 | 구 reportlab 기반 PDF 렌더러 (삭제됨) |
+
+## 채점된 종이의 학생 귀속 정정
+
+교사가 기존 OMR 검토의 학생 선택을 잘못된 A에서 같은 테넌트·시험의 적격 B로
+바꾸면, 이미 채점된 종이의 `ExamAttempt`는 같은 제출 ID를 유지하면서 현재
+학생 귀속을 정정한다. 학생 변경만 저장한 경우 객관식·문항·서술형·총점의 교사
+수정과 복습 표시를 그대로 옮긴다. 답안도 함께 바꾼 경우 기존 재채점 정책을
+적용한다. 온라인 제출의 학생 귀속 변경에는 이 예외를 적용하지 않는다.
+검토 화면이 답안을 전부 다시 전송해도 저장된 값과 실제로 다른 답안만 변경으로
+판정한다. API의 `updated` 처리 개수는 유지하며 감사 메타의
+`changed_answers_count`와 명시적 채점 문맥으로 동일 내용 재전송을 구분한다.
+정답키 변경 등 별도 재채점은 이 보존 문맥을 자동으로 상속하지 않는다.
+
+정정 전에 `ResultFact(source=omr_reassignment, question_id=0)`에 원/대상 학생,
+응시 차수, 대표 여부, 교사·시각, 원 점수·문항·메타 스냅샷을 추가한다. 과거
+Fact는 수정하거나 삭제하지 않는다. `ExamAttempt.current_fact_after_id` 이전의
+Fact는 감사 조회에 남고, 현재 통계·수기 채점·대표 복원에는 `ResultFact.current()`로
+현재 귀속과 cutoff 이후 Fact만 사용한다. 새 귀속의 Fact는 원 Fact ID·원 시각·
+교사 provenance를 보존하며 추가된다. A→B→A에서도 이전 사실이 다시 집계되지
+않으며, 이미 소비된 수기 0점 placeholder가 새 교사 총점으로 부활하지 않는다.
+
+A의 현재 Result가 해당 종이를 가리키면 남은 유효 일반 응시의 대표 스냅샷으로
+복원하고, 남은 성적이 없으면 현재 Result/ResultItem만 제거해 미채점으로 돌린다.
+A의 대표가 이미 별도 교사 성적이면 그대로 보존한다. B의 별도 수동·승인 성적은
+자동 병합하거나 대체하지 않는다. 재응시 정책과 횟수를 넘으면 기존
+`409 OMR_ATTEMPT_CONFLICT`로 전체 작업을 되돌리고, 교사는 올바른 대상을 다시
+선택해 저장할 수 있다. 이 작업에 별도 성적 대체 확인 UI는 포함하지 않는다.
+
+최초 성적은 숫자 차수 1 고정 대신 현재 귀속의 가장 이른 일반 응시로 판정한다.
+클리닉 재시도는 최초 성적·석차·일반 응시 한도에 포함하지 않으며, 기존 차수와
+클리닉 이력은 바꾸지 않는다. 빈 A의 응시 기회를 복구하고 양쪽 학생의 현재
+성적·차시/강의 진척을 동기 갱신한다. 시험→차시→제출 잠금 안에서 양쪽 학생과
+결과를 잠그며, 충돌·중간 오류·진척 갱신 실패는 학생 연결·답안·매칭·성적·
+감사 Fact를 함께 rollback한다. 기존 운영 데이터의 일괄 재배정/삭제는 없다.
+
+배포는 expand migration `results.0022`와 호환 reader를 먼저 적용한다.
+`OMR_SCORED_REASSIGNMENT_ENABLED`는 기본 false다. 모든 API/AI reader와 writer가
+cutoff/최초 일반 응시 계약을 읽는 정확한 후보 revision으로 수렴한 뒤에만 같은
+후보의 정정 쓰기를 활성화한다. 비활성 상태의 충돌 응답은 정상 기능 검증 완료가
+아니며, 활성화 후 실제 학생 정정→재조회→양쪽 역할/통계→cleanup까지 확인해야
+완료다. 활성화 후에는 쓰기만 끌 수 있고 과거 cutoff를 무시하는 이미지로
+rollback하지 않는다. 현재 HOLD와 다른 OMR 단계 배포 순서를 자동 확장하지 않는다.
+
+설정은 API `apps/api/config/settings/base.py`와 독립 worker 설정
+`apps/api/config/settings/worker.py`가 같은 환경 변수·기본 false를 읽는다.
+환경 전달은 운영 `/academy/api/env`와 `/academy/workers/env`, 격리 개발
+`/academy/api/development/env`와 `/academy/workers/development/env`의 기존
+버전 고정 배포 경계를 사용한다. 개발 전용 opt-in은
+[persistent-development-runtime.md](../operations/persistent-development-runtime.md)가 소유한다.
+운영 설정 변경은 기존 공유 잠금·정확한 source/manifest·승인된 배포 경로에서
+수행하며 이 기능의 배포만으로 기존 HOLD가 해제되지는 않는다.
+
+호환성 확인 대상은 교사/학생/학부모 API(현재 성적·최초 성적·응시 한도·통계),
+AI OMR 콜백/채점 writer, Tools의 성적·문항 통계 내보내기 reader, 같은 결과·진척
+서비스를 실행하는 관리 명령/예약 작업이다. API 인스턴스 전부와 해당 worker의
+실제 digest/source를 확인하고, 이전 코드로 시작한 요청·작업이 종료된 뒤 같은
+artifact의 정정 쓰기를 켠다. 단일 인스턴스 health만으로 이 조건을 대신하지 않는다.
+첫 정정 후 장애가 나면 flag를 내려 새 정정만 멈추고 호환 reader를 유지한 채
+수정 후보로 전진한다. 이미 쌓인 cutoff/감사 Fact를 제거하거나 예전 이미지로
+되돌리지 않는다. 최초 호환 단계는 archived 재접수 기능을 포함하지 않으며,
+재접수는 별도 단계의 모든 기존 worker 수렴·in-flight 종료 조건을 통과해야 한다.
+
+검증: `results/tests/test_omr_reassignment.py`(정상 정정/되돌리기, 교사 점수·원본,
+기존 성적 충돌 후 재선택, 중간 실패 rollback, 클리닉 최초성적 제외),
+`test_omr_reassignment_pg.py`(실제 PostgreSQL 잠금 대기, commit/rollback 뒤 정정).
+실환경의 정확한 revision·활성화·격리 QA 증거는 배포 담당의 별도 릴리스 기록이
+소유한다. 채점 일반 정책은 [exam-grading.md](exam-grading.md)를 따른다.

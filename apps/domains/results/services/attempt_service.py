@@ -34,6 +34,16 @@ class ExamAttemptService:
     """
 
     @staticmethod
+    def regular_attempts(queryset):
+        return queryset.regular()
+
+    @staticmethod
+    def next_regular_attempt_index(queryset):
+        if not queryset.filter(attempt_index=1).exists() and not ExamAttemptService.regular_attempts(queryset).exists():
+            return 1
+        return int(queryset.aggregate(Max("attempt_index")).get("attempt_index__max") or 0) + 1
+
+    @staticmethod
     @transaction.atomic
     def create_for_submission(
         *,
@@ -81,16 +91,16 @@ class ExamAttemptService:
                 f"Attempt already exists for submission {submission_id}."
             )
 
-        last = qs.aggregate(Max("attempt_index")).get("attempt_index__max") or 0
-        next_index = int(last) + 1
+        next_index = ExamAttemptService.next_regular_attempt_index(qs)
+        regular_count = ExamAttemptService.regular_attempts(qs).count()
 
         # -------------------------------------------------
         # 4️⃣ 정책 강제
         # -------------------------------------------------
-        if not allow_retake and next_index > 1:
+        if not allow_retake and regular_count > 0:
             raise ValidationError("Retake is not allowed for this exam.", code="retake_not_allowed")
 
-        if allow_retake and next_index > max_attempts:
+        if allow_retake and regular_count + 1 > max_attempts:
             raise ValidationError("Max attempts exceeded.", code="max_attempts_exceeded")
 
         # -------------------------------------------------
@@ -104,7 +114,7 @@ class ExamAttemptService:
                 enrollment_id=enrollment_id,
                 submission_id=submission_id,
                 attempt_index=next_index,
-                is_retake=(last > 0),
+                is_retake=(regular_count > 0),
                 is_representative=True,
                 status="pending",
             )
@@ -135,8 +145,8 @@ class ExamAttemptService:
         attempts = ExamAttempt.objects.select_for_update().filter(
             exam_id=int(exam_id), enrollment_id=int(enrollment_id),
         )
-        placeholder = attempts.filter(
-            submission_id=0, attempt_index=1, is_retake=False,
+        placeholder = attempts.initial().filter(
+            submission_id=0,  is_retake=False,
             is_representative=True, status="done",
         ).first()
         if placeholder is None or attempts.exclude(pk=placeholder.pk).exists():
@@ -203,12 +213,12 @@ class ExamAttemptService:
 
         placeholder = (
             ExamAttempt.objects
-            .select_for_update()
+            .select_for_update().initial()
             .filter(
                 exam_id=int(exam_id),
                 enrollment_id=int(enrollment_id),
                 submission_id=0,
-                attempt_index=1,
+
                 is_retake=False,
                 is_representative=True,
                 status="done",
@@ -331,9 +341,9 @@ class ExamAttemptService:
             .filter(exam_id=int(exam_id), enrollment_id=int(enrollment_id))
         )
         placeholder = (
-            qs.filter(
+            qs.initial().filter(
                 submission_id=0,
-                attempt_index=1,
+
                 is_representative=True,
             )
             .order_by("id")

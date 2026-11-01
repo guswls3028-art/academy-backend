@@ -652,7 +652,9 @@ class SubmissionViewSet(ModelViewSet):
         )
 
         identifier = request.data.get("identifier")
-        answers = request.data.get("answers") or []
+        answers = request.data.get("answers", [])
+        if answers is None:
+            answers = []
         note = str(request.data.get("note") or "manual_edit")
         tenant = submission.tenant
 
@@ -713,11 +715,6 @@ class SubmissionViewSet(ModelViewSet):
                     )
 
             resolved_enrollment_id = candidate_eid
-            if should_create_exam_enrollment:
-                exam_enrollment_created = create_exam_enrollment_assignment(
-                    exam_id=exam_id,
-                    enrollment_id=candidate_eid,
-                )
 
         if (
             submission.status == Submission.Status.NEEDS_IDENTIFICATION
@@ -730,6 +727,8 @@ class SubmissionViewSet(ModelViewSet):
             )
 
         validated_answers: list[tuple[int, str]] = []
+        if not isinstance(answers, list):
+            return Response({"detail": "answers는 답안 목록이어야 합니다."}, status=400)
         if answers:
             if submission.target_type != Submission.TargetType.EXAM:
                 return Response({"detail": "시험 제출 답안만 수동 수정할 수 있습니다."}, status=400)
@@ -745,10 +744,10 @@ class SubmissionViewSet(ModelViewSet):
 
             for a in answers:
                 if not isinstance(a, dict):
-                    continue
+                    return Response({"detail": "각 답안에는 question_id와 answer가 필요합니다."}, status=400)
                 raw_eqid = a.get("exam_question_id") or a.get("question_id")
                 if not raw_eqid:
-                    continue
+                    return Response({"detail": "각 답안에는 question_id가 필요합니다."}, status=400)
                 try:
                     eqid = int(raw_eqid)
                 except (TypeError, ValueError):
@@ -757,14 +756,28 @@ class SubmissionViewSet(ModelViewSet):
                     return Response({"detail": "해당 시험의 문항만 수정할 수 있습니다."}, status=400)
                 validated_answers.append((eqid, str(a.get("answer") or "")))
 
+        if should_create_exam_enrollment:
+            try:
+                exam_enrollment_created = create_exam_enrollment_assignment(
+                    tenant=tenant, exam_id=exam_id, enrollment_id=resolved_enrollment_id,
+                )
+            except DjangoValidationError:
+                return Response({"detail": "해당 시험의 대상 학생이 아닙니다."}, status=400)
+
         updated = 0
+        answers_changed = 0
 
         for eqid, ans in validated_answers:
-            SubmissionAnswer.objects.update_or_create(
-                submission=submission,
-                exam_question_id=eqid,
-                defaults={"answer": ans, "tenant": submission.tenant},
-            )
+            existing_answer = SubmissionAnswer.objects.filter(
+                submission=submission, exam_question_id=eqid,
+            ).first()
+            if existing_answer is None or existing_answer.answer != ans:
+                SubmissionAnswer.objects.update_or_create(
+                    submission=submission,
+                    exam_question_id=eqid,
+                    defaults={"answer": ans, "tenant": submission.tenant},
+                )
+                answers_changed += 1
             updated += 1
 
         meta = dict(submission.meta or {})
@@ -778,6 +791,7 @@ class SubmissionViewSet(ModelViewSet):
                 "by_user_id": getattr(request.user, "id", None),
                 "note": note,
                 "updated_answers_count": updated,
+                "changed_answers_count": answers_changed,
                 "identifier": identifier,
                 "resolved_enrollment_id": resolved_enrollment_id,
                 "exam_enrollment_created": exam_enrollment_created,
@@ -868,6 +882,7 @@ class SubmissionViewSet(ModelViewSet):
                 int(submission.id),
                 actor=f"admin.manual_edit.user_{getattr(request.user, 'id', '?')}",
                 allow_done_regrade=True,
+                preserve_current_omr_grade=(answers_changed == 0),
             )
         except Exception as exc:
             if isinstance(exc, DjangoValidationError) and getattr(exc, "code", None) == "omr_grading_configuration_conflict":

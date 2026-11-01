@@ -25,7 +25,10 @@ from apps.support.results.grading_dependencies import (
 
 
 @transaction.atomic
-def grade_submission(submission_id: int, *, force_regrade: bool = False) -> ExamResult:
+def grade_submission(
+    submission_id: int, *, force_regrade: bool = False,
+    preserve_current_omr_grade: bool = False,
+) -> ExamResult:
     submission = get_submission_for_grading(submission_id=int(submission_id))
     lock_score_edit_scope_before_submission_grading(submission=submission)
 
@@ -61,7 +64,10 @@ def grade_submission(submission_id: int, *, force_regrade: bool = False) -> Exam
     # ✅ 모든 source(ONLINE, OMR_SCAN 등)에서 Result/ResultItem 동기화 (학생 결과 API용)
     canonical_result = None
     try:
-        canonical_result = sync_result_from_exam_submission(submission_id)
+        canonical_result = sync_result_from_exam_submission(
+            submission_id,
+            **({"preserve_current_omr_grade": True} if preserve_current_omr_grade else {}),
+        )
     except Exception:
         import logging
         logging.getLogger(__name__).exception(

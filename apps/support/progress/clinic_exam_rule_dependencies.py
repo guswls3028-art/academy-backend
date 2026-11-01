@@ -31,7 +31,7 @@ def exam_pass_score(*, exam_id: int) -> float:
 def low_confidence_fact_count(*, enrollment_id: int, exam_id: int) -> int:
     from apps.domains.results.models import ResultFact
 
-    return ResultFact.objects.filter(
+    return ResultFact.objects.current().filter(
         enrollment_id=enrollment_id,
         target_type="exam",
         target_id=exam_id,
@@ -43,7 +43,7 @@ def repeated_wrong_question_ids(*, enrollment_id: int, exam_id: int) -> list[int
     from apps.domains.results.models import ResultFact
 
     repeated = (
-        ResultFact.objects
+        ResultFact.objects.current()
         .filter(
             enrollment_id=enrollment_id,
             target_type="exam",

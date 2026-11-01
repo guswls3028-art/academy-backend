@@ -10,7 +10,6 @@ from apps.shared.utils.excel_phone import normalize_excel_phone
 from apps.shared.utils.excel_workbook import validate_xlsx_archive
 
 from django.db import transaction
-from django.db.models import Max
 from django.utils import timezone
 from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
@@ -25,6 +24,7 @@ from apps.domains.results.guards.exam_enrollment_guard import (
 from apps.domains.results.guards.score_edit_lease_guard import (
     require_score_edit_scope_available_for_exam,
 )
+from apps.domains.results.services.attempt_service import ExamAttemptService
 from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
 from apps.domains.results.services.initial_attempt_snapshot import sync_confirmed_initial_snapshot_meta
 from apps.domains.results.utils.exam_absence import current_exam_absence_counts
@@ -1550,7 +1550,8 @@ def _locked_result_and_attempt(
             exam_id=int(exam.id),
             enrollment_id=int(enrollment.id),
         )
-        last_index = attempts.aggregate(Max("attempt_index")).get("attempt_index__max") or 0
+        next_index = ExamAttemptService.next_regular_attempt_index(attempts)
+        is_initial = not attempts.regular().exists()
         attempts.filter(is_representative=True).update(is_representative=False)
         initial_meta = {}
         if not is_not_submitted:
@@ -1564,8 +1565,8 @@ def _locked_result_and_attempt(
             exam_id=int(exam.id),
             enrollment_id=int(enrollment.id),
             submission_id=0,
-            attempt_index=int(last_index) + 1,
-            is_retake=bool(last_index),
+            attempt_index=next_index,
+            is_retake=not is_initial,
             is_representative=True,
             status="done",
             meta=initial_meta,

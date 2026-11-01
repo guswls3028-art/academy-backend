@@ -5,6 +5,63 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+<a id="sqlite-delegated-review-20261101"></a>
+
+## 2026-11-01 OMR 복구 배포의 SQLite 한시 결정
+
+OMR 복구 PR716의 배포41303507718은 `CVE-2026-119586` / `sqlite3` /
+`3.46.1-7+deb13u2` High로 development 진입 전에 중단됐다. 새 서비스 이미지
+다섯 개의 완료 scan은 기존 glibc 세 항목과 이 항목의 High 4·Critical 0이다.
+재사용 base의 이전 완료 scan은 High 3이며 새 SQLite 항목이 없다는 증거가 아니다.
+
+초기 PR719는 glibc 위험 수용 뒤의 상시 위임 메시지
+`01a19337-27eb-7933-98df-77ba41319935`와 후속 배포 지시를 근거로 제안됐다.
+자동 승인 검토는 새 SQLite 위험의 구체적인 동의 범위가 확인되지 않았다는 이유로
+그 경로를 거부했다. 이 거부와 상시 위임의 재해석에 대한 거부 이력은 보존하며,
+현재의 SQLite 승인을 이전 상시 위임에서 추론하지 않는다.
+
+이후 사용자가 기존 여섯 이미지의 `CVE-2026-119586` / `sqlite3` /
+`3.46.1-7+deb13u2`, **2026-11-08 09:00 KST** 만료, 해결되지 않은 취약점과
+잔여 코드 실행 위험, 다른 취약점·Critical 차단 기준 유지를 명시한 질문에
+**“명시한 범위의 임시 예외 허용”**이라고 직접 답했다. 출처는 채팅
+`01a18f8b-6856-79a1-93ff-cec66d5f7e20`의 사용자 메시지
+`01a1978e-e754-7901-9bb7-e1b610119f12`다. 루트 채팅에서도 같은 범위·기한에 대해
+**“해당 범위·기한의 한시 위험 수용 승인”**을 직접 확인했다.
+원래 관리형 검토 채널은 이 새 동의를 원문으로 재검증한 뒤 동일한 메시지 전달
+경로에서 수락을 확인했다. 이는 전달 결과이며 게시·병합·배포의 동작별 검토나
+아래 릴리스 게이트를 대신하지 않는다.
+근거는 workspace의 `_artifacts/deploy-resume-01a18f8d/direct-decisions-20261101.json`과
+`_artifacts/sessions/delivery-ownership-01a19579/managed-review-evidence.json`의
+`subsequentDirectDecision`에 보존한다. turn 시작 시각을 개별 메시지 시각으로
+해석하지 않는다.
+
+이 직접 승인에 따른 한시 결정은 위 SQLite exact identity 한 건을 기존 여섯
+저장소에만 추가하며 High 상한을 3에서 4로 맞춘다. **2026-11-08 09:00 KST까지**로
+제한하고 `expiresOn: 2026-11-07`로 기록해 다음 날 00:00 UTC부터 실패한다.
+기존 glibc 세 항목의 범위·기한과 Critical 정책·기존 HOLD는 변경하지 않는다.
+다른 CVE/패키지/버전/저장소와 자동 연장은 이 결정에 포함하지 않는다.
+
+[Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-119586)와
+[공식 CNA 기록](https://raw.githubusercontent.com/CVEProject/cvelistV5/main/cves/2026/119xxx/CVE-2026-119586.json)은
+SQLite CLI `.recover` 출력의 악성 dot-command를 CLI에 다시 입력할 때 OS 명령이
+실행될 수 있다고 설명한다. 확인한 Debian trixie·sid는 unfixed이고 upstream
+3.54.1도 영향 범위여서 검증된 수정 버전은 없다.
+
+여섯 exact OCI manifest와 모든 압축 layer digest를 직접 검증하고 whiteout을 반영한
+파일·패키지 목록에서 `libsqlite3-0`만 설치돼 있고 `sqlite3` CLI 패키지 및
+`sqlite`/`sqlite3` 이름의 파일·심볼릭 링크는 없음을 확인했다. 이미지는 실행하지 않았다.
+공유 라이브러리는 기존 Python SQLite/FTS5 계약에 필요하다. 이 정적 증거는 모든
+동적 경로의 비도달성·취약점 수정·오탐의 확정이 아니며, 취약 CLI와 악성 DB 복구
+경로가 사용 가능해지면 코드 실행 위험이 남는다.
+
+증거는 `_artifacts/backend716-01a1954c/`의 `candidate-scan-readback.json`,
+`sqlite-oci-academy-*.json`, `security-exception-proposal.json` 및 독립 검토
+`_artifacts/omr-assignment-01a195bd/security-proposal-independent-review.json`에 보존한다.
+정책 계약은 exact identity·다른 identity 거부·만료·기존 승인 보존을 검증한다.
+이 결정은 배포 완료가 아니며 새 후보도 fresh exact scan·native·격리 개발 실사용과
+cleanup0·preprod와 임시 인스턴스 종료·공식 production 승인·healthy rolling·exact live
+검증을 모두 통과해야 한다. 관리형 action-time 거부를 우회하는 권한도 부여하지 않는다.
+
 <a id="glibc-approval-20261101"></a>
 
 ## 2026-11-01 QR 출석 배포의 신규 glibc High 한시 승인

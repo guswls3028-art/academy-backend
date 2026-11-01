@@ -56,10 +56,10 @@ def load_initial_exam_scores(
         return {}
 
     states: dict[tuple[int, int], InitialExamScore] = {}
-    attempts = list(ExamAttempt.objects.filter(
+    attempts = list(ExamAttempt.objects.initial().filter(
         exam_id__in=normalized_exam_ids,
         enrollment_id__in=normalized_enrollment_ids,
-        attempt_index=1,
+
     ).only("id", "exam_id", "enrollment_id", "meta", "created_at"))
     current_results = {
         (int(result.target_id), int(result.enrollment_id)): result

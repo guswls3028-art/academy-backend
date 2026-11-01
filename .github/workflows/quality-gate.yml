@@ -218,7 +218,7 @@ jobs:
       - name: Deployment contract tests
         shell: pwsh
         run: |
-          python -B -m unittest scripts.v1.test_frontend_development_qa scripts.v1.test_homework_preview_development -v
+          python -B -m unittest scripts.v1.test_frontend_development_qa scripts.v1.test_homework_preview_development scripts.v1.test_omr_scored_development_env -v
           if ($LASTEXITCODE -ne 0) { throw "Frontend development QA boundary contracts failed." }
           ./scripts/codex/test-change-risk-contract.ps1
           ./scripts/codex/test-production-release-bundle-contract.ps1
@@ -331,7 +331,16 @@ jobs:
         run: |
           python -m pytest -q --tb=short \
             apps/api apps/billing apps/core apps/shared apps/support apps/domains tests \
-            apps/domains/tools/problem_studio/test_conversions.py
+            apps/domains/tools/problem_studio/test_conversions.py \
+            --junitxml=test-results/postgresql.xml
+      - name: Preserve PostgreSQL test results
+        if: always() && needs.change-scope.outputs.prose_only != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: postgresql-test-results
+          path: test-results/postgresql.xml
+          retention-days: 7
+          if-no-files-found: error
       - name: Record unchanged PostgreSQL test scope
         if: needs.change-scope.outputs.prose_only == 'true'
         run: echo "Known Markdown-only diff; no application, test, schema, runtime, dependency or executable policy changes."
