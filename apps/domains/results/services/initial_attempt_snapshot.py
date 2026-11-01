@@ -9,7 +9,7 @@ def sync_confirmed_initial_snapshot_meta(
     *, attempt: Any, meta: dict[str, Any], total_score: float,
     max_score: float, confirmed_at: Any, fallback_source: str,
 ) -> dict[str, Any]:
-    if int(attempt.attempt_index) != 1:
+    if not getattr(attempt, "is_initial_grade", int(attempt.attempt_index) == 1):
         return meta
     existing = meta.get("initial_snapshot")
     snapshot = dict(existing) if isinstance(existing, dict) else {}

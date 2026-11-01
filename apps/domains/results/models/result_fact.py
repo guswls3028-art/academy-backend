@@ -3,6 +3,18 @@ from django.db import models
 from apps.api.common.models import BaseModel
 
 
+class ResultFactQuerySet(models.QuerySet):
+    def current(self):
+        """Exclude historical attribution without changing append-only facts."""
+        return self.filter(
+            models.Q(attempt_id__isnull=True)
+            | models.Q(
+                enrollment_id=models.F("attempt__enrollment_id"),
+                id__gt=models.F("attempt__current_fact_after_id"),
+            )
+        )
+
+
 class ResultFact(BaseModel):
     """
     결과 Fact (append-only, 불변)
@@ -52,6 +64,8 @@ class ResultFact(BaseModel):
 
     source = models.CharField(max_length=20)
     meta = models.JSONField(null=True, blank=True)
+
+    objects = ResultFactQuerySet.as_manager()
 
     class Meta:
         db_table = "results_fact"

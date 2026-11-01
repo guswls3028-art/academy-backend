@@ -260,7 +260,7 @@ class ClinicTargetService:
             attempts_by_id[int(attempt.id)] = attempt
         low_confidence_fact_keys = set()
         # Preserve the old latest-200 non-null facts per exact attempt boundary.
-        fact_rows = ResultFact.objects.filter(
+        fact_rows = ResultFact.objects.current().filter(
             target_type="exam", target_id__in=exam_ids,
             enrollment_id__in=all_enrollment_ids, enrollment__tenant=tenant,
             attempt_id__in={state.attempt_id for state in initial_exam_scores.values() if state.attempt_id},
@@ -517,7 +517,7 @@ class ClinicTargetService:
                 if "total_score" in meta:
                     att_score = float(meta["total_score"])
                     att_passed = att_score >= cutline if cutline > 0 else True
-                elif att.attempt_index == 1 and result:
+                elif att.id == initial_score.attempt_id and result:
                     att_score = float(exam_score)
                     att_passed = att_score >= cutline if cutline > 0 else True
 

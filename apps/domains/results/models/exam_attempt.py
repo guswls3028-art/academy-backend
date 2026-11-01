@@ -1,6 +1,27 @@
 # apps/domains/results/models/exam_attempt.py
 from django.db import models
+from django.utils.functional import cached_property
 from apps.api.common.models import BaseModel
+
+
+class ExamAttemptQuerySet(models.QuerySet):
+    def with_initial_grade(self):
+        return self.annotate(is_initial_grade=models.Exists(
+            self.model.objects.initial().filter(pk=models.OuterRef("pk")),
+        ))
+
+    def regular(self):
+        """Clinic remediation is audit evidence, not an ordinary graded sitting."""
+        return self.filter(clinic_link__isnull=True).filter(
+            models.Q(meta__source__isnull=True) | ~models.Q(meta__source="clinic_remediation"),
+        )
+
+    def initial(self):
+        first = self.model.objects.regular().filter(
+            exam_id=models.OuterRef("exam_id"),
+            enrollment_id=models.OuterRef("enrollment_id"),
+        ).order_by("attempt_index", "id").values("id")[:1]
+        return self.regular().filter(id=models.Subquery(first))
 
 
 class ExamAttempt(BaseModel):
@@ -15,7 +36,8 @@ class ExamAttempt(BaseModel):
     ✅ 설계 고정 사항
     --------------------------------------------------
     1) ExamAttempt는 append-only 개념이다.
-       - 기존 attempt를 수정하지 않는다.
+       - 기존 채점 사실은 수정하지 않는다. 확인된 OMR의 학생 오배정 정정은
+         전용 서비스에서 원 귀속/순서를 감사 Fact에 보존한 뒤 현재 귀속을 바꾼다.
        - 대표 attempt 변경은 is_representative 플래그로만 처리한다.
 
     2) Result / ResultItem은 항상
@@ -57,6 +79,10 @@ class ExamAttempt(BaseModel):
     # Result는 항상 이 attempt를 기준으로 snapshot을 만든다.
     is_representative = models.BooleanField(default=True)
 
+    # Facts at/before this immutable audit event belong to an earlier student
+    # attribution. They remain readable for audit, never for current grading.
+    current_fact_after_id = models.PositiveBigIntegerField(default=0, db_default=0)
+
     status = models.CharField(
         max_length=20,
         choices=[
@@ -90,6 +116,14 @@ class ExamAttempt(BaseModel):
             "재채점 근거 등 운영/분석용 정보 저장."
         ),
     )
+
+    objects = ExamAttemptQuerySet.as_manager()
+
+    @cached_property
+    def is_initial_grade(self):
+        if self.pk is None:
+            return self.attempt_index == 1 and not self.clinic_link_id
+        return type(self).objects.initial().filter(pk=self.pk).exists()
 
     class Meta:
         db_table = "results_exam_attempt"

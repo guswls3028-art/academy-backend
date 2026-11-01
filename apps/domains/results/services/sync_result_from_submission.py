@@ -15,6 +15,10 @@ from apps.domains.results.guards.score_edit_lease_state import (
     invalidate_score_edit_leases_for_exam,
 )
 from apps.domains.results.services.attempt_service import ExamAttemptService
+from apps.domains.results.services.omr_reassignment import (
+    correct_scored_omr_attribution,
+    refresh_former_omr_student,
+)
 from apps.domains.results.services.answer_matching import (
     answer_matches,
     format_answer_for_display,
@@ -113,7 +117,7 @@ def _repair_attempt_initial_snapshot_for_submission(
     total_score: float,
     max_score: float,
 ) -> None:
-    if not attempt or int(getattr(attempt, "attempt_index", 0) or 0) != 1:
+    if not attempt or not attempt.is_initial_grade:
         return
 
     meta = dict(attempt.meta or {}) if isinstance(attempt.meta, dict) else {}
@@ -153,7 +157,9 @@ def _repair_attempt_initial_snapshot_for_submission(
 
 
 @transaction.atomic
-def sync_result_from_exam_submission(submission_id: int) -> Result | None:
+def sync_result_from_exam_submission(
+    submission_id: int, *, preserve_current_omr_grade: bool = False,
+) -> Result | None:
     """
     Submission(ONLINE) 채점 완료 후 Result/ResultItem 생성·갱신.
     enrollment_id는 Submission에서 가져옴.
@@ -223,11 +229,32 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         question_number_to_id=question_number_to_id,
     )
 
+    former_enrollment = correct_scored_omr_attribution(submission=submission, exam=exam)
     existing_result_prev = Result.objects.filter(
         target_type="exam",
         target_id=int(exam.id),
         enrollment_id=int(enrollment_id),
     ).first()
+    if (
+        preserve_current_omr_grade
+        and is_omr_scan_submission(submission)
+        and existing_result_prev
+        and existing_result_prev.attempt_id
+        and existing_result_prev.attempt.submission_id == submission.id
+        and existing_result_prev.attempt.enrollment_id == enrollment_id
+        and existing_result_prev.attempt.exam_id == exam.id
+    ):
+        if former_enrollment is not None:
+            refresh_former_omr_student(exam=exam, enrollment=former_enrollment)
+        return existing_result_prev
+    if former_enrollment is not None:
+        latest_edit = (submission.meta.get("manual_edits") or [{}])[-1]
+        if not latest_edit.get("changed_answers_count", latest_edit.get("updated_answers_count")):
+            # An identity-only correction must carry the teacher's exact paper
+            # grade, including objective/item/total overrides. The normal
+            # grading orchestrator finalizes the compatibility result next.
+            refresh_former_omr_student(exam=exam, enrollment=former_enrollment)
+            return existing_result_prev
     require_complete_omr_answers(
         submission=submission,
         answers_map=answers_map,
@@ -288,7 +315,7 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
     attempt = (
         ExamAttempt.objects
         .select_for_update()
-        .filter(submission_id=submission.id)
+        .filter(submission_id=submission.id, exam_id=exam.id, enrollment_id=enrollment_id)
         .first()
     )
     attached_placeholder = False
@@ -356,7 +383,7 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
     )
 
     attempt.status = "done"
-    if int(attempt.attempt_index) == 1 and (created_attempt or attached_placeholder):
+    if attempt.is_initial_grade and (created_attempt or attached_placeholder):
         attempt.meta = dict(attempt.meta or {}) if isinstance(attempt.meta, dict) else {}
         attempt.meta["initial_snapshot"] = {
             "total_score": float(result_total),
@@ -437,11 +464,11 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
     if existing_result_prev:
         from apps.domains.results.models import ExamAttempt as _EA
         prev_idx1 = (
-            _EA.objects.select_for_update()
+            _EA.objects.select_for_update().initial()
             .filter(
                 exam_id=int(exam.id),
                 enrollment_id=int(enrollment_id),
-                attempt_index=1,
+
             )
             .first()
         )
@@ -553,5 +580,8 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         total_score=result_total,
         max_score=result_max_score,
     )
+
+    if former_enrollment is not None:
+        refresh_former_omr_student(exam=exam, enrollment=former_enrollment)
 
     return result

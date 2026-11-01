@@ -17,6 +17,7 @@ from rest_framework.exceptions import ValidationError, NotFound
 from apps.domains.results.services.initial_attempt_snapshot import sync_confirmed_initial_snapshot_meta
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultItem, ResultFact, ExamAttempt
+from apps.domains.results.services.attempt_service import ExamAttemptService
 from apps.domains.results.validation import parse_finite_score
 from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
 from apps.domains.results.guards.score_edit_lease_guard import (
@@ -156,18 +157,18 @@ class AdminExamItemScoreView(APIView):
             .first()
         )
         if not result:
-            attempt, _ = ExamAttempt.objects.get_or_create(
+            attempts = ExamAttempt.objects.select_for_update().filter(
                 exam_id=exam_id,
                 enrollment_id=enrollment_id,
-                attempt_index=1,
-                defaults={
-                    "submission_id": 0,
-                    "is_retake": False,
-                    "is_representative": True,
-                    "status": "done",
-                    "meta": {"source": "manual_entry"},
-                },
             )
+            attempt = attempts.initial().first()
+            if attempt is None:
+                attempt = ExamAttempt.objects.create(
+                    exam_id=exam_id, enrollment_id=enrollment_id,
+                    attempt_index=ExamAttemptService.next_regular_attempt_index(attempts),
+                    submission_id=0, is_retake=False, is_representative=True,
+                    status="done", meta={"source": "manual_entry"},
+                )
 
             result, _ = Result.objects.get_or_create(
                 target_type="exam",

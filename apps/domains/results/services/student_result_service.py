@@ -122,7 +122,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
 
     allow_retake = bool(getattr(exam, "allow_retake", False))
     max_attempts = int(getattr(exam, "max_attempts", 1) or 1)
-    attempt_count = ExamAttempt.objects.filter(
+    attempt_count = ExamAttempt.objects.regular().filter(
         exam_id=exam_id,
         enrollment_id=enrollment_id,
     ).count()
