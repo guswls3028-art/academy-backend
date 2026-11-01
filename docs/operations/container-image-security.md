@@ -5,6 +5,49 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-11-02 SQLite 공식 수정 라이브러리 소스 계약
+
+새 scan의 `CVE-2026-119373`, `CVE-2026-119374`, `CVE-2026-119379`는
+[Debian tracker](https://security-tracker.debian.org/tracker/source-package/sqlite3)에서
+trixie `3.46.1-7+deb13u2`와 sid `3.53.4-2`가 미수정이다.
+공식 수정이 포함된 [SQLite 3.54.1](https://sqlite.org/releaselog/3_54_1.html)을
+기존 공통 base의 native `.deb` 경로로 빌드한다. 이는 소스 계약이며 이미지 빌드,
+fresh scan, 격리 실사용 및 운영 readback을 대신하는 배포 완료 증거가 아니다.
+
+- `build-sqlite.sh`는 공식 canonical `sqlite-src-3540100.zip`의 SHA-256·공식
+  SHA3-256·manifest source ID를 고정한다. 기존 옵션을 parser 생성에도 전달해
+  amalgamation을 생성하고 그 hash를 기록한다. 미리 생성된 amalgamation에
+  옵션 문자열만 추가하는 방식은 UPDATE/DELETE LIMIT를 보존하지 못한다.
+  Tcl·개발 헤더는 builder에서만 사용한다. 배포판·Python base
+  digest·glibc·APT source는 유지하며 SQLite shared library만 교체한다.
+- 기존 stable 라이브러리의 전체 export·SONAME·컴파일 옵션을 먼저 기록한다.
+  같은 버전 Debian 개발 패키지의 원본 헤더 선언과 실제 export의 교집합을
+  공개 ABI로 분류하며, 공개 변수·session API도 포함한다. 그 밖의 export는
+  hash가 고정된 원래 3.46.1 소스의 `SQLITE_PRIVATE` 선언을 확인해야 한다.
+  미분류 항목은 실패하고 변경된 내부 export 목록도 빌드 기록에 남긴다.
+  compiler 식별 문자열을 제외한 기존 옵션은 값까지 보존하고, 삭제된 옵션·공개 심볼,
+  `libsqlite3.so.0` 변경 또는 FTS5/threading 축소는 빌드를 실패시킨다.
+  새 공개 심볼은 허용한다. 정상 in-memory SQL·FTS5 생성/쓰기/검색과, 기존
+  session extension이 있으면 정상 생성한 changeset 적용만 검사한다.
+  기존 UPDATE/DELETE ORDER BY LIMIT·view ROWID 옵션도 정상 SQL로 확인하므로
+  컴파일 옵션 문자열만 남고 실제 parser 기능이 빠진 후보는 통과하지 않는다.
+  손상된 DB나 취약점 재현 입력은 사용하지 않는다.
+- 패키지는 실제 upstream 버전의 `libsqlite3-0 / Source: sqlite3 /
+  3.54.1-1+academy1`이며 CLI는 포함하지 않는다. 버전 문자열만 바꾸거나
+  scanner용 metadata를 제거하지 않는다. baseline과 새 라이브러리 hash를
+  패키지에 보존한다.
+- 공통 base 및 다섯 서비스의 마지막 OS 패키지 처리 뒤에는 exact package·source,
+  library hash·C API source ID·기존 심볼/옵션과 Python `_sqlite3`의 실제 연결을
+  재확인한다. Messaging은 Python 의존성 설치 뒤 확인한다. 설치 단계에서 이전
+  라이브러리가 돌아오거나 다른 Python SQLite에 연결되면 이미지 빌드를 중단한다.
+- 기존 보안 수용 정책은 수정하지 않는다. 다른 CVE 또는 새 패키지 버전의 finding은
+  이전 exact 승인을 승계하지 않는다. 여섯 fresh COMPLETE scan, native arm64/amd64,
+  기존 development/preprod·운영 검증을 모두 통과해야 한다. 호환성 실패는
+  원인을 수정하고 재검증하며 실패 조건을 완화하지 않는다.
+
+소스 검증은 `tests/test_native_sqlite_security.py`, 빌드 검증은
+`verify-sqlite.py`, 최종 공통 native 검증은 `verify-fixed-libs.sh`가 소유한다.
+
 <a id="sqlite-delegated-review-20261101"></a>
 
 ## 2026-11-01 OMR 복구 배포의 SQLite 한시 결정

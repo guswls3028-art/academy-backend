@@ -80,6 +80,7 @@ RUN python /tmp/install-resource-office.py && rm /tmp/install-resource-office.py
     && test -z "$(dpkg --audit)" && apt-get check \
     && ! command -v perl >/dev/null 2>&1 \
     && python /usr/local/bin/verify-krb5.py --package \
+    && python /usr/local/bin/verify-sqlite.py --package \
     && python /usr/local/bin/verify-sasl.py
 
 USER appuser
