@@ -268,6 +268,8 @@ def _batch_item_summary(batch: OmrUploadBatch, item: OmrUploadBatchItem) -> dict
         item_status = "pending_admission"
     elif item.admission_status == OmrUploadBatchItem.AdmissionStatus.DUPLICATE:
         item_status = "duplicate"
+    elif submission is not None and submission.status == Submission.Status.SUPERSEDED:
+        item_status = "superseded"
     elif item.admission_status == OmrUploadBatchItem.AdmissionStatus.FAILED or submission is None:
         item_status = "failed"
     else:
@@ -341,6 +343,8 @@ def _batch_summary(batch: OmrUploadBatch, *, grading_statuses=None) -> dict:
             duplicate_ordinals.append(int(item.ordinal))
             continue
         if item_status == "failed":
+            if submission is not None and _submission_is_archived(submission):
+                continue
             failed_ordinals.append(int(item.ordinal))
             if entry["admission_status"] == OmrUploadBatchItem.AdmissionStatus.FAILED or entry["submission_id"] is None:
                 admission_failed_ordinals.append(int(item.ordinal))
@@ -441,6 +445,60 @@ def _uploaded_file_sha256(upload_file) -> str:
     return digest.hexdigest()
 
 
+def _submission_is_archived(submission: Submission) -> bool:
+    meta = submission.meta if isinstance(submission.meta, dict) else {}
+    return submission.status == Submission.Status.SUPERSEDED or (
+        submission.status == Submission.Status.FAILED
+        and (
+            str(submission.error_message or "").startswith("discarded:")
+            or isinstance(meta.get("discarded"), dict)
+        )
+    )
+
+
+def _received_content_owner(*, tenant, exam_id: int, content_sha256: str, item_id: int):
+    """Resolve an active hash owner inside the caller's admission transaction.
+
+    A discarded/superseded source stays archived, but its receipt must release
+    the partial unique index before an explicit re-upload can be admitted.
+    Keep the old hash and submission link as history; never revive its grades.
+    """
+    existing = (
+        OmrUploadBatchItem.objects.select_for_update()
+        .filter(
+            tenant=tenant,
+            exam_id=int(exam_id),
+            content_sha256=content_sha256,
+            admission_status=OmrUploadBatchItem.AdmissionStatus.RECEIVED,
+            submission_id__isnull=False,
+        )
+        .exclude(id=int(item_id))
+        .order_by("id")
+        .first()
+    )
+    if existing is None:
+        return None
+    submission = (
+        Submission.objects.select_for_update()
+        .filter(
+            id=existing.submission_id, tenant=tenant,
+            target_type=Submission.TargetType.EXAM, target_id=int(exam_id),
+        )
+        .first()
+    )
+    if submission is None:
+        # Leave inconsistent ownership untouched; the unique constraint fails
+        # admission closed instead of linking a different tenant/exam's data.
+        return None
+    if not _submission_is_archived(submission):
+        return existing
+    existing.admission_status = OmrUploadBatchItem.AdmissionStatus.FAILED
+    existing.failure_code = "submission_archived"
+    existing.failure_message = "폐기·대체된 답안은 보관하고 새 업로드를 다시 접수합니다."
+    existing.save(update_fields=["admission_status", "failure_code", "failure_message", "updated_at"])
+    return None
+
+
 def _mark_duplicate_admission(
     *,
     item_id: int,
@@ -449,23 +507,17 @@ def _mark_duplicate_admission(
     content_sha256: str,
 ) -> bool:
     with transaction.atomic():
-        existing = (
-            OmrUploadBatchItem.objects
-            .filter(
-                tenant=tenant,
-                exam_id=int(exam_id),
-                content_sha256=content_sha256,
-                admission_status=OmrUploadBatchItem.AdmissionStatus.RECEIVED,
-                submission_id__isnull=False,
-            )
-            .exclude(id=int(item_id))
-            .order_by("id")
-            .first()
+        # Match admission's lock order; a linked ordinal is immutable history,
+        # including an archived receipt whose unique claim has been released.
+        item = OmrUploadBatchItem.objects.select_for_update().get(
+            id=int(item_id), tenant=tenant, exam_id=int(exam_id),
+        )
+        if item.submission_id is not None or item.duplicate_of_submission_id is not None:
+            return False
+        existing = _received_content_owner(
+            tenant=tenant, exam_id=exam_id, content_sha256=content_sha256, item_id=item_id,
         )
         if existing is None:
-            return False
-        item = OmrUploadBatchItem.objects.select_for_update().get(id=int(item_id))
-        if item.admission_status == OmrUploadBatchItem.AdmissionStatus.RECEIVED:
             return False
         item.admission_status = OmrUploadBatchItem.AdmissionStatus.DUPLICATE
         item.submission = None
@@ -494,10 +546,7 @@ def _mark_admission_failed(item_id: int, *, code: str, message: str) -> bool:
         )
         if item is None:
             return False
-        if (
-            item.admission_status == OmrUploadBatchItem.AdmissionStatus.RECEIVED
-            and item.submission_id is not None
-        ):
+        if item.submission_id is not None or item.duplicate_of_submission_id is not None:
             return False
         item.admission_status = OmrUploadBatchItem.AdmissionStatus.FAILED
         item.submission = None
@@ -679,10 +728,7 @@ class ExamOMRBatchUploadView(APIView):
                         OmrUploadBatchItem.objects.select_for_update()
                         .get(id=item.id, batch=batch)
                     )
-                    if (
-                        locked_item.admission_status == OmrUploadBatchItem.AdmissionStatus.RECEIVED
-                        and locked_item.submission_id is not None
-                    ):
+                    if locked_item.submission_id is not None or locked_item.duplicate_of_submission_id is not None:
                         continue
                     validation_error = _file_validation_error(upload_file)
                     if validation_error is not None:
@@ -701,18 +747,9 @@ class ExamOMRBatchUploadView(APIView):
                         )
                         continue
                     content_sha256 = _uploaded_file_sha256(upload_file)
-                    duplicate = (
-                        OmrUploadBatchItem.objects
-                        .filter(
-                            tenant=tenant,
-                            exam_id=int(exam_id),
-                            content_sha256=content_sha256,
-                            admission_status=OmrUploadBatchItem.AdmissionStatus.RECEIVED,
-                            submission_id__isnull=False,
-                        )
-                        .exclude(id=locked_item.id)
-                        .order_by("id")
-                        .first()
+                    duplicate = _received_content_owner(
+                        tenant=tenant, exam_id=exam_id,
+                        content_sha256=content_sha256, item_id=locked_item.id,
                     )
                     if duplicate is not None:
                         locked_item.admission_status = OmrUploadBatchItem.AdmissionStatus.DUPLICATE
@@ -938,7 +975,13 @@ class OmrUploadBatchRetryView(APIView):
                 if item is None:
                     skipped.append(int(ordinal))
                     continue
+                if item.duplicate_of_submission_id is not None:
+                    skipped.append(int(ordinal))
+                    continue
                 submission = submissions.get(int(item.submission_id)) if item.submission_id else None
+                if submission is not None and _submission_is_archived(submission):
+                    skipped.append(int(ordinal))
+                    continue
                 if item.admission_status == OmrUploadBatchItem.AdmissionStatus.FAILED or submission is None:
                     requires_file.append(int(ordinal))
                     continue

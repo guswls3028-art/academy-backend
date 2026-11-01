@@ -370,21 +370,52 @@ OMR 답안의 점수 영향 여부를 다시 계산한다. 정확히 일치하�
 1. 클라이언트가 시험·차시와 총 파일 수로 batch를 먼저 생성한다.
 2. 서버는 `1..total_count` ordinal을 원자적으로 만들고, 클라이언트는 그 batch id와
    ordinal을 붙여 파일 전체를 한 multipart 요청으로 보낸다.
-3. 각 ordinal은 별도 transaction에서 `Submission`에 연결된다. 이미 연결된 ordinal을
-   다시 보내면 서버가 item row를 먼저 잠그고 파일 검증보다 앞서 `RECEIVED`를 확인해
-   no-op 처리한다. 따라서 같은 ordinal의 늦은 잘못된 파일이나 동시 재전송이 기존
-   Submission 연결을 실패 상태로 되돌리지 않고, 워커도 중복 dispatch하지 않는다.
+3. 각 ordinal은 별도 transaction에서 `Submission`에 연결된다. 이미 원본 또는
+   중복 제출에 연결된 ordinal을 다시 보내면 서버가 item row를 먼저 잠그고 파일
+   검증보다 앞서 no-op 처리한다. 따라서 폐기된 과거 등록을 포함해 같은 ordinal의
+   늦은 잘못된 파일이나 동시 재전송이 원본 해시·제출 연결을 바꾸지 않고,
+   워커도 중복 dispatch하지 않는다.
    같은 tenant·시험에서 다른 batch/ordinal로 동일 바이트가 다시 오면 SHA-256과 DB
    conditional unique constraint로 경합까지 직렬화하고 `duplicate`로 완료 처리한다.
    새 Submission/R2 object/worker dispatch를 만들지 않으며 파일명이 같아도 바이트가
    다르면 정상 신규 접수다.
+   다만 연결된 제출이 `SUPERSEDED`이거나 `FAILED`와 명시적 폐기 표식
+   (`meta.discarded` 객체 또는 기존 `discarded:` 오류 코드)을 함께 가지면,
+   새 batch 접수 시 해당 item과 tenant·시험 범위의 Submission을 잠근 뒤 과거
+   item을 `failed/submission_archived`로 표시해 unique 예약만 해제한다. 원본
+   SHA-256, Submission 연결, R2 파일, 답안과 교사 결과 이력은 그대로 보존한다.
+   새 batch는 새 Submission으로 정상 접수하며 이후 같은 파일은 새 활성 제출로
+   중복 처리한다. 일반 worker 실패·처리 중·완료 제출의 중복 차단은 유지한다.
+   동시 신규 접수는 기존 partial unique 제약으로 한 건만 수락한다. 충돌한 요청은
+   자기 업로드만 정리하고 같은 잠금·범위·폐기 판정으로 활성 소유자를 재조회한다.
+   그 사이 소유자도 폐기됐다면 과거 제출로 연결하지 않고 명시적 접수 실패와
+   파일 재접수 경로를 남긴다. 교차 tenant·시험 연결은 재사용하지 않는다.
 4. 요청 응답이 끊겨도 detail GET의 `pending_admission_ordinals`와
    `admission_failed_ordinals`로 미접수 파일만 다시 선택한다. 이미 성공한 ordinal은
-   재전송하지 않는다.
+   재전송하지 않는다. 폐기·대체된 과거 항목은 `failed_ordinals`와
+   `admission_failed_ordinals`의 재시도 대상에서 제외하며, 중복 이력과 함께
+   retry API에서도 건너뛴다. 다시 제출하려면 파일을 선택해 새 batch를 만든다.
+   일반 처리 실패는 기존 원본으로 재시도할 수 있다.
 5. batch 진행 상태는 기존 Submission/AI worker 상태를 집계한다. 파일 수신은
    `received`, AI 작업 중은 `processing`, OMR 처리 완료는 `completed`, 학생 확인 필요는
    `needs_identification`, 처리 실패는 `failed`로 서로 구분한다. 업로드 성공을 AI 완료로
    표시하지 않는다.
+
+예약 해제 활성화(B)의 선행 조건은 원본·중복 ordinal 불변과 폐기 retry 제외를 갖춘
+보호 단계(A)의 전량 배포다. 모든 API 인스턴스의 정확한 A revision과 이전 요청 종료를
+운영 담당자가 확인한 뒤에만 B를 정상 rolling한다. A 이전 코드가 남아 있으면 B가
+보관 상태로 바꾼 과거 ordinal을 재전송할 때 원본 연결이 훼손될 수 있다.
+각 후보의 필수 CI와 같은 artifact의 격리 개발환경 batch HTTP 접수·폐기·재등록·
+재조회·원본 보존·cleanup zero를 확인한다. 다른 readiness canary로 대체하지 않는다.
+API 복구는 [운영 절차](../../scripts/v1/README.md)의 새 immutable 이미지
+roll-forward만 사용하고, A 보호 코드는 이후 복구 소스에도 유지한다. 이는 구버전
+이미지 직접 rollback 허가가 아니다. A 수준의 소스로 복구하면 원본은 보존되지만
+재등록 동작은 다시 중복 처리될 수 있으므로 해당 흐름의 검증이 필요하다.
+
+폐기 API → 새 batch 접수 → detail 재조회와 원본/교사 fact 보존은
+`test_omr_readmission.py`, 실제 row lock·unique 충돌과 discard commit/rollback
+경합은 `test_omr_readmission_concurrency_pg.py`가 검증한다. SQLite 기능 통과를
+PostgreSQL 경합 증거로 대체하지 않는다.
 
 `counts.completed`, `terminal`, `overall_status`는 기존 파일 접수·OMR 처리 계약을
 유지한다. 따라서 혼합 시험은 객관식 인식이 끝나면 `overall_status=completed`이면서
