@@ -27,7 +27,7 @@ def _current_question_facts(
 ):
     """Return the latest non-absence fact for each attempt/question pair."""
     qs = (
-        ResultFact.objects.filter(
+        ResultFact.objects.current().filter(
             target_type="exam",
             target_id=int(exam_id),
         )

@@ -172,7 +172,7 @@ class AdminExamResultDetailView(APIView):
             exam_id=exam_id,
             enrollment_id=enrollment_id,
         )
-        attempt_count = attempt_qs.count()
+        attempt_count = attempt_qs.regular().count()
         can_retake = bool(allow_retake and attempt_count < max_attempts)
 
         # -------------------------------------------------

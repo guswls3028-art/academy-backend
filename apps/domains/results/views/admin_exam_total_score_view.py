@@ -14,6 +14,7 @@ from rest_framework import status as drf_status
 from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.domains.results.services.attempt_service import ExamAttemptService
 from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
 from apps.domains.results.validation import parse_finite_score
 from apps.support.results.exam_policy_dependencies import (
@@ -35,7 +36,6 @@ from apps.support.results.admin_exam_dependencies import (
     lock_enrollment_for_exam_state_transition,
     resolve_exam_not_submitted_clinic_links,
 )
-from django.db.models import Max
 
 
 class AdminExamTotalScoreView(APIView):
@@ -122,11 +122,11 @@ class AdminExamTotalScoreView(APIView):
         explicit_attempt = None
         if explicit_first_attempt:
             explicit_attempt = (
-                ExamAttempt.objects.select_for_update()
+                ExamAttempt.objects.select_for_update().initial()
                 .filter(
                     exam_id=exam_id,
                     enrollment_id=enrollment_id,
-                    attempt_index=1,
+
                 )
                 .first()
             )
@@ -145,13 +145,13 @@ class AdminExamTotalScoreView(APIView):
                 .select_for_update()
                 .filter(exam_id=exam_id, enrollment_id=enrollment_id)
             )
-            last = qs.aggregate(Max("attempt_index")).get("attempt_index__max") or 0
-            next_index = int(last) + 1
+            next_index = ExamAttemptService.next_regular_attempt_index(qs)
+            is_initial = not qs.regular().exists()
             qs.filter(is_representative=True).update(is_representative=False)
             # attempt_index=1이면 1차 점수 불변 스냅샷 저장 (석차 정책 SSOT).
             # 이후 ONLINE 재응시가 Result.total_score를 덮어써도 석차는 이 값 고정.
             _initial_meta = None
-            if next_index == 1:
+            if is_initial:
                 _initial_meta = {
                     "initial_snapshot": {
                         "total_score": float(new_score),
@@ -165,7 +165,7 @@ class AdminExamTotalScoreView(APIView):
                 enrollment_id=enrollment_id,
                 submission_id=0,
                 attempt_index=next_index,
-                is_retake=(last > 0),
+                is_retake=not is_initial,
                 is_representative=True,
                 status="done",
                 meta=_initial_meta,
@@ -280,7 +280,7 @@ class AdminExamTotalScoreView(APIView):
             if sync_result:
                 attempt_meta["synced_from_result"] = True
             attempt_meta.pop("status", None)  # 정상 점수 입력 시 NOT_SUBMITTED 해제
-            if int(attempt.attempt_index) == 1:
+            if attempt.is_initial_grade:
                 initial_snapshot = dict(
                     attempt_meta.get("initial_snapshot")
                     if isinstance(attempt_meta.get("initial_snapshot"), dict)
@@ -388,13 +388,13 @@ class AdminExamTotalScoreView(APIView):
             qs = ExamAttempt.objects.select_for_update().filter(
                 exam_id=exam_id, enrollment_id=enrollment_id
             )
-            last = qs.aggregate(Max("attempt_index")).get("attempt_index__max") or 0
-            next_index = int(last) + 1
+            next_index = ExamAttemptService.next_regular_attempt_index(qs)
+            is_initial = not qs.regular().exists()
             qs.filter(is_representative=True).update(is_representative=False)
             attempt = ExamAttempt.objects.create(
                 exam_id=exam_id, enrollment_id=enrollment_id,
                 submission_id=0, attempt_index=next_index,
-                is_retake=(last > 0), is_representative=True,
+                is_retake=not is_initial, is_representative=True,
                 status="done",
                 meta={
                     "status": "NOT_SUBMITTED",
@@ -476,7 +476,7 @@ class AdminExamTotalScoreView(APIView):
         state_changed = state_changed or bool(resolved_clinic_links)
 
         # audit
-        audit_exists = ResultFact.objects.filter(
+        audit_exists = ResultFact.objects.current().filter(
             target_type="exam",
             target_id=exam_id,
             enrollment_id=enrollment_id,

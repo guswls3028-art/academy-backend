@@ -281,7 +281,7 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
         )
     }
     fact_items_by_enrollment: dict[int, dict[int, Any]] = {}
-    for fact in ResultFact.objects.filter(
+    for fact in ResultFact.objects.current().filter(
         attempt_id__in=initial_attempt_ids,
         enrollment_id__in=candidate_by_id,
     ).order_by("-id"):

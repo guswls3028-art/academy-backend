@@ -137,7 +137,7 @@ class AdminAttemptHistoryView(APIView):
 
         # 2️⃣ Attempt 조회
         attempts = (
-            ExamAttempt.objects
+            ExamAttempt.objects.with_initial_grade()
             .filter(exam_id=exam_id, enrollment_id=enrollment_id)
             .order_by("attempt_index")
         )
@@ -161,7 +161,7 @@ class AdminAttemptHistoryView(APIView):
                 or max_score
             )
 
-            if a.attempt_index == 1 and result:
+            if a.is_initial_grade and result:
                 if meta_status == "NOT_SUBMITTED":
                     score = None
                 else:

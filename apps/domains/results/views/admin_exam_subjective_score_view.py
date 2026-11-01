@@ -23,6 +23,7 @@ from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.services.initial_attempt_snapshot import sync_confirmed_initial_snapshot_meta
 from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.domains.results.services.attempt_service import ExamAttemptService
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
 from apps.domains.results.validation import parse_finite_score
 from apps.support.results.exam_policy_dependencies import (
@@ -41,7 +42,6 @@ from apps.support.results.admin_exam_dependencies import (
     get_latest_exam_submission_id,
     lock_regular_active_exam_for_tenant,
 )
-from django.db.models import Max
 
 class AdminExamSubjectiveScoreView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
@@ -104,13 +104,13 @@ class AdminExamSubjectiveScoreView(APIView):
                 .select_for_update()
                 .filter(exam_id=exam_id, enrollment_id=enrollment_id)
             )
-            last = qs.aggregate(Max("attempt_index")).get("attempt_index__max") or 0
-            next_index = int(last) + 1
+            next_index = ExamAttemptService.next_regular_attempt_index(qs)
+            is_initial = not qs.regular().exists()
             qs.filter(is_representative=True).update(is_representative=False)
             # attempt_index=1: 1차 점수 스냅샷. Subjective는 이 시점 객관식=0이므로
             # total_score = new_subjective (1차 기준 고정).
             _initial_meta = None
-            if next_index == 1:
+            if is_initial:
                 _initial_meta = {
                     "initial_snapshot": {
                         "total_score": float(new_subjective),
@@ -124,7 +124,7 @@ class AdminExamSubjectiveScoreView(APIView):
                 enrollment_id=enrollment_id,
                 submission_id=0,
                 attempt_index=next_index,
-                is_retake=(last > 0),
+                is_retake=not is_initial,
                 is_representative=True,
                 status="done",
                 meta=_initial_meta,

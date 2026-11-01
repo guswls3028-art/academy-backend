@@ -6,7 +6,7 @@ from math import isfinite
 from statistics import fmean
 from typing import Any
 
-from django.db.models import Max
+from django.db.models import Count
 from django.db.models.functions import Coalesce
 
 from apps.domains.results.models import ExamAttempt, Result
@@ -184,14 +184,14 @@ def build_student_exam_history(
     retake_counts: dict[tuple[int, int], int] = {}
     if exam_ids:
         for attempt in (
-            ExamAttempt.objects.filter(
+            ExamAttempt.objects.regular().filter(
                 exam_id__in=exam_ids,
                 enrollment_id__in=enrollment_ids,
                 exam__tenant=tenant,
                 enrollment__tenant=tenant,
             )
             .values("exam_id", "enrollment_id")
-            .annotate(max_attempt=Max("attempt_index"))
+            .annotate(max_attempt=Count("id"))
         ):
             retake_counts[(attempt["enrollment_id"], attempt["exam_id"])] = attempt["max_attempt"]
 

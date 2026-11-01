@@ -150,6 +150,13 @@ def rebind_representative_omr_submission(
     from apps.domains.submissions.models import Submission
 
     with transaction.atomic():
+        # A teacher correcting an already graded paper's student is not
+        # replacing the destination student's scan. Results owns the atomic
+        # attribution correction and its grade/history/conflict policy.
+        if ExamAttempt.objects.select_for_update().filter(
+            exam_id=int(exam_id), submission_id=int(replacement_submission_id),
+        ).exclude(enrollment_id=int(enrollment_id)).exists():
+            return None
         attempt = (
             ExamAttempt.objects.select_for_update()
             .filter(

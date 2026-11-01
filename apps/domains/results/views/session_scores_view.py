@@ -199,7 +199,7 @@ def _build_exam_attempt_summary(
     score: Optional[float]
     if is_not_submitted:
         score = None
-    elif int(attempt.attempt_index) == 1:
+    elif attempt.is_initial_grade:
         score = (
             _float_or_none(snapshot.get("total_score"))
             if snapshot
@@ -213,7 +213,7 @@ def _build_exam_attempt_summary(
         score = _float_or_none(meta.get("total_score"))
 
     max_score = _float_or_none(meta.get("max_score"))
-    if int(attempt.attempt_index) == 1:
+    if attempt.is_initial_grade:
         max_score = _float_or_none(snapshot.get("max_score")) if snapshot else max_score
     if max_score is None and result is not None:
         max_score = _float_or_none(result.max_score)
@@ -677,16 +677,18 @@ class SessionScoresView(APIView):
         # Exam: 차수별 이력(알림톡/드로어 공통) + 성취(1차/최종 통과 분리)
         exam_attempts_by_key: Dict[tuple[int, int], List[Dict[str, Any]]] = {}
         initial_attempt_id_by_key: Dict[tuple[int, int], int] = {}
+        initial_attempt_index_by_key: Dict[tuple[int, int], int] = {}
         if exam_ids and enrollment_ids:
             for attempt in (
-                ExamAttempt.objects
+                ExamAttempt.objects.with_initial_grade()
                 .filter(exam_id__in=exam_ids, enrollment_id__in=enrollment_ids)
                 .order_by("exam_id", "enrollment_id", "attempt_index")
             ):
                 exid = int(attempt.exam_id)
                 eid = int(attempt.enrollment_id)
-                if int(attempt.attempt_index) == 1:
+                if attempt.is_initial_grade:
                     initial_attempt_id_by_key[(exid, eid)] = int(attempt.id)
+                    initial_attempt_index_by_key[(exid, eid)] = int(attempt.attempt_index)
                 result = result_map.get(exid, {}).get(eid)
                 exam_attempts_by_key.setdefault((exid, eid), []).append(
                     _build_exam_attempt_summary(
@@ -825,7 +827,8 @@ class SessionScoresView(APIView):
                         (
                             attempt
                             for attempt in attempt_summaries
-                            if int(attempt.get("attempt_index") or 0) == 1
+                            if int(attempt.get("attempt_index") or 0)
+                            == initial_attempt_index_by_key.get((exid, eid))
                         ),
                         None,
                     )

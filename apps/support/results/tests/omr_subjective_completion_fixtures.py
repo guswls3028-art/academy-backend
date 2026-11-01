@@ -31,6 +31,7 @@ from apps.domains.submissions.views.exam_omr_batch_upload_view import (
     OmrUploadBatchListView,
 )
 from apps.domains.submissions.views.submission_view import SubmissionViewSet
+from apps.domains.submissions.services.ai_omr_result_mapper import apply_omr_ai_result
 
 __all__ = [
     "AnswerKey",
@@ -58,4 +59,5 @@ __all__ = [
     "SubmissionAnswer",
     "SubmissionViewSet",
     "dispatch_progress_pipeline",
+    "apply_omr_ai_result",
 ]

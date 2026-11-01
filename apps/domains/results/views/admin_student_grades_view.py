@@ -113,12 +113,12 @@ class AdminStudentGradesView(APIView):
         # 재시도 횟수 (bulk)
         retake_counts = {}
         if exam_ids and enrollment_ids:
-            from django.db.models import Max
+            from django.db.models import Count
             from apps.domains.results.models import ExamAttempt as _EA
-            for att in _EA.objects.filter(
+            for att in _EA.objects.regular().filter(
                 exam_id__in=exam_ids,
                 enrollment_id__in=enrollment_ids,
-            ).values("exam_id", "enrollment_id").annotate(max_attempt=Max("attempt_index")):
+            ).values("exam_id", "enrollment_id").annotate(max_attempt=Count("id")):
                 retake_counts[(att["enrollment_id"], att["exam_id"])] = att["max_attempt"]
 
         # 세션/강의 정보 — enrollment → lecture 매핑
