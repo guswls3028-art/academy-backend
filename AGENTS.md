@@ -45,6 +45,20 @@ Docs/instruction/local-settings changes require applicable syntax/path/contract/
 diff checks and required CI; no separate product build, deployment or mutating
 QA solely for prose. Executable changes use their owning gates.
 
+## Delivery responsibility
+
+A deployment request remains open until the requested changes are included in
+the deployed candidate, its exact live revision and affected flows are verified,
+and owned cleanup is complete. Commit/CI/merge/handoff is not completion. Keep
+one release executor; transfer outcome responsibility only after the receiver
+acknowledges the exact candidate, remaining work and tracking. Continue assigned
+fixes/verification. Failed gates require diagnosis and correction; genuine
+external waits need a named owner, release condition and verified existing
+authorized continuation. Do not leave runnable work for the user to re-request,
+create duplicate chats, or imply unverified background work. Preserve gates and
+managed denials. Details: `docs/operations/concurrent-codex-sessions.md` →
+Delivery completion and continuation. Docs-only scope remains as defined above.
+
 ## Product boundaries and evidence
 
 For backend work motivated by a UI/UX or user-journey complaint, inspect the
