@@ -69,6 +69,9 @@ class Submission(TimestampModel):
     file_size = models.PositiveIntegerField(null=True, blank=True)
 
     payload = models.JSONField(null=True, blank=True)
+    # A transport retry belongs to the original attempt, including after reload.
+    # Nullable for clients deployed before the online submission retry contract.
+    client_request_id = models.UUIDField(null=True, blank=True, editable=False)
 
     status = models.CharField(
         max_length=30,
@@ -88,6 +91,11 @@ class Submission(TimestampModel):
             models.Index(fields=["tenant", "created_at"]),
         ]
         constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "enrollment", "target_type", "target_id", "client_request_id"],
+                condition=models.Q(client_request_id__isnull=False),
+                name="unique_submission_client_request",
+            ),
             models.UniqueConstraint(
                 fields=["user", "target_type", "target_id"],
                 condition=models.Q(

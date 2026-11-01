@@ -66,6 +66,8 @@ class SubmissionSerializer(serializers.ModelSerializer):
 class SubmissionCreateSerializer(serializers.ModelSerializer):
     enrollment_id = serializers.IntegerField(required=False, allow_null=True)
     file = serializers.FileField(required=False)
+    client_request_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
+    expected_attempt_count = serializers.IntegerField(required=False, min_value=0, write_only=True)
 
     class Meta:
         model = Submission
@@ -76,6 +78,8 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
             "source",
             "file",
             "payload",
+            "client_request_id",
+            "expected_attempt_count",
         )
 
     def validate(self, attrs):
@@ -100,12 +104,15 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"file": "file required"})
 
         # online은 payload 필요
-        if source == Submission.Source.ONLINE and not attrs.get("payload"):
+        if source == Submission.Source.ONLINE and not isinstance(attrs.get("payload"), dict):
             raise serializers.ValidationError({"payload": "required"})
+        if source == Submission.Source.ONLINE and attrs.get("target_type") == Submission.TargetType.EXAM and not attrs.get("enrollment_id"):
+            raise serializers.ValidationError({"enrollment_id": "시험 제출에는 수강 정보가 필요합니다."})
 
         return attrs
 
     def create(self, validated_data):
+        validated_data.pop("expected_attempt_count", None)
         upload_file = validated_data.pop("file", None)
         tenant = validated_data.pop("tenant", None)
         user = validated_data.pop("user", None)

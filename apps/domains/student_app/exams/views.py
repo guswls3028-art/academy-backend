@@ -20,11 +20,8 @@ from rest_framework import status
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
 from apps.support.student_app.exam_dependencies import (
     StudentExamSubmitError,
-    create_online_exam_submission,
-    dispatch_student_exam_submission,
-    fail_student_exam_submission,
+    submit_online_exam,
     get_enrollment_for_student_exam,
-    normalize_student_exam_answers,
     student_exam_queryset,
     student_exam_questions,
     submission_status_map_for_student_exams,
@@ -200,7 +197,9 @@ class StudentExamSubmitView(APIView):
                 {"detail": "시험을 찾을 수 없거나 응시 권한이 없습니다."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        qs = _exam_queryset_for_student(request_student, tenant).filter(id=exam_id)
+        qs = student_exam_queryset(
+            request_student, tenant, include_closed=request.data.get("client_request_id") is not None,
+        ).filter(id=exam_id)
         exam = qs.first()
         if not exam:
             return Response(
@@ -214,34 +213,19 @@ class StudentExamSubmitView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
         try:
-            answers = normalize_student_exam_answers(
-                exam=exam,
-                answers=request.data.get("answers"),
-            )
-        except StudentExamSubmitError as exc:
-            return Response({"detail": exc.detail}, status=exc.status_code)
-        try:
-            submission = create_online_exam_submission(
+            submission = submit_online_exam(
                 request_user=request.user,
                 request_student=request_student,
                 tenant=tenant,
                 exam=exam,
                 enrollment=enrollment,
-                answers=answers,
+                answers=request.data.get("answers"),
+                client_request_id=request.data.get("client_request_id"),
+                expected_attempt_count=request.data.get("expected_attempt_count"),
             )
         except StudentExamSubmitError as exc:
-            return Response({"detail": exc.detail}, status=exc.status_code)
+            return Response({"detail": exc.detail, "code": exc.code}, status=exc.status_code)
 
-        try:
-            dispatch_student_exam_submission(submission)
-        except Exception:
-            logger.exception("StudentExamSubmitView dispatch_submission failed")
-            fail_student_exam_submission(submission)
-            return Response(
-                {"detail": "제출 처리 중 오류가 발생했습니다. 입력한 답안으로 다시 제출해 주세요."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-        submission.refresh_from_db(fields=["status"])
         return Response(
             {"submission_id": submission.id, "status": getattr(submission, "status", submission.status)},
             status=status.HTTP_201_CREATED,

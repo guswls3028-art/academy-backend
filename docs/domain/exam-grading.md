@@ -1108,6 +1108,27 @@ ID이고 `total`은 해당 필터 전체 건수다. 식별되지 않은 답안, 
 
 ### 온라인 제출의 준비 검사·재시도·서술형 채점
 
+학생 전용 제출과 호환 `/submissions/submissions/`의 온라인 시험은 동일한
+접수·채점·실패 복구 서비스를 사용한다. 호환 API의 기존 역할·본인 수강 검사는
+유지하며, 다른 tenant/학생의 제출로 요청을 복구하지 않는다.
+클라이언트가 보내는 UUID `client_request_id`는 tenant·수강·시험 범위에서
+유일하다. 같은 식별자와 같은 답안의 재전송은 기존 제출·응시를 반환하고,
+답안이 달라지면 409로 거부한다. 완료 뒤 응답 유실, 마감 이후 확인, 재응시로
+대체된 이전 요청도 응시 횟수나 현재 대표 성적을 바꾸지 않는다. 접수 직후
+프로세스가 끊긴 요청과 채점 실패 요청은 같은 식별자로 즉시 재처리하며,
+답안·저장 행을 보존한다. `expected_attempt_count`가 현재 응시 횟수와 다르면
+새 접수를 409로 거부하여 여러 탭의 오래된 화면이 새 재응시를 소모하지 않는다.
+두 값은 순차 배포 호환을 위해 선택 사항이며, 이전 클라이언트의 실제 재응시
+의미는 바꾸지 않는다. 신규 nullable 식별자와 유일 인덱스만 추가하고 기존
+답안·점수·응시 이력을 일괄 변경하지 않는다. 백엔드를 먼저 배포한다.
+`0014`의 조건부 unique 제약은 일반 migration guard의 contract 검토 대상이다.
+기존 행과 구버전 API의 null 쓰기는 제약에서 제외되는 호환성을 확인한 뒤,
+정확한 병합 main 후보를 `allow_contract_migrations=true`로 dispatch한다.
+development/preprod migration·health와 운영 rolling 검증은 그대로 필수다.
+검증: `test_online_submission_idempotency.py`, PostgreSQL의
+`test_concurrent_same_request_dispatches_one_attempt`, 프런트엔드
+`numeric-short-answer.spec.ts`의 응답 유실·reload·마감 후 확인 흐름.
+
 학생과 선택 자녀의 온라인 제출은 기존 tenant·시험 배정·활성 수강 권한을
 확인한 뒤 자동채점할 모든 문항의 정답을 검사한다. 정답지가 없거나 선택형
 정답이 일부 누락되면 409와 교사 확인 안내를 반환하며 제출이나 0점 성적을

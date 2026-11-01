@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import threading
 import time
+import uuid
 import unittest
 from unittest.mock import patch
 
@@ -71,6 +72,47 @@ class TestP0ConcurrencyPG(TransactionTestCase):
         exam.sessions.add(session)
         ExamEnrollment.objects.create(exam=exam, enrollment=enrollment)
         return tenant, enrollment, exam
+
+    def test_concurrent_same_request_dispatches_one_attempt(self):
+        tenant, enrollment, exam = self._setup_data()
+        exam.exam_type = Exam.ExamType.REGULAR
+        exam.save(update_fields=["exam_type"])
+        sheet = Sheet.objects.create(exam=exam, name="MAIN", total_questions=1, choice_count=1)
+        question = ExamQuestion.objects.create(sheet=sheet, number=1, score=100)
+        AnswerKey.objects.create(exam=exam, answers={str(question.pk): "1"})
+        request_id = uuid.uuid4()
+        barrier = threading.Barrier(2, timeout=10)
+        accepted, failures = [], []
+
+        def submit():
+            try:
+                connection.close()
+                barrier.wait()
+                submission = create_online_exam_submission(
+                    request_user=enrollment.student.user, request_student=enrollment.student,
+                    tenant=tenant, exam=exam, enrollment=enrollment,
+                    answers=[{"exam_question_id": question.pk, "answer": "1"}],
+                    client_request_id=request_id, expected_attempt_count=0,
+                )
+                dispatch_student_exam_submission(submission)
+                accepted.append(submission.pk)
+            except Exception as exc:
+                failures.append(repr(exc))
+            finally:
+                connection.close()
+
+        with patch("apps.domains.results.services.grading_service.dispatch_progress_pipeline"):
+            threads = [threading.Thread(target=submit) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(20)
+            self.assertFalse(any(thread.is_alive() for thread in threads), "Concurrent retry deadlocked")
+        self.assertEqual(failures, [])
+        self.assertEqual(len(accepted), 2)
+        self.assertEqual(len(set(accepted)), 1)
+        self.assertEqual(ExamAttempt.objects.filter(exam=exam, enrollment=enrollment).count(), 1)
+        self.assertEqual(Submission.objects.get(pk=accepted[0]).status, Submission.Status.DONE)
 
     def test_concurrent_legal_retake_creates_one_active_submission(self):
         tenant, enrollment, exam = self._setup_data()

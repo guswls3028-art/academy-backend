@@ -351,19 +351,19 @@ class TestC1bStudentCreateAllowed(_SecurityFixtureMixin, TestCase):
 
         serializer_save.side_effect = fail_after_upload
         view = SubmissionViewSet.as_view({"post": "create"})
-        response = self._call(
-            lambda: view,
-            "post",
-            "/api/v1/submissions/submissions/",
-            user=self.student_user,
-            data={
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        request = self.factory.post(
+            "/api/v1/submissions/submissions/", {
                 "target_type": "exam",
                 "target_id": self.exam.id,
-                "source": "online",
+                "source": "omr_scan",
                 "enrollment_id": self.enrollment.id,
-                "payload": {"answers": []},
-            },
+                "file": SimpleUploadedFile("generic.jpg", b"test-image", content_type="image/jpeg"),
+            }, format="multipart",
         )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = view(request)
 
         self.assertEqual(response.status_code, 503, response.data)
         self.assertEqual(response.data["code"], "submission_storage_cleanup_pending")
