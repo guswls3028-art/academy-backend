@@ -8,6 +8,7 @@ GET /api/v1/clinic/idcard/
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolved
@@ -24,9 +25,9 @@ from apps.support.clinic.idcard_dependencies import (
     active_enrollments_for_student,
     clinic_link_source_projection,
     ordered_sessions_by_enrollment,
-    student_for_idcard_user,
     unresolved_auto_clinic_links,
 )
+from apps.support.clinic.session_dependencies import get_student_for_clinic_request
 from apps.domains.clinic.time_ranges import booking_window
 
 
@@ -184,16 +185,14 @@ class StudentClinicIdcardView(APIView):
     permission_classes = [IsAuthenticated, TenantResolved]
 
     def get(self, request):
-        user = request.user
         tenant = request.tenant
-        student = student_for_idcard_user(tenant=tenant, user=user)
+        student = get_student_for_clinic_request(request)
+        if student is None:
+            raise PermissionDenied("선택한 학생 정보를 확인할 수 없습니다.")
         local_now = timezone.localtime(timezone.now())
 
         # 패스카드 배경 색상 (매일 자동 3색 또는 저장값)
         colors = get_effective_clinic_colors(tenant) if tenant else ["#ef4444", "#3b82f6", "#22c55e"]
-
-        if not student:
-            return Response(_response_payload(colors=colors, server_now=local_now))
 
         # tenant is guaranteed by TenantResolved permission
         # 활성 강의 전체를 기준으로 집계한다. 한 학생이 여러 강의를 수강해도

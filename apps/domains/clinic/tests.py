@@ -1975,6 +1975,115 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
             )
         )
 
+    def _make_idcard_parent(self, students):
+        from django.apps import apps as django_apps
+
+        user = self.make_user(f"idcard_parent_{self.tenant.code}")
+        user.tenant = self.tenant
+        user.save(update_fields=["tenant"])
+        parent = django_apps.get_model("parents", "Parent").objects.create(
+            tenant=self.tenant, user=user, name="패스카드 학부모", phone="01012345678",
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=user, role="parent")
+        for student in students:
+            student.parent = parent
+            student.save(update_fields=["parent", "updated_at"])
+        return user
+
+    def test_parent_idcard_matches_selected_child_targets_booking_and_resolution(self):
+        from django.apps import apps as django_apps
+
+        enrollment = self.data["enrollments"][0]
+        session = self.data["lec_session"]
+        links = []
+        for title in ("미제출 과제 1", "미제출 과제 2"):
+            homework = django_apps.get_model("homework_results", "Homework").objects.create(
+                tenant=self.tenant, session=session, title=title,
+            )
+            django_apps.get_model("homework", "HomeworkAssignment").objects.create(
+                tenant=self.tenant, homework=homework, session=session, enrollment=enrollment,
+            )
+            links.append(self.make_clinic_link(
+                enrollment, session, source_type="homework", source_id=homework.id,
+            ))
+        parent_user = self._make_idcard_parent([self.student])
+        parent_headers = {**self._headers(self.tenant), "HTTP_X_STUDENT_ID": str(self.student.id)}
+
+        def assert_same_projection(expected_state):
+            self.client.force_authenticate(user=self.student.user)
+            own = self.client.get("/api/v1/clinic/idcard/", **self._headers(self.tenant))
+            self.client.force_authenticate(user=parent_user)
+            for _ in range(2):  # A fresh GET/reload must retain the same selected child.
+                selected = self.client.get("/api/v1/clinic/idcard/", **parent_headers)
+                self.assertEqual(selected.status_code, 200, selected.data)
+                self.assertEqual(selected.data["passcard_state"], expected_state)
+                for key in ("student_name", "current_result", "current_targets", "histories", "can_leave", "valid_bookings"):
+                    self.assertEqual(selected.data[key], own.data[key], key)
+            return selected.data
+
+        required = assert_same_projection("CLINIC_REQUIRED")
+        self.assertEqual(required["current_result"], "FAIL")
+        self.assertFalse(required["can_leave"])
+        self.assertEqual({row["clinic_link_id"] for row in required["current_targets"]}, {link.id for link in links})
+        self.make_participant(
+            self.tenant, self.data["clinic_session"], self.student,
+            enrollment=enrollment, status="booked",
+        )
+        booked = assert_same_projection("BOOKING_CONFIRMED")
+        self.assertEqual(booked["current_result"], "FAIL")
+        ClinicLink.objects.filter(id__in=[link.id for link in links]).update(resolved_at=timezone.now())
+        passed = assert_same_projection("PASSED")
+        self.assertEqual(passed["current_result"], "SUCCESS")
+        self.assertEqual(passed["current_targets"], [])
+
+    def test_parent_idcard_switches_only_to_explicit_owned_child(self):
+        sibling = self.make_student(self.tenant, "idcard_sibling")
+        self.make_enrollment(self.tenant, sibling, self.data["lecture"])
+        self._make_live_exam_clinic_link(self.data["enrollments"][0], self.data["lec_session"])
+        parent_user = self._make_idcard_parent([self.student, sibling])
+        self.client.force_authenticate(user=parent_user)
+        for child, state in ((self.student, "CLINIC_REQUIRED"), (sibling, "PASSED"), (self.student, "CLINIC_REQUIRED")):
+            response = self.client.get(
+                "/api/v1/clinic/idcard/", HTTP_X_STUDENT_ID=str(child.id), **self._headers(self.tenant),
+            )
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["student_name"], child.name)
+            self.assertEqual(response.data["passcard_state"], state)
+
+    def test_parent_idcard_rejects_missing_invalid_unowned_and_foreign_child(self):
+        stranger = self.make_student(self.tenant, "idcard_stranger")
+        foreign = self.make_student(self.make_tenant("idcard_foreign"), "foreign")
+        parent_user = self._make_idcard_parent([self.student])
+        self.client.force_authenticate(user=parent_user)
+        for selected_id in (None, "invalid", str(stranger.id), str(foreign.id)):
+            headers = self._headers(self.tenant)
+            if selected_id is not None:
+                headers["HTTP_X_STUDENT_ID"] = selected_id
+            with self.subTest(selected_id=selected_id):
+                response = self.client.get("/api/v1/clinic/idcard/", **headers)
+                self.assertEqual(response.status_code, 403, response.data)
+                self.assertNotIn("current_result", response.data)
+        self.student.deleted_at = timezone.now()
+        self.student.save(update_fields=["deleted_at", "updated_at"])
+        response = self.client.get(
+            "/api/v1/clinic/idcard/", HTTP_X_STUDENT_ID=str(self.student.id), **self._headers(self.tenant),
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+
+    def test_student_idcard_ignores_another_student_header_and_staff_cannot_get_pass(self):
+        self._make_live_exam_clinic_link(self.data["enrollments"][0], self.data["lec_session"])
+        stranger = self.make_student(self.tenant, "header_stranger")
+        response = self.client.get(
+            "/api/v1/clinic/idcard/", HTTP_X_STUDENT_ID=str(stranger.id), **self._headers(self.tenant),
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["student_name"], self.student.name)
+        self.assertEqual(response.data["passcard_state"], "CLINIC_REQUIRED")
+        self.client.force_authenticate(user=self.data["admin_user"])
+        response = self.client.get("/api/v1/clinic/idcard/", **self._headers(self.tenant))
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertNotIn("current_result", response.data)
+
     def test_idcard_projects_all_sources_newest_first_across_active_enrollments(self):
         from django.apps import apps as django_apps
 
@@ -2522,7 +2631,7 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
             ).exists()
         )
 
-    def test_deleted_student_gets_empty_idcard(self):
+    def test_deleted_student_cannot_receive_passed_idcard(self):
         self.student.deleted_at = timezone.now()
         self.student.save(update_fields=["deleted_at", "updated_at"])
 
@@ -2531,10 +2640,8 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
             **self._headers(self.tenant),
         )
 
-        self.assertEqual(resp.status_code, 200, resp.data)
-        self.assertEqual(resp.data["student_name"], "")
-        self.assertEqual(resp.data["histories"], [])
-        self.assertEqual(resp.data["current_result"], "SUCCESS")
+        self.assertEqual(resp.status_code, 403, resp.data)
+        self.assertNotIn("current_result", resp.data)
 
     def test_student_cannot_complete_own_booking(self):
         participant = self.make_participant(
