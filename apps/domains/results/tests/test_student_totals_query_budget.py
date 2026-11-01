@@ -2,13 +2,21 @@
 from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.db import connection
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.test.utils import CaptureQueriesContext
 
 from apps.support.results.score_total_dependencies import (
     student_exam_session_pairs,
     student_session_totals,
 )
+from apps.support.progress.session_calculator_dependencies import get_exam_target_enrollment_pairs_by_session
+
+
+class EmptyTargetQueryTests(SimpleTestCase):
+    def test_empty_roster_never_queries_assignments(self):
+        self.assertEqual(get_exam_target_enrollment_pairs_by_session(
+            exam_ids_by_session={1: [1]}, enrollment_ids_by_session={1: []},
+        ), {1: set()})
 
 
 class StudentTotalsQueryBudgetTests(TestCase):

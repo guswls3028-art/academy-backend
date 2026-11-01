@@ -97,6 +97,8 @@ def get_exam_target_enrollment_pairs_by_session(*, exam_ids_by_session, enrollme
     exam_ids = {int(eid) for ids in exam_ids_by_session.values() for eid in ids}
     rosters = {sid: {int(eid) for eid in ids} for sid, ids in enrollment_ids_by_session.items()}
     roster_ids = {eid for ids in rosters.values() for eid in ids}
+    if not exam_ids or not roster_ids:
+        return {sid: set() for sid in exam_ids_by_session}
     explicit_rows = list(
         ExamEnrollment.objects.filter(
             exam_id__in=exam_ids,
