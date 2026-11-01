@@ -24,6 +24,10 @@ class OmrReceiptGuardTests(OmrReceiptFixture, TestCase):
 
     def test_phase_b_archive_shape_is_immutable_for_valid_and_empty_resends(self):
         item = self.archive_shape()
+        active, active_response = self.upload()
+        self.assertEqual(active_response.data["created_count"], 1)
+        self.assertNotEqual(active.submission_id, item.submission_id)
+        self.assertEqual(active.content_sha256, item.content_sha256)
         answer = SubmissionAnswer.objects.create(
             tenant=self.tenant, submission_id=item.submission_id, exam_question_id=1,
             answer="2", meta={"source": "teacher", "approved": True},
@@ -41,8 +45,8 @@ class OmrReceiptGuardTests(OmrReceiptFixture, TestCase):
         self.assertEqual(OmrUploadBatchItem.objects.filter(pk=item.pk).values().get(), receipt)
         self.assertEqual(Submission.objects.filter(pk=item.submission_id).values().get(), submission)
         self.assertEqual(SubmissionAnswer.objects.filter(pk=answer.pk).values().get(), teacher_answer)
-        self.assertEqual(self.storage.call_count, 1)
-        self.assertEqual(self.dispatch.call_count, 1)
+        self.assertEqual(self.storage.call_count, 2)
+        self.assertEqual(self.dispatch.call_count, 2)
 
     def test_duplicate_ordinal_stays_bound_after_original_discard(self):
         original, _ = self.upload()
