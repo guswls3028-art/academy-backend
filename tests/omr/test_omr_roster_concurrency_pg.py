@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import unittest
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.db import close_old_connections, connection, transaction
@@ -19,6 +20,7 @@ from apps.domains.students.models import Student
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.services.ai_omr_result_mapper import apply_omr_ai_result
 from apps.support.omr.candidate_matching import ensure_exam_enrollment_candidate
+from apps.support.exams import enrollment_candidates
 
 
 class OmrRosterConcurrencyPostgresTests(TransactionTestCase):
@@ -170,3 +172,35 @@ class OmrRosterConcurrencyPostgresTests(TransactionTestCase):
         self.assertEqual(self.values["callback"], submission.id)
         self.assertEqual(submission.status, Submission.Status.ANSWERS_READY)
         self.assertEqual(submission.enrollment_id, self.enrollments[0].id)
+
+    def test_concurrent_eligible_assignment_commit_does_not_abort_legacy_snapshot(self):
+        roster_read = threading.Event()
+        other_committed = threading.Event()
+        read_roster = enrollment_candidates.linked_exam_roster_ids
+
+        def pause_after_snapshot(**kwargs):
+            ids = read_roster(**kwargs)
+            if threading.current_thread().name == "legacy-materializer" and kwargs.get("include_attendance"):
+                roster_read.set()
+                if not other_committed.wait(timeout=5):
+                    raise AssertionError("concurrent FK assignment did not commit")
+            return ids
+
+        def eligible_assignment_writer():
+            if not roster_read.wait(timeout=5):
+                raise AssertionError("legacy roster was not read")
+            # Enrollment/attendance writers may add eligible rows without
+            # selecting the Exam parent; its FK commit lock must be exercised.
+            with transaction.atomic():
+                ExamEnrollment.objects.get_or_create(exam=self.exam, enrollment=self.enrollments[0])
+            other_committed.set()
+            return True
+
+        with patch.object(enrollment_candidates, "linked_exam_roster_ids", side_effect=pause_after_snapshot):
+            writer = self._thread("eligible-assignment", eligible_assignment_writer)
+            materializer = self._thread("legacy-materializer", lambda: self._ensure(self.enrollments[1]))
+            self._join(writer, materializer)
+        self.assertEqual(self.values, {"eligible-assignment": True, "legacy-materializer": True})
+        self.assertEqual(set(ExamEnrollment.objects.filter(exam=self.exam).values_list(
+            "enrollment_id", flat=True,
+        )), {e.id for e in self.enrollments})
