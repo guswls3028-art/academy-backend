@@ -201,6 +201,13 @@ class StudentClinicIdcardView(APIView):
             tenant=tenant,
             student=student,
         )
+        if not enrollments:
+            # An identified account without enrollment is not proof of passing.
+            # A non-2xx response also keeps older clients from rendering PASSED.
+            raise PermissionDenied({
+                "code": "clinic_no_active_enrollment",
+                "detail": "패스카드를 확인할 수 있는 활성 수강이 없습니다.",
+            })
         enrollment_ids = [int(enrollment.id) for enrollment in enrollments]
         clinic_links = unresolved_auto_clinic_links(
             tenant=tenant,
@@ -212,17 +219,6 @@ class StudentClinicIdcardView(APIView):
             local_date=local_now.date(),
             required_date=passcard_required_booking_date(clinic_links),
         )
-
-        if not enrollments:
-            return Response(
-                _response_payload(
-                    student_name=getattr(student, "name", "") or "",
-                    profile_photo_url=_profile_photo_url(request, student),
-                    colors=colors,
-                    valid_bookings=valid_bookings,
-                    server_now=local_now,
-                )
-            )
 
         source_projection = clinic_link_source_projection(
             tenant=tenant,

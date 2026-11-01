@@ -523,6 +523,16 @@ child restores the ordinary passcard journey. No student, grade, enrollment or
 clinic records are migrated or changed by this read-side correction. Regression
 coverage in `StudentClinicPermissionAPITest` verifies repeated GETs, child switching,
 two unresolved homework targets, booking confirmation, resolution and isolation.
+An identified student with no active enrollment also receives `403`, with
+`code=clinic_no_active_enrollment`, instead of an empty passing/departure credential.
+This includes an account with no enrollment history and one whose enrollments are
+all inactive, even when a preserved clinic booking exists. Older clients enter
+their existing error state; the updated frontend explains the empty enrollment
+state and offers a fresh check. Selecting an enrolled child or restoring the
+ordinary enrollment restores the existing verdict on the next GET. The read does
+not alter enrollments, grades, targets or reservations. Regression coverage checks
+both roles, repeated reads, child selection and recovery with unresolved evidence
+preserved; active students keep the existing PASS/FAIL/booking contract.
 The response also returns
 the separate `passcard_state` (`PASSED`, `CLINIC_REQUIRED`, or
 `BOOKING_CONFIRMED`). A future-or-today `booked` reservation yields

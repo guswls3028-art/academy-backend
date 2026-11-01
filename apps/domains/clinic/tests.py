@@ -1990,6 +1990,59 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
             student.save(update_fields=["parent", "updated_at"])
         return user
 
+    def test_idcard_without_enrollment_never_issues_a_pass_for_either_role(self):
+        student = self.make_student(self.tenant, "idcard_without_enrollment")
+        student.user.tenant = self.tenant
+        student.user.save(update_fields=["tenant"])
+        TenantMembership.ensure_active(tenant=self.tenant, user=student.user, role="student")
+        parent = self._make_idcard_parent([student, self.student])
+        counts = (Enrollment.objects.count(), ClinicLink.objects.count(), SessionParticipant.objects.count())
+        for user, selection in ((student.user, {}), (parent, {"HTTP_X_STUDENT_ID": str(student.id)})):
+            with self.subTest(role="parent" if user == parent else "student"):
+                self.client.force_authenticate(user=user)
+                for _ in range(2):
+                    response = self.client.get("/api/v1/clinic/idcard/", **self._headers(self.tenant), **selection)
+                    self.assertEqual(response.status_code, 403, response.data)
+                    self.assertEqual(response.data["code"], "clinic_no_active_enrollment")
+                    self.assertNotIn("passcard_state", response.data)
+                    self.assertNotIn("can_leave", response.data)
+        self.assertEqual(counts, (Enrollment.objects.count(), ClinicLink.objects.count(), SessionParticipant.objects.count()))
+        self.client.force_authenticate(user=parent)
+        selected = self.client.get(
+            "/api/v1/clinic/idcard/", **self._headers(self.tenant), HTTP_X_STUDENT_ID=str(self.student.id),
+        )
+        self.assertEqual(selected.status_code, 200, selected.data)
+        self.assertEqual(selected.data["student_name"], self.student.name)
+        self.assertEqual(selected.data["passcard_state"], "PASSED")
+
+    def test_idcard_inactive_enrollment_recovers_without_changing_saved_targets(self):
+        enrollment = self.data["enrollments"][0]
+        link = self._make_live_exam_clinic_link(enrollment, self.data["lec_session"])
+        parent = self._make_idcard_parent([self.student])
+        participant = self.make_participant(
+            self.tenant, self.data["clinic_session"], self.student, enrollment=enrollment, status="booked",
+        )
+        enrollment.status = "INACTIVE"
+        enrollment.save(update_fields=["status"])
+        for user, selection in ((self.student.user, {}), (parent, {"HTTP_X_STUDENT_ID": str(self.student.id)})):
+            self.client.force_authenticate(user=user)
+            response = self.client.get("/api/v1/clinic/idcard/", **self._headers(self.tenant), **selection)
+            self.assertEqual(response.status_code, 403, response.data)
+            self.assertEqual(response.data["code"], "clinic_no_active_enrollment")
+        link.refresh_from_db()
+        participant.refresh_from_db()
+        self.assertIsNone(link.resolved_at)
+        self.assertEqual(participant.status, "booked")
+        enrollment.status = "ACTIVE"
+        enrollment.save(update_fields=["status"])
+        for user, selection in ((self.student.user, {}), (parent, {"HTTP_X_STUDENT_ID": str(self.student.id)})):
+            self.client.force_authenticate(user=user)
+            for _ in range(2):
+                response = self.client.get("/api/v1/clinic/idcard/", **self._headers(self.tenant), **selection)
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertEqual(response.data["current_result"], "FAIL")
+                self.assertEqual({row["clinic_link_id"] for row in response.data["current_targets"]}, {link.id})
+
     def test_parent_idcard_matches_selected_child_targets_booking_and_resolution(self):
         from django.apps import apps as django_apps
 

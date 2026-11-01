@@ -4,7 +4,9 @@ from copy import deepcopy
 from contextlib import redirect_stdout
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 import unittest
 from unittest.mock import patch
@@ -258,6 +260,138 @@ class HomeworkCanaryBoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "production_bucket_access_not_denied"):
                 self.canary.run(release_id="owned-release", production_database="postgres")
             storage.put_object.assert_not_called()
+
+
+class HomeworkPreviewDriftTests(unittest.TestCase):
+    """Run the real readonly drift function with Describe responses, never AWS."""
+
+    CE = "academy-development-homework-video-ce"
+    QUEUE = "academy-development-homework-video-queue"
+
+    def setUp(self):
+        self.fixture = {
+            "params": {"homeworkPreviewDevelopment": {"computeEnvironmentName": self.CE, "queueName": self.QUEUE}},
+            "ces": [{"computeEnvironmentName": name, "status": "VALID", "state": "ENABLED",
+                     "computeResources": {"type": "EC2", "allocationStrategy": "BEST_FIT_PROGRESSIVE", "maxvCpus": 4, "instanceTypes": ["c6a.large"]}}
+                    for name in ("academy-video-ce", "academy-ops-ce", self.CE)],
+            "queues": [{"jobQueueName": name, "status": "VALID", "state": "ENABLED"}
+                       for name in ("academy-video-queue", "academy-ops-queue", self.QUEUE)],
+        }
+
+    def drift(self):
+        harness = r'''
+$ErrorActionPreference = 'Stop'
+$script:fixture = $env:DRIFT_FIXTURE | ConvertFrom-Json
+$script:params = ($env:DRIFT_FIXTURE | ConvertFrom-Json -AsHashtable).params
+$script:Region = 'qa-region'
+$script:VideoCEName = 'academy-video-ce'; $script:OpsCEName = 'academy-ops-ce'
+$script:SSOT_CE = @($script:VideoCEName, $script:OpsCEName)
+$script:SSOT_Queue = @('academy-video-queue', 'academy-ops-queue')
+$script:VideoCEMaxvCpus = 4; $script:OpsCEMaxvCpus = 4
+$script:VideoCEInstanceTypes = @('c6a.large'); $script:OpsCEInstanceType = 'c6a.large'
+$script:SSOT_ASG = @(); $script:SSOT_EventBridgeRule = @()
+$script:ApiASGName = 'api'; $script:MessagingASGName = 'messaging'
+$script:AiASGName = 'ai'; $script:ToolsASGName = 'tools'
+$script:ApiLaunchTemplateName = 'qa-api-lt'
+function Get-ParamsYaml { return $script:params }
+function Invoke-AwsJson {
+    param([object[]]$Arguments)
+    switch ("$($Arguments[0]):$($Arguments[1])") {
+        'batch:describe-compute-environments' { return [pscustomobject]@{computeEnvironments=$script:fixture.ces} }
+        'batch:describe-job-queues' { return [pscustomobject]@{jobQueues=$script:fixture.queues} }
+        'autoscaling:describe-auto-scaling-groups' { return [pscustomobject]@{AutoScalingGroups=@()} }
+        'ec2:describe-launch-templates' { return [pscustomobject]@{LaunchTemplates=@()} }
+        default { throw 'Unexpected AWS operation in readonly drift' }
+    }
+}
+. (Join-Path $env:DRIFT_ROOT 'scripts/v1/core/diff.ps1')
+$rows = @(Get-StructuralDrift)
+'DRIFT_RESULT=' + (@{rows=$rows; productionCE=$script:SSOT_CE; productionQueue=$script:SSOT_Queue} | ConvertTo-Json -Depth 10 -Compress)
+'''
+        env = {key: value for key, value in os.environ.items() if not key.startswith(("AWS_", "ACADEMY_"))}
+        env.update(DRIFT_ROOT=str(ROOT), DRIFT_FIXTURE=json.dumps(self.fixture))
+        result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", harness],
+                                capture_output=True, text=True, timeout=30, env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        lines = [line for line in result.stdout.splitlines() if line.startswith("DRIFT_RESULT=")]
+        self.assertEqual(len(lines), 1, result.stdout + result.stderr)
+        data = json.loads(lines[0].split("=", 1)[1])
+        self.assertEqual(data["productionCE"], ["academy-video-ce", "academy-ops-ce"])
+        self.assertEqual(data["productionQueue"], ["academy-video-queue", "academy-ops-queue"])
+        self.drift_rows = {row["Name"]: row for row in data["rows"]}
+        return {row["Name"]: row["Action"] for row in data["rows"]}
+
+    def test_only_declared_healthy_resources_are_noop(self):
+        rows = self.drift()
+        for name in (self.CE, self.QUEUE, "academy-video-ce", "academy-ops-queue"):
+            self.assertEqual(rows[name], "NoOp")
+
+    def test_development_unhealthy_missing_or_duplicate_requires_review(self):
+        original = deepcopy(self.fixture)
+        for group, field, name in (("ces", "computeEnvironmentName", self.CE), ("queues", "jobQueueName", self.QUEUE)):
+            for fault in ("disabled", "invalid", "creating", "missing", "duplicate"):
+                with self.subTest(resource=group, fault=fault):
+                    self.fixture = deepcopy(original)
+                    resource = next(row for row in self.fixture[group] if row[field] == name)
+                    if fault == "missing":
+                        self.fixture[group].remove(resource)
+                    elif fault == "duplicate":
+                        self.fixture[group].append(deepcopy(resource))
+                    elif fault == "disabled":
+                        resource["state"] = "DISABLED"
+                    else:
+                        resource["status"] = fault.upper()
+                    self.assertEqual(self.drift()[name], "Review")
+
+    def test_unknown_similarly_named_resources_are_not_exempt(self):
+        for group, field, name in (("ces", "computeEnvironmentName", self.CE), ("queues", "jobQueueName", self.QUEUE)):
+            extra = deepcopy(self.fixture[group][-1])
+            extra[field] = name + "-unknown"
+            self.fixture[group].append(extra)
+        rows = self.drift()
+        self.assertEqual(rows[self.CE + "-unknown"], "Review")
+        self.assertEqual(rows[self.QUEUE + "-unknown"], "Review")
+
+    def test_missing_incomplete_or_wrong_declaration_never_guesses_names(self):
+        for declaration in (None, {}, {"computeEnvironmentName": self.CE},
+                            {"computeEnvironmentName": self.CE, "queueName": self.QUEUE + "-other"}):
+            with self.subTest(declaration=declaration):
+                self.fixture["params"] = {} if declaration is None else {"homeworkPreviewDevelopment": declaration}
+                rows = self.drift()
+                self.assertEqual(rows["homeworkPreviewDevelopment"], "Review")
+                self.assertEqual(rows[self.CE], "Review")
+                self.assertEqual(rows[self.QUEUE], "Review")
+
+    def test_case_only_unknown_names_do_not_inherit_declared_exemption(self):
+        unknown_names = []
+        for group, field, name in (("ces", "computeEnvironmentName", self.CE), ("queues", "jobQueueName", self.QUEUE)):
+            extra = deepcopy(self.fixture[group][-1])
+            extra[field] = name.rsplit("-", 1)[0] + "-" + name.rsplit("-", 1)[1].upper()
+            extra["state"] = "DISABLED"
+            unknown_names.append(extra[field])
+            self.fixture[group].append(extra)
+        rows = self.drift()
+        for name in (self.CE, self.QUEUE):
+            self.assertEqual(rows[name], "NoOp")
+        for name in unknown_names:
+            self.assertEqual(rows[name], "Review")
+            self.assertEqual(self.drift_rows[name]["Actual"], "VALID/DISABLED")
+
+    def test_missing_configuration_and_resources_still_require_review(self):
+        self.fixture["params"] = {}
+        self.fixture["ces"] = self.fixture["ces"][:2]
+        self.fixture["queues"] = self.fixture["queues"][:2]
+        rows = self.drift()
+        self.assertEqual(rows["homeworkPreviewDevelopment"], "Review")
+        self.assertNotIn(self.CE, rows)
+        self.assertNotIn(self.QUEUE, rows)
+
+    def test_production_repair_classification_is_unchanged(self):
+        self.fixture["ces"][0]["status"] = "INVALID"
+        self.fixture["queues"][0]["state"] = "DISABLED"
+        rows = self.drift()
+        self.assertEqual(rows["academy-video-ce"], "Recreate")
+        self.assertEqual(rows["academy-video-queue"], "Update")
 
 
 if __name__ == "__main__": unittest.main()
