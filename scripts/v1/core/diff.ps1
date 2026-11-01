@@ -179,6 +179,21 @@ function Get-ExpectedApiSecurityGroupForDrift {
 function Get-StructuralDrift {
     $R = $script:Region
     $rows = [System.Collections.ArrayList]::new()
+    # Observe the separately owned development codec runtime without enrolling
+    # it in production convergence or inferring resources from a name prefix.
+    $preview = (Get-ParamsYaml)["homeworkPreviewDevelopment"]
+    $developmentCE = ""
+    $developmentQueue = ""
+    if ($preview -and
+        $preview["computeEnvironmentName"] -ceq "academy-development-homework-video-ce" -and
+        $preview["queueName"] -ceq "academy-development-homework-video-queue") {
+        $developmentCE = [string]$preview["computeEnvironmentName"]
+        $developmentQueue = [string]$preview["queueName"]
+    } elseif ($null -ne $preview) {
+        [void]$rows.Add([PSCustomObject]@{ ResourceType = "Development Batch configuration"; Name = "homeworkPreviewDevelopment"; Expected = "explicit owned CE and queue"; Actual = "missing or invalid names"; Action = "Review" })
+    }
+    $expectedCEs = @($script:SSOT_CE) + @($developmentCE | Where-Object { $_ })
+    $expectedQueues = @($script:SSOT_Queue) + @($developmentQueue | Where-Object { $_ })
     Write-Host "`n  [DRIFT-DEBUG] --- ExpectedName vs ActualNames from AWS ---" -ForegroundColor DarkGray
 
     # Batch CE: full list describe-compute-environments, then filter by computeEnvironmentName
@@ -186,9 +201,17 @@ function Get-StructuralDrift {
     $ceArr = if ($ceResult -and $ceResult.PSObject.Properties['computeEnvironments']) { @($ceResult.computeEnvironments) } else { @() }
     $allCeNames = @($ceArr | ForEach-Object { $_.computeEnvironmentName } | Where-Object { $_ })
     Write-Host "  [DRIFT-DEBUG] Batch CE ActualNames from AWS: ($($allCeNames -join ', '))" -ForegroundColor DarkGray
-    foreach ($ceName in $script:SSOT_CE) {
+    foreach ($ceName in $expectedCEs) {
         Write-Host "  [DRIFT-DEBUG] Batch CE ExpectedName: $ceName" -ForegroundColor DarkGray
         $matched = $ceArr | Where-Object { $_.computeEnvironmentName -eq $ceName }
+        if ($ceName -ceq $developmentCE) {
+            $developmentActual = @($ceArr | Where-Object { $_.computeEnvironmentName -ceq $ceName })
+            $ce = $developmentActual | Select-Object -First 1
+            $actual = if ($ce) { "$($ce.status)/$($ce.state)" } else { "missing" }
+            $action = if ($developmentActual.Count -eq 1 -and $actual -ceq "VALID/ENABLED") { "NoOp" } else { "Review" }
+            [void]$rows.Add([PSCustomObject]@{ ResourceType = "Batch CE"; Name = $ceName; Expected = "VALID/ENABLED (development owner)"; Actual = $actual; Action = $action })
+            continue
+        }
         if (-not $matched -or @($matched).Count -eq 0) {
             [void]$rows.Add([PSCustomObject]@{ ResourceType = "Batch CE"; Name = $ceName; Expected = "exists"; Actual = "missing"; Action = "Create" })
             continue
@@ -236,7 +259,7 @@ function Get-StructuralDrift {
         -Rows $rows `
         -ResourceType "Batch CE" `
         -ActualNames $allCeNames `
-        -ExpectedNames $script:SSOT_CE `
+        -ExpectedNames $expectedCEs `
         -ActualLabel {
             param($name)
             $ce = $ceArr | Where-Object { $_.computeEnvironmentName -eq $name } | Select-Object -First 1
@@ -249,9 +272,17 @@ function Get-StructuralDrift {
     $qArr = if ($qResult -and $qResult.PSObject.Properties['jobQueues']) { @($qResult.jobQueues) } else { @() }
     $allQueueNames = @($qArr | ForEach-Object { $_.jobQueueName } | Where-Object { $_ })
     Write-Host "  [DRIFT-DEBUG] Batch Queue ActualNames from AWS: ($($allQueueNames -join ', '))" -ForegroundColor DarkGray
-    foreach ($qName in $script:SSOT_Queue) {
+    foreach ($qName in $expectedQueues) {
         Write-Host "  [DRIFT-DEBUG] Batch Queue ExpectedName: $qName" -ForegroundColor DarkGray
         $matched = $qArr | Where-Object { $_.jobQueueName -eq $qName }
+        if ($qName -ceq $developmentQueue) {
+            $developmentActual = @($qArr | Where-Object { $_.jobQueueName -ceq $qName })
+            $queue = $developmentActual | Select-Object -First 1
+            $actual = if ($queue) { "$($queue.status)/$($queue.state)" } else { "missing" }
+            $action = if ($developmentActual.Count -eq 1 -and $actual -ceq "VALID/ENABLED") { "NoOp" } else { "Review" }
+            [void]$rows.Add([PSCustomObject]@{ ResourceType = "Batch Queue"; Name = $qName; Expected = "VALID/ENABLED (development owner)"; Actual = $actual; Action = $action })
+            continue
+        }
         if (-not $matched -or @($matched).Count -eq 0) {
             [void]$rows.Add([PSCustomObject]@{ ResourceType = "Batch Queue"; Name = $qName; Expected = "exists"; Actual = "missing"; Action = "Create" })
         } else {
@@ -272,7 +303,7 @@ function Get-StructuralDrift {
         -Rows $rows `
         -ResourceType "Batch Queue" `
         -ActualNames $allQueueNames `
-        -ExpectedNames $script:SSOT_Queue `
+        -ExpectedNames $expectedQueues `
         -ActualLabel {
             param($name)
             $queue = $qArr | Where-Object { $_.jobQueueName -eq $name } | Select-Object -First 1
