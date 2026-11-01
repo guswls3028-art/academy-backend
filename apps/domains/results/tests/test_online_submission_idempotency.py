@@ -113,6 +113,7 @@ class OnlineSubmissionIdempotencyTests(TestCase):
         self.assertEqual(saved.status, "failed")
         # Admission was accepted on time; a processing outage must not turn the
         # deadline into loss of that accepted answer snapshot.
+        type(saved).objects.filter(pk=saved.pk).update(created_at=timezone.now() - timedelta(minutes=1))
         self.exam.close_at = timezone.now() - timedelta(seconds=1)
         self.exam.save(update_fields=["close_at"])
         response = self.submit(key)

@@ -109,6 +109,7 @@ def get_submission_for_grading(*, submission_id: int) -> Any | None:
         "target_type",
         "target_id",
         "source",
+        "created_at",
         "meta",
     ).first()
 

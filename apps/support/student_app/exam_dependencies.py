@@ -411,10 +411,10 @@ def create_online_exam_submission(
             # Read current policy after the same lock used by teacher edits.
             exam.refresh_from_db()
             validate_online_exam_readiness(exam)
-            now = timezone.now()
-            if not existing and exam.open_at and now < exam.open_at:
+            received_at = existing.created_at if existing else timezone.now()
+            if exam.open_at and received_at < exam.open_at:
                 raise StudentExamSubmitError("아직 시험 응시 시간이 아닙니다.", 409)
-            if not existing and exam.close_at and now > exam.close_at:
+            if exam.close_at and received_at > exam.close_at:
                 raise StudentExamSubmitError("시험이 마감되었습니다.", 409)
             attempt_indexes = list(
                 ExamAttempt.objects.select_for_update()
@@ -459,7 +459,9 @@ def create_online_exam_submission(
             if in_progress:
                 raise StudentExamSubmitError("이미 제출된 시험입니다.", 409)
 
-            if done_submissions or attempt_indexes:
+            # Teacher-entered placeholders may attach to the first real
+            # submission; the grading service owns that compatibility policy.
+            if done_submissions:
                 allow_retake = getattr(exam, "allow_retake", False)
                 max_attempts = getattr(exam, "max_attempts", 1) or 1
                 if not allow_retake or attempt_count >= max_attempts:

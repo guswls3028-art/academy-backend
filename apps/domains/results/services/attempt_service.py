@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from django.core.exceptions import ValidationError
@@ -40,6 +41,7 @@ class ExamAttemptService:
         enrollment_id: int,
         submission_id: int,
         enforce_availability_window: bool = True,
+        submission_received_at: datetime | None = None,
     ) -> ExamAttempt:
 
         # -------------------------------------------------
@@ -53,7 +55,9 @@ class ExamAttemptService:
         # 2️⃣ open_at / close_at 정책 강제
         # -------------------------------------------------
         if exam and enforce_availability_window:
-            now = timezone.now()
+            # Online processing/recovery may finish after the deadline. Its
+            # server-recorded receipt time owns availability, not dispatch time.
+            now = submission_received_at or timezone.now()
             open_at = getattr(exam, "open_at", None)
             close_at = getattr(exam, "close_at", None)
 

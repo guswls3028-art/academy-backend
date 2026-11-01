@@ -316,6 +316,7 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
             enrollment_id=int(enrollment_id),
             submission_id=int(submission.id),
             enforce_availability_window=not is_omr_scan_submission(submission),
+            submission_received_at=(submission.created_at if submission.source == "online" else None),
         )
         created_attempt = True
 
