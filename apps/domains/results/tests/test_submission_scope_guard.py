@@ -531,7 +531,17 @@ class SubmissionScopeGuardTests(TestCase):
             route = resolve(path)
             return route.func(request, **route.kwargs)
 
-        for _ in range(2):
+        complete_choice_key = {str(q.id): "1" for q in choices}
+        for pending_key in (
+            None, None, {},
+            {str(q.id): "1" for q in choices[:-1]},
+            {**complete_choice_key, str(choices[-1].id): " "},
+            {**complete_choice_key, str(choices[-1].id): []},
+            {**complete_choice_key, str(choices[-1].id): [None, ""]},
+        ):
+            AnswerKey.objects.filter(exam=self.exam).delete()
+            if pending_key is not None:
+                AnswerKey.objects.create(exam=self.exam, answers=pending_key)
             response = post(
                 f"/api/v1/submissions/submissions/{submission.id}/manual-edit/",
                 {"identifier": {"enrollment_id": self.enrollment.id}, "answers": []},
@@ -548,6 +558,17 @@ class SubmissionScopeGuardTests(TestCase):
             self.assertEqual(list(submission.answers.order_by("id").values("id", "answer")), original_answers)
             self.assertFalse(Result.objects.filter(target_id=self.exam.id).exists())
             self.assertFalse(ExamAttempt.objects.filter(exam=self.exam).exists())
+            self.assertFalse(ResultFact.objects.filter(target_id=self.exam.id).exists())
+
+        # Direct key-save regrading must enforce the same complete choice key.
+        AnswerKey.objects.filter(exam=self.exam).delete()
+        for incomplete in ({}, {str(q.id): "1" for q in choices[:-1]}):
+            response = post("/api/v1/exams/answer-keys/", {"exam": self.exam.id, "answers": incomplete})
+            self.assertEqual(response.status_code, 400, response.data)
+            self.assertFalse(AnswerKey.objects.filter(exam=self.exam).exists())
+            self.assertFalse(ResultFact.objects.filter(target_id=self.exam.id).exists())
+            self.assertFalse(ExamAttempt.objects.filter(exam=self.exam).exists())
+            self.assertEqual(list(submission.answers.order_by("id").values("id", "answer")), original_answers)
 
         def inbox_row():
             path = "/api/v1/submissions/submissions/pending/"
@@ -667,7 +688,7 @@ class SubmissionScopeGuardTests(TestCase):
             }
 
         path = f"/api/v1/submissions/submissions/{submission.id}/manual-edit/"
-        for invalid_key in (None, [], {str(self.question.id + 1000): "1"}):
+        for invalid_key in (None, [], {str(self.question.id + 1000): "1"}, {}, {str(self.question.id): " "}):
             with self.subTest(key=invalid_key):
                 AnswerKey.objects.filter(exam=self.exam).delete()
                 if invalid_key is not None:
@@ -865,6 +886,29 @@ class SubmissionScopeGuardTests(TestCase):
         other_tenant = Tenant.objects.create(code="omr-other-config", name="Other Config")
         foreign_exam = Exam.objects.create(tenant=other_tenant, title="Other", exam_type=Exam.ExamType.REGULAR)
         self.assertEqual(missing(foreign_exam.id), ["exam"])
+
+    def test_omr_key_completeness_preserves_multiple_answers_and_all_essay_empty_keys(self):
+        from apps.support.submissions.grading_contract_dependencies import omr_grading_configuration_missing
+        from apps.domains.results.guards.grading_contract import GradingContractGuard
+
+        for answers in (["1", "3"], "1|3"):
+            AnswerKey.objects.filter(exam=self.exam).update(answers={str(self.question.id): answers})
+            self.assertEqual(omr_grading_configuration_missing(
+                tenant_id=self.tenant.id, exam_id=self.exam.id,
+            ), [])
+            GradingContractGuard.validate_exam_for_grading(self.exam, require_omr_answers=True)
+
+        self.sheet.choice_count = 0
+        self.sheet.essay_count = 1
+        self.sheet.save(update_fields=["choice_count", "essay_count"])
+        AnswerKey.objects.filter(exam=self.exam).update(answers={})
+        self.assertEqual(omr_grading_configuration_missing(
+            tenant_id=self.tenant.id, exam_id=self.exam.id,
+        ), [])
+        # Use a fresh exam instance; related-object caches must not obscure the key.
+        GradingContractGuard.validate_exam_for_grading(
+            Exam.objects.get(pk=self.exam.pk), require_omr_answers=True,
+        )
         self.assertFalse(ExamAttempt.objects.filter(exam=self.exam).exists())
 
     def test_sync_attaches_zero_manual_component_placeholders_to_real_submission(self):

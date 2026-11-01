@@ -7,7 +7,9 @@ from typing import Any
 from django.core.exceptions import ValidationError
 
 
-def validate_exam_grading_contract(exam: Any, *, require_online_answers: bool = False) -> tuple[Any, Any]:
+def validate_exam_grading_contract(
+    exam: Any, *, require_online_answers: bool = False, require_omr_answers: bool = False,
+) -> tuple[Any, Any]:
     from apps.domains.exams.models import Exam
     from apps.domains.exams.models.answer_key import AnswerKey
     from apps.domains.exams.models.sheet import Sheet
@@ -48,6 +50,23 @@ def validate_exam_grading_contract(exam: Any, *, require_online_answers: bool = 
 
     if unknown_key_ids:
         raise ValidationError("answer_key contains unknown question ids", code="answer_key")
+
+    if require_omr_answers:
+        from apps.support.omr.score_shape import get_exam_score_shape
+
+        shape = get_exam_score_shape(exam)
+
+        def omr_answer_present(value: Any) -> bool:
+            if isinstance(value, list):
+                return any(omr_answer_present(item) for item in value)
+            return value is not None and bool(str(value).strip())
+
+        if any(
+            shape.question_kind(question_id) == "choice"
+            and not omr_answer_present(answer_key.answers.get(str(question_id), answer_key.answers.get(question_id)))
+            for question_id in question_ids
+        ):
+            raise ValidationError("OMR choice questions require complete answer keys", code="answer_key")
 
     if require_online_answers:
         from apps.support.omr.score_shape import get_exam_score_shape

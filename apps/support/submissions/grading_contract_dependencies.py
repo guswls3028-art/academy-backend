@@ -11,7 +11,7 @@ def omr_grading_configuration_missing(*, tenant_id: int, exam_id: int) -> list[s
     if exam is None:
         return ["exam"]
     try:
-        validate_exam_grading_contract(exam)
+        validate_exam_grading_contract(exam, require_omr_answers=True)
     except ValidationError as exc:
         code = getattr(exc, "code", None)
         return [code if code in {"sheet", "answer_key"} else "grading_configuration"]

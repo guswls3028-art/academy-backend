@@ -179,7 +179,9 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         return locked_result
 
     try:
-        sheet, answer_key = GradingContractGuard.validate_exam_for_grading(exam)
+        sheet, answer_key = GradingContractGuard.validate_exam_for_grading(
+            exam, require_omr_answers=is_omr_scan_submission(submission),
+        )
     except Exception:
         return None
     invalidate_score_edit_leases_for_exam(
