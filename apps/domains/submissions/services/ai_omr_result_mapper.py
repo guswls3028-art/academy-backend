@@ -88,14 +88,14 @@ def _can_hydrate_late_ai_answers(
 
 
 def _validate_worker_contract(
-    submission: Submission, payload: Dict[str, Any]
+    submission: Submission, payload: Dict[str, Any], *, record_failure: bool = True,
 ) -> Optional[int]:
     """
     AI worker callback payload 를 OMRWorkerCallback schema 로 검증.
 
     Returns:
         None  schema 통과 → caller 는 정상 흐름 계속.
-        submission.id  schema 위반 → manual_review 마킹 + meta 기록 후 caller 종료.
+        submission.id  schema 위반 → 미확정 제출만 manual_review 기록 후 caller 종료.
 
     silent failure 차단: 새 worker version, 필수 키 누락, 타입 오류가 prod 에 들어와도
     학원장 화면에 "검토 필요" 표시가 뜨고 audit log 가 남는다.
@@ -110,6 +110,8 @@ def _validate_worker_contract(
         "OMR_WORKER_CONTRACT_VIOLATION | submission_id=%s | error=%s",
         submission.id, err,
     )
+    if not record_failure:
+        return submission.id
     now_iso = datetime.now(timezone.utc).isoformat()
     meta = dict(submission.meta or {})
     meta.setdefault("manual_review", {})
@@ -135,34 +137,41 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     AI job 최종 상태(DONE/REVIEW_REQUIRED/FAILED)는 InternalAIJobResultView + status_resolver에서 결정.
     """
     submission_id = payload.get("submission_id")
-    if not submission_id:
-        return None
-
-    try:
-        submission = Submission.objects.select_for_update().get(id=int(submission_id))
-    except Submission.DoesNotExist:
-        logger.warning("apply_omr_ai_result: submission %s not found", submission_id)
-        return None
-
-    # ── worker contract 검증 (silent failure 차단) ──────────────────────────
-    # 새 worker version / 깨진 payload / 빠진 필수 키 들어오면 즉시 manual_review
-    # 강제하고 자동 채점은 막는다. 학원장이 빈 시트나 잘못된 점수를 받는 것보다
-    # "검토 필요" 표시가 안전하다.
-    _violation_id = _validate_worker_contract(submission, payload)
-    if _violation_id is not None:
-        return _violation_id
-
-    # 🔐 tenant 교차검증: AI job의 tenant_id와 submission의 tenant_id 일치 확인
-    job_id = payload.get("job_id")
     payload_tenant_id = payload.get("tenant_id")
-    if payload_tenant_id and hasattr(submission, "tenant_id") and submission.tenant_id:
-        if str(payload_tenant_id) != str(submission.tenant_id):
-            logger.error(
-                "TENANT_ISOLATION_VIOLATION | apply_omr_ai_result | "
-                "job_id=%s | payload_tenant=%s | submission_tenant=%s | submission_id=%s",
-                job_id, payload_tenant_id, submission.tenant_id, submission_id,
-            )
-            return None
+    job_id = payload.get("job_id")
+    if any(isinstance(value, bool) or not isinstance(value, (int, str)) for value in (
+        submission_id, payload_tenant_id,
+    )):
+        return None
+    try:
+        submission_id = int(submission_id)
+        payload_tenant_id = int(payload_tenant_id)
+    except (TypeError, ValueError):
+        return None
+    if submission_id <= 0 or payload_tenant_id <= 0:
+        return None
+
+    # Verify the callback envelope before even contract-error metadata can be
+    # written, then share grading's Exam -> Session -> Submission lock order.
+    scope = Submission.objects.filter(
+        id=submission_id, tenant_id=payload_tenant_id,
+    ).only("id", "tenant_id", "target_type", "target_id").first()
+    if scope is None:
+        logger.warning("apply_omr_ai_result: no submission in callback tenant scope")
+        return None
+    from apps.support.submissions.dependencies import lock_submission_score_edit_scope_before_write
+
+    lock_submission_score_edit_scope_before_write(submission=scope)
+    submission = Submission.objects.select_for_update().filter(
+        id=submission_id, tenant_id=payload_tenant_id,
+    ).first()
+    if submission is None:
+        return None
+
+    if (submission.meta or {}).get("discarded"):
+        # Discard is a teacher decision. A delayed delivery is acknowledged,
+        # without reviving the scan or causing an endless invalid-transition retry.
+        return None
 
     status = payload.get("status")
     error = payload.get("error")
@@ -189,6 +198,15 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             submission.status,
             submission.enrollment_id,
         )
+
+    # Only a callback still eligible to change this submission may record a
+    # contract failure. Invalid stale callbacks must not reopen teacher review.
+    preserve_completed = submission.status == Submission.Status.DONE
+    _violation_id = _validate_worker_contract(
+        submission, payload, record_failure=not preserve_completed,
+    )
+    if _violation_id is not None:
+        return None if preserve_completed else _violation_id
 
     meta = dict(submission.meta or {})
     meta["ai_result"] = {

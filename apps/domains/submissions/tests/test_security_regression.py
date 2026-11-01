@@ -1230,6 +1230,7 @@ class TestC3ExamOMRSubmitGuard(_SecurityFixtureMixin, TestCase):
                 }
             ],
         }
+        payload["tenant_id"] = self.tenant.id
 
         apply_omr_ai_result({"submission_id": first.id, **payload})
         apply_omr_ai_result({"submission_id": second.id, **payload})

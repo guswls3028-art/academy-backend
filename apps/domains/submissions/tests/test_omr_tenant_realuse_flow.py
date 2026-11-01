@@ -662,6 +662,156 @@ class OMRMapperReviewPolicyTests(TestCase):
                 self.assertFalse(submission.answers.exists())
                 self.assertNotIn("ai_result", submission.meta or {})
 
+    def test_foreign_malformed_callback_cannot_mark_submission_for_review(self):
+        tenant, _exam, _enrollment, submission = self._make_exam()
+        before = Submission.objects.filter(pk=submission.pk).values().get()
+        for callback_tenant in (tenant.id + 10000, None, "", 0, "invalid", True, tenant.id + 0.5):
+            with self.subTest(callback_tenant=callback_tenant):
+                returned = apply_omr_ai_result({
+                    "submission_id": submission.id,
+                    "tenant_id": callback_tenant,
+                    "status": "DONE",
+                    "version": "unknown-worker-version",
+                    "answers": [],
+                })
+                self.assertIsNone(returned)
+                self.assertEqual(
+                    Submission.objects.filter(pk=submission.pk).values().get(), before,
+                )
+        self.assertFalse(OMRRecognitionRun.objects.filter(submission=submission).exists())
+
+    def _make_two_student_legacy_exam(self):
+        tenant, exam, first, submission = self._make_exam(peer_phone="01099887766")
+        second = Enrollment.objects.get(tenant=tenant, lecture=first.lecture, student__phone="01099887766")
+        ExamEnrollment.objects.filter(exam=exam).delete()
+        other = Submission.objects.create(
+            tenant=tenant, user=submission.user, target_type="exam", target_id=exam.id,
+            source=Submission.Source.OMR_SCAN, status=Submission.Status.DISPATCHED,
+            file_key=f"tenants/{tenant.id}/omr/second.jpg",
+        )
+        return tenant, exam, ((first, submission), (second, other))
+
+    def test_two_sequential_legacy_scans_both_match_grade_and_publish(self):
+        tenant, exam, pairs = self._make_two_student_legacy_exam()
+        for enrollment, submission in pairs:
+            apply_omr_ai_result({
+                "submission_id": submission.id, "tenant_id": tenant.id,
+                "status": "DONE", "version": "v15", "aligned": True,
+                "identifier": {"status": "ok", "identifier": enrollment.student.omr_code},
+                "answers": [
+                    {"question_id": 1, "detected": ["1"], "status": "ok", "confidence": 0.99},
+                    {"question_id": 2, "detected": ["2"], "status": "ok", "confidence": 0.99},
+                ],
+            })
+            submission.refresh_from_db()
+            self.assertEqual(submission.enrollment_id, enrollment.id)
+            self.assertEqual(submission.status, Submission.Status.ANSWERS_READY)
+            grade_submission(submission.id)
+            submission.refresh_from_db()
+            self.assertEqual(submission.status, Submission.Status.DONE)
+            self.assertEqual(Result.objects.get(target_type="exam", target_id=exam.id, enrollment=enrollment).total_score, 100)
+
+    def test_two_sequential_manual_matches_preserve_other_legacy_candidates(self):
+        tenant, exam, pairs = self._make_two_student_legacy_exam()
+        questions = list(ExamQuestion.objects.filter(sheet__exam=exam).order_by("number"))
+        for enrollment, submission in pairs:
+            request = APIRequestFactory().post("/submissions/manual-edit/", {
+                "identifier": {"enrollment_id": enrollment.id},
+                "answers": [{"question_id": question.id, "answer": str(question.number)} for question in questions],
+            }, format="json")
+            request.tenant = tenant
+            force_authenticate(request, user=submission.user)
+            response = SubmissionViewSet.as_view({"post": "manual_edit"})(request, pk=submission.id)
+            self.assertEqual(response.status_code, 200, response.data)
+            submission.refresh_from_db()
+            self.assertEqual(submission.status, Submission.Status.DONE)
+            self.assertEqual(Result.objects.get(target_type="exam", target_id=exam.id, enrollment=enrollment).total_score, 100)
+
+    def test_invalid_manual_answers_do_not_materialize_legacy_roster(self):
+        tenant, exam, enrollment, submission = self._make_exam(create_exam_enrollment=False)
+        before = Submission.objects.filter(pk=submission.pk).values().get()
+        for answers in ({"bad": "shape"}, {}, "", False, ["bad row"], [{}], [{"question_id": 999999, "answer": "1"}]):
+            with self.subTest(answers=answers):
+                request = APIRequestFactory().post("/submissions/manual-edit/", {
+                    "identifier": {"enrollment_id": enrollment.id}, "answers": answers,
+                }, format="json")
+                request.tenant = tenant
+                force_authenticate(request, user=submission.user)
+                response = SubmissionViewSet.as_view({"post": "manual_edit"})(request, pk=submission.id)
+                self.assertEqual(response.status_code, 400, response.data)
+                self.assertFalse(ExamEnrollment.objects.filter(exam=exam).exists())
+                self.assertFalse(submission.answers.exists())
+                self.assertEqual(Submission.objects.filter(pk=submission.pk).values().get(), before)
+
+    def test_malformed_late_callback_preserves_completed_and_archived_submissions(self):
+        tenant, _exam, enrollment, submission = self._make_exam()
+        for state in (
+            Submission.Status.DONE, Submission.Status.SUPERSEDED, Submission.Status.FAILED,
+        ):
+            with self.subTest(state=state):
+                submission.status = state
+                submission.enrollment = enrollment
+                submission.meta = {"manual_edits": [{"note": "teacher confirmed"}]}
+                if state == Submission.Status.FAILED:
+                    submission.meta["discarded"] = {"reason": "wrong_upload"}
+                submission.save(update_fields=["status", "enrollment", "meta"])
+                before = Submission.objects.filter(pk=submission.pk).values().get()
+                returned = apply_omr_ai_result({
+                    "submission_id": submission.id,
+                    "tenant_id": tenant.id,
+                    "status": "DONE",
+                    "version": "unknown-worker-version",
+                    "answers": [],
+                })
+                self.assertEqual(returned, None if state == Submission.Status.FAILED else submission.id)
+                self.assertEqual(
+                    Submission.objects.filter(pk=submission.pk).values().get(), before,
+                )
+
+    def test_valid_late_callback_cannot_restore_a_discarded_scan(self):
+        tenant, _exam, _enrollment, submission = self._make_exam()
+        submission.status = Submission.Status.FAILED
+        submission.error_message = "discarded:wrong_upload"
+        submission.meta = {"discarded": {"reason": "wrong_upload"}}
+        submission.save(update_fields=["status", "error_message", "meta"])
+        before = Submission.objects.filter(pk=submission.pk).values().get()
+        apply_omr_ai_result({
+            "submission_id": submission.id,
+            "tenant_id": tenant.id,
+            "status": "DONE",
+            "version": "v15",
+            "aligned": True,
+            "identifier": {"status": "ok", "identifier": "12345678"},
+            "answers": [
+                {"question_id": 1, "detected": ["1"], "status": "ok", "confidence": 0.99},
+                {"question_id": 2, "detected": ["2"], "status": "ok", "confidence": 0.99},
+            ],
+        })
+        self.assertEqual(
+            Submission.objects.filter(pk=submission.pk).values().get(), before,
+        )
+        self.assertFalse(submission.answers.exists())
+        self.assertFalse(OMRRecognitionRun.objects.filter(submission=submission).exists())
+
+    def test_invalid_nonempty_hydration_cannot_change_completed_submission(self):
+        tenant, _exam, enrollment, submission = self._make_exam()
+        submission.status = Submission.Status.DONE
+        submission.enrollment = enrollment
+        submission.meta = {"manual_edits": [{"note": "confirmed"}]}
+        submission.save(update_fields=["status", "enrollment", "meta"])
+        before = Submission.objects.filter(pk=submission.pk).values().get()
+        for version, answers in (
+            ("unknown-worker-version", [{"question_id": 1, "detected": ["1"]}]),
+            ("v15", ["invalid-answer-row"]),
+        ):
+            with self.subTest(version=version, answers=answers):
+                self.assertIsNone(apply_omr_ai_result({
+                    "submission_id": submission.id, "tenant_id": tenant.id,
+                    "status": "DONE", "version": version, "answers": answers,
+                }))
+                self.assertEqual(Submission.objects.filter(pk=submission.pk).values().get(), before)
+                self.assertFalse(submission.answers.exists())
+
     def test_session_candidate_without_exam_enrollment_matches_parent_tail_and_creates_exam_enrollment(self):
         tenant, exam, enrollment, submission = self._make_exam(
             phone="01011112222",
@@ -2128,6 +2278,28 @@ class StateRecoveryTests(TestCase):
                 max_score=100,
             ).exists()
         )
+
+    def test_late_callback_acknowledges_discard_without_grading_or_writes(self):
+        from django.apps import apps
+        from apps.domains.ai.callbacks import dispatch_ai_result_to_domain
+
+        submission, _enrollment, _exam = self._make_done_zero_answer_submission()
+        Submission.objects.filter(pk=submission.pk).update(
+            status=Submission.Status.FAILED, error_message="discarded:wrong_upload",
+            meta={"discarded": {"reason": "wrong_upload"}},
+        )
+        job = self._create_late_ai_result(submission)
+        payload = apps.get_model("ai_domain", "AIResultModel").objects.get(job=job).payload
+        before = Submission.objects.filter(pk=submission.pk).values().get()
+        with patch("academy.application.use_cases.omr.grading_readiness.grade_omr_submission_if_ready") as grade:
+            handled = dispatch_ai_result_to_domain(
+                job_id=job.job_id, status="DONE", result_payload=payload, error=None,
+                source_domain="submissions", source_id=str(submission.id), tier="basic",
+            )
+        self.assertTrue(handled)
+        grade.assert_not_called()
+        self.assertEqual(Submission.objects.filter(pk=submission.pk).values().get(), before)
+        self.assertFalse(submission.answers.exists())
 
     def test_late_ai_callback_recovers_state_timeout_failure(self):
         from django.apps import apps

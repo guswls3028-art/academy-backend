@@ -11,6 +11,7 @@ from apps.domains.students.services.identity import derive_student_omr_code
 from apps.support.omr.candidate_matching import (
     ensure_exam_enrollment_candidate,
     exact_enrollment_ids_by_identifier,
+    lock_exam_enrollment_candidate,
     resolve_enrollment_by_identifier,
 )
 
@@ -162,6 +163,75 @@ class OmrCandidateMatchingTests(TestCase):
                 enrollment=other_enrollment,
             ).exists()
         )
+
+    def test_matching_first_session_student_keeps_remaining_students_eligible(self):
+        tenant, exam, first = self._create_exam_target()
+        second_student = create_student_account(
+            tenant=tenant,
+            student_data={
+                "ps_number": "OMR-CAND-SECOND",
+                "name": "[OMR] Second Student",
+                "phone": "01099998888",
+                "parent_phone": "01077776666",
+                "omr_code": "11223344",
+                "school_type": "HIGH",
+            },
+            password="test1234",
+        )
+        second = Enrollment.objects.create(
+            tenant=tenant, student=second_student.student,
+            lecture=first.lecture, status="ACTIVE",
+        )
+        SessionEnrollment.objects.create(
+            tenant=tenant, session=exam.sessions.get(), enrollment=second,
+        )
+        self.assertEqual(
+            resolve_enrollment_by_identifier(
+                tenant=tenant, exam_id=exam.id, identifier="11223344",
+            ),
+            (second.id, "exact"),
+        )
+        for materialize in (ensure_exam_enrollment_candidate, lock_exam_enrollment_candidate):
+            with self.subTest(entry=materialize.__name__):
+                ExamEnrollment.objects.filter(exam=exam).delete()
+                self.assertTrue(materialize(
+                    tenant=tenant, exam_id=exam.id, enrollment_id=first.id,
+                ))
+                # First receipt must preserve every still-eligible student.
+                self.assertEqual(
+                    resolve_enrollment_by_identifier(
+                        tenant=tenant, exam_id=exam.id, identifier="11223344",
+                    ),
+                    (second.id, "exact"),
+                )
+                self.assertTrue(materialize(
+                    tenant=tenant, exam_id=exam.id, enrollment_id=second.id,
+                ))
+
+    def test_invalid_first_candidate_cannot_materialize_or_expand_exam_targets(self):
+        tenant, exam, enrollment = self._create_exam_target()
+        enrollment.status = "INACTIVE"
+        enrollment.save(update_fields=["status"])
+        for materialize in (ensure_exam_enrollment_candidate, lock_exam_enrollment_candidate):
+            self.assertFalse(materialize(
+                tenant=tenant, exam_id=exam.id, enrollment_id=enrollment.id,
+            ))
+            self.assertFalse(ExamEnrollment.objects.filter(exam=exam).exists())
+
+        enrollment.status = "ACTIVE"
+        enrollment.save(update_fields=["status"])
+        foreign_tenant = Tenant.objects.create(name="Foreign", code="omr-foreign")
+        self.assertFalse(ensure_exam_enrollment_candidate(
+            tenant=foreign_tenant, exam_id=exam.id, enrollment_id=enrollment.id,
+        ))
+        self.assertFalse(ExamEnrollment.objects.filter(exam=exam).exists())
+
+        enrollment.student.deleted_at = exam.created_at
+        enrollment.student.save(update_fields=["deleted_at"])
+        self.assertFalse(ensure_exam_enrollment_candidate(
+            tenant=tenant, exam_id=exam.id, enrollment_id=enrollment.id,
+        ))
+        self.assertFalse(ExamEnrollment.objects.filter(exam=exam).exists())
 
     def test_omr_code_is_an_exact_identifier_source(self):
         tenant, exam, enrollment = self._create_exam_target(omr_code="13572468")
