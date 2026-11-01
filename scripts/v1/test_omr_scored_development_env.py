@@ -332,11 +332,18 @@ exit $exitCode
                      if call["operation"] == "put-parameter" and call["name"].endswith("/workers")))
         invalid = [b"", b'{"forbidden-secret-marker":', b"[]", b"null", b"!!!",
                    base64.b64encode(b"\xffforbidden-secret-marker"), base64.b64encode(b"[]")]
-        for key, value in (("DB_NAME", "production"), ("PRESERVED_SENTINEL", "forbidden-secret-marker\nINJECTED=1"),
-                           ("bad-key", "forbidden-secret-marker")):
+        boundary_keys = ("DJANGO_SETTINGS_MODULE", "ACADEMY_RUNTIME_ENV", "ACADEMY_DEVELOPMENT_RELEASE_ID",
+                         "DB_NAME", "TOOLS_SQS_QUEUE_NAME", "AI_SQS_QUEUE_NAME_LITE",
+                         "AI_SQS_QUEUE_NAME_BASIC", "AI_SQS_QUEUE_NAME_PREMIUM",
+                         "VIDEO_BATCH_JOB_QUEUE", "VIDEO_BATCH_JOB_DEFINITION")
+        invalid_values = [(key, "wrong-isolation-boundary") for key in boundary_keys]
+        invalid_values.extend((("PRESERVED_SENTINEL", "forbidden-secret-marker\nINJECTED=1"),
+                               ("bad-key", "forbidden-secret-marker")))
+        for key, value in invalid_values:
             changed = copy.deepcopy(valid)
             changed[key] = value
-            invalid.append(json.dumps(changed).encode())
+            raw = json.dumps(changed).encode()
+            invalid.extend((raw, base64.b64encode(raw)))
         invalid.append(base64.b64encode(json.dumps(valid).encode()) + b"!")
         invalid.append(json.dumps(valid).replace('"TEST_PADDING": ""', '"TEST_PADDING": "", "TEST_PADDING": ""').encode())
         invalid.append(json.dumps(valid).replace('"TEST_PADDING": ""', '"TEST_PADDING": NaN').encode())

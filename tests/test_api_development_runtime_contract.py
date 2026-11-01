@@ -297,8 +297,12 @@ def test_development_settings_fail_closed_on_external_write_targets() -> None:
     assert publish.count('[string]$actualWorkers.SOLAPI_MOCK -ne "true"') == 1
     assert "api_cdn_signing_fingerprint=" in deploy
     assert "worker_cdn_signing_fingerprint=" in deploy
-    assert "d.get('VIDEO_BATCH_JOB_QUEUE') == ''" in deploy
-    assert "d.get('VIDEO_BATCH_JOB_DEFINITION') == ''" in deploy
+    # The decoder checks the complete expected map with explicit exceptions,
+    # including under python -O. Executable rejection cases live in the
+    # development publisher/reader suite run by the deployment contract gate.
+    assert "'VIDEO_BATCH_JOB_QUEUE': ''" in deploy
+    assert "'VIDEO_BATCH_JOB_DEFINITION': ''" in deploy
+    assert "if any(d.get(k) != v for k,v in expected.items()):" in deploy
     assert "ApiPreprod" not in publish
     assert "amazonaws.com" not in publish
     assert "s3api" not in PREREQUISITES.read_text(encoding="utf-8-sig")
