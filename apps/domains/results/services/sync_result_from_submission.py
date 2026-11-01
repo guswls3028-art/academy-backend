@@ -291,6 +291,14 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
     )
     attached_placeholder = False
     created_attempt = False
+    if not attempt and is_omr_scan_submission(submission):
+        attempt = ExamAttemptService.attach_absence_placeholder_for_submission(
+            exam_id=int(exam.id),
+            enrollment_id=int(enrollment_id),
+            submission_id=int(submission.id),
+            submission_created_at=submission.created_at,
+        )
+        attached_placeholder = attempt is not None
     if not attempt and not essay_question_ids:
         attempt = ExamAttemptService.attach_matching_manual_objective_placeholder_for_submission(
             exam_id=int(exam.id),
@@ -376,7 +384,9 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
                 if isinstance(previous, dict)
                 else None
             )
-            if reconciliation == "exact_manual_objective_match":
+            if attempt.meta.get("absence_placeholder"):
+                attempt.meta["initial_snapshot"]["source"] = "omr_replaced_absence_placeholder"
+            elif reconciliation == "exact_manual_objective_match":
                 attempt.meta["initial_snapshot"]["source"] = "omr_attached_matching_manual_result"
             elif previous_source == "admin_manual_subjective" and existing_subjective > 0:
                 attempt.meta["initial_snapshot"]["source"] = "omr_attached_manual_subjective"

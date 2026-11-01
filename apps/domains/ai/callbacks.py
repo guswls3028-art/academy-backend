@@ -429,6 +429,9 @@ def _handle_submission_ai_result(
             "AI_CALLBACK_GRADING_ERROR | submission_id=%s | job_id=%s",
             returned_id, job_id,
         )
+        # The worker must retain the message for its existing bounded retry.
+        # A persisted recognition result is not a successfully graded result.
+        raise
 
 
 def _handle_exam_ai_result(
