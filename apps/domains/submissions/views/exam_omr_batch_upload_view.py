@@ -441,6 +441,57 @@ def _uploaded_file_sha256(upload_file) -> str:
     return digest.hexdigest()
 
 
+def _received_content_owner(*, tenant, exam_id: int, content_sha256: str, item_id: int):
+    """Resolve an active hash owner inside the caller's admission transaction.
+
+    A discarded/superseded source stays archived, but its receipt must release
+    the partial unique index before an explicit re-upload can be admitted.
+    Keep the old hash and submission link as history; never revive its grades.
+    """
+    existing = (
+        OmrUploadBatchItem.objects.select_for_update()
+        .filter(
+            tenant=tenant,
+            exam_id=int(exam_id),
+            content_sha256=content_sha256,
+            admission_status=OmrUploadBatchItem.AdmissionStatus.RECEIVED,
+            submission_id__isnull=False,
+        )
+        .exclude(id=int(item_id))
+        .order_by("id")
+        .first()
+    )
+    if existing is None:
+        return None
+    submission = (
+        Submission.objects.select_for_update()
+        .filter(
+            id=existing.submission_id, tenant=tenant,
+            target_type=Submission.TargetType.EXAM, target_id=int(exam_id),
+        )
+        .first()
+    )
+    if submission is None:
+        # Leave inconsistent ownership untouched; the unique constraint fails
+        # admission closed instead of linking a different tenant/exam's data.
+        return None
+    meta = submission.meta if isinstance(submission.meta, dict) else {}
+    archived = submission.status == Submission.Status.SUPERSEDED or (
+        submission.status == Submission.Status.FAILED
+        and (
+            str(submission.error_message or "").startswith("discarded:")
+            or isinstance(meta.get("discarded"), dict)
+        )
+    )
+    if not archived:
+        return existing
+    existing.admission_status = OmrUploadBatchItem.AdmissionStatus.FAILED
+    existing.failure_code = "submission_archived"
+    existing.failure_message = "폐기·대체된 답안은 보관하고 새 업로드를 다시 접수합니다."
+    existing.save(update_fields=["admission_status", "failure_code", "failure_message", "updated_at"])
+    return None
+
+
 def _mark_duplicate_admission(
     *,
     item_id: int,
@@ -449,18 +500,8 @@ def _mark_duplicate_admission(
     content_sha256: str,
 ) -> bool:
     with transaction.atomic():
-        existing = (
-            OmrUploadBatchItem.objects
-            .filter(
-                tenant=tenant,
-                exam_id=int(exam_id),
-                content_sha256=content_sha256,
-                admission_status=OmrUploadBatchItem.AdmissionStatus.RECEIVED,
-                submission_id__isnull=False,
-            )
-            .exclude(id=int(item_id))
-            .order_by("id")
-            .first()
+        existing = _received_content_owner(
+            tenant=tenant, exam_id=exam_id, content_sha256=content_sha256, item_id=item_id,
         )
         if existing is None:
             return False
@@ -701,18 +742,9 @@ class ExamOMRBatchUploadView(APIView):
                         )
                         continue
                     content_sha256 = _uploaded_file_sha256(upload_file)
-                    duplicate = (
-                        OmrUploadBatchItem.objects
-                        .filter(
-                            tenant=tenant,
-                            exam_id=int(exam_id),
-                            content_sha256=content_sha256,
-                            admission_status=OmrUploadBatchItem.AdmissionStatus.RECEIVED,
-                            submission_id__isnull=False,
-                        )
-                        .exclude(id=locked_item.id)
-                        .order_by("id")
-                        .first()
+                    duplicate = _received_content_owner(
+                        tenant=tenant, exam_id=exam_id,
+                        content_sha256=content_sha256, item_id=locked_item.id,
                     )
                     if duplicate is not None:
                         locked_item.admission_status = OmrUploadBatchItem.AdmissionStatus.DUPLICATE

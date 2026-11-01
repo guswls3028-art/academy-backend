@@ -36,6 +36,7 @@ from apps.domains.submissions.views.exam_omr_batch_upload_view import (
     OmrUploadBatchListView,
     OmrUploadBatchRetryView,
 )
+from apps.domains.submissions.views.submission_view import SubmissionViewSet
 
 
 User = get_user_model()
@@ -332,6 +333,66 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
         )
         self.assertEqual(upload_fileobj_to_r2.call_count, 1)
         self.assertEqual(dispatch_submission.call_count, 1)
+
+    @patch("apps.domains.submissions.views.exam_omr_batch_upload_view.dispatch_submission")
+    @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
+    def test_discarded_scan_reupload_creates_new_submission_and_keeps_original(
+        self, upload_fileobj_to_r2, dispatch_submission,
+    ):
+        def upload():
+            batch_id = self._initialize(1).data["id"]
+            response = self._upload_to_batch(
+                batch_id,
+                [SimpleUploadedFile("same-scan.jpg", b"discard-and-reupload", content_type="image/jpeg")],
+                [1],
+            )
+            self.assertEqual(response.status_code, 201, response.data)
+            return batch_id, response
+
+        original_batch, first = upload()
+        original = Submission.objects.get(pk=first.data["submission_ids"][0])
+        original_key = original.file_key
+        original_item = OmrUploadBatchItem.objects.get(batch_id=original_batch, ordinal=1)
+        original_hash = original_item.content_sha256
+        request = self.factory.post(
+            f"/api/v1/submissions/submissions/{original.id}/discard/",
+            {"reason": "wrong_upload"}, format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.user)
+        discarded = SubmissionViewSet.as_view({"post": "discard"})(request, pk=original.id)
+        self.assertEqual(discarded.status_code, 200, discarded.data)
+        original.refresh_from_db()
+        original_meta = original.meta
+        self.assertEqual(original.status, Submission.Status.FAILED)
+
+        new_batch, reuploaded = upload()
+        self.assertEqual(reuploaded.data["created_count"], 1, reuploaded.data)
+        new_id = reuploaded.data["submission_ids"][0]
+        self.assertNotEqual(new_id, original.id)
+        self.assertEqual(reuploaded.data["counts"]["duplicate"], 0)
+        original.refresh_from_db()
+        original_item.refresh_from_db()
+        self.assertEqual(original.status, Submission.Status.FAILED)
+        self.assertEqual(original.file_key, original_key)
+        self.assertEqual(original.meta, original_meta)
+        self.assertEqual(original_item.submission_id, original.id)
+        self.assertEqual(original_item.content_sha256, original_hash)
+        self.assertEqual(original_item.admission_status, OmrUploadBatchItem.AdmissionStatus.FAILED)
+        self.assertEqual(original_item.failure_code, "submission_archived")
+        self.assertEqual(self._detail(original_batch).data["counts"]["failed"], 1)
+        self.assertEqual(self._detail(new_batch).data["counts"]["received"], 1)
+
+        duplicate_batch, repeated = upload()
+        self.assertEqual(repeated.data["created_count"], 0)
+        self.assertEqual(repeated.data["counts"]["duplicate"], 1)
+        self.assertEqual(
+            OmrUploadBatchItem.objects.get(batch_id=duplicate_batch).duplicate_of_submission_id,
+            new_id,
+        )
+        self.assertEqual(Submission.objects.filter(target_id=self.exam.id).count(), 2)
+        self.assertEqual(upload_fileobj_to_r2.call_count, 2)
+        self.assertEqual(dispatch_submission.call_count, 2)
 
     @patch("apps.domains.submissions.views.exam_omr_batch_upload_view.dispatch_submission")
     @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
