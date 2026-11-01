@@ -54,7 +54,7 @@ function Get-AcademyChangeRiskPlan {
     $frontendRuntimeBuildPattern = '^(package\.json$|pnpm-lock\.yaml$|vite\.config\.[^/]+$|tsconfig(?:\.[^/]+)?\.json$|eslint\.config\.[^/]+$|scripts/openapi-backend-source\.json$|index\.html$)'
     $backendGovernancePattern = '^((\.github/workflows/)|(scripts/(v1|codex|post_deploy_smoke)/)|(docs/(operations|infrastructure)/)|(docs/ssot/ecr-(lifecycle-policy|high-risk-baseline|critical-risk-acceptance)\.json$))'
     $frontendGovernancePattern = '^((\.github/workflows/)|(scripts/guard-deployment-governance\.mjs$)|(scripts/guard-runtime)|(scripts/tests/(visual-audit-workflow|workspace-deployment-contract))|(docs/deployment-operations\.md$))'
-    $frontendQaPattern = '^(playwright(?:\.[^/]+)?\.config\.[cm]?[jt]s$|scripts/(run-development-release-canary|release-canary-progress-reporter|wait-development-backend|run-iphone-safari-login-uat)\.mjs$)'
+    $frontendQaPattern = '^(playwright(?:\.[^/]+)?\.config\.[cm]?[jt]s$|scripts/(run-development-release-canary|release-canary-progress-reporter|wait-development-backend|run-iphone-safari-login-uat|public-video-(provider|native)-diagnostic)\.mjs$)'
     $docsOnly = -not [bool](@($all | Where-Object { $_ -notmatch $docsPattern }).Count)
     $backendProduct = Test-AnyPath $backend $backendProductPattern
     $backendRuntimePaths = @($backend | Where-Object {

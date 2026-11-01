@@ -60,6 +60,12 @@ frontend E2E·deployment contract를 유지한다. 담당 작업은 실제 실�
 막는다. 테스트 개수나 mock E2E 성공만으로 PostgreSQL, tenant, worker, 운영 UI
 증거를 대체하지 않는다.
 
+`scripts/public-video-provider-diagnostic.mjs`와
+`scripts/public-video-native-diagnostic.mjs`도 실행 가능한 frontend QA로 분류한다.
+두 정확한 경로에 E2E·deployment contract를 유지하며 임의의 유사 경로는 거부한다.
+진단은 공급자 전송을 구분하기 위한 보충 증거이며 정상 release의 동일 산출물 실사용,
+cleanup0 또는 production 승격 조건을 대체하지 않는다.
+
 `docs/`, `AGENTS.md`, `README*.md`, `CONVENTIONS.md` 같은 관례적 문서와 명시적
 테스트 경로는 runtime/build 판정보다 먼저 제외한다. 단, 실행 입력인
 `docs/ssot/params.yaml`은 backend runtime/build로, `docs/ssot/ecr-lifecycle-policy.json`,
