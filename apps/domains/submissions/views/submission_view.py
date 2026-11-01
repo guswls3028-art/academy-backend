@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
 
@@ -868,7 +869,29 @@ class SubmissionViewSet(ModelViewSet):
                 actor=f"admin.manual_edit.user_{getattr(request.user, 'id', '?')}",
                 allow_done_regrade=True,
             )
-        except Exception:
+        except Exception as exc:
+            if isinstance(exc, DjangoValidationError) and getattr(exc, "code", None) in {
+                "retake_not_allowed", "max_attempts_exceeded",
+            }:
+                transaction.set_rollback(True)
+                return Response(
+                    {
+                        "submission_id": submission.id,
+                        "code": "OMR_ATTEMPT_CONFLICT",
+                        "reason": exc.code,
+                        "detail": (
+                            "기존 미응시 판정이나 성적, 허용 응시 횟수를 확인해 주세요. "
+                            "기존 결과를 확인·정정한 뒤 다시 배정할 수 있습니다. "
+                            "답안과 배정 정보는 변경되지 않았습니다."
+                        ),
+                        "recovery": {
+                            "action": "review_existing_result",
+                            "exam_id": int(submission.target_id),
+                            "enrollment_id": int(submission.enrollment_id),
+                        },
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
             logger.exception(
                 "OMR manual grading failed tenant_id=%s submission_id=%s",
                 getattr(tenant, "id", None),

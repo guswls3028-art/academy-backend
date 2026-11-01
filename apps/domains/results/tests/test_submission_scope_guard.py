@@ -370,6 +370,93 @@ class SubmissionScopeGuardTests(TestCase):
         self.assertEqual(attempt.meta["status"], "NOT_SUBMITTED")
         self.assertEqual(result.total_score, 0)
 
+    def test_manual_match_preserves_later_absence_then_recovers_after_explicit_answer_confirmation(self):
+        from datetime import timedelta
+        from django.urls import resolve
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from apps.core.models import TenantMembership
+        from apps.domains.results.views.admin_exam_manual_answers_view import AdminExamManualAnswersView
+
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.admin, role="teacher")
+        attempt, result, fact, submission = self._absence_before_confirmed_scan()
+        submission.created_at = attempt.updated_at - timedelta(seconds=1)
+        submission.save(update_fields=["created_at"])
+        self.assertGreater(attempt.updated_at, submission.created_at)
+        submission.enrollment_id = None
+        submission.status = Submission.Status.NEEDS_IDENTIFICATION
+        submission.save(update_fields=["enrollment_id", "status", "updated_at"])
+        original_fact = ResultFact.objects.filter(pk=fact.pk).values().get()
+        original_answers = list(submission.answers.values("id", "answer"))
+
+        def match(answers):
+            request = APIRequestFactory().post(
+                f"/api/v1/submissions/submissions/{submission.id}/manual-edit/",
+                {"identifier": {"enrollment_id": self.enrollment.id}, "answers": answers},
+                format="json",
+            )
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            route = resolve(request.path)
+            return route.func(request, **route.kwargs)
+
+        response = match([{"question_id": self.question.id, "answer": "2"}])
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["code"], "OMR_ATTEMPT_CONFLICT")
+        self.assertEqual(response.data["reason"], "retake_not_allowed")
+        self.assertEqual(response.data["recovery"]["enrollment_id"], self.enrollment.id)
+        submission.refresh_from_db()
+        result.refresh_from_db()
+        attempt.refresh_from_db()
+        self.assertIsNone(submission.enrollment_id)
+        self.assertEqual(submission.status, Submission.Status.NEEDS_IDENTIFICATION)
+        self.assertEqual(attempt.submission_id, 0)
+        self.assertEqual(attempt.meta["status"], "NOT_SUBMITTED")
+        self.assertEqual(result.total_score, 0)
+        self.assertEqual(list(submission.answers.values("id", "answer")), original_answers)
+        self.assertEqual(ResultFact.objects.filter(pk=fact.pk).values().get(), original_fact)
+
+        # A teacher's explicit, version-bound preview/confirm is the recovery.
+        # Student identification alone must never cancel a later absence.
+        payload = {
+            "answers": {str(self.question.id): "1"},
+            "expected_version": result.updated_at.isoformat(),
+            "note": "교사가 종이 답안을 확인하고 미응시를 정정",
+            "apply": False,
+        }
+        for apply in (False, True):
+            payload["apply"] = apply
+            request = APIRequestFactory().post(
+                f"/results/admin/exams/{self.exam.id}/enrollments/{self.enrollment.id}/manual-answers/",
+                payload, format="json",
+            )
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            response = AdminExamManualAnswersView.as_view()(
+                request, exam_id=self.exam.id, enrollment_id=self.enrollment.id,
+            )
+            self.assertEqual(response.status_code, 200, response.data)
+            payload["preview_token"] = response.data["preview_token"]
+        manual_facts = list(
+            ResultFact.objects.filter(attempt=attempt, source="manual").values()
+        )
+        self.assertEqual(len(manual_facts), 1)
+        for _ in range(2):
+            response = match([])
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertTrue(response.data["graded"])
+            submission.refresh_from_db()
+            result.refresh_from_db()
+            attempt.refresh_from_db()
+            self.assertEqual(submission.status, Submission.Status.DONE)
+            self.assertEqual(submission.enrollment_id, self.enrollment.id)
+            self.assertEqual(result.total_score, 10)
+            self.assertEqual(attempt.submission_id, submission.id)
+            self.assertNotIn("status", attempt.meta)
+            self.assertEqual(list(submission.answers.values("id", "answer")), original_answers)
+            self.assertEqual(ResultFact.objects.filter(pk=fact.pk).values().get(), original_fact)
+            self.assertEqual(list(ResultFact.objects.filter(attempt=attempt, source="manual").values()), manual_facts)
+        self.assertEqual(ExamAttempt.objects.filter(exam=self.exam, enrollment=self.enrollment).count(), 1)
+
     def test_absence_placeholder_with_prior_answer_history_is_preserved(self):
         attempt, result, _fact, submission = self._absence_before_confirmed_scan()
         ResultFact.objects.create(
@@ -382,6 +469,71 @@ class SubmissionScopeGuardTests(TestCase):
         attempt.refresh_from_db()
         self.assertEqual(attempt.submission_id, 0)
         self.assertEqual(attempt.meta["status"], "NOT_SUBMITTED")
+
+    def test_attempt_limit_has_a_typed_conflict_without_changing_existing_attempt(self):
+        self.exam.allow_retake = True
+        self.exam.max_attempts = 1
+        self.exam.save(update_fields=["allow_retake", "max_attempts"])
+        ExamAttempt.objects.create(
+            exam=self.exam, enrollment=self.enrollment, submission_id=77,
+            attempt_index=1, is_representative=True, status="done",
+        )
+        with self.assertRaises(DjangoValidationError) as caught:
+            ExamAttemptService.create_for_submission(
+                exam_id=self.exam.id, enrollment_id=self.enrollment.id, submission_id=78,
+            )
+        self.assertEqual(caught.exception.code, "max_attempts_exceeded")
+        self.assertEqual(ExamAttempt.objects.get(exam=self.exam).submission_id, 77)
+
+    def test_late_roster_assignment_retries_unknown_errors_and_persists_without_answer_changes(self):
+        from unittest.mock import patch
+        from django.urls import resolve
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from apps.core.models import TenantMembership
+
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.admin, role="teacher")
+        submission = self._submission_for_exam(self.exam, self.question)
+        submission.source = Submission.Source.OMR_SCAN
+        submission.enrollment_id = None
+        submission.status = Submission.Status.NEEDS_IDENTIFICATION
+        submission.save(update_fields=["source", "enrollment_id", "status", "updated_at"])
+        # Register the roster after uploading the unassigned scan.
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
+
+        def match(answers):
+            request = APIRequestFactory().post(
+                f"/api/v1/submissions/submissions/{submission.id}/manual-edit/",
+                {"identifier": {"enrollment_id": self.enrollment.id}, "answers": answers},
+                format="json",
+            )
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            route = resolve(request.path)
+            return route.func(request, **route.kwargs)
+
+        for error in (RuntimeError("temporary grading failure"), DjangoValidationError({"score": "invalid"})):
+            with patch(
+                "academy.application.use_cases.omr.grading_readiness.grade_omr_submission_if_ready",
+                side_effect=error,
+            ):
+                response = match([{"question_id": self.question.id, "answer": "2"}])
+            self.assertEqual(response.status_code, 500, response.data)
+            self.assertEqual(response.data["code"], "OMR_REGRADING_FAILED")
+            submission.refresh_from_db()
+            self.assertIsNone(submission.enrollment_id)
+            self.assertEqual(submission.answers.get().answer, "1")
+            self.assertFalse(ExamAttempt.objects.filter(exam=self.exam).exists())
+        for _ in range(2):
+            response = match([])
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertTrue(response.data["graded"])
+            submission.refresh_from_db()
+            self.assertEqual(submission.enrollment_id, self.enrollment.id)
+            self.assertEqual(submission.status, Submission.Status.DONE)
+            self.assertEqual(submission.answers.get().answer, "1")
+            self.assertEqual(Result.objects.get(target_id=self.exam.id).total_score, 10)
+            self.assertEqual(ExamResult.objects.get(submission=submission).status, ExamResult.Status.FINAL)
+        self.assertEqual(ExamAttempt.objects.filter(exam=self.exam).count(), 1)
 
     def test_sync_attaches_zero_manual_component_placeholders_to_real_submission(self):
         ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
