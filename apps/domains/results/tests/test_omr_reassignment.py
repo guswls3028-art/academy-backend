@@ -395,3 +395,11 @@ def test_preexisting_corrupt_target_result_is_preserved_for_explicit_repair(scor
     assert response.status_code == 409
     assert response.data["code"] == "OMR_ATTEMPT_CONFLICT"
     assert _state(submission) == before
+
+
+def test_internal_fact_cutoff_does_not_expand_the_public_attempt_contract(scored_paper):
+    from apps.domains.results.serializers.exam_attempt import ExamAttemptSerializer
+
+    _, _, _, _, submission = scored_paper
+    attempt = ExamAttempt.objects.get(submission_id=submission.id)
+    assert "current_fact_after_id" not in ExamAttemptSerializer(attempt).data

@@ -7,4 +7,5 @@ from apps.domains.results.models import ExamAttempt
 class ExamAttemptSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExamAttempt
-        fields = "__all__"
+        # Internal attribution boundary; preserve the existing public schema.
+        exclude = ("current_fact_after_id",)
