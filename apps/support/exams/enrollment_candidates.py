@@ -65,8 +65,11 @@ def ensure_legacy_exam_roster_candidate(
         candidate_ids = linked_exam_roster_ids(
             tenant=tenant, exam_id=int(exam.id), include_attendance=True,
         )
+    # Existing attendance/enrollment writers may commit the same eligible pair
+    # without taking the Exam lock. Keep their row and insert the rest of the
+    # snapshot; a duplicate must not abort this student's OMR transaction.
     ExamEnrollment.objects.bulk_create([
         ExamEnrollment(exam_id=exam.id, enrollment_id=candidate_id)
         for candidate_id in sorted(candidate_ids)
-    ])
+    ], ignore_conflicts=True)
     return True
