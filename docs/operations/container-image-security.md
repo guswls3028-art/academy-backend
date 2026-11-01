@@ -5,6 +5,52 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+<a id="sqlite-delegated-review-20261101"></a>
+
+## 2026-11-01 OMR 복구 배포의 SQLite 한시 결정
+
+OMR 복구 PR716의 배포41303507718은 `CVE-2026-119586` / `sqlite3` /
+`3.46.1-7+deb13u2` High로 development 진입 전에 중단됐다. 새 서비스 이미지
+다섯 개의 완료 scan은 기존 glibc 세 항목과 이 항목의 High 4·Critical 0이다.
+재사용 base의 이전 완료 scan은 High 3이며 새 SQLite 항목이 없다는 증거가 아니다.
+
+이번 결정은 새 CVE에 대한 개별 답변을 받은 것이 아니라 **후속 승인에 관한 사용자의
+상시 위임**에 근거한다. 같은 사용자 채팅 `01a19314-7201-7812-b149-104a46c1b5c7`에서
+glibc의 코드 실행 위험을 명시 수용한 메시지 `01a19336-617e-7b42-84b2-660f4d03996c`
+뒤에, 메시지 `01a19337-27eb-7933-98df-77ba41319935`로
+**“귀찮으니까 앞으로 모든 승인 허용 재질문 하지않을것.”**이라고 지시했다.
+후속 메시지 `01a19565-4cc8-7ff0-8931-c00756c1145f`도 승인 재질문 없이 배포 완료를
+지시했다. 공식 채팅 원문을 재검증한 근거는
+`_artifacts/sessions/deploy-hardening-01a19314/direct-human-approval-authority.json`에 있다.
+원문 도구가 제공한 turn 시작 시각을 개별 메시지 시각으로 해석하지 않는다.
+
+이 위임 아래 독립 검토된 한시 결정은 위 SQLite exact identity 한 건을 기존 여섯
+저장소에만 추가하며 High 상한을 3에서 4로 맞춘다. **2026-11-08 09:00 KST까지**로
+제한하고 `expiresOn: 2026-11-07`로 기록해 다음 날 00:00 UTC부터 실패한다.
+기존 glibc 세 항목의 범위·기한과 Critical 정책·기존 HOLD는 변경하지 않는다.
+다른 CVE/패키지/버전/저장소와 자동 연장은 이 결정에 포함하지 않는다.
+
+[Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-119586)와
+[공식 CNA 기록](https://raw.githubusercontent.com/CVEProject/cvelistV5/main/cves/2026/119xxx/CVE-2026-119586.json)은
+SQLite CLI `.recover` 출력의 악성 dot-command를 CLI에 다시 입력할 때 OS 명령이
+실행될 수 있다고 설명한다. 확인한 Debian trixie·sid는 unfixed이고 upstream
+3.54.1도 영향 범위여서 검증된 수정 버전은 없다.
+
+여섯 exact OCI manifest와 모든 압축 layer digest를 직접 검증하고 whiteout을 반영한
+파일·패키지 목록에서 `libsqlite3-0`만 설치돼 있고 `sqlite3` CLI 패키지 및
+`sqlite`/`sqlite3` 이름의 파일·심볼릭 링크는 없음을 확인했다. 이미지는 실행하지 않았다.
+공유 라이브러리는 기존 Python SQLite/FTS5 계약에 필요하다. 이 정적 증거는 모든
+동적 경로의 비도달성·취약점 수정·오탐의 확정이 아니며, 취약 CLI와 악성 DB 복구
+경로가 사용 가능해지면 코드 실행 위험이 남는다.
+
+증거는 `_artifacts/backend716-01a1954c/`의 `candidate-scan-readback.json`,
+`sqlite-oci-academy-*.json`, `security-exception-proposal.json` 및 독립 검토
+`_artifacts/omr-assignment-01a195bd/security-proposal-independent-review.json`에 보존한다.
+정책 계약은 exact identity·다른 identity 거부·만료·기존 승인 보존을 검증한다.
+이 결정은 배포 완료가 아니며 새 후보도 fresh exact scan·native·격리 개발 실사용과
+cleanup0·preprod와 임시 인스턴스 종료·공식 production 승인·healthy rolling·exact live
+검증을 모두 통과해야 한다. 관리형 action-time 거부를 우회하는 권한도 부여하지 않는다.
+
 <a id="glibc-approval-20261101"></a>
 
 ## 2026-11-01 QR 출석 배포의 신규 glibc High 한시 승인
