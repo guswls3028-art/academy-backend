@@ -1,14 +1,32 @@
 {
   "schemaVersion": 3,
   "maximumHighFindings": {
-    "academy-base": 3,
-    "academy-api": 3,
-    "academy-video-worker": 3,
-    "academy-messaging-worker": 3,
-    "academy-ai-worker-cpu": 3,
-    "academy-tools-worker": 3
+    "academy-base": 4,
+    "academy-api": 4,
+    "academy-video-worker": 4,
+    "academy-messaging-worker": 4,
+    "academy-ai-worker-cpu": 4,
+    "academy-tools-worker": 4
   },
   "acceptedHighFindings": [
+    {
+      "cve": "CVE-2026-119586",
+      "packageName": "sqlite3",
+      "packageVersion": "3.46.1-7+deb13u2",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ],
+      "expiresOn": "2026-11-07",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-119586",
+      "rationale": "Reviewed temporary decision under the human owner's standing future-approval delegation, not a new SQLite-specific human reply. After an explicit glibc code-execution risk acceptance, user message 01a19337-27eb-7933-98df-77ba41319935 authorized future approvals without repeated questions; later message 01a19565-4cc8-7ff0-8931-c00756c1145f reaffirmed completion without asking again. This decision covers only CVE-2026-119586/sqlite3/3.46.1-7+deb13u2 in these six repositories through 2026-11-07 UTC (2026-11-08 09:00 KST cutoff). Debian/CNA identify SQLite CLI .recover command injection through 3.54.1 and no verified fixed release. Static exact OCI inspection verified all six manifests and every compressed layer digest: only required libsqlite3-0 is installed, with no sqlite3 CLI package or sqlite/sqlite3 named file or symlink. This bounded evidence does not prove all runtime unreachability, fix the vulnerability, or declare a scanner false positive. Code-execution risk remains if the vulnerable CLI and crafted recovery workflow become available. Preserve required Python SQLite/FTS5 behavior, existing three glibc scopes/expirations, Critical policy and HOLDs. Fresh exact scans, native checks, isolated development and actual HTTP proof, preprod termination, protected production approval, healthy rolling, exact live verification and cleanup remain mandatory. No other CVE, package, version, repository or automatic extension is accepted.",
+      "approvedOn": "2026-11-01",
+      "approvalReference": "docs/operations/container-image-security.md#sqlite-delegated-review-20261101"
+    },
     {
       "cve": "CVE-2026-84243",
       "packageName": "glibc",
