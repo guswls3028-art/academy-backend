@@ -270,7 +270,7 @@ OMR 사용이 어려운 혼합형 시험은 같은 성적 저장 경로에 엑�
 학생 식별·채점/수기 입력, 명시 명단·tenant·비활성 경계, 실패 원자성, 지연 콜백
 보존과 정상 복구를 사용한다. `test_manual_score_assignment_guard.py`는 OMR 최초
 매칭 후 출결 전용 학생의 성적 조회·저장을 검증한다.
-`tests/omr/test_omr_roster_concurrency_pg.py`는 동시 첫 매칭, 정식 대상자 PUT과의
+`tests/test_omr_roster_concurrency_pg.py`는 동시 첫 매칭, 정식 대상자 PUT과의
 경합, 채점과 콜백의 잠금 순서를 실제 PostgreSQL에서 검사한다.
 
 ```
