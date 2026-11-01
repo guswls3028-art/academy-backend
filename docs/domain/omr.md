@@ -370,21 +370,36 @@ OMR 답안의 점수 영향 여부를 다시 계산한다. 정확히 일치하�
 1. 클라이언트가 시험·차시와 총 파일 수로 batch를 먼저 생성한다.
 2. 서버는 `1..total_count` ordinal을 원자적으로 만들고, 클라이언트는 그 batch id와
    ordinal을 붙여 파일 전체를 한 multipart 요청으로 보낸다.
-3. 각 ordinal은 별도 transaction에서 `Submission`에 연결된다. 이미 연결된 ordinal을
-   다시 보내면 서버가 item row를 먼저 잠그고 파일 검증보다 앞서 `RECEIVED`를 확인해
-   no-op 처리한다. 따라서 같은 ordinal의 늦은 잘못된 파일이나 동시 재전송이 기존
-   Submission 연결을 실패 상태로 되돌리지 않고, 워커도 중복 dispatch하지 않는다.
+3. 각 ordinal은 별도 transaction에서 `Submission`에 연결된다. 원본 또는 중복 제출에
+   연결된 ordinal은 item row를 먼저 잠근 뒤 파일 검증보다 앞서 no-op 처리한다.
+   접수 상태와 관계없이 과거 ordinal의 재전송·늦은 오류·unique 충돌 복구가 기존
+   SHA-256과 제출 연결을 바꾸지 않으며 워커도 중복 dispatch하지 않는다.
    같은 tenant·시험에서 다른 batch/ordinal로 동일 바이트가 다시 오면 SHA-256과 DB
    conditional unique constraint로 경합까지 직렬화하고 `duplicate`로 완료 처리한다.
    새 Submission/R2 object/worker dispatch를 만들지 않으며 파일명이 같아도 바이트가
    다르면 정상 신규 접수다.
 4. 요청 응답이 끊겨도 detail GET의 `pending_admission_ordinals`와
    `admission_failed_ordinals`로 미접수 파일만 다시 선택한다. 이미 성공한 ordinal은
-   재전송하지 않는다.
+   재전송하지 않는다. `SUPERSEDED` 또는 `FAILED`이면서 명시적 폐기 표식
+   (`meta.discarded` 객체 또는 기존 `discarded:` 오류 코드)이 있는 제출은
+   `failed_ordinals`와 `admission_failed_ordinals`에서 제외한다. retry API도 이 제출과
+   중복 ordinal을 건너뛰며, 일반 worker 실패는 기존 원본으로 재시도한다.
+   폐기·대체 항목과 교사 답안 이력은 그대로 보관한다.
 5. batch 진행 상태는 기존 Submission/AI worker 상태를 집계한다. 파일 수신은
    `received`, AI 작업 중은 `processing`, OMR 처리 완료는 `completed`, 학생 확인 필요는
    `needs_identification`, 처리 실패는 `failed`로 서로 구분한다. 업로드 성공을 AI 완료로
    표시하지 않는다.
+
+이 보호 단계(A)는 기존 hash 예약과 중복 판정을 유지한다. 따라서 폐기 후 같은 파일을
+새 batch로 다시 보내는 동작은 아직 중복 처리된다. 예약 해제 단계(B)는 별도 후보로
+배포하며, A가 모든 API 인스턴스에 적용됐다는 정확한 revision 확인과 이전 요청의 종료
+확인 후에만 활성화한다. B가 남기는 `failed/submission_archived` 항목도 A는 원본
+hash·Submission 연결을 불변으로 취급한다. `test_omr_receipt_guards.py`는 그 향후
+저장 형태를 fixture로 만들어 재전송·오류·retry·summary 및 교사 답안 보존을 검사한다.
+이 fixture 검사는 B의 실제 재등록이나 배포 중 동작 검증을 대신하지 않는다.
+API 복구는 [운영 절차](../../scripts/v1/README.md)에 따라 새 immutable 이미지로
+roll-forward하며, A의 보호 코드를 최소 호환 기준으로 유지한다. 구버전 이미지의
+직접 rollback이나 보호 코드 제거는 허용하지 않는다.
 
 `counts.completed`, `terminal`, `overall_status`는 기존 파일 접수·OMR 처리 계약을
 유지한다. 따라서 혼합 시험은 객관식 인식이 끝나면 `overall_status=completed`이면서

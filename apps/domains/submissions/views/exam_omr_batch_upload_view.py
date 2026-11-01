@@ -268,6 +268,8 @@ def _batch_item_summary(batch: OmrUploadBatch, item: OmrUploadBatchItem) -> dict
         item_status = "pending_admission"
     elif item.admission_status == OmrUploadBatchItem.AdmissionStatus.DUPLICATE:
         item_status = "duplicate"
+    elif submission is not None and submission.status == Submission.Status.SUPERSEDED:
+        item_status = "superseded"
     elif item.admission_status == OmrUploadBatchItem.AdmissionStatus.FAILED or submission is None:
         item_status = "failed"
     else:
@@ -341,6 +343,8 @@ def _batch_summary(batch: OmrUploadBatch, *, grading_statuses=None) -> dict:
             duplicate_ordinals.append(int(item.ordinal))
             continue
         if item_status == "failed":
+            if submission is not None and _submission_is_archived(submission):
+                continue
             failed_ordinals.append(int(item.ordinal))
             if entry["admission_status"] == OmrUploadBatchItem.AdmissionStatus.FAILED or entry["submission_id"] is None:
                 admission_failed_ordinals.append(int(item.ordinal))
@@ -441,6 +445,17 @@ def _uploaded_file_sha256(upload_file) -> str:
     return digest.hexdigest()
 
 
+def _submission_is_archived(submission: Submission) -> bool:
+    meta = submission.meta if isinstance(submission.meta, dict) else {}
+    return submission.status == Submission.Status.SUPERSEDED or (
+        submission.status == Submission.Status.FAILED
+        and (
+            str(submission.error_message or "").startswith("discarded:")
+            or isinstance(meta.get("discarded"), dict)
+        )
+    )
+
+
 def _mark_duplicate_admission(
     *,
     item_id: int,
@@ -449,6 +464,12 @@ def _mark_duplicate_admission(
     content_sha256: str,
 ) -> bool:
     with transaction.atomic():
+        # A linked ordinal is immutable, including archived or duplicate receipts.
+        item = OmrUploadBatchItem.objects.select_for_update().get(
+            id=int(item_id), tenant=tenant, exam_id=int(exam_id),
+        )
+        if item.submission_id is not None or item.duplicate_of_submission_id is not None:
+            return False
         existing = (
             OmrUploadBatchItem.objects
             .filter(
@@ -463,9 +484,6 @@ def _mark_duplicate_admission(
             .first()
         )
         if existing is None:
-            return False
-        item = OmrUploadBatchItem.objects.select_for_update().get(id=int(item_id))
-        if item.admission_status == OmrUploadBatchItem.AdmissionStatus.RECEIVED:
             return False
         item.admission_status = OmrUploadBatchItem.AdmissionStatus.DUPLICATE
         item.submission = None
@@ -494,10 +512,7 @@ def _mark_admission_failed(item_id: int, *, code: str, message: str) -> bool:
         )
         if item is None:
             return False
-        if (
-            item.admission_status == OmrUploadBatchItem.AdmissionStatus.RECEIVED
-            and item.submission_id is not None
-        ):
+        if item.submission_id is not None or item.duplicate_of_submission_id is not None:
             return False
         item.admission_status = OmrUploadBatchItem.AdmissionStatus.FAILED
         item.submission = None
@@ -679,10 +694,7 @@ class ExamOMRBatchUploadView(APIView):
                         OmrUploadBatchItem.objects.select_for_update()
                         .get(id=item.id, batch=batch)
                     )
-                    if (
-                        locked_item.admission_status == OmrUploadBatchItem.AdmissionStatus.RECEIVED
-                        and locked_item.submission_id is not None
-                    ):
+                    if locked_item.submission_id is not None or locked_item.duplicate_of_submission_id is not None:
                         continue
                     validation_error = _file_validation_error(upload_file)
                     if validation_error is not None:
@@ -938,7 +950,13 @@ class OmrUploadBatchRetryView(APIView):
                 if item is None:
                     skipped.append(int(ordinal))
                     continue
+                if item.duplicate_of_submission_id is not None:
+                    skipped.append(int(ordinal))
+                    continue
                 submission = submissions.get(int(item.submission_id)) if item.submission_id else None
+                if submission is not None and _submission_is_archived(submission):
+                    skipped.append(int(ordinal))
+                    continue
                 if item.admission_status == OmrUploadBatchItem.AdmissionStatus.FAILED or submission is None:
                     requires_file.append(int(ordinal))
                     continue
