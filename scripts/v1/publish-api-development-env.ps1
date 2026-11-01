@@ -50,6 +50,15 @@ function Get-RequiredSecureParameterValue {
     return [string]$result.Parameter.Value
 }
 
+function Assert-DevelopmentParameterSize {
+    param([string]$Value, [ValidateSet('api', 'workers')][string]$Kind)
+    $bytes = [Text.Encoding]::UTF8.GetByteCount($Value)
+    if ($bytes -gt 8192) {
+        # Never include payloads, keys or CLI output in a publication failure.
+        throw "DEVELOPMENT_ENV_TOO_LARGE kind=$Kind bytes=$bytes limit=8192"
+    }
+}
+
 $productionValue = Get-RequiredSecureParameterValue -Name $script:SsmApiEnv
 $productionWorkersValue = Get-RequiredSecureParameterValue -Name $script:SsmWorkersEnv
 $credentialValue = Get-RequiredSecureParameterValue -Name $script:ApiDevelopmentCredentialParameter
@@ -281,8 +290,22 @@ Set-IsolatedDevelopmentValues `
 Set-IsolatedDevelopmentValues `
     -Target $productionWorkers `
     -SettingsModule "apps.api.config.settings.worker"
-$workersJson = $productionWorkers | ConvertTo-Json -Compress -Depth 20
-$workersValue = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($workersJson))
+# Development readers accept JSON and historical base64(JSON). Keep every value
+# while avoiding base64's extra space in the Advanced parameter's 8 KiB budget.
+$workersValue = $productionWorkers | ConvertTo-Json -Compress -Depth 20
+Assert-DevelopmentParameterSize -Value $workersValue -Kind workers
+
+# Check both payloads before the first write. The API's immutable Batch binding
+# needs the returned worker version, so reserve its maximum Int64 digit count.
+$releaseHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+    [Text.Encoding]::UTF8.GetBytes($ReleaseId))).ToLowerInvariant().Substring(0, 12)
+$homeworkPreviewPrefix = "academy-development-homework-video-$releaseHash-v"
+$homeworkPreviewQueue = if ($EnableHomeworkPreview) { "academy-development-homework-video-queue" } else { "" }
+$production.HOMEWORK_PREVIEW_BATCH_JOB_QUEUE = $homeworkPreviewQueue
+$production.HOMEWORK_PREVIEW_BATCH_JOB_DEFINITION = if ($EnableHomeworkPreview) {
+    "${homeworkPreviewPrefix}$([long]::MaxValue):1"
+} else { "" }
+Assert-DevelopmentParameterSize -Value ($production | ConvertTo-Json -Compress -Depth 20) -Kind api
 
 $workersPut = Invoke-AwsJson @(
     "ssm", "put-parameter",
@@ -295,28 +318,27 @@ $workersPut = Invoke-AwsJson @(
     "--region", $script:Region,
     "--output", "json"
 )
-if (-not $workersPut -or -not $workersPut.Version) {
-    throw "API development workers env publication returned no parameter version."
+$workersVersion = 0L
+if (-not $workersPut -or -not [long]::TryParse([string]$workersPut.Version, [ref]$workersVersion) -or $workersVersion -lt 1) {
+    throw "DEVELOPMENT_ENV_PUT_NO_VERSION kind=workers"
 }
-$workersVersion = [int]$workersPut.Version
 
 # A unique revision-1 definition pins this exact worker environment and image.
 # The runtime/canary gate registers and proves it before this API env is activated.
-$releaseHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
-    [Text.Encoding]::UTF8.GetBytes($ReleaseId))).ToLowerInvariant().Substring(0, 12)
-$homeworkPreviewDefinition = if ($EnableHomeworkPreview) { "academy-development-homework-video-$releaseHash-v${workersVersion}:1" } else { "" }
-$homeworkPreviewQueue = if ($EnableHomeworkPreview) { "academy-development-homework-video-queue" } else { "" }
-$production.HOMEWORK_PREVIEW_BATCH_JOB_QUEUE = $homeworkPreviewQueue
+$homeworkPreviewDefinition = if ($EnableHomeworkPreview) { "${homeworkPreviewPrefix}${workersVersion}:1" } else { "" }
 $production.HOMEWORK_PREVIEW_BATCH_JOB_DEFINITION = $homeworkPreviewDefinition
 $value = $production | ConvertTo-Json -Compress -Depth 20
+Assert-DevelopmentParameterSize -Value $value -Kind api
 $put = Invoke-AwsJson @(
     "ssm", "put-parameter", "--name", $script:ApiDevelopmentEnvParameter,
     "--description", "Versioned environment for the isolated persistent Academy API development instance",
     "--type", "SecureString", "--tier", "Advanced", "--value", $value, "--overwrite",
     "--region", $script:Region, "--output", "json"
 )
-if (-not $put -or -not $put.Version) { throw "API development env publication returned no parameter version." }
-$version = [int]$put.Version
+$version = 0L
+if (-not $put -or -not [long]::TryParse([string]$put.Version, [ref]$version) -or $version -lt 1) {
+    throw "DEVELOPMENT_ENV_PUT_NO_VERSION kind=api"
+}
 
 $readback = Invoke-AwsJson @(
     "ssm", "get-parameter",
@@ -325,8 +347,10 @@ $readback = Invoke-AwsJson @(
     "--region", $script:Region,
     "--output", "json"
 )
-if (-not $readback -or -not $readback.Parameter -or -not $readback.Parameter.Value) {
-    throw "Versioned API development env readback failed."
+if (-not $readback -or -not $readback.Parameter -or
+    $readback.Parameter.Version -ne $version -or
+    [string]$readback.Parameter.Value -cne $value) {
+    throw "DEVELOPMENT_ENV_READBACK_MISMATCH kind=api"
 }
 $actual = [string]$readback.Parameter.Value | ConvertFrom-Json
 if (
@@ -363,14 +387,12 @@ $workersReadback = Invoke-AwsJson @(
     "--region", $script:Region,
     "--output", "json"
 )
-try {
-    $actualWorkersJson = [Text.Encoding]::UTF8.GetString(
-        [Convert]::FromBase64String([string]$workersReadback.Parameter.Value)
-    )
-    $actualWorkers = $actualWorkersJson | ConvertFrom-Json
-} catch {
-    throw "Versioned API development workers env readback is invalid."
+if (-not $workersReadback -or -not $workersReadback.Parameter -or
+    $workersReadback.Parameter.Version -ne $workersVersion -or
+    [string]$workersReadback.Parameter.Value -cne $workersValue) {
+    throw "DEVELOPMENT_ENV_READBACK_MISMATCH kind=workers"
 }
+$actualWorkers = [string]$workersReadback.Parameter.Value | ConvertFrom-Json
 if (
     [string]$actualWorkers.ACADEMY_DEVELOPMENT_RELEASE_ID -ne $ReleaseId -or
     [string]$actualWorkers.DB_NAME -ne $developmentDatabaseName -or
