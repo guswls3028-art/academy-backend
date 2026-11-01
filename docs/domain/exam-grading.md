@@ -1122,18 +1122,26 @@ ID이고 `total`은 해당 필터 전체 건수다. 식별되지 않은 답안, 
 두 값은 순차 배포 호환을 위해 선택 사항이며, 이전 클라이언트의 실제 재응시
 의미는 바꾸지 않는다. 신규 nullable 식별자와 유일 인덱스만 추가하고 기존
 답안·점수·응시 이력을 일괄 변경하지 않는다. 백엔드를 먼저 배포한다.
-`0014`의 조건부 unique 제약은 일반 migration guard의 contract 검토 대상이다.
+`0014`는 nullable 열과 migration 기록을 하나의 트랜잭션으로 추가한다.
+분리된 `0015`의 조건부 unique 제약은 일반 migration guard의 contract 검토 대상이다.
 기존 행과 구버전 API의 null 쓰기는 제약에서 제외되는 호환성을 확인한 뒤,
 정확한 병합 main 후보를 `allow_contract_migrations=true`로 dispatch한다.
 development/preprod migration·health와 운영 rolling 검증은 그대로 필수다.
-PostgreSQL에서는 migration을 비원자적으로 실행하고 unique 인덱스를
+PostgreSQL에서는 `0015`를 비원자적으로 실행하고 unique 인덱스를
 `CONCURRENTLY`로 만들어 전체 인덱스 스캔 동안 제출 쓰기를 막지 않는다.
 기본값 없는 nullable 열 추가는 짧은 DDL 잠금만 사용하며 데이터 재작성은 없다.
+인덱스 생성 전 중단은 그대로 재실행한다. 생성 중 실패로 남은 invalid 인덱스는
+테이블·열·유일성·조건·정렬 정의가 정확히 일치하고 실행 중인 build가 없을 때만
+concurrent 삭제 후 재생성한다. 인덱스 생성 후 migration 기록 전에 중단되었다면
+유효한 동일 인덱스를 재사용한다. 이름만 같은 다른 정의나 실행 중인 build는
+실패로 중단하고 보존한다. 중복 데이터는 자동 삭제·수정하지 않는다.
 앱 rollback은 추가 스키마를 유지한다. DB rollback은 별도 검토 대상이며,
 인덱스 역연산은 concurrent 삭제를 사용하고 열 제거 시 요청 식별자가 사라진다.
 검증: `test_online_submission_idempotency.py`, PostgreSQL의
 `test_concurrent_same_request_dispatches_one_attempt`, 프런트엔드
 `numeric-short-answer.spec.ts`의 응답 유실·reload·마감 후 확인 흐름.
+배포 중단 복구와 다른 인덱스 보존은 PostgreSQL의
+`test_online_request_migration_pg.py`에서 실제 DDL과 migration recorder 실패로 검증한다.
 
 학생과 선택 자녀의 온라인 제출은 기존 tenant·시험 배정·활성 수강 권한을
 확인한 뒤 자동채점할 모든 문항의 정답을 검사한다. 정답지가 없거나 선택형

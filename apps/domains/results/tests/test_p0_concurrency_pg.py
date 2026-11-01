@@ -128,7 +128,7 @@ class TestP0ConcurrencyPG(TransactionTestCase):
         table = connection.ops.quote_name(Submission._meta.db_table)
         with connection.cursor() as cursor:
             cursor.execute(f"INSERT INTO {table} ({columns}) SELECT {columns} FROM {table} WHERE id = %s", [original.pk])
-        migration = import_module("apps.domains.submissions.migrations.0014_submission_client_request_id")
+        migration = import_module("apps.domains.submissions.migrations.0015_submission_request_unique_index")
         with connection.schema_editor(atomic=False) as editor:
             migration.remove_request_index(django_apps, editor)
             migration.create_request_index(django_apps, editor)
