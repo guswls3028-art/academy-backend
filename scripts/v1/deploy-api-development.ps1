@@ -186,14 +186,42 @@ if ! docker pull "$TOOLS_IMAGE" 2>>"$LOG"; then
   log "Development tools image pull failed: $TOOLS_IMAGE"
   exit 1
 fi
-WORKERS_ENV_B64="$(aws ssm get-parameter \
+WORKERS_ENV_VALUE="$(aws ssm get-parameter \
   --name "__WORKERS_ENV__" \
   --with-decryption \
   --query Parameter.Value \
   --output text \
   --region "__REGION__" 2>>"$LOG")"
-printf '%s' "$WORKERS_ENV_B64" | base64 -d | python3 -c \
-  "import sys,json; d=json.load(sys.stdin); assert d.get('DJANGO_SETTINGS_MODULE') == 'apps.api.config.settings.worker'; assert d.get('ACADEMY_RUNTIME_ENV') == 'development'; assert d.get('ACADEMY_DEVELOPMENT_RELEASE_ID') == '__RELEASE_ID__'; assert d.get('DB_NAME') == '__DATABASE__'; assert d.get('TOOLS_SQS_QUEUE_NAME') == '__TOOLS_QUEUE__'; assert d.get('AI_SQS_QUEUE_NAME_LITE') == '__AI_QUEUE__'; assert d.get('AI_SQS_QUEUE_NAME_BASIC') == '__AI_QUEUE__'; assert d.get('AI_SQS_QUEUE_NAME_PREMIUM') == '__AI_QUEUE__'; assert d.get('VIDEO_BATCH_JOB_QUEUE') == ''; assert d.get('VIDEO_BATCH_JOB_DEFINITION') == ''; [print(k+'='+str(v)) for k,v in d.items()]" \
+printf '%s' "$WORKERS_ENV_VALUE" | python3 -c \
+  "import base64,json,re,sys
+def invalid(*args):
+    raise ValueError()
+def unique_object(pairs):
+    result = {}
+    for k,v in pairs:
+        if k in result:
+            invalid()
+        result[k] = v
+    return result
+try:
+    raw = sys.stdin.buffer.read().decode('utf-8').strip()
+    if not raw.startswith('{'):
+        raw = base64.b64decode(raw, validate=True).decode('utf-8')
+    d = json.loads(raw, object_pairs_hook=unique_object, parse_constant=invalid)
+    if not isinstance(d, dict):
+        raise ValueError()
+    expected = {'DJANGO_SETTINGS_MODULE': 'apps.api.config.settings.worker', 'ACADEMY_RUNTIME_ENV': 'development', 'ACADEMY_DEVELOPMENT_RELEASE_ID': '__RELEASE_ID__', 'DB_NAME': '__DATABASE__', 'TOOLS_SQS_QUEUE_NAME': '__TOOLS_QUEUE__', 'AI_SQS_QUEUE_NAME_LITE': '__AI_QUEUE__', 'AI_SQS_QUEUE_NAME_BASIC': '__AI_QUEUE__', 'AI_SQS_QUEUE_NAME_PREMIUM': '__AI_QUEUE__', 'VIDEO_BATCH_JOB_QUEUE': '', 'VIDEO_BATCH_JOB_DEFINITION': ''}
+    if any(d.get(k) != v for k,v in expected.items()):
+        raise ValueError()
+    lines = []
+    for k,v in d.items():
+        value = str(v)
+        if not re.fullmatch('[A-Za-z_][A-Za-z0-9_]*', k) or '\n' in value or '\r' in value or '\x00' in value:
+            raise ValueError()
+        lines.append(k+'='+value)
+except Exception:
+    sys.exit('DEVELOPMENT_WORKERS_ENV_INVALID')
+sys.stdout.buffer.write(('\n'.join(lines)+'\n').encode('utf-8'))" \
   > /opt/workers-development.env
 test -s /opt/workers-development.env
 docker stop academy-tools-development 2>/dev/null || true

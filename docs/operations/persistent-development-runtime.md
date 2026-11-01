@@ -599,6 +599,24 @@ DB/R2만 사용하며 일반 강의 Video 파이프라인과 Redis는 활성화�
   API env에 고정한다. definition은 immutable Video digest와 versioned `BATCH_SSM_ENV`를
   사용한다. 같은 이름의 다른 revision/image/env는 거부한다. 최초 instance bootstrap은
   opt-in 없이 이전 검증 이미지로 접속 기반을 만든다.
+- development workers parameter는 모든 설정값과 명시적인 격리용 빈 값을 보존한
+  compact UTF-8 JSON으로 저장한다. 기존 base64(JSON)의 용량 증가 때문에 OMR
+  opt-in을 포함한 값이 Advanced parameter 한도 8,192바이트를 넘었던 문제를 해결한다.
+  production workers parameter와 production bootstrap의 base64 계약은 변경하지 않는다.
+  개발 AI/Tools/Messaging 공통 bootstrap은 새 JSON과 기존 base64(JSON)를 읽고,
+  잘못된 형식·UTF-8·환경/릴리스/DB/큐 경계·env 줄 삽입은 고정 오류로 거부한다.
+  개발 숙제 Batch entrypoint도 기존의 JSON/base64 이중 reader를 사용한다.
+- publisher는 첫 쓰기 전에 workers와 API의 UTF-8 바이트 수를 모두 검사한다.
+  API의 homework definition에는 아직 발급되지 않은 workers version의 최대 Int64
+  자릿수를 예약하며, 반환된 실제 version으로 바인딩한 값도 다시 검사한다.
+  8,192바이트까지 허용하고 초과하면 `DEVELOPMENT_ENV_TOO_LARGE`와 종류·크기만
+  보고한다. 게시 응답에 유효한 version이 없으면 `DEVELOPMENT_ENV_PUT_NO_VERSION`,
+  해당 version의 전체 payload 또는 응답 version이 다르면
+  `DEVELOPMENT_ENV_READBACK_MISMATCH`로 실패한다. 값·키·CLI 원문은 오류에 넣지 않는다.
+  원격 게시/조회 실패 뒤 생성된 미사용 development version은 활성화 증거가 아니며,
+  같은 후보로 정상 publisher를 재실행해 새 정확한 version 쌍을 검증해야 한다.
+  `test_omr_scored_development_env.py`는 전체 publisher의 가짜 AWS 전송 경로,
+  한글 포함 8,191/8,192/8,193바이트 경계, 새/기존 reader와 잘못된 입력을 검증한다.
 - 공식 workflow와 수동 `deploy.ps1`은 후보 API 활성화 전에 codec canary를 요구한다.
   현재 active development API container의 instance role로 고정 명령을 SubmitJob한다.
   제품과 같은 SubmitJob-only 권한으로 검사하며 추가 TagResource 권한을 요구하는 작업
