@@ -617,10 +617,8 @@ class DirectVideoEntitlementTests(TestCase):
         self.assertEqual(signed.call_args.kwargs["key"], f"tenants/{self.tenant.pk}/video/hls/{self.video.pk}/video/segment_001.ts")
         self.assertLessEqual(signed.call_args.kwargs["expires_in"], 15)
         self.assertEqual(view(request, key=key, asset="../other/master.m3u8").status_code, 403)
-        from django.http import Http404
         request.tenant = self.other_tenant
-        with self.assertRaises(Http404):
-            view(request, key=key, asset="master.m3u8")
+        self.assertEqual(view(request, key=key, asset="master.m3u8").status_code, 404)
 
     def test_direct_token_consumers_revalidate_exact_current_scope_without_writes(self):
         entitlement = self._grant().entitlement

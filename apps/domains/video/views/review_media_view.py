@@ -9,7 +9,6 @@ from django.conf import settings
 from django.core.signing import Signer
 from django.utils.crypto import constant_time_compare
 from django.http import HttpResponse, HttpResponseRedirect
-from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views import View
 
@@ -72,15 +71,16 @@ def rewrite_playlist(content, asset, tenant_code, signer):
 class ReviewMediaView(View):
     def get(self, request, key, asset):
         now = timezone.now()
-        stream = get_object_or_404(
-            VideoReviewWatchStream.objects.select_related("usage__video"),
+        stream = VideoReviewWatchStream.objects.select_related("usage__video").filter(
             key=key,
             usage__video__tenant=request.tenant,
             usage__student__tenant=request.tenant,
             usage__video__deleted_at__isnull=True,
             closed=False,
             access_until__gt=now,
-        )
+        ).first()
+        if stream is None:
+            return HttpResponse(status=404)
         usage = stream.usage
         video = usage.video
         remaining = (
