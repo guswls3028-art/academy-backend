@@ -378,9 +378,7 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
             HTTP_X_SCORE_EDITOR_CLIENT="mixed-omr-browser",
         )
 
-    def test_manual_overwrite_regrades_replacement_scan_and_preserves_teacher_marks(self):
-        from apps.domains.results.services.question_stats_service import QuestionStatsService
-
+    def _graded_math_paper_and_rescan(self):
         _, essays = self._configure_paper_math_numeric_keys()
         _, result = self._grade_objective_only()
         self._acquire_score_lease()
@@ -389,7 +387,6 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
             self.assertEqual(response.status_code, 200, response.data)
         result.refresh_from_db()
         self.assertEqual(result.total_score, 47)
-        attempt_id = result.attempt_id
         marked_item = result.items.get(question__number=2)
         marked_item.include_in_wrong_note = True
         marked_item.save(update_fields=["include_in_wrong_note"])
@@ -400,6 +397,13 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
                              exam_question_id=row.exam_question_id, answer=row.answer)
             for row in self.submission.answers.exclude(exam_question_id=self.choice.id)
         ])
+        return result, essays, marked_item, replacement
+
+    def test_manual_overwrite_regrades_replacement_scan_and_preserves_teacher_marks(self):
+        from apps.domains.results.services.question_stats_service import QuestionStatsService
+
+        result, essays, marked_item, replacement = self._graded_math_paper_and_rescan()
+        attempt_id = result.attempt_id
         conflict = self._confirm_scan(replacement)
         self.assertEqual(conflict.status_code, 409, conflict.data)
         self.assertEqual(conflict.data["code"], "DUPLICATE_ENROLLMENT")
@@ -433,6 +437,46 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
         self.assertEqual(list(ResultFact.objects.filter(attempt=attempt).order_by("id").values()), facts)
         attempt.refresh_from_db()
         self.assertEqual(len(attempt.meta["omr_scan_replacements"]), 1)
+
+    def test_incomplete_replacement_rolls_back_both_adoption_actions_until_repaired(self):
+        from django.apps import apps
+
+        result, _, _, replacement = self._graded_math_paper_and_rescan()
+        missing_id = replacement.answers.order_by("exam_question_id").last().exam_question_id
+        replacement.answers.filter(exam_question_id=missing_id).delete()
+        apps.get_model("submissions", "OMRRecognitionRun").objects.create(
+            tenant=self.tenant, submission=replacement, status="DONE", answer_count=29,
+            contract_snapshot={"auto_detect_count": 30},
+        )
+        original = self._exam_grading_snapshot(result)
+        scans = Submission.objects.filter(pk__in=[self.submission.pk, replacement.pk]).order_by("pk")
+        original_scans = list(scans.values())
+        matches = apps.get_model("submissions", "OMRStudentMatch").objects.filter(submission=replacement)
+        original_matches = list(matches.values())
+        client = APIClient()
+        client.force_authenticate(user=self.staff)
+        accept_url = f"/api/v1/submissions/submissions/{replacement.id}/accept-from-duplicates/"
+        def accept():
+            return client.post(accept_url, {}, format="json", HTTP_HOST="api.hakwonplus.com",
+                               HTTP_X_TENANT_CODE=self.tenant.code)
+
+        for action in (lambda: self._confirm_scan(replacement, allow_duplicate=True), accept):
+            response = action()
+            self.assertEqual(response.status_code, 409, response.data)
+            self.assertEqual(response.data["code"], "OMR_REPLACEMENT_NOT_READY")
+            self.assertIn("answers:29/30", response.data["missing"])
+            self.assertEqual(self._exam_grading_snapshot(result), original)
+            self.assertEqual(list(scans.values()), original_scans)
+            self.assertEqual(list(matches.values()), original_matches)
+        SubmissionAnswer.objects.create(tenant=self.tenant, submission=replacement,
+                                        exam_question_id=missing_id, answer="1")
+        recovered = accept()
+        self.assertEqual(recovered.status_code, 200, recovered.data)
+        result.refresh_from_db()
+        self.assertEqual((result.total_score, result.attempt.submission_id), (46, replacement.id))
+        facts = list(ResultFact.objects.filter(attempt=result.attempt).order_by("pk").values())
+        self.assertEqual(accept().status_code, 200)
+        self.assertEqual(list(ResultFact.objects.filter(attempt=result.attempt).order_by("pk").values()), facts)
 
     def test_replacement_scan_preserves_explicit_total_on_same_sitting(self):
         _, result = self._grade_objective_only()
