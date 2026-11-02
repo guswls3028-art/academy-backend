@@ -366,6 +366,18 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
         self.assertFalse(SubmissionAnswer.objects.filter(submission=self.submission,
                                                         exam_question_id__in=[q.id for q in essays]).exists())
 
+    def _confirm_scan(self, submission, *, allow_duplicate=False):
+        client = APIClient()
+        client.force_authenticate(user=self.staff)
+        url = f"/api/v1/submissions/submissions/{submission.id}/manual-edit/"
+        return client.post(
+            url + ("?allow_duplicate=1" if allow_duplicate else ""),
+            {"identifier": {"enrollment_id": self.enrollment.id},
+             "answers": list(submission.answers.values("exam_question_id", "answer"))},
+            format="json", HTTP_HOST="api.hakwonplus.com", HTTP_X_TENANT_CODE=self.tenant.code,
+            HTTP_X_SCORE_EDITOR_CLIENT="mixed-omr-browser",
+        )
+
     def test_manual_overwrite_regrades_replacement_scan_and_preserves_teacher_marks(self):
         from apps.domains.results.services.question_stats_service import QuestionStatsService
 
@@ -388,24 +400,14 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
                              exam_question_id=row.exam_question_id, answer=row.answer)
             for row in self.submission.answers.exclude(exam_question_id=self.choice.id)
         ])
-        payload = {
-            "identifier": {"enrollment_id": self.enrollment.id},
-            "answers": list(replacement.answers.values("exam_question_id", "answer")),
-        }
-        client = APIClient()
-        client.force_authenticate(user=self.staff)
-        url = f"/api/v1/submissions/submissions/{replacement.id}/manual-edit/"
-        options = dict(format="json", HTTP_HOST="api.hakwonplus.com",
-                       HTTP_X_TENANT_CODE=self.tenant.code,
-                       HTTP_X_SCORE_EDITOR_CLIENT="mixed-omr-browser")
-        conflict = client.post(url, payload, **options)
+        conflict = self._confirm_scan(replacement)
         self.assertEqual(conflict.status_code, 409, conflict.data)
         self.assertEqual(conflict.data["code"], "DUPLICATE_ENROLLMENT")
         result.refresh_from_db()
         self.assertEqual(result.total_score, 47)
         self.assertEqual(result.attempt.submission_id, self.submission.id)
 
-        accepted = client.post(url + "?allow_duplicate=1", payload, **options)
+        accepted = self._confirm_scan(replacement, allow_duplicate=True)
         self.assertEqual(accepted.status_code, 200, accepted.data)
         result.refresh_from_db()
         self.assertEqual((result.objective_score, result.total_score), (29, 46))
@@ -426,11 +428,22 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
 
         # Repeating an already accepted scan must not append new grading facts.
         facts = list(ResultFact.objects.filter(attempt=attempt).order_by("id").values())
-        repeat = client.post(url + "?allow_duplicate=1", payload, **options)
+        repeat = self._confirm_scan(replacement, allow_duplicate=True)
         self.assertEqual(repeat.status_code, 200, repeat.data)
         self.assertEqual(list(ResultFact.objects.filter(attempt=attempt).order_by("id").values()), facts)
         attempt.refresh_from_db()
         self.assertEqual(len(attempt.meta["omr_scan_replacements"]), 1)
+
+    def test_replacement_scan_preserves_explicit_total_on_same_sitting(self):
+        _, result = self._grade_objective_only()
+        saved = self._patch_aggregate_score(65, view=AdminExamTotalScoreView)
+        self.assertEqual(saved.status_code, 200, saved.data)
+        replacement = self._new_omr_submission(answer="2")
+        accepted = self._confirm_scan(replacement, allow_duplicate=True)
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+        result.refresh_from_db()
+        self.assertEqual((result.objective_score, result.total_score), (0, 65))
+        self.assertEqual(result.attempt.submission_id, replacement.id)
 
     def test_paper_math_numeric_keys_still_reject_missing_objective_answer(self):
         self._configure_paper_math_numeric_keys()
@@ -2138,6 +2151,7 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
         self.exam.max_attempts = 2
         self.exam.save(update_fields=["allow_retake", "max_attempts", "updated_at"])
         _legacy, canonical = self._grade_objective_only()
+        canonical.items.filter(question=self.choice).update(include_in_wrong_note=True)
         ResultItem.objects.create(
             result=canonical,
             question=self.essay,
@@ -2159,6 +2173,7 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
         self.assertNotEqual(int(canonical.attempt_id), prior_attempt_id)
         self.assertEqual(second_legacy.status, ExamResult.Status.DRAFT)
         self.assertEqual(float(canonical.total_score), 80.0)
+        self.assertFalse(canonical.items.get(question=self.choice).include_in_wrong_note)
         self.assertFalse(
             ResultItem.objects.filter(
                 result=canonical,

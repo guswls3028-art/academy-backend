@@ -508,6 +508,8 @@ def sync_result_from_exam_submission(
             # not make a later OMR attempt look subjectively complete.
             existing_essay_items.delete()
 
+    # Review selections belong to the student's sitting, including its replacement scan.
+    keep_review_marks = preserve_existing_subjective and is_omr_scan_submission(submission)
     for item in items_payload:
         ResultFact.objects.create(
             target_type="exam",
@@ -522,17 +524,17 @@ def sync_result_from_exam_submission(
             max_score=item["max_score"],
             source=item["source"],
         )
+        item_defaults = {
+            "answer": item["answer"],
+            "is_correct": item["is_correct"],
+            "score": item["score"],
+            "max_score": item["max_score"],
+            "source": item["source"],
+        }
+        if not keep_review_marks:
+            item_defaults["include_in_wrong_note"] = False
         ResultItem.objects.update_or_create(
-            result=result,
-            question_id=item["question_id"],
-            defaults={
-                "answer": item["answer"],
-                "is_correct": item["is_correct"],
-                "include_in_wrong_note": False,
-                "score": item["score"],
-                "max_score": item["max_score"],
-                "source": item["source"],
-            },
+            result=result, question_id=item["question_id"], defaults=item_defaults,
         )
     if submission.source == "online":
         # Preserve the written response independently of its teacher-owned

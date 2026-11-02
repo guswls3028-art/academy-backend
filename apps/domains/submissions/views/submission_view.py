@@ -686,7 +686,7 @@ class SubmissionViewSet(ModelViewSet):
             should_create_exam_enrollment = candidate.should_create
 
             # ✅ 중복 매칭 차단 (기본): 같은 시험의 다른 submission이 이미 같은 enrollment로 active면 409.
-            #    override=1 쿼리파라미터로만 덮어쓰기 허용 (운영자 명시적 선택).
+            #    allow_duplicate=1은 운영자가 중복 덮어쓰기를 확인한 경우다.
             allow_duplicate = allow_duplicate_requested(request)
             if exam_id and not allow_duplicate:
                 dup_qs = (
@@ -827,6 +827,7 @@ class SubmissionViewSet(ModelViewSet):
                 identifier_payload=identifier,
             )
 
+        representative_scan_replaced = False
         if allow_duplicate and resolved_enrollment_id is not None:
             actor = f"admin.manual_edit.user_{getattr(request.user, 'id', '?')}"
             all_siblings = list(
@@ -840,7 +841,7 @@ class SubmissionViewSet(ModelViewSet):
                 )
                 .exclude(id=submission.id)
             )
-            rebind_representative_omr_submission(
+            representative_scan_replaced = rebind_representative_omr_submission(
                 exam_id=int(submission.target_id),
                 enrollment_id=int(resolved_enrollment_id),
                 replacement_submission_id=int(submission.id),
@@ -882,7 +883,7 @@ class SubmissionViewSet(ModelViewSet):
                 int(submission.id),
                 actor=f"admin.manual_edit.user_{getattr(request.user, 'id', '?')}",
                 allow_done_regrade=True,
-                preserve_current_omr_grade=(answers_changed == 0),
+                preserve_current_omr_grade=(answers_changed == 0 and not representative_scan_replaced),
             )
         except Exception as exc:
             if isinstance(exc, DjangoValidationError) and getattr(exc, "code", None) == "omr_grading_configuration_conflict":
