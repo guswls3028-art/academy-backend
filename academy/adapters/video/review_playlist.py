@@ -1,4 +1,4 @@
-"""Read one server-signed CDN playlist without forwarding browser credentials."""
+"""Read one server-signed private video playlist without forwarding browser credentials."""
 
 import requests
 

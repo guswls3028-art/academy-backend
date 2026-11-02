@@ -567,6 +567,10 @@ class DirectVideoEntitlementTests(TestCase):
         view = ReviewMediaView.as_view()
         request = self.factory.get(opened["play_url"])
         request.tenant = self.tenant
+        origin_url = "https://private-storage.example.test/qa-segment"
+        signer = patch("apps.domains.video.views.review_media_view.create_presigned_get_url", return_value=origin_url)
+        signed = signer.start()
+        self.addCleanup(signer.stop)
         with patch("apps.domains.video.views.review_media_view.read_review_playlist",
                    return_value="#EXTM3U\nvideo/level.m3u8?sig=private\n"):
             manifest = view(request, key=key, asset="master.m3u8")
@@ -575,7 +579,9 @@ class DirectVideoEntitlementTests(TestCase):
             self.assertNotIn(b"sig=", manifest.content)
         fragment = view(request, key=key, asset="video/segment_001.ts")
         self.assertEqual(fragment.status_code, 302)
-        self.assertEqual(urlsplit(fragment.url).hostname, "cdn.example.test")
+        self.assertEqual(urlsplit(fragment.url).hostname, "private-storage.example.test")
+        self.assertEqual(signed.call_args.kwargs["key"], f"tenants/{self.tenant.pk}/video/hls/{self.video.pk}/video/segment_001.ts")
+        self.assertLessEqual(signed.call_args.kwargs["expires_in"], 15)
         self.assertEqual(view(request, key=key, asset="../other/master.m3u8").status_code, 403)
         from django.http import Http404
         request.tenant = self.other_tenant

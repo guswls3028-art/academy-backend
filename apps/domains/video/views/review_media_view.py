@@ -1,4 +1,4 @@
-"""Serve playlists through the budget check. Only individual fragments redirect to the CDN."""
+"""Serve protected manifests and admit short-lived reads of individual private video fragments."""
 
 import posixpath
 import re
@@ -10,9 +10,10 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views import View
 
+from academy.adapters.storage.r2_presign import create_presigned_get_url
 from academy.adapters.video.review_playlist import read_review_playlist
 from apps.core.r2_paths import video_hls_master_path
-from apps.domains.video.cdn.cloudflare_signing import CloudflareSignedURL
+
 from apps.domains.video.models import VideoReviewWatchStream
 from apps.domains.video.services.review_media import stream_access_is_current
 from apps.domains.video.services.review_watch import admit_fragment, elapsed_ms, threshold_ms
@@ -76,20 +77,16 @@ class ReviewMediaView(View):
         master = str(video.hls_path or canonical).removeprefix("storage/").lstrip("/")
         if posixpath.dirname(master) != posixpath.dirname(canonical):
             return HttpResponse(status=403)
-        secret = getattr(settings, "CDN_HLS_SIGNING_SECRET", "")
-        if not secret:
-            return HttpResponse(status=503)
-        cdn_url = CloudflareSignedURL(secret, getattr(settings, "CDN_HLS_SIGNING_KEY_ID", "v1")).build_url(
-            cdn_base=settings.CDN_HLS_BASE_URL,
-            path=posixpath.join(posixpath.dirname(master), asset),
-            expires_at=min(
-                int(stream.access_until.timestamp()), int(now.timestamp()) + min(15, (remaining + 999) // 1000)
-            ),
-            user_id=stream.user_id,
+        lifetime = min(15, (remaining + 999) // 1000, int((stream.access_until - now).total_seconds()))
+        if lifetime <= 0:
+            return HttpResponse(status=403)
+        media_url = create_presigned_get_url(
+            key=posixpath.join(posixpath.dirname(master), asset),
+            bucket=settings.R2_VIDEO_BUCKET, expires_in=lifetime,
         )
         if asset.endswith(".m3u8"):
             try:
-                playlist = read_review_playlist(cdn_url)
+                playlist = read_review_playlist(media_url)
                 if playlist is None:
                     return HttpResponse(status=502)
                 content = rewrite_playlist(playlist, asset, request.tenant.code)
@@ -101,7 +98,7 @@ class ReviewMediaView(View):
                 admission = admit_fragment(stream, now)
                 if admission != 200:
                     return HttpResponse(status=admission, headers={"Retry-After": "1", "Cache-Control": "no-store"})
-            response = HttpResponseRedirect(cdn_url)
+            response = HttpResponseRedirect(media_url)
         response["Cache-Control"] = "private, no-store"
         response["Referrer-Policy"] = "no-referrer"
         return response
