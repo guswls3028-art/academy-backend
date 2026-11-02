@@ -113,6 +113,7 @@ def _resolve_tenant_from_header(request) -> Optional[Tenant]:
 # cross-tenant 보안: landing-public path 만 적용, 각 endpoint 는 tenant scoped queryset 사용.
 _QUERY_PARAM_TENANT_PATH_PREFIXES = (
     "/api/v1/landing-public/",
+    "/api/v1/media/review-stream/",
 )
 
 

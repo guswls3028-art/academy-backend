@@ -353,6 +353,8 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
         perm = self._load_permission(video=video, enrollment=enrollment)
         policy = self._effective_policy(video=video, enrollment=enrollment, perm=perm)
 
+        token = grant.token
+
         media_expires_at = expires_at
         if enrollment.status != "INACTIVE":
             media_expires_at = bounded_ordinary_media_expiry(video)
@@ -362,9 +364,18 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
             user_id=request.user.id,
         )
 
+        if video.review_watch_limit_enabled and access_mode == AccessMode.FREE_REVIEW:
+            from apps.domains.video.contracts import bind_review_token, open_review_stream, review_stream_url
+
+            watch = open_review_stream(video, enrollment.student, user_id=request.user.pk, expires_at=expires_at)
+            if watch is None:
+                return _deny("이 영상의 복습 시청시간을 모두 사용했습니다.")
+            token = bind_review_token(token, watch["stream"], expires_at)
+            play_url = review_stream_url(video, watch["stream"], request.tenant.code)
+
         resp = Response(
             PlaybackResponseSerializer({
-                "token": grant.token,
+                "token": token,
                 "session_id": session_id,
                 "expires_at": expires_at,
                 "access_mode": access_mode.value,
@@ -642,6 +653,16 @@ class PlaybackRenewView(APIView):
 
                 if enrollment.status == "INACTIVE" and not renewed_play_url:
                     return _deny("playback_url_unavailable", code=503)
+
+            if current_video.review_watch_limit_enabled and access_mode == AccessMode.FREE_REVIEW:
+                from apps.domains.video.services.review_media import renew_review_stream
+
+                renewed_play_url = renew_review_stream(
+                    current_video, payload["student_id"], request.user.pk,
+                    payload.get("review_stream"), expires_at, request.tenant.code,
+                )
+                if not renewed_play_url:
+                    return _deny("복습 재생 정보를 다시 확인해 주세요.", code=409)
 
             if expires_at <= now_timestamp:
                 return _deny("access_expired", code=403)

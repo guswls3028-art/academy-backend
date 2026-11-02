@@ -48,6 +48,7 @@ class StudentVideoListItemSerializer(serializers.Serializer):
 
 
 class StudentVideoPlaybackRequestSerializer(serializers.Serializer):
+    review_watch = serializers.BooleanField(default=False)
     event_protocol_version = serializers.ChoiceField(choices=[1, 2], default=1)
 
 
@@ -67,6 +68,7 @@ class StudentVideoPlaybackSerializer(serializers.Serializer):
     policy_version = serializers.IntegerField(min_value=1)
     event_protocol_version = serializers.ChoiceField(choices=[1, 2], default=1)
 
+    review_watch = serializers.DictField(required=False, allow_null=True)
     policy = serializers.DictField()
 
 

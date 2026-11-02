@@ -143,6 +143,7 @@ class Video(TimestampModel):
     )
 
     duration = models.PositiveIntegerField(null=True, blank=True)
+    review_watch_limit_enabled = models.BooleanField(default=False, db_default=False)
     order = models.PositiveIntegerField(default=1)
 
     # 조회수 / 좋아요 (denormalized counters)
@@ -681,6 +682,30 @@ class DirectVideoEntitlement(TimestampModel):
 # ========================================================
 # Video Progress
 # ========================================================
+
+class VideoReviewWatchUsage(models.Model):
+    video = models.ForeignKey(Video, on_delete=models.CASCADE)
+    student = models.ForeignKey("students.Student", on_delete=models.CASCADE)
+    used_ms = models.PositiveBigIntegerField(default=0)
+    started_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["video", "student"], name="unique_review_watch_usage"),
+        ]
+
+
+class VideoReviewWatchStream(models.Model):
+    usage = models.ForeignKey(VideoReviewWatchUsage, on_delete=models.CASCADE, related_name="streams")
+    key = models.UUIDField(unique=True)
+    sequence = models.PositiveBigIntegerField(default=0)
+    access_until = models.DateTimeField()
+    last_signal_at = models.DateTimeField(null=True)
+    policy_version = models.PositiveIntegerField()
+    user_id = models.PositiveBigIntegerField()
+    active_since = models.DateTimeField(null=True)
+    closed = models.BooleanField(default=False)
+
 
 class VideoProgress(models.Model):
     video = models.ForeignKey(

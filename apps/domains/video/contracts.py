@@ -14,6 +14,27 @@ def sort_videos_for_playlist(videos: Iterable[T]) -> list[T]:
     return _impl(videos)
 
 
+def bind_review_token(token, stream, expires_at):
+    from .drm import create_playback_token, verify_playback_token
+
+    valid, claims, _ = verify_playback_token(token)
+    if not valid or not claims:
+        raise ValueError("invalid playback grant")
+    return create_playback_token(payload={**claims, "review_stream": stream}, expires_at=expires_at)
+
+
+def review_stream_url(video, stream, tenant_code):
+    from .services.review_media import review_stream_url as _impl
+
+    return _impl(video, stream, tenant_code)
+
+
+def open_review_stream(video, student, *, user_id, expires_at):
+    from .services.review_watch import open_review_stream as _impl
+
+    return _impl(video, student, user_id=user_id, expires_at=expires_at)
+
+
 def youtube_embed_url(video_id: str) -> str:
     from .youtube import youtube_embed_url as _impl
 
