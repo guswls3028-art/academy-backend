@@ -9,10 +9,41 @@ UnhandledExceptionMiddleware 회귀 테스트.
 
 import json
 
+from django.contrib.admin.sites import AdminSite
+from django.core.exceptions import PermissionDenied
 from django.http import HttpRequest
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
+from django.urls import path
 
 from apps.api.common.middleware import UnhandledExceptionMiddleware
+
+
+def _deny_access(request):
+    raise PermissionDenied
+
+
+urlpatterns = [
+    path("admin/denied/", _deny_access),
+    path("admin/<path:url>", AdminSite().catch_all_view),
+]
+
+
+@override_settings(
+    ROOT_URLCONF=__name__,
+    DEBUG=False,
+    MIDDLEWARE=[
+        "apps.api.common.middleware.CorsResponseFixMiddleware",
+        "apps.api.common.middleware.UnhandledExceptionMiddleware",
+    ],
+    CORS_ALLOWED_ORIGINS=["https://school.example"],
+)
+class NativeHttpStatusTests(SimpleTestCase):
+    def test_expected_denials_reach_the_client_with_their_status(self):
+        for url, expected in (("/admin/missing/", 404), ("/admin/denied/", 403)):
+            with self.subTest(url=url):
+                response = self.client.get(url, HTTP_ORIGIN="https://school.example")
+                self.assertEqual(response.status_code, expected)
+                self.assertEqual(response.headers["Access-Control-Allow-Origin"], "https://school.example")
 
 
 def _request() -> HttpRequest:
