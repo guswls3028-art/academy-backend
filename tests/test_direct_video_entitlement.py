@@ -460,9 +460,17 @@ class DirectVideoEntitlementTests(TestCase):
         from apps.domains.video.views.review_watch_views import ReviewWatchReportView
 
         self._grant()
+        from apps.domains.video.views.video_views import VideoViewSet
+
         self.video.duration = 10
-        self.video.review_watch_limit_enabled = True
-        self.video.save(update_fields=["duration", "review_watch_limit_enabled"])
+        self.video.save(update_fields=["duration"])
+        configure = VideoViewSet.as_view({"patch": "partial_update"})
+        change = configure(self._request("patch", "/videos/", user=self.staff, data={
+            "review_watch_limit_enabled": True,
+        }), pk=self.video.pk)
+        self.assertEqual(change.status_code, 200, change.data)
+        self.video.refresh_from_db()
+        self.assertTrue(self.video.review_watch_limit_enabled)
 
         def open_player(supported=True):
             return StudentVideoPlaybackView.as_view()(self._request(
