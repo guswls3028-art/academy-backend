@@ -75,6 +75,18 @@ from apps.support.submissions.dependencies import (
 logger = logging.getLogger(__name__)
 
 
+def _reject_unready_replacement(submission_id, readiness):
+    # Adoption and regrading must commit together in the caller's transaction.
+    transaction.set_rollback(True)
+    return Response({
+        "submission_id": submission_id,
+        "code": "OMR_REPLACEMENT_NOT_READY",
+        "detail": "새 답안지를 채점할 수 없어 기존 답안지와 성적을 유지했습니다. 누락된 답안과 시험 설정을 확인한 뒤 다시 채택해 주세요.",
+        "missing": list(readiness.missing),
+        "recovery": {"action": "review_scan", "submission_id": submission_id},
+    }, status=status.HTTP_409_CONFLICT)
+
+
 class SubmissionViewSet(ModelViewSet):
     # 기본: Member (학생 CREATE 허용). 관리자 전용 액션은 get_permissions에서 Staff로 승격.
     permission_classes = [IsAuthenticated, TenantResolvedAndMember]
@@ -937,6 +949,8 @@ class SubmissionViewSet(ModelViewSet):
                 status=500,
             )
 
+        if representative_scan_replaced and not decision.graded:
+            return _reject_unready_replacement(submission.id, decision.readiness)
         submission.refresh_from_db(fields=["status", "enrollment_id"])
         if not decision.graded:
             configuration_required = bool(set(decision.readiness.missing) & {
@@ -1061,7 +1075,7 @@ class SubmissionViewSet(ModelViewSet):
                 for sibling in all_siblings
                 if sibling.status in OMR_CONFLICT_STATUSES
             ]
-            rebind_representative_omr_submission(
+            representative_scan_replaced = rebind_representative_omr_submission(
                 exam_id=int(submission.target_id),
                 enrollment_id=int(submission.enrollment_id),
                 replacement_submission_id=int(submission.id),
@@ -1152,7 +1166,10 @@ class SubmissionViewSet(ModelViewSet):
                     int(submission.id),
                     actor=actor,
                     allow_done_regrade=True,
+                    preserve_current_omr_grade=not representative_scan_replaced,
                 )
+                if representative_scan_replaced and not decision.graded:
+                    return _reject_unready_replacement(submission.id, decision.readiness)
             except Exception:
                 logger.exception(
                     "OMR duplicate resolution grading failed tenant_id=%s submission_id=%s",
