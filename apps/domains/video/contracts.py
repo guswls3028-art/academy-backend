@@ -35,6 +35,12 @@ def open_review_stream(video, student, *, user_id, expires_at, context):
     return _impl(video, student, user_id=user_id, expires_at=expires_at, context=context)
 
 
+def record_review_state(*, video, student, stream_key, sequence, playing, prepare=False):
+    from .services.review_watch import record_review_state as _impl
+
+    return _impl(video=video, student=student, stream_key=stream_key, sequence=sequence, playing=playing, prepare=prepare)
+
+
 def youtube_embed_url(video_id: str) -> str:
     from .youtube import youtube_embed_url as _impl
 

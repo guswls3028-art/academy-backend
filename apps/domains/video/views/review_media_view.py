@@ -1,4 +1,5 @@
 """Serve playlists through the budget check. Only individual fragments redirect to the CDN."""
+
 import posixpath
 import re
 from urllib.parse import urlencode, urlsplit
@@ -30,7 +31,11 @@ def rewrite_playlist(content, asset, tenant_code):
 
     def local_uri(uri):
         path = urlsplit(uri).path
-        if uri.startswith("/") or ":" in uri or not safe_asset(posixpath.normpath(posixpath.join(posixpath.dirname(asset), path))):
+        if (
+            uri.startswith("/")
+            or ":" in uri
+            or not safe_asset(posixpath.normpath(posixpath.join(posixpath.dirname(asset), path)))
+        ):
             raise ValueError("invalid playlist path")
         return path + query
 
@@ -49,13 +54,20 @@ class ReviewMediaView(View):
         now = timezone.now()
         stream = get_object_or_404(
             VideoReviewWatchStream.objects.select_related("usage__video"),
-            key=key, usage__video__tenant=request.tenant, usage__student__tenant=request.tenant,
+            key=key,
+            usage__video__tenant=request.tenant,
+            usage__student__tenant=request.tenant,
             usage__video__deleted_at__isnull=True,
-            closed=False, access_until__gt=now,
+            closed=False,
+            access_until__gt=now,
         )
         usage = stream.usage
         video = usage.video
-        remaining = threshold_ms(video) - usage.used_ms - elapsed_ms(stream, now) if video.review_watch_limit_enabled else 15_000
+        remaining = (
+            threshold_ms(video) - usage.used_ms - elapsed_ms(stream, now)
+            if video.review_watch_limit_enabled
+            else 15_000
+        )
         if remaining <= 0 or stream.policy_version != video.policy_version or not safe_asset(asset):
             return HttpResponse(status=403)
         if not stream_access_is_current(stream, request.tenant):
@@ -68,8 +80,11 @@ class ReviewMediaView(View):
         if not secret:
             return HttpResponse(status=503)
         cdn_url = CloudflareSignedURL(secret, getattr(settings, "CDN_HLS_SIGNING_KEY_ID", "v1")).build_url(
-            cdn_base=settings.CDN_HLS_BASE_URL, path=posixpath.join(posixpath.dirname(master), asset),
-            expires_at=min(int(stream.access_until.timestamp()), int(now.timestamp()) + min(15, (remaining+999)//1000)),
+            cdn_base=settings.CDN_HLS_BASE_URL,
+            path=posixpath.join(posixpath.dirname(master), asset),
+            expires_at=min(
+                int(stream.access_until.timestamp()), int(now.timestamp()) + min(15, (remaining + 999) // 1000)
+            ),
             user_id=stream.user_id,
         )
         if asset.endswith(".m3u8"):

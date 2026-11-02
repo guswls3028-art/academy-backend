@@ -20,6 +20,7 @@ from apps.domains.lectures.test_support import (
 from apps.domains.messaging.models import NotificationLog, ScheduledNotification
 from apps.domains.parents.models import Parent
 from apps.domains.student_app.media.views import (
+    StudentReviewWatchView,
     StudentSessionVideoListView,
     StudentVideoMeView,
     StudentVideoPlaybackView,
@@ -456,7 +457,7 @@ class DirectVideoEntitlementTests(TestCase):
     def test_review_limit_counts_playing_only_and_survives_reopening(self):
         from unittest.mock import patch
 
-        from apps.domains.video.views.review_watch_views import ReviewWatchReportView, StudentReviewWatchView
+        from apps.domains.video.views.review_watch_views import ReviewWatchReportView
 
         self._grant()
         self.video.duration = 10
@@ -505,7 +506,7 @@ class DirectVideoEntitlementTests(TestCase):
 
         from apps.domains.video.models import VideoReviewWatchStream
         from apps.domains.video.services.review_watch import admit_fragment
-        from apps.domains.video.views.review_watch_views import StudentReviewWatchView
+
 
         self._grant()
         self.video.review_watch_limit_enabled = True

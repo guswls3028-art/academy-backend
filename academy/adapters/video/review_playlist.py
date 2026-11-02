@@ -1,4 +1,5 @@
 """Read one server-signed CDN playlist without forwarding browser credentials."""
+
 import requests
 
 

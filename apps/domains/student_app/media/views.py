@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 from django.db import transaction
 from django.db.models import Prefetch, Q
 from django.http import Http404
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, PolymorphicProxySerializer, extend_schema
 from rest_framework.views import APIView
@@ -42,6 +43,7 @@ from apps.domains.video.contracts import (
     bind_review_token,
     consume_video_forward_skip,
     open_review_stream,
+    record_review_state,
     sort_videos_for_playlist,
     youtube_embed_url,
 )
@@ -59,6 +61,8 @@ from academy.adapters.db.django import repositories_video as video_repo
 from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
 from apps.api.common.query_params import parse_query_bool
 from .serializers import (
+    ReviewSignalSerializer,
+    ReviewStateSerializer,
     StudentVideoAccessCheckSerializer,
     StudentVideoForwardSkipRequestSerializer,
     StudentVideoForwardSkipResponseSerializer,
@@ -928,6 +932,31 @@ class StudentSessionVideoListView(APIView):
         return Response({
             "items": StudentVideoListItemSerializer(items, many=True).data
         })
+
+
+class StudentReviewWatchView(APIView):
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    @extend_schema(request=ReviewSignalSerializer, responses=ReviewStateSerializer)
+    def post(self, request, video_id):
+        form = ReviewSignalSerializer(data=request.data)
+        form.is_valid(raise_exception=True)
+        data = form.validated_data
+        video = get_object_or_404(get_video_model(), pk=video_id, tenant=request.tenant)
+        student = get_request_student(request)
+        try:
+            context = resolve_student_video_access_context(
+                request, video, explicit_enrollment_id=data.get("enrollment"), allow_public_enrollment_write=False,
+            )
+            ensure_student_video_watch_allowed(context)
+        except StudentVideoAccessError as exc:
+            return Response({"detail": exc.detail}, status=exc.status_code)
+        if not student or context.access_mode_value not in (None, "FREE_REVIEW"):
+            return Response({"detail": "복습 권한을 확인할 수 없습니다."}, status=403)
+        return Response(record_review_state(
+            video=video, student=student, stream_key=data["stream"], sequence=data["sequence"],
+            playing=data["playing"], prepare=data["prepare"],
+        ))
 
 
 class StudentVideoPlaybackView(APIView):

@@ -1,4 +1,5 @@
 """Wall-clock review usage. Lock the student's ledger before changing any stream."""
+
 from datetime import datetime, timezone as dt_timezone
 from uuid import uuid4
 
@@ -14,7 +15,6 @@ PREFETCH_REQUEST_COST_MS = 2_000
 PREFETCH_MAX_MS = 96_000
 
 
-
 def threshold_ms(video):
     return int(video.duration or 0) * 1400
 
@@ -26,8 +26,14 @@ def elapsed_ms(stream, now):
     return max(0, min(SIGNAL_TIMEOUT_MS, elapsed))
 
 
-def settle(usage, stream, now):
-    elapsed = elapsed_ms(stream, now)
+def chargeable_ms(video, used_ms, elapsed):
+    if video.review_watch_limit_enabled:
+        return min(elapsed, max(0, threshold_ms(video) - used_ms))
+    return elapsed
+
+
+def settle(video, usage, stream, now):
+    elapsed = chargeable_ms(video, usage.used_ms, elapsed_ms(stream, now))
     usage.used_ms += elapsed
     usage.prefetch_credit_ms = min(PREFETCH_MAX_MS, usage.prefetch_credit_ms + elapsed)
     stream.active_since = None
@@ -53,16 +59,17 @@ def open_review_stream(video, student, *, user_id, expires_at, context):
     for previous in usage.streams.all():
         stale = previous.active_since and elapsed_ms(previous, now) == SIGNAL_TIMEOUT_MS
         if video.review_watch_limit_enabled or stale or previous.access_until <= now:
-            settle(usage, previous, now)
+            settle(video, usage, previous, now)
             previous.delete()
     usage.save(update_fields=["used_ms", "prefetch_credit_ms"])
     if video.review_watch_limit_enabled and usage.used_ms >= threshold_ms(video):
         return None
     stream = usage.streams.create(
-        key=uuid4(), user_id=user_id, policy_version=video.policy_version,
+        key=uuid4(),
+        user_id=user_id,
+        policy_version=video.policy_version,
         enrollment_id=getattr(context.enrollment, "pk", None),
         entitlement_id=getattr(context.direct_entitlement or context.inactive_entitlement, "pk", None),
-
         access_until=datetime.fromtimestamp(expires_at, tz=dt_timezone.utc),
     )
     return snapshot(video, usage, stream)
@@ -91,8 +98,12 @@ def admit_fragment(stream, now):
 def record_review_state(*, video, student, stream_key, sequence, playing, prepare=False):
     usage = VideoReviewWatchUsage.objects.select_for_update().filter(video=video, student=student).first()
     stream = usage and usage.streams.filter(key=stream_key, closed=False).first()
-    if (not stream or stream.policy_version != video.policy_version
-            or video.review_watch_limit_enabled and stream.access_until <= timezone.now()):
+    if (
+        not stream
+        or stream.policy_version != video.policy_version
+        or video.review_watch_limit_enabled
+        and stream.access_until <= timezone.now()
+    ):
         raise PermissionDenied("다른 기기에서 영상을 열었거나 재생이 만료되었습니다. 다시 열어 주세요.")
     if prepare:
         # Cold-start recovery needs the first packets before the first playing event.
@@ -109,7 +120,7 @@ def record_review_state(*, video, student, stream_key, sequence, playing, prepar
         return snapshot(video, usage, stream)
     if sequence > stream.sequence:
         now = timezone.now()
-        settle(usage, stream, now)
+        settle(video, usage, stream, now)
         exhausted = video.review_watch_limit_enabled and usage.used_ms >= threshold_ms(video)
         if exhausted:
             # Do not reduce historical usage if the teacher enabled a limit later.

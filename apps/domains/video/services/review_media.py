@@ -1,4 +1,5 @@
 """Limit protected HLS delivery to the currently admitted, tenant-bound student player."""
+
 from datetime import datetime, timezone as dt_timezone
 from pathlib import PurePosixPath
 from types import SimpleNamespace
@@ -10,9 +11,10 @@ from django.urls import reverse
 from rest_framework.exceptions import PermissionDenied
 
 from academy.application.use_cases.student_video_access_context import (
-    StudentVideoAccessError, resolve_student_video_access_context,
+    StudentVideoAccessError,
+    resolve_student_video_access_context,
 )
-from apps.domains.video.models import VideoReviewWatchStream
+from apps.domains.video.models import VideoReviewWatchStream, VideoReviewWatchUsage
 from apps.domains.video.services.review_watch import threshold_ms
 
 
@@ -30,7 +32,9 @@ def stream_access_is_current(stream, tenant):
     principal = SimpleNamespace(tenant=tenant, user=user, META={"HTTP_X_STUDENT_ID": str(stream.usage.student_id)})
     try:
         context = resolve_student_video_access_context(
-            principal, stream.usage.video, explicit_enrollment_id=stream.enrollment_id,
+            principal,
+            stream.usage.video,
+            explicit_enrollment_id=stream.enrollment_id,
             allow_public_enrollment_write=False,
         )
     except (StudentVideoAccessError, PermissionDenied):
@@ -48,15 +52,22 @@ def renew_review_stream(video, student_id, user_id, key, expires_at, tenant_code
         key = UUID(str(key))
     except ValueError:
         return None
-    stream = VideoReviewWatchStream.objects.select_for_update().filter(
-        key=key, usage__video=video, usage__student_id=student_id, user_id=user_id,
-        policy_version=video.policy_version, closed=False,
-    ).select_related("usage").first()
-    if not stream or (video.review_watch_limit_enabled and stream.usage.used_ms >= threshold_ms(video)):
+    usage = VideoReviewWatchUsage.objects.select_for_update().filter(video=video, student_id=student_id).first()
+    if not usage or (video.review_watch_limit_enabled and usage.used_ms >= threshold_ms(video)):
+        return None
+    stream = VideoReviewWatchStream.objects.filter(
+        key=key,
+        usage=usage,
+        user_id=user_id,
+        policy_version=video.policy_version,
+        closed=False,
+    ).first()
+    if not stream:
         return None
     stream.access_until = datetime.fromtimestamp(expires_at, tz=dt_timezone.utc)
     stream.save(update_fields=["access_until"])
     if video.source_type == video.SourceType.YOUTUBE:
         from apps.domains.video.youtube import youtube_embed_url
+
         return youtube_embed_url(video.youtube_video_id)
     return review_stream_url(video, key, tenant_code)
