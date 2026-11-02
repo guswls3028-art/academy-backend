@@ -405,7 +405,7 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
         self.assertEqual(result.total_score, 47)
         self.assertEqual(result.attempt.submission_id, self.submission.id)
 
-        accepted = client.post(url + "?override=1", payload, **options)
+        accepted = client.post(url + "?allow_duplicate=1", payload, **options)
         self.assertEqual(accepted.status_code, 200, accepted.data)
         result.refresh_from_db()
         self.assertEqual((result.objective_score, result.total_score), (29, 46))
@@ -426,7 +426,7 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
 
         # Repeating an already accepted scan must not append new grading facts.
         facts = list(ResultFact.objects.filter(attempt=attempt).order_by("id").values())
-        repeat = client.post(url + "?override=1", payload, **options)
+        repeat = client.post(url + "?allow_duplicate=1", payload, **options)
         self.assertEqual(repeat.status_code, 200, repeat.data)
         self.assertEqual(list(ResultFact.objects.filter(attempt=attempt).order_by("id").values()), facts)
         attempt.refresh_from_db()
