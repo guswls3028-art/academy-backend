@@ -232,7 +232,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         policy_changed = any(
             field in serializer.validated_data
             and serializer.validated_data[field] != getattr(locked, field)
-            for field in ("allow_skip", "max_speed", "show_watermark", "review_watch_limit_enabled")
+            for field in ("allow_skip", "max_speed", "show_watermark")
         )
         serializer.save(
             policy_version=locked.policy_version + (1 if policy_changed else 0),

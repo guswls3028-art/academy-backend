@@ -19,7 +19,8 @@ from apps.domains.video.services.review_watch import elapsed_ms, record_review_s
 class ReviewSignalSerializer(serializers.Serializer):
     stream = serializers.UUIDField()
     sequence = serializers.IntegerField(min_value=1, max_value=2**53 - 1)
-    playing = serializers.BooleanField()
+    playing = serializers.BooleanField(default=False)
+    prepare = serializers.BooleanField(default=False)
     enrollment = serializers.IntegerField(min_value=1, required=False)
 
 
@@ -27,6 +28,7 @@ class ReviewStateSerializer(serializers.Serializer):
     stream = serializers.UUIDField()
     used_ms = serializers.IntegerField()
     remaining_ms = serializers.IntegerField(allow_null=True)
+    retry_after_ms = serializers.IntegerField(required=False)
 
 
 class ReviewStudentSerializer(serializers.Serializer):
@@ -64,7 +66,7 @@ class StudentReviewWatchView(APIView):
             return Response({"detail": "복습 권한을 확인할 수 없습니다."}, status=403)
         return Response(record_review_state(
             video=video, student=student, stream_key=data["stream"], sequence=data["sequence"],
-            playing=data["playing"],
+            playing=data["playing"], prepare=data["prepare"],
         ))
 
 

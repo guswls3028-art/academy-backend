@@ -22,10 +22,15 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('used_ms', models.PositiveBigIntegerField(default=0)),
+                ('prefetch_credit_ms', models.PositiveIntegerField(default=96000)),
+                ('last_prepare_at', models.DateTimeField(null=True)),
                 ('started_at', models.DateTimeField(auto_now_add=True)),
                 ('student', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='students.student')),
                 ('video', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='video.video')),
             ],
+            options={
+                'constraints': [models.UniqueConstraint(fields=('video', 'student'), name='unique_review_watch_usage')],
+            },
         ),
         migrations.CreateModel(
             name='VideoReviewWatchStream',
@@ -34,16 +39,15 @@ class Migration(migrations.Migration):
                 ('key', models.UUIDField(unique=True)),
                 ('sequence', models.PositiveBigIntegerField(default=0)),
                 ('access_until', models.DateTimeField()),
-                ('last_signal_at', models.DateTimeField(null=True)),
+
                 ('policy_version', models.PositiveIntegerField()),
                 ('user_id', models.PositiveBigIntegerField()),
+                ('enrollment_id', models.PositiveBigIntegerField(null=True)),
+                ('entitlement_id', models.PositiveBigIntegerField(null=True)),
                 ('active_since', models.DateTimeField(null=True)),
                 ('closed', models.BooleanField(default=False)),
                 ('usage', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='streams', to='video.videoreviewwatchusage')),
             ],
         ),
-        migrations.AddConstraint(
-            model_name='videoreviewwatchusage',
-            constraint=models.UniqueConstraint(fields=('video', 'student'), name='unique_review_watch_usage'),
-        ),
+
     ]

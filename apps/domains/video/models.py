@@ -687,6 +687,9 @@ class VideoReviewWatchUsage(models.Model):
     video = models.ForeignKey(Video, on_delete=models.CASCADE)
     student = models.ForeignKey("students.Student", on_delete=models.CASCADE)
     used_ms = models.PositiveBigIntegerField(default=0)
+    # Prefetch is a transport allowance. Only elapsed playing replenishes it.
+    prefetch_credit_ms = models.PositiveIntegerField(default=96_000)
+    last_prepare_at = models.DateTimeField(null=True)
     started_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -700,9 +703,11 @@ class VideoReviewWatchStream(models.Model):
     key = models.UUIDField(unique=True)
     sequence = models.PositiveBigIntegerField(default=0)
     access_until = models.DateTimeField()
-    last_signal_at = models.DateTimeField(null=True)
+
     policy_version = models.PositiveIntegerField()
     user_id = models.PositiveBigIntegerField()
+    enrollment_id = models.PositiveBigIntegerField(null=True)
+    entitlement_id = models.PositiveBigIntegerField(null=True)
     active_since = models.DateTimeField(null=True)
     closed = models.BooleanField(default=False)
 

@@ -504,6 +504,7 @@ class VideoProgressSerializer(serializers.ModelSerializer):
 # ========================================================
 
 class PlaybackStartRequestSerializer(serializers.Serializer):
+    review_watch = serializers.BooleanField(default=False)
     enrollment_id = serializers.IntegerField()
     device_id = serializers.CharField(max_length=128)
     event_protocol_version = serializers.ChoiceField(choices=[1, 2], default=1)
@@ -522,6 +523,7 @@ class PlaybackEndRequestSerializer(serializers.Serializer):
 
 
 class PlaybackResponseSerializer(serializers.Serializer):
+    review_watch = serializers.DictField(required=False, allow_null=True)
     token = serializers.CharField()
     event_protocol_version = serializers.ChoiceField(choices=[1, 2], default=1)
     session_id = serializers.CharField(allow_null=True, required=False)  # None for FREE_REVIEW

@@ -14568,6 +14568,11 @@
             "type": "integer"
           },
           "playing": {
+            "default": false,
+            "type": "boolean"
+          },
+          "prepare": {
+            "default": false,
             "type": "boolean"
           },
           "sequence": {
@@ -14582,7 +14587,6 @@
           }
         },
         "required": [
-          "playing",
           "sequence",
           "stream"
         ],
@@ -14592,6 +14596,9 @@
         "properties": {
           "remaining_ms": {
             "nullable": true,
+            "type": "integer"
+          },
+          "retry_after_ms": {
             "type": "integer"
           },
           "stream": {

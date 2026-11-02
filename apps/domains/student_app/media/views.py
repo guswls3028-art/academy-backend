@@ -1243,9 +1243,11 @@ class StudentVideoPlaybackView(APIView):
         student = get_request_student(request)
         review_watch = None
         if playback_policy["access_mode"] == "FREE_REVIEW":
-            if review_watch_supported or video.review_watch_limit_enabled:
+            if video.review_watch_limit_enabled and not review_watch_supported:
+                return Response({"detail": "복습 시청시간 확인을 위해 최신 학생 페이지에서 영상을 열어 주세요."}, status=409)
+            if review_watch_supported:
                 review_watch = open_review_stream(
-                    video, student, user_id=request.user.pk,
+                    video, student, user_id=request.user.pk, context=access_context,
                     expires_at=playback_expires_at or int(timezone.now().timestamp()) + 600,
                 )
                 if review_watch is None:

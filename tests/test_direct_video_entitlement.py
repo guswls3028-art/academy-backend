@@ -474,7 +474,7 @@ class DirectVideoEntitlementTests(TestCase):
                 data={"stream": key, "sequence": seq, "playing": playing},
             ), video_id=self.video.pk)
 
-        self.assertIn("/review-stream/", open_player(False).data["play_url"])
+        self.assertEqual(open_player(False).status_code, 409)
         started = timezone.now()
         with patch("django.utils.timezone.now", return_value=started):
             first = open_player()
@@ -500,9 +500,50 @@ class DirectVideoEntitlementTests(TestCase):
         student_request = self._request("get", "/report/", user=self.student_user)
         self.assertEqual(report(student_request, video_id=self.video.pk).status_code, 403)
 
+    def test_paused_prefetch_is_not_viewing_and_cold_start_recovers(self):
+        from unittest.mock import patch
+
+        from apps.domains.video.models import VideoReviewWatchStream
+        from apps.domains.video.services.review_watch import admit_fragment
+        from apps.domains.video.views.review_watch_views import StudentReviewWatchView
+
+        self._grant()
+        self.video.review_watch_limit_enabled = True
+        self.video.save(update_fields=["review_watch_limit_enabled"])
+
+        def open_player():
+            opened = StudentVideoPlaybackView.as_view()(self._request(
+                "post", "/playback/", user=self.student_user, data={"review_watch": True},
+            ), video_id=self.video.pk)
+            return VideoReviewWatchStream.objects.select_related("usage__video").get(key=opened.data["review_watch"]["stream"])
+
+        def signal(stream, **data):
+            return StudentReviewWatchView.as_view()(self._request(
+                "post", "/review-watch/", user=self.student_user, data={"stream": str(stream.key), **data},
+            ), video_id=self.video.pk)
+
+        stream = open_player()
+        usage = stream.usage
+        usage.prefetch_credit_ms = 4000
+        usage.save(update_fields=["prefetch_credit_ms"])
+        self.assertEqual(signal(stream, sequence=1, playing=False).status_code, 200)
+        started = timezone.now()
+        for seconds, expected in [(30, 200), (36, 200), (42, 429)]:
+            self.assertEqual(admit_fragment(stream, started + timedelta(seconds=seconds)), expected)
+        usage.refresh_from_db()
+        self.assertEqual(usage.used_ms, 0)
+        replacement = open_player()
+        self.assertEqual(admit_fragment(replacement, started), 429)
+        self.assertEqual(signal(replacement, sequence=1, prepare=True).data["used_ms"], 0)
+        self.assertEqual(admit_fragment(replacement, started), 200)
+        with patch("django.utils.timezone.now", return_value=started):
+            self.assertEqual(signal(replacement, sequence=2, playing=True).status_code, 200)
+        with patch("django.utils.timezone.now", return_value=started + timedelta(seconds=3)):
+            self.assertEqual(signal(replacement, sequence=3, playing=False).data["used_ms"], 3000)
+
     @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="test-key")
     def test_review_media_uses_private_playlists_and_revocable_fragment_links(self):
-        from unittest.mock import Mock, patch
+        from unittest.mock import patch
         from urllib.parse import urlsplit
 
         from apps.domains.video.views.review_media_view import ReviewMediaView
@@ -517,9 +558,8 @@ class DirectVideoEntitlementTests(TestCase):
         view = ReviewMediaView.as_view()
         request = self.factory.get(opened["play_url"])
         request.tenant = self.tenant
-        with patch("apps.domains.video.views.review_media_view.requests.get", return_value=Mock(
-            status_code=200, text="#EXTM3U\\nvideo/level.m3u8?sig=private\\n",
-        )):
+        with patch("apps.domains.video.views.review_media_view.read_review_playlist",
+                   return_value="#EXTM3U\nvideo/level.m3u8?sig=private\n"):
             manifest = view(request, key=key, asset="master.m3u8")
             self.assertEqual(manifest.status_code, 200)
             self.assertIn(b"level.m3u8?tenant=", manifest.content)
@@ -690,12 +730,16 @@ class DirectVideoEntitlementTests(TestCase):
         CDN_HLS_SIGNING_SECRET="direct-video-test-secret",
     )
     def test_revoked_direct_token_is_rejected_by_every_runtime_consumer(self):
+        from apps.domains.video.views.review_media_view import ReviewMediaView
+
+        self.video.review_watch_limit_enabled = True
+        self.video.save(update_fields=["review_watch_limit_enabled"])
         entitlement = self._grant().entitlement
         playback = StudentVideoPlaybackView.as_view()(
             self._request(
                 "post",
                 f"/api/v1/student/video/videos/{self.video.id}/playback/",
-                user=self.student_user,
+                user=self.student_user, data={"review_watch": True},
             ),
             video_id=self.video.id,
         )
@@ -708,6 +752,12 @@ class DirectVideoEntitlementTests(TestCase):
             actor=self.staff,
             actor_reference=f"user:{self.staff.id}",
         )
+
+        request = self.factory.get(playback.data["play_url"])
+        request.tenant = self.tenant
+        key = playback.data["review_watch"]["stream"]
+        for asset in ("master.m3u8", "v1/segment_001.ts"):
+            self.assertEqual(ReviewMediaView.as_view()(request, key=key, asset=asset).status_code, 403)
 
         calls = (
             (PlaybackRefreshView, {"token": token}),

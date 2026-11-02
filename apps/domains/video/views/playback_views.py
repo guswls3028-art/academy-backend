@@ -354,6 +354,7 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
         policy = self._effective_policy(video=video, enrollment=enrollment, perm=perm)
 
         token = grant.token
+        watch = None
 
         media_expires_at = expires_at
         if enrollment.status != "INACTIVE":
@@ -365,9 +366,19 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
         )
 
         if video.review_watch_limit_enabled and access_mode == AccessMode.FREE_REVIEW:
+            if not serializer.validated_data["review_watch"]:
+                return _deny("복습 시청시간을 지원하는 학생 페이지에서 영상을 열어 주세요.", code=409)
             from apps.domains.video.contracts import bind_review_token, open_review_stream, review_stream_url
 
-            watch = open_review_stream(video, enrollment.student, user_id=request.user.pk, expires_at=expires_at)
+            try:
+                context = resolve_student_video_access_context(
+                    request, video, explicit_enrollment_id=enrollment.id, allow_public_enrollment_write=False,
+                )
+            except StudentVideoAccessError:
+                return _deny("시청 권한이 변경되었습니다.")
+            watch = open_review_stream(
+                video, enrollment.student, user_id=request.user.pk, expires_at=expires_at, context=context,
+            )
             if watch is None:
                 return _deny("이 영상의 복습 시청시간을 모두 사용했습니다.")
             token = bind_review_token(token, watch["stream"], expires_at)
@@ -376,6 +387,7 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
         resp = Response(
             PlaybackResponseSerializer({
                 "token": token,
+                "review_watch": watch,
                 "session_id": session_id,
                 "expires_at": expires_at,
                 "access_mode": access_mode.value,
@@ -654,7 +666,15 @@ class PlaybackRenewView(APIView):
                 if enrollment.status == "INACTIVE" and not renewed_play_url:
                     return _deny("playback_url_unavailable", code=503)
 
-            if current_video.review_watch_limit_enabled and access_mode == AccessMode.FREE_REVIEW:
+            # A grant issued before activation may finish its already-admitted viewing.
+            # Freeze that window across renewals. New capped grants always carry a stream.
+            legacy_deadline = payload.get("prelimit_media_until")
+            if current_video.review_watch_limit_enabled and access_mode == AccessMode.FREE_REVIEW and not payload.get("review_stream"):
+                legacy_deadline = int(legacy_deadline or (int(payload["iat"]) + int(current_video.duration or 0) + ttl_seconds))
+                expires_at = min(expires_at, legacy_deadline)
+                if renewed_play_url and expires_at > now_timestamp:
+                    renewed_play_url, _ = pick_video_urls(current_video, request, expires_at=expires_at)
+            if payload.get("review_stream") and access_mode == AccessMode.FREE_REVIEW:
                 from apps.domains.video.services.review_media import renew_review_stream
 
                 renewed_play_url = renew_review_stream(
@@ -671,6 +691,8 @@ class PlaybackRenewView(APIView):
                 for key, value in payload.items()
                 if key not in {"iat", "exp"}
             }
+            if legacy_deadline is not None:
+                token_payload["prelimit_media_until"] = legacy_deadline
             token_payload.update(
                 {
                     "video_id": current_video.id,
