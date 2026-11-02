@@ -140,8 +140,8 @@ def rebind_representative_omr_submission(
     replacement_submission_id: int,
     allowed_previous_submission_ids: set[int],
     actor: str,
-):
-    """Rebind a replacement scan to the same physical exam sitting."""
+) -> bool:
+    """Return True only when this transaction replaces the sitting's previous scan."""
     from django.core.exceptions import ValidationError
     from django.db import transaction
     from django.utils import timezone
@@ -156,7 +156,7 @@ def rebind_representative_omr_submission(
         if ExamAttempt.objects.select_for_update().filter(
             exam_id=int(exam_id), submission_id=int(replacement_submission_id),
         ).exclude(enrollment_id=int(enrollment_id)).exists():
-            return None
+            return False
         attempt = (
             ExamAttempt.objects.select_for_update()
             .filter(
@@ -166,10 +166,8 @@ def rebind_representative_omr_submission(
             )
             .first()
         )
-        if attempt is None:
-            return None
-        if int(attempt.submission_id or 0) == int(replacement_submission_id):
-            return attempt
+        if attempt is None or int(attempt.submission_id or 0) == int(replacement_submission_id):
+            return False
         previous_submission_id = int(attempt.submission_id or 0)
         if previous_submission_id not in {int(value) for value in allowed_previous_submission_ids}:
             raise ValidationError("Representative attempt is not owned by the OMR replacement set.")
@@ -240,7 +238,7 @@ def rebind_representative_omr_submission(
         attempt.status = "pending"
         attempt.meta = meta
         attempt.save(update_fields=["submission_id", "status", "meta", "updated_at"])
-        return attempt
+        return True
 
 
 def dispatch_submission_ai_job(**kwargs: Any) -> Any:

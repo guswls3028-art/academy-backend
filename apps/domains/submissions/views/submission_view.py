@@ -75,6 +75,18 @@ from apps.support.submissions.dependencies import (
 logger = logging.getLogger(__name__)
 
 
+def _reject_unready_replacement(submission_id, readiness):
+    # Adoption and regrading must commit together in the caller's transaction.
+    transaction.set_rollback(True)
+    return Response({
+        "submission_id": submission_id,
+        "code": "OMR_REPLACEMENT_NOT_READY",
+        "detail": "새 답안지를 채점할 수 없어 기존 답안지와 성적을 유지했습니다. 누락된 답안과 시험 설정을 확인한 뒤 다시 채택해 주세요.",
+        "missing": list(readiness.missing),
+        "recovery": {"action": "review_scan", "submission_id": submission_id},
+    }, status=status.HTTP_409_CONFLICT)
+
+
 class SubmissionViewSet(ModelViewSet):
     # 기본: Member (학생 CREATE 허용). 관리자 전용 액션은 get_permissions에서 Staff로 승격.
     permission_classes = [IsAuthenticated, TenantResolvedAndMember]
@@ -686,7 +698,7 @@ class SubmissionViewSet(ModelViewSet):
             should_create_exam_enrollment = candidate.should_create
 
             # ✅ 중복 매칭 차단 (기본): 같은 시험의 다른 submission이 이미 같은 enrollment로 active면 409.
-            #    override=1 쿼리파라미터로만 덮어쓰기 허용 (운영자 명시적 선택).
+            #    allow_duplicate=1은 운영자가 중복 덮어쓰기를 확인한 경우다.
             allow_duplicate = allow_duplicate_requested(request)
             if exam_id and not allow_duplicate:
                 dup_qs = (
@@ -827,6 +839,7 @@ class SubmissionViewSet(ModelViewSet):
                 identifier_payload=identifier,
             )
 
+        representative_scan_replaced = False
         if allow_duplicate and resolved_enrollment_id is not None:
             actor = f"admin.manual_edit.user_{getattr(request.user, 'id', '?')}"
             all_siblings = list(
@@ -840,7 +853,7 @@ class SubmissionViewSet(ModelViewSet):
                 )
                 .exclude(id=submission.id)
             )
-            rebind_representative_omr_submission(
+            representative_scan_replaced = rebind_representative_omr_submission(
                 exam_id=int(submission.target_id),
                 enrollment_id=int(resolved_enrollment_id),
                 replacement_submission_id=int(submission.id),
@@ -882,7 +895,7 @@ class SubmissionViewSet(ModelViewSet):
                 int(submission.id),
                 actor=f"admin.manual_edit.user_{getattr(request.user, 'id', '?')}",
                 allow_done_regrade=True,
-                preserve_current_omr_grade=(answers_changed == 0),
+                preserve_current_omr_grade=(answers_changed == 0 and not representative_scan_replaced),
             )
         except Exception as exc:
             if isinstance(exc, DjangoValidationError) and getattr(exc, "code", None) == "omr_grading_configuration_conflict":
@@ -936,6 +949,8 @@ class SubmissionViewSet(ModelViewSet):
                 status=500,
             )
 
+        if representative_scan_replaced and not decision.graded:
+            return _reject_unready_replacement(submission.id, decision.readiness)
         submission.refresh_from_db(fields=["status", "enrollment_id"])
         if not decision.graded:
             configuration_required = bool(set(decision.readiness.missing) & {
@@ -1060,7 +1075,7 @@ class SubmissionViewSet(ModelViewSet):
                 for sibling in all_siblings
                 if sibling.status in OMR_CONFLICT_STATUSES
             ]
-            rebind_representative_omr_submission(
+            representative_scan_replaced = rebind_representative_omr_submission(
                 exam_id=int(submission.target_id),
                 enrollment_id=int(submission.enrollment_id),
                 replacement_submission_id=int(submission.id),
@@ -1151,7 +1166,10 @@ class SubmissionViewSet(ModelViewSet):
                     int(submission.id),
                     actor=actor,
                     allow_done_regrade=True,
+                    preserve_current_omr_grade=not representative_scan_replaced,
                 )
+                if representative_scan_replaced and not decision.graded:
+                    return _reject_unready_replacement(submission.id, decision.readiness)
             except Exception:
                 logger.exception(
                     "OMR duplicate resolution grading failed tenant_id=%s submission_id=%s",
