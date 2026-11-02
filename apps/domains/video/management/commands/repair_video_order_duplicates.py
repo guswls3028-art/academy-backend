@@ -273,7 +273,7 @@ class Command(BaseCommand):
             if folder_ids:
                 scope |= Q(folder_id__in=folder_ids)
             queryset = queryset.filter(scope)
-        return queryset.order_by("folder_id", "session_id", "order", "title", "id")
+        return queryset.only("id", "session_id", "folder_id", "order").order_by("folder_id", "session_id", "order", "title", "id")
 
     def _unlocked_plan(
         self,
@@ -409,7 +409,7 @@ class Command(BaseCommand):
             return
         by_id = {row["video_id"]: row for row in rows}
         videos = list(
-            Video.objects.select_for_update()
+            Video.objects.select_for_update().only("id", "session_id", "folder_id", "order")
             .filter(tenant=tenant, id__in=by_id)
             .order_by("id")
         )
@@ -464,7 +464,7 @@ class Command(BaseCommand):
             video_repo.lock_sessions_by_ids(session_ids)
             video_repo.lock_video_folders_by_ids(folder_ids)
             videos = list(
-                Video.objects.select_for_update()
+                Video.objects.select_for_update().only("id", "session_id", "folder_id", "order")
                 .filter(tenant=tenant, id__in=by_id)
                 .order_by("id")
             )

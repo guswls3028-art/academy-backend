@@ -14,7 +14,7 @@ from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
 
 from apps.core.models import Tenant
-from apps.domains.video.models import Video, VideoFolder
+from apps.domains.video.models import VideoFolder
 
 
 Lecture = apps.get_model("lectures", "Lecture")
@@ -28,7 +28,10 @@ class RepairVideoOrderDuplicatesCommandTests(TransactionTestCase):
     def setUpClass(cls):
         super().setUpClass()
         cls.addClassCleanup(cls._restore_current_schema)
-        MigrationExecutor(connection).migrate([("video", "0018_video_source_type_youtube")])
+        before_constraints = [("video", "0018_video_source_type_youtube")]
+        executor = MigrationExecutor(connection)
+        executor.migrate(before_constraints)
+        cls.LegacyVideo = executor.loader.project_state(before_constraints).apps.get_model("video", "Video")
 
     @classmethod
     def _restore_current_schema(cls):
@@ -54,27 +57,27 @@ class RepairVideoOrderDuplicatesCommandTests(TransactionTestCase):
             order=2,
             regular_order=2,
         )
-        self.a = Video.objects.create(
-            tenant=self.tenant,
-            session=self.duplicate_session,
+        self.a = self.LegacyVideo.objects.create(
+            tenant_id=self.tenant.id,
+            session_id=self.duplicate_session.id,
             title="A",
             order=1,
         )
-        self.b = Video.objects.create(
-            tenant=self.tenant,
-            session=self.duplicate_session,
+        self.b = self.LegacyVideo.objects.create(
+            tenant_id=self.tenant.id,
+            session_id=self.duplicate_session.id,
             title="B",
             order=1,
         )
-        self.c = Video.objects.create(
-            tenant=self.tenant,
-            session=self.duplicate_session,
+        self.c = self.LegacyVideo.objects.create(
+            tenant_id=self.tenant.id,
+            session_id=self.duplicate_session.id,
             title="C",
             order=2,
         )
-        self.unique = Video.objects.create(
-            tenant=self.tenant,
-            session=self.unique_session,
+        self.unique = self.LegacyVideo.objects.create(
+            tenant_id=self.tenant.id,
+            session_id=self.unique_session.id,
             title="Unique gap",
             order=9,
         )
@@ -185,17 +188,17 @@ class RepairVideoOrderDuplicatesCommandTests(TransactionTestCase):
             session=self.duplicate_session,
             name="공개 폴더",
         )
-        first = Video.objects.create(
-            tenant=self.tenant,
-            session=self.duplicate_session,
-            folder=folder,
+        first = self.LegacyVideo.objects.create(
+            tenant_id=self.tenant.id,
+            session_id=self.duplicate_session.id,
+            folder_id=folder.id,
             title="Folder A",
             order=5,
         )
-        second = Video.objects.create(
-            tenant=self.tenant,
-            session=self.duplicate_session,
-            folder=folder,
+        second = self.LegacyVideo.objects.create(
+            tenant_id=self.tenant.id,
+            session_id=self.duplicate_session.id,
+            folder_id=folder.id,
             title="Folder B",
             order=5,
         )
