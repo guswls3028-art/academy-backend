@@ -366,6 +366,72 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
         self.assertFalse(SubmissionAnswer.objects.filter(submission=self.submission,
                                                         exam_question_id__in=[q.id for q in essays]).exists())
 
+    def test_manual_overwrite_regrades_replacement_scan_and_preserves_teacher_marks(self):
+        from apps.domains.results.services.question_stats_service import QuestionStatsService
+
+        _, essays = self._configure_paper_math_numeric_keys()
+        _, result = self._grade_objective_only()
+        self._acquire_score_lease()
+        for essay, score in zip(essays, (8, 9)):
+            response = self._patch_item_score(question=essay, score=score)
+            self.assertEqual(response.status_code, 200, response.data)
+        result.refresh_from_db()
+        self.assertEqual(result.total_score, 47)
+        attempt_id = result.attempt_id
+        marked_item = result.items.get(question__number=2)
+        marked_item.include_in_wrong_note = True
+        marked_item.save(update_fields=["include_in_wrong_note"])
+
+        replacement = self._new_omr_submission(answer="2")
+        SubmissionAnswer.objects.bulk_create([
+            SubmissionAnswer(tenant=self.tenant, submission=replacement,
+                             exam_question_id=row.exam_question_id, answer=row.answer)
+            for row in self.submission.answers.exclude(exam_question_id=self.choice.id)
+        ])
+        payload = {
+            "identifier": {"enrollment_id": self.enrollment.id},
+            "answers": list(replacement.answers.values("exam_question_id", "answer")),
+        }
+        client = APIClient()
+        client.force_authenticate(user=self.staff)
+        url = f"/api/v1/submissions/submissions/{replacement.id}/manual-edit/"
+        options = dict(format="json", HTTP_HOST="api.hakwonplus.com",
+                       HTTP_X_TENANT_CODE=self.tenant.code,
+                       HTTP_X_SCORE_EDITOR_CLIENT="mixed-omr-browser")
+        conflict = client.post(url, payload, **options)
+        self.assertEqual(conflict.status_code, 409, conflict.data)
+        self.assertEqual(conflict.data["code"], "DUPLICATE_ENROLLMENT")
+        result.refresh_from_db()
+        self.assertEqual(result.total_score, 47)
+        self.assertEqual(result.attempt.submission_id, self.submission.id)
+
+        accepted = client.post(url + "?override=1", payload, **options)
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+        result.refresh_from_db()
+        self.assertEqual((result.objective_score, result.total_score), (29, 46))
+        attempt = ExamAttempt.objects.get(exam=self.exam, enrollment=self.enrollment)
+        self.assertEqual((attempt.id, attempt.submission_id, attempt.is_representative),
+                         (attempt_id, replacement.id, True))
+        self.assertEqual(list(result.items.filter(question__in=essays).order_by("question__number")
+                              .values_list("score", flat=True)), [8, 9])
+        marked_item.refresh_from_db()
+        self.assertTrue(marked_item.include_in_wrong_note)
+        stats = QuestionStatsService.per_question_stats(exam_id=self.exam.id)
+        first = next(row for row in stats if row["question_id"] == self.choice.id)
+        self.assertEqual((first["attempts"], first["correct"]), (1, 0))
+        legacy = ExamResult.objects.get(submission=replacement)
+        self.assertEqual((legacy.status, legacy.total_score), (ExamResult.Status.FINAL, 46))
+        grades = build_student_grades_summary(tenant=self.tenant, student=self.student)
+        self.assertEqual(grades["exams"][0]["total_score"], 46)
+
+        # Repeating an already accepted scan must not append new grading facts.
+        facts = list(ResultFact.objects.filter(attempt=attempt).order_by("id").values())
+        repeat = client.post(url + "?override=1", payload, **options)
+        self.assertEqual(repeat.status_code, 200, repeat.data)
+        self.assertEqual(list(ResultFact.objects.filter(attempt=attempt).order_by("id").values()), facts)
+        attempt.refresh_from_db()
+        self.assertEqual(len(attempt.meta["omr_scan_replacements"]), 1)
+
     def test_paper_math_numeric_keys_still_reject_missing_objective_answer(self):
         self._configure_paper_math_numeric_keys()
         SubmissionAnswer.objects.filter(submission=self.submission,
