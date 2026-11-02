@@ -955,7 +955,7 @@ class StudentReviewWatchView(APIView):
             return Response({"detail": "복습 권한을 확인할 수 없습니다."}, status=403)
         return Response(record_review_state(
             video=video, student=student, stream_key=data["stream"], sequence=data["sequence"],
-            playing=data["playing"], prepare=data["prepare"],
+            playing=data["playing"], prepare=data["prepare"], position_ms=data["position_ms"],
         ))
 
 

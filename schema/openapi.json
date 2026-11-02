@@ -14571,6 +14571,13 @@
             "default": false,
             "type": "boolean"
           },
+          "position_ms": {
+            "default": 0,
+            "format": "int64",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
           "prepare": {
             "default": false,
             "type": "boolean"

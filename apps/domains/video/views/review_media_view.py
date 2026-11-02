@@ -1,10 +1,13 @@
 """Serve protected manifests and admit short-lived reads of individual private video fragments."""
 
+import math
 import posixpath
 import re
 from urllib.parse import urlencode, urlsplit
 
 from django.conf import settings
+from django.core.signing import Signer
+from django.utils.crypto import constant_time_compare
 from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -16,7 +19,7 @@ from apps.core.r2_paths import video_hls_master_path
 
 from apps.domains.video.models import VideoReviewWatchStream
 from apps.domains.video.services.review_media import stream_access_is_current
-from apps.domains.video.services.review_watch import admit_fragment, elapsed_ms, threshold_ms
+from apps.domains.video.services.review_watch import elapsed_ms, prefetch_allows, threshold_ms
 
 
 def safe_asset(path):
@@ -27,25 +30,41 @@ def safe_asset(path):
     )
 
 
-def rewrite_playlist(content, asset, tenant_code):
-    query = "?" + urlencode({"tenant": tenant_code})
+def rewrite_playlist(content, asset, tenant_code, signer):
+    offset_ms = 0
+    duration_ms = None
 
-    def local_uri(uri):
+    def local_uri(uri, span=None):
         path = urlsplit(uri).path
+        child = posixpath.normpath(posixpath.join(posixpath.dirname(asset), path))
         if (
             uri.startswith("/")
             or ":" in uri
-            or not safe_asset(posixpath.normpath(posixpath.join(posixpath.dirname(asset), path)))
+            or not safe_asset(child)
         ):
             raise ValueError("invalid playlist path")
-        return path + query
+        params = {"tenant": tenant_code}
+        if not child.endswith(".m3u8") and signer:
+            if span is None:
+                raise ValueError("missing segment duration")
+            params["part"] = span + "." + signer.signature(f"{child}:{span}")
+        return path + "?" + urlencode(params)
 
     lines = []
     for line in content.splitlines():
-        if line.startswith("#"):
-            line = re.sub(r'URI="([^"]+)"', lambda match: 'URI="' + local_uri(match[1]) + '"', line)
+        if line.startswith("#EXTINF:"):
+            seconds = float(line[8:].split(",", 1)[0])
+            if not math.isfinite(seconds) or seconds <= 0 or seconds > 2**31:
+                raise ValueError("invalid segment duration")
+            duration_ms = max(1, round(seconds * 1000))
+        elif line.startswith("#"):
+            metadata = "init" if line.startswith(("#EXT-X-MAP:", "#EXT-X-KEY:")) else None
+            line = re.sub(r'URI="([^"]+)"', lambda match: 'URI="' + local_uri(match[1], metadata) + '"', line)
         elif line.strip():
-            line = local_uri(line.strip())
+            end = offset_ms + (duration_ms or 0)
+            line = local_uri(line.strip(), f"{offset_ms}-{end}" if duration_ms else None)
+            offset_ms = end
+            duration_ms = None
         lines.append(line)
     return "\n".join(lines) + "\n"
 
@@ -80,6 +99,16 @@ class ReviewMediaView(View):
         lifetime = min(15, (remaining + 999) // 1000, int((stream.access_until - now).total_seconds()))
         if lifetime <= 0:
             return HttpResponse(status=403)
+        signer = Signer(salt=f"review-media:{key}") if video.review_watch_limit_enabled else None
+        if signer and not asset.endswith(".m3u8"):
+            span, _, mac = request.GET.get("part", "").partition(".")
+            if not re.fullmatch(r"init|\d{1,16}-\d{1,16}", span) or not constant_time_compare(
+                mac, signer.signature(f"{asset}:{span}"),
+            ):
+                return HttpResponse(status=403)
+            times = None if span == "init" else tuple(map(int, span.split("-")))
+            if not prefetch_allows(stream, now, times):
+                return HttpResponse(status=429, headers={"Retry-After": "1", "Cache-Control": "no-store"})
         media_url = create_presigned_get_url(
             key=posixpath.join(posixpath.dirname(master), asset),
             bucket=settings.R2_VIDEO_BUCKET, expires_in=lifetime,
@@ -89,15 +118,11 @@ class ReviewMediaView(View):
                 playlist = read_review_playlist(media_url)
                 if playlist is None:
                     return HttpResponse(status=502)
-                content = rewrite_playlist(playlist, asset, request.tenant.code)
+                content = rewrite_playlist(playlist, asset, request.tenant.code, signer)
             except ValueError:
                 return HttpResponse(status=502)
             response = HttpResponse(content, content_type="application/vnd.apple.mpegurl")
         else:
-            if video.review_watch_limit_enabled:
-                admission = admit_fragment(stream, now)
-                if admission != 200:
-                    return HttpResponse(status=admission, headers={"Retry-After": "1", "Cache-Control": "no-store"})
             response = HttpResponseRedirect(media_url)
         response["Cache-Control"] = "private, no-store"
         response["Referrer-Policy"] = "no-referrer"
