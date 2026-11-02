@@ -1,6 +1,6 @@
 """Wall-clock review usage. Lock the student's ledger before changing any stream."""
 
-from datetime import datetime, timezone as dt_timezone
+from datetime import datetime, timedelta, timezone as dt_timezone
 from uuid import uuid4
 
 from django.db import transaction
@@ -11,7 +11,8 @@ from apps.domains.video.models import VideoReviewWatchStream, VideoReviewWatchUs
 
 # A closed tab cannot keep consuming a student's allowance indefinitely.
 SIGNAL_TIMEOUT_MS = 20_000
-PREFETCH_REQUEST_COST_MS = 2_000
+PREFETCH_WINDOW_MS = 16_000
+PREFETCH_TTL = timedelta(seconds=30)
 PREFETCH_MAX_MS = 96_000
 
 
@@ -75,27 +76,21 @@ def open_review_stream(video, student, *, user_id, expires_at, context):
     return snapshot(video, usage, stream)
 
 
-@transaction.atomic
-def admit_fragment(stream, now):
-    """Allow bounded prefetch across reloads. Media requests never start a viewing clock."""
-    usage = VideoReviewWatchUsage.objects.select_for_update().get(pk=stream.usage_id)
-    current = usage.streams.filter(pk=stream.pk, closed=False).first()
-    if not current:
-        return 403
-    elapsed = elapsed_ms(current, now)
-    if usage.used_ms + elapsed >= threshold_ms(stream.usage.video):
-        return 403
-    if current.active_since is not None and elapsed < SIGNAL_TIMEOUT_MS:
-        return 200
-    if usage.prefetch_credit_ms < PREFETCH_REQUEST_COST_MS:
-        return 429
-    usage.prefetch_credit_ms -= PREFETCH_REQUEST_COST_MS
-    usage.save(update_fields=["prefetch_credit_ms"])
-    return 200
+def prefetch_allows(stream, now, span):
+    """Repeated GET, HEAD and Range reads of the same window are interchangeable."""
+    if stream.active_since and elapsed_ms(stream, now) < SIGNAL_TIMEOUT_MS:
+        return True
+    if not stream.prepared_until or stream.prepared_until <= now:
+        return False
+    if span is None:  # initialization/key referenced by the signed playlist
+        return True
+    begin, end = span
+    anchor = stream.prepared_position_ms
+    return end > max(0, anchor - 3000) and begin < anchor + PREFETCH_WINDOW_MS
 
 
 @transaction.atomic
-def record_review_state(*, video, student, stream_key, sequence, playing, prepare=False):
+def record_review_state(*, video, student, stream_key, sequence, playing, prepare=False, position_ms=0):
     usage = VideoReviewWatchUsage.objects.select_for_update().filter(video=video, student=student).first()
     stream = usage and usage.streams.filter(key=stream_key, closed=False).first()
     if (
@@ -105,21 +100,24 @@ def record_review_state(*, video, student, stream_key, sequence, playing, prepar
         and stream.access_until <= timezone.now()
     ):
         raise PermissionDenied("다른 기기에서 영상을 열었거나 재생이 만료되었습니다. 다시 열어 주세요.")
+    now = timezone.now()
+    position_ms = min(position_ms, int(video.duration or 0) * 1000)
     if prepare:
-        # Cold-start recovery needs the first packets before the first playing event.
-        # Authenticate the play gesture separately from the bearer HLS URL, keep the
-        # allowance per student across devices, and never start or extend a clock here.
-        if usage.prefetch_credit_ms < PREFETCH_REQUEST_COST_MS * 4:
-            now = timezone.now()
-            since = (now - usage.last_prepare_at).total_seconds() if usage.last_prepare_at else 30
-            if since < 30:
-                return {**snapshot(video, usage, stream), "retry_after_ms": max(1, int((30 - since) * 1000))}
-            usage.prefetch_credit_ms = PREFETCH_REQUEST_COST_MS * 4
+        if stream.prepared_until and stream.prepared_until > now and stream.prepared_position_ms == position_ms:
+            return snapshot(video, usage, stream)
+        if usage.prefetch_credit_ms < PREFETCH_WINDOW_MS:
+            if usage.last_prepare_at and usage.last_prepare_at + PREFETCH_TTL > now:
+                wait = (usage.last_prepare_at + PREFETCH_TTL - now).total_seconds()
+                return {**snapshot(video, usage, stream), "retry_after_ms": max(1, int(wait * 1000))}
             usage.last_prepare_at = now
-            usage.save(update_fields=["prefetch_credit_ms", "last_prepare_at"])
+        usage.prefetch_credit_ms = max(0, usage.prefetch_credit_ms - PREFETCH_WINDOW_MS)
+        usage.save(update_fields=["prefetch_credit_ms", "last_prepare_at"])
+        stream.prepared_position_ms = position_ms
+        stream.prepared_until = now + PREFETCH_TTL
+        stream.save(update_fields=["prepared_position_ms", "prepared_until"])
         return snapshot(video, usage, stream)
     if sequence > stream.sequence:
-        now = timezone.now()
+        was_playing = stream.active_since is not None and elapsed_ms(stream, now) < SIGNAL_TIMEOUT_MS
         settle(video, usage, stream, now)
         exhausted = video.review_watch_limit_enabled and usage.used_ms >= threshold_ms(video)
         if exhausted:
@@ -127,7 +125,11 @@ def record_review_state(*, video, student, stream_key, sequence, playing, prepar
             stream.closed = True
         elif playing:
             stream.active_since = now
+        elif was_playing:
+            # A stalled player needs the current segment to resume sending playing signals.
+            stream.prepared_position_ms = position_ms
+            stream.prepared_until = now + PREFETCH_TTL
         stream.sequence = sequence
-        stream.save(update_fields=["sequence", "active_since", "closed"])
+        stream.save(update_fields=["sequence", "active_since", "closed", "prepared_position_ms", "prepared_until"])
         usage.save(update_fields=["used_ms", "prefetch_credit_ms"])
     return snapshot(video, usage, stream)

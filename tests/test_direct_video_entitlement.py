@@ -509,46 +509,72 @@ class DirectVideoEntitlementTests(TestCase):
         student_request = self._request("get", "/report/", user=self.student_user)
         self.assertEqual(report(student_request, video_id=self.video.pk).status_code, 403)
 
-    def test_paused_prefetch_is_not_viewing_and_cold_start_recovers(self):
+    @override_settings(ALLOWED_HOSTS=["api.hakwonplus.com"])
+    def test_prepared_media_reads_are_safe_and_bounded_across_retries(self):
         from unittest.mock import patch
+        from urllib.parse import urljoin
 
-        from apps.domains.video.models import VideoReviewWatchStream
-        from apps.domains.video.services.review_watch import admit_fragment
-
+        from django.test import Client
+        from apps.domains.video.models import VideoReviewWatchStream, VideoReviewWatchUsage
 
         self._grant()
         self.video.review_watch_limit_enabled = True
         self.video.save(update_fields=["review_watch_limit_enabled"])
+        opened = StudentVideoPlaybackView.as_view()(self._request(
+            "post", "/playback/", user=self.student_user, data={"review_watch": True},
+        ), video_id=self.video.pk).data
+        key = opened["review_watch"]["stream"]
+        stream = VideoReviewWatchStream.objects.get(key=key)
+        VideoReviewWatchUsage.objects.filter(pk=stream.usage_id).update(prefetch_credit_ms=0)
+        client = Client(HTTP_HOST="api.hakwonplus.com", HTTP_X_TENANT_CODE=self.tenant.code)
+        master = opened["play_url"]
 
-        def open_player():
-            opened = StudentVideoPlaybackView.as_view()(self._request(
-                "post", "/playback/", user=self.student_user, data={"review_watch": True},
-            ), video_id=self.video.pk)
-            return VideoReviewWatchStream.objects.select_related("usage__video").get(key=opened.data["review_watch"]["stream"])
+        def state():
+            return (VideoReviewWatchUsage.objects.values().get(pk=stream.usage_id),
+                    VideoReviewWatchStream.objects.values().get(pk=stream.pk))
 
-        def signal(stream, **data):
+        def signal(**data):
             return StudentReviewWatchView.as_view()(self._request(
-                "post", "/review-watch/", user=self.student_user, data={"stream": str(stream.key), **data},
-            ), video_id=self.video.pk)
+                "post", "/review-watch/", user=self.student_user, data={"stream": key, **data},
+            ), video_id=self.video.pk).data
 
-        stream = open_player()
-        usage = stream.usage
-        usage.prefetch_credit_ms = 4000
-        usage.save(update_fields=["prefetch_credit_ms"])
-        self.assertEqual(signal(stream, sequence=1, playing=False).status_code, 200)
+        playlist = "#EXTM3U\n#EXTINF:32,\na.ts\n#EXTINF:10,\nb.ts\n"
         started = timezone.now()
-        for seconds, expected in [(30, 200), (36, 200), (42, 429)]:
-            self.assertEqual(admit_fragment(stream, started + timedelta(seconds=seconds)), expected)
-        usage.refresh_from_db()
-        self.assertEqual(usage.used_ms, 0)
-        replacement = open_player()
-        self.assertEqual(admit_fragment(replacement, started), 429)
-        self.assertEqual(signal(replacement, sequence=1, prepare=True).data["used_ms"], 0)
-        self.assertEqual(admit_fragment(replacement, started), 200)
-        with patch("django.utils.timezone.now", return_value=started):
-            self.assertEqual(signal(replacement, sequence=2, playing=True).status_code, 200)
-        with patch("django.utils.timezone.now", return_value=started + timedelta(seconds=3)):
-            self.assertEqual(signal(replacement, sequence=3, playing=False).data["used_ms"], 3000)
+        module = "apps.domains.video.views.review_media_view"
+        with (patch(module + ".create_presigned_get_url", return_value="https://private.example.test/a"),
+              patch(module + ".read_review_playlist", return_value=playlist),
+              patch("django.utils.timezone.now", return_value=started)):
+            before = state()
+            response = client.get(master)
+            self.assertEqual(response.status_code, 200, response.content)
+            first, second = [urljoin(master, line) for line in response.content.decode().splitlines() if ".ts?" in line]
+            self.assertEqual(client.get(first).status_code, 429)
+            self.assertEqual(before, state())
+            self.assertEqual(signal(sequence=1, prepare=True)["used_ms"], 0)
+            prepared = state()
+            self.assertEqual(signal(sequence=1, prepare=True)["used_ms"], 0)
+            self.assertEqual(client.get(first).status_code, 302)
+            self.assertEqual(client.head(first).status_code, 302)
+            self.assertEqual(client.get(first, HTTP_RANGE="bytes=0-1").status_code, 302)
+            self.assertEqual(client.options(first).status_code, 200)
+            self.assertEqual(client.head(master).status_code, 200)
+            self.assertEqual(client.get(second).status_code, 429)
+            self.assertEqual(client.get(first.replace("a.ts?", "b.ts?")).status_code, 403)
+            self.assertEqual(client.get(first, HTTP_X_TENANT_CODE=self.other_tenant.code).status_code, 404)
+            self.assertEqual(prepared, state())
+            self.assertGreater(signal(sequence=1, prepare=True, position_ms=32000)["retry_after_ms"], 0)
+            signal(sequence=2, playing=True)
+            active = state()
+            self.assertEqual(client.get(second).status_code, 302)
+            self.assertEqual(active, state())
+            with patch("django.utils.timezone.now", return_value=started + timedelta(seconds=3)):
+                self.assertEqual(signal(sequence=3, playing=False, position_ms=32000)["used_ms"], 3000)
+            with patch("django.utils.timezone.now", return_value=started + timedelta(seconds=34)):
+                paused = state()
+                self.assertEqual(client.get(second).status_code, 429)
+                self.assertEqual(paused, state())
+                self.assertEqual(signal(sequence=4, prepare=True, position_ms=32000)["used_ms"], 3000)
+                self.assertEqual(client.get(second).status_code, 302)
 
     @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="test-key")
     def test_review_media_uses_private_playlists_and_revocable_fragment_links(self):
@@ -577,16 +603,22 @@ class DirectVideoEntitlementTests(TestCase):
             self.assertEqual(manifest.status_code, 200)
             self.assertIn(b"level.m3u8?tenant=", manifest.content)
             self.assertNotIn(b"sig=", manifest.content)
-        fragment = view(request, key=key, asset="video/segment_001.ts")
+        StudentReviewWatchView.as_view()(self._request(
+            "post", "/review-watch/", user=self.student_user, data={"stream": key, "sequence": 1, "prepare": True},
+        ), video_id=self.video.pk)
+        with patch("apps.domains.video.views.review_media_view.read_review_playlist",
+                   return_value="#EXTM3U\n#EXTINF:6,\nsegment_001.ts\n"):
+            level = view(request, key=key, asset="video/level.m3u8")
+        fragment_request = self.factory.get(level.content.decode().splitlines()[-1])
+        fragment_request.tenant = self.tenant
+        fragment = view(fragment_request, key=key, asset="video/segment_001.ts")
         self.assertEqual(fragment.status_code, 302)
         self.assertEqual(urlsplit(fragment.url).hostname, "private-storage.example.test")
         self.assertEqual(signed.call_args.kwargs["key"], f"tenants/{self.tenant.pk}/video/hls/{self.video.pk}/video/segment_001.ts")
         self.assertLessEqual(signed.call_args.kwargs["expires_in"], 15)
         self.assertEqual(view(request, key=key, asset="../other/master.m3u8").status_code, 403)
-        from django.http import Http404
         request.tenant = self.other_tenant
-        with self.assertRaises(Http404):
-            view(request, key=key, asset="master.m3u8")
+        self.assertEqual(view(request, key=key, asset="master.m3u8").status_code, 404)
 
     def test_direct_token_consumers_revalidate_exact_current_scope_without_writes(self):
         entitlement = self._grant().entitlement

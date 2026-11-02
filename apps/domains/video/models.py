@@ -709,6 +709,8 @@ class VideoReviewWatchStream(models.Model):
     enrollment_id = models.PositiveBigIntegerField(null=True)
     entitlement_id = models.PositiveBigIntegerField(null=True)
     active_since = models.DateTimeField(null=True)
+    prepared_position_ms = models.PositiveBigIntegerField(null=True)
+    prepared_until = models.DateTimeField(null=True)
     closed = models.BooleanField(default=False)
 
 
