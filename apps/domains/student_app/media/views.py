@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 from django.db import transaction
 from django.db.models import Prefetch, Q
 from django.http import Http404
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, PolymorphicProxySerializer, extend_schema
 from rest_framework.views import APIView
@@ -39,7 +40,10 @@ from apps.support.student_app.video_media import (
 )
 from apps.domains.video.contracts import (
     build_effective_playback_policy,
+    bind_review_token,
     consume_video_forward_skip,
+    open_review_stream,
+    record_review_state,
     sort_videos_for_playlist,
     youtube_embed_url,
 )
@@ -57,6 +61,8 @@ from academy.adapters.db.django import repositories_video as video_repo
 from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
 from apps.api.common.query_params import parse_query_bool
 from .serializers import (
+    ReviewSignalSerializer,
+    ReviewStateSerializer,
     StudentVideoAccessCheckSerializer,
     StudentVideoForwardSkipRequestSerializer,
     StudentVideoForwardSkipResponseSerializer,
@@ -928,6 +934,31 @@ class StudentSessionVideoListView(APIView):
         })
 
 
+class StudentReviewWatchView(APIView):
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    @extend_schema(request=ReviewSignalSerializer, responses=ReviewStateSerializer)
+    def post(self, request, video_id):
+        form = ReviewSignalSerializer(data=request.data)
+        form.is_valid(raise_exception=True)
+        data = form.validated_data
+        video = get_object_or_404(get_video_model(), pk=video_id, tenant=request.tenant)
+        student = get_request_student(request)
+        try:
+            context = resolve_student_video_access_context(
+                request, video, explicit_enrollment_id=data.get("enrollment"), allow_public_enrollment_write=False,
+            )
+            ensure_student_video_watch_allowed(context)
+        except StudentVideoAccessError as exc:
+            return Response({"detail": exc.detail}, status=exc.status_code)
+        if not student or context.access_mode_value not in (None, "FREE_REVIEW"):
+            return Response({"detail": "복습 권한을 확인할 수 없습니다."}, status=403)
+        return Response(record_review_state(
+            video=video, student=student, stream_key=data["stream"], sequence=data["sequence"],
+            playing=data["playing"], prepare=data["prepare"],
+        ))
+
+
 class StudentVideoPlaybackView(APIView):
     """
     GET access check / POST playback bootstrap for one student video.
@@ -980,9 +1011,10 @@ class StudentVideoPlaybackView(APIView):
         serializer.is_valid(raise_exception=True)
         return self._resolve_playback(
             request, video_id, event_protocol_version=serializer.validated_data["event_protocol_version"],
+            review_watch_supported=serializer.validated_data["review_watch"],
         )
 
-    def _resolve_playback(self, request, video_id: int, *, event_protocol_version=1):
+    def _resolve_playback(self, request, video_id: int, *, event_protocol_version=1, review_watch_supported=False):
         Video, VideoPermission = _import_media_models()
         explicit_enrollment_id = _get_explicit_enrollment_id(request)
         access_check = parse_query_bool(
@@ -1238,6 +1270,24 @@ class StudentVideoPlaybackView(APIView):
         )
 
         student = get_request_student(request)
+        review_watch = None
+        if playback_policy["access_mode"] == "FREE_REVIEW":
+            if video.review_watch_limit_enabled and not review_watch_supported:
+                return Response({"detail": "복습 시청시간 확인을 위해 최신 학생 페이지에서 영상을 열어 주세요."}, status=409)
+            if review_watch_supported:
+                review_watch = open_review_stream(
+                    video, student, user_id=request.user.pk, context=access_context,
+                    expires_at=playback_expires_at or int(timezone.now().timestamp()) + 600,
+                )
+                if review_watch is None:
+                    return Response({"detail": "이 영상의 복습 시청시간을 모두 사용했습니다."}, status=403)
+                if video.review_watch_limit_enabled and playback_token:
+                    playback_token = bind_review_token(playback_token, review_watch["stream"], playback_expires_at)
+                if video.review_watch_limit_enabled and not is_youtube:
+                    from apps.domains.video.contracts import review_stream_url
+
+                    hls_url = play_url = review_stream_url(video, review_watch["stream"], request.tenant.code)
+                    mp4_url = None
         if student and direct_entitlement is None:
             from apps.domains.students.activity import record_student_target_open
 
@@ -1317,6 +1367,7 @@ class StudentVideoPlaybackView(APIView):
             "hls_url": hls_url,
             "mp4_url": mp4_url,
             "play_url": play_url,
+            "review_watch": review_watch,
             "playback_token": playback_token,
             "playback_session_id": playback_session_id,
             "playback_expires_at": playback_expires_at,

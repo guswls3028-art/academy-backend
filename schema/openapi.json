@@ -10540,6 +10540,9 @@
             "minimum": 0,
             "type": "integer"
           },
+          "review_watch_limit_enabled": {
+            "type": "boolean"
+          },
           "session": {
             "type": "integer",
             "writeOnly": true
@@ -14531,6 +14534,112 @@
         ],
         "type": "string"
       },
+      "ReviewReport": {
+        "properties": {
+          "duration": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "students": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewStudent"
+            },
+            "type": "array"
+          },
+          "threshold_ms": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "duration",
+          "enabled",
+          "students",
+          "threshold_ms"
+        ],
+        "type": "object"
+      },
+      "ReviewSignalRequest": {
+        "properties": {
+          "enrollment": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "playing": {
+            "default": false,
+            "type": "boolean"
+          },
+          "prepare": {
+            "default": false,
+            "type": "boolean"
+          },
+          "sequence": {
+            "format": "int64",
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "stream": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sequence",
+          "stream"
+        ],
+        "type": "object"
+      },
+      "ReviewState": {
+        "properties": {
+          "remaining_ms": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "retry_after_ms": {
+            "type": "integer"
+          },
+          "stream": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "used_ms": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "remaining_ms",
+          "stream",
+          "used_ms"
+        ],
+        "type": "object"
+      },
+      "ReviewStudent": {
+        "properties": {
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "student_id": {
+            "type": "integer"
+          },
+          "student_name": {
+            "type": "string"
+          },
+          "used_ms": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "started_at",
+          "student_id",
+          "student_name",
+          "used_ms"
+        ],
+        "type": "object"
+      },
       "RiskLog": {
         "properties": {
           "created_at": {
@@ -14790,6 +14899,9 @@
             "maximum": 9223372036854775807,
             "minimum": 0,
             "type": "integer"
+          },
+          "review_watch_limit_enabled": {
+            "type": "boolean"
           },
           "session_id": {
             "readOnly": true,
@@ -15230,6 +15342,9 @@
             "maximum": 9223372036854775807,
             "minimum": 0,
             "type": "integer"
+          },
+          "review_watch_limit_enabled": {
+            "type": "boolean"
           },
           "session": {
             "type": "integer",
@@ -19545,6 +19660,11 @@
             "minimum": 1,
             "type": "integer"
           },
+          "review_watch": {
+            "additionalProperties": {},
+            "nullable": true,
+            "type": "object"
+          },
           "video": {
             "$ref": "#/components/schemas/StudentVideoListItem"
           }
@@ -19575,6 +19695,10 @@
               }
             ],
             "default": 1
+          },
+          "review_watch": {
+            "default": false,
+            "type": "boolean"
           }
         },
         "type": "object"
@@ -41773,6 +41897,44 @@
         ]
       }
     },
+    "/api/v1/media/videos/{video_id}/review-watch/report/": {
+      "get": {
+        "operationId": "media_videos_review_watch_report_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewReport"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
     "/api/v1/messaging/attendance-notification/confirm/": {
       "post": {
         "description": "출결 알림 확정 발송.\n\nPOST /api/v1/messaging/attendance-notification/confirm/\n{\n    \"preview_token\": \"uuid\"\n}\n\npreview_token 없이 직접 호출 불가.\n동일 token 재사용 불가 (1회용).",
@@ -50088,6 +50250,64 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "student"
+        ]
+      }
+    },
+    "/api/v1/student/video/videos/{video_id}/review-watch/": {
+      "post": {
+        "operationId": "student_video_videos_review_watch_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewSignalRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewSignalRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewSignalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewState"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

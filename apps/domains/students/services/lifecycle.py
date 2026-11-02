@@ -43,6 +43,7 @@ PERMANENT_DELETE_STUDENT_RELATIONS = frozenset({
     ("fee_payment", "student_id"),
     ("video_inactivevideoentitlement", "student_id"),
     ("video_directvideoentitlement", "student_id"),
+    ("video_videoreviewwatchusage", "student_id"),
     ("video_videolike", "student_id"),
     ("video_videocomment", "author_student_id"),
 })
@@ -926,6 +927,9 @@ def _permanently_delete_selected_students(
         )
 
         _assert_no_cross_tenant_student_refs(student_id_clause, student_id_params)
+        review_usage = apps.get_model("video", "VideoReviewWatchUsage").objects.filter(student_id__in=student_ids)
+        if review_usage.exclude(video__tenant=tenant).exists():
+            raise StudentLifecycleError("cross_tenant_reference", "복습 기록의 영상 소유 학원이 일치하지 않습니다.")
 
         cursor.execute(
             f"SELECT id FROM enrollment_enrollment WHERE student_id IN {student_id_clause} AND tenant_id = %s",
@@ -1081,6 +1085,8 @@ def _permanently_delete_selected_students(
                 f"WHERE id IN {submission_id_clause} AND tenant_id = %s",
                 [*submission_id_params, tenant.id],
             )
+
+        review_usage.filter(video__tenant=tenant, student__tenant=tenant).delete()
 
         for tbl in [
             "results_student_reported_score",

@@ -113,6 +113,9 @@ Enrollment 인스턴스의 상태는 권한 판정에 사용하지 않는다.
 
 ## 4. Permanent Delete
 
+영구 삭제는 해당 학생의 복습영상 누적시간과 연결된 재생 권한도 함께 삭제한다.
+영상 소유 학원이 다르면 전체 영구 삭제를 중단한다. 휴지통 이동과 복구에서는 누적시간을 보존한다.
+
 SSOT: `permanently_delete_students(tenant=..., student_ids=[...])`
 
 현재 facade:

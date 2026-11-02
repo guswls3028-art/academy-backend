@@ -39,6 +39,11 @@ class VideoSerializer(serializers.ModelSerializer):
     - Legacy 경로 normalize
     """
 
+    def validate_review_watch_limit_enabled(self, value):
+        if value and (not self.instance or not self.instance.duration or self.instance.status != Video.Status.READY):
+            raise serializers.ValidationError("영상 준비가 완료되고 길이가 확인된 후 설정할 수 있습니다.")
+        return value
+
     # write — queryset is overridden in __init__ to enforce tenant isolation
     session = serializers.PrimaryKeyRelatedField(
         queryset=video_repo.session_all_queryset(),
@@ -88,6 +93,7 @@ class VideoSerializer(serializers.ModelSerializer):
             "encoding_step_name",
             "encoding_step_percent",
             "allow_skip",
+            "review_watch_limit_enabled",
             "max_speed",
             "show_watermark",
             "thumbnail",
@@ -498,6 +504,7 @@ class VideoProgressSerializer(serializers.ModelSerializer):
 # ========================================================
 
 class PlaybackStartRequestSerializer(serializers.Serializer):
+    review_watch = serializers.BooleanField(default=False)
     enrollment_id = serializers.IntegerField()
     device_id = serializers.CharField(max_length=128)
     event_protocol_version = serializers.ChoiceField(choices=[1, 2], default=1)
@@ -516,6 +523,7 @@ class PlaybackEndRequestSerializer(serializers.Serializer):
 
 
 class PlaybackResponseSerializer(serializers.Serializer):
+    review_watch = serializers.DictField(required=False, allow_null=True)
     token = serializers.CharField()
     event_protocol_version = serializers.ChoiceField(choices=[1, 2], default=1)
     session_id = serializers.CharField(allow_null=True, required=False)  # None for FREE_REVIEW

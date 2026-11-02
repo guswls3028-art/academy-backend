@@ -1987,6 +1987,28 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
         self.assertTrue(Submission.objects.filter(pk=self.sub_a.pk).exists())
         delete_object.assert_not_called()
 
+    def test_review_usage_and_streams_follow_only_the_owned_student(self):
+        from uuid import uuid4
+
+        usage_model = django_apps.get_model("video", "VideoReviewWatchUsage")
+        stream_model = django_apps.get_model("video", "VideoReviewWatchStream")
+        owned = Video.objects.create(tenant=self.tenant_a, title="복습")
+        foreign = Video.objects.create(tenant=self.tenant_b, title="다른 학원")
+        usage = usage_model.objects.create(video=owned, student=self.student_a, used_ms=3000)
+        stream = stream_model.objects.create(
+            usage=usage, key=uuid4(), access_until=timezone.now(), user_id=self.user_x.pk, policy_version=1,
+        )
+        mismatch = usage_model.objects.create(video=foreign, student=self.student_a)
+        with self.assertRaises(StudentLifecycleError) as error:
+            permanently_delete_students(tenant=self.tenant_a, student_ids=[self.student_a.pk])
+        self.assertEqual(error.exception.code, "cross_tenant_reference")
+        self.assertTrue(stream_model.objects.filter(pk=stream.pk).exists())
+        mismatch.delete()
+        permanently_delete_students(tenant=self.tenant_a, student_ids=[self.student_a.pk])
+        self.assertFalse(usage_model.objects.filter(pk=usage.pk).exists())
+        self.assertFalse(stream_model.objects.filter(pk=stream.pk).exists())
+        self.assertTrue(Video.objects.filter(pk=foreign.pk).exists())
+
     def test_permanent_delete_relation_contract_matches_model_graph(self):
         """신규 Student/Submission FK가 수동 삭제 그래프에서 누락되지 않게 한다."""
         student_relations = {
