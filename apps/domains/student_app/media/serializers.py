@@ -52,6 +52,7 @@ class ReviewSignalSerializer(serializers.Serializer):
     sequence = serializers.IntegerField(min_value=1, max_value=2**53 - 1)
     playing = serializers.BooleanField(default=False)
     prepare = serializers.BooleanField(default=False)
+    position_ms = serializers.IntegerField(min_value=0, max_value=2**53 - 1, default=0)
     enrollment = serializers.IntegerField(min_value=1, required=False)
 
 
