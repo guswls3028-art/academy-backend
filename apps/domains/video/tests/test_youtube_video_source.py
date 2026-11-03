@@ -103,6 +103,10 @@ class YouTubeVideoSourceTests(TestCase):
         video = Video.objects.get(tenant=self.tenant, title="복습")
         self.assertTrue(video.review_watch_limit_enabled)
         self.assertEqual(video.duration, 3600)
+        from datetime import timedelta
+        # Give the viewed revision a distinct timestamp even on coarse Windows test clocks.
+        Video.objects.filter(pk=video.pk).update(updated_at=video.updated_at - timedelta(seconds=1))
+        video.refresh_from_db()
         revision = video.updated_at.isoformat()
         view = VideoViewSet.as_view({"patch": "partial_update"})
 
@@ -113,6 +117,9 @@ class YouTubeVideoSourceTests(TestCase):
             return view(req, pk=video.pk)
 
         self.assertEqual(correct(3660).status_code, 200)
+        video.refresh_from_db()
+        self.assertEqual(video.duration, 3660)
+        self.assertNotEqual(video.updated_at.isoformat(), revision)
         self.assertEqual(correct(500).status_code, 409)
         video.refresh_from_db()
         self.assertEqual(video.duration, 3660)
