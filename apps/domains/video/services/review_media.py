@@ -19,6 +19,10 @@ from apps.domains.video.services.review_watch import threshold_ms
 
 
 def review_stream_url(video, stream, tenant_code):
+    if video.source_type == video.SourceType.YOUTUBE:
+        from apps.domains.video.youtube import youtube_embed_url
+
+        return youtube_embed_url(video.youtube_video_id)
     master = PurePosixPath(video.hls_path or "master.m3u8").name
     return reverse("review-watch-media", args=[stream, master]) + "?" + urlencode({"tenant": tenant_code})
 
@@ -66,8 +70,4 @@ def renew_review_stream(video, student_id, user_id, key, expires_at, tenant_code
         return None
     stream.access_until = datetime.fromtimestamp(expires_at, tz=dt_timezone.utc)
     stream.save(update_fields=["access_until"])
-    if video.source_type == video.SourceType.YOUTUBE:
-        from apps.domains.video.youtube import youtube_embed_url
-
-        return youtube_embed_url(video.youtube_video_id)
     return review_stream_url(video, key, tenant_code)

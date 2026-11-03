@@ -913,7 +913,7 @@ class StudentSessionVideoListView(APIView):
                 "enrollment_id": int(enrollment_obj.id) if enrollment_obj else None,
                 "title": str(v.title),
                 "status": str(getattr(v, "status", "READY")),
-                **({"source_type": _source_type_from_video(v)} if access_mode_value == "BLOCKED" else _video_source_payload(v)),
+                **({"source_type": _source_type_from_video(v)} if access_mode_value == "BLOCKED" or _effective_rule(perm_obj) == "blocked" else _video_source_payload(v)),
                 "thumbnail_url": thumb,
                 "duration": getattr(v, "duration", None),
                 "progress": progress_percent,  # 0-100

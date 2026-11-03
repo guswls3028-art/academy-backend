@@ -757,6 +757,9 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         session_id = request.data.get("session")
         title = (request.data.get("title") or "").strip()
         raw_url = request.data.get("url") or request.data.get("youtube_url") or request.data.get("link")
+        duration = request.data.get("duration")
+        if duration is not None:
+            duration = serializers.IntegerField(min_value=1, max_value=2**31 - 1).run_validation(duration)
 
         if not session_id or not title or not raw_url:
             return Response(
@@ -797,6 +800,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         session = prepare_legacy_public_video_upload_session(session)
         is_public = getattr(session.lecture, "is_system", False)
+        if tenant.review_limit_new_uploads and not is_public and duration is None:
+            return Response({"code": "review_duration_required", "detail": "복습 제한에 사용할 YouTube 원본 길이를 입력해 주세요."}, status=400)
         folder_id = request.data.get("folder")
         if folder_id not in (None, ""):
             if not is_public:
@@ -849,6 +854,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             session=session,
             title=title,
             file_key="",
+            duration=duration,
             order=order,
             status=Video.Status.READY,
             allow_skip=allow_skip,

@@ -90,6 +90,20 @@ class YouTubeVideoSourceTests(TestCase):
         force_authenticate(request, user=self.staff_user)
         return VideoViewSet.as_view({"post": "create_youtube"})(request)
 
+    def test_new_class_link_requires_original_length_when_default_limit_is_on(self):
+        self.tenant.review_limit_new_uploads = True
+        self.tenant.save(update_fields=["review_limit_new_uploads"])
+        payload = {"session": self.session.pk, "title": "복습", "url": "https://youtu.be/abcdefghijk"}
+        missing = self._post_youtube(payload)
+        self.assertEqual(missing.status_code, 400)
+        self.assertEqual(missing.data["code"], "review_duration_required")
+        self.assertFalse(Video.objects.filter(tenant=self.tenant, title="복습").exists())
+        saved = self._post_youtube({**payload, "duration": 3600})
+        self.assertEqual(saved.status_code, 201, saved.data)
+        video = Video.objects.get(tenant=self.tenant, title="복습")
+        self.assertTrue(video.review_watch_limit_enabled)
+        self.assertEqual(video.duration, 3600)
+
     def test_extracts_provided_youtube_share_url(self):
         video_id = extract_youtube_video_id(
             "https://youtu.be/VnqgmOJaMGc?si=HVOBHgoVObf0zukX"

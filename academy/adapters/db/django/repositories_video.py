@@ -208,6 +208,7 @@ def create_video(
     source_type=None,
     youtube_video_id="",
     youtube_url="",
+    duration=None,
 ):
     from apps.domains.video.models import Video
     kwargs = dict(
@@ -224,7 +225,9 @@ def create_video(
     )
     if source_type is not None:
         kwargs["source_type"] = source_type
-    if tenant and visibility == Video.Visibility.ENROLLED and source_type in (None, Video.SourceType.UPLOADED):
+    if duration is not None:
+        kwargs["duration"] = duration
+    if tenant and visibility == Video.Visibility.ENROLLED:
         kwargs["review_watch_limit_enabled"] = tenant.review_limit_new_uploads
     if uploaded_by is not None:
         kwargs["uploaded_by"] = uploaded_by
