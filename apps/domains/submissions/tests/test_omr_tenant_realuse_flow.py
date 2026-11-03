@@ -2301,6 +2301,108 @@ class StateRecoveryTests(TestCase):
         self.assertEqual(Submission.objects.filter(pk=submission.pk).values().get(), before)
         self.assertFalse(submission.answers.exists())
 
+    def test_unmatched_timeout_and_teacher_retry_accept_only_the_new_result(self):
+        from copy import deepcopy
+        from datetime import timedelta
+        from django.apps import apps
+
+        from academy.framework.workers.ai_sqs_worker import _dispatch_terminal_callback_from_message
+        from apps.domains.submissions.omr_pipeline.services.state_recovery import recover_stuck_submissions
+        from apps.domains.submissions.services.dispatcher import dispatch_submission
+        from apps.domains.submissions.views.submission_view import SubmissionViewSet
+
+        submission, _, _ = self._make_done_zero_answer_submission()
+        AIJobModel = apps.get_model("ai_domain", "AIJobModel")
+        AIResultModel = apps.get_model("ai_domain", "AIResultModel")
+        old = self._create_late_ai_result(submission)
+        Submission.objects.filter(pk=submission.pk).update(
+            status=Submission.Status.DISPATCHED, enrollment_id=None, updated_at=self.now - timedelta(hours=3),
+        )
+        self.assertIn(submission.pk, recover_stuck_submissions().recovered)
+        envelope = {"tenant_id": str(self.tenant.pk)}
+
+        def deliver(job):
+            self.assertTrue(_dispatch_terminal_callback_from_message(job.job_id, envelope, "basic"))
+
+        failed = Submission.objects.filter(pk=submission.pk).values().get()
+        self.assertEqual(failed["status"], Submission.Status.FAILED)
+        deliver(old)
+        self.assertEqual(Submission.objects.filter(pk=submission.pk).values().get(), failed)
+        self.assertFalse(submission.answers.exists())
+
+        def dispatch_after_old_delivery(retried):
+            # The retry endpoint releases its first lock before redispatch.
+            deliver(old)
+            retried.refresh_from_db()
+            self.assertEqual(retried.status, Submission.Status.SUBMITTED)
+            self.assertFalse(retried.answers.exists())
+            dispatch_submission(retried)
+
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.staff, role="owner")
+        request = APIRequestFactory().post("/retry/", {}, format="json")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.staff)
+        with (
+            patch("apps.domains.submissions.views.submission_view.dispatch_submission", dispatch_after_old_delivery),
+            patch("apps.domains.submissions.services.dispatcher._build_ai_payload", return_value=envelope),
+        ):
+            response = SubmissionViewSet.as_view({"post": "retry"})(request, pk=submission.pk)
+        self.assertEqual(response.status_code, 200)
+        new = AIJobModel.objects.exclude(pk=old.pk).get(source_domain="submissions", source_id=str(submission.pk))
+        deliver(old)
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.DISPATCHED)
+        self.assertFalse(submission.answers.exists())
+
+        payload = deepcopy(AIResultModel.objects.get(job=old).payload)
+        payload["job_id"] = new.job_id
+        answer = payload["result"]["answers"][0]
+        answer.update(detected=["2"], marking="2")
+        new.status = "DONE"
+        new.save(update_fields=["status"])
+        AIResultModel.objects.create(job=new, payload=payload)
+        deliver(new)
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.NEEDS_IDENTIFICATION)
+        answers = list(submission.answers.order_by("id").values())
+        self.assertEqual(len(answers), 2)
+        recognition = OMRRecognitionRun.objects.get(submission=submission)
+        self.assertEqual(recognition.job_id, new.job_id)
+        self.assertEqual(recognition.raw_result["answers"][0]["detected"], ["2"])
+        after = Submission.objects.filter(pk=submission.pk).values().get()
+        deliver(old)
+        deliver(new)
+        self.assertEqual(Submission.objects.filter(pk=submission.pk).values().get(), after)
+        self.assertEqual(list(submission.answers.order_by("id").values()), answers)
+
+    def test_legacy_unmatched_scan_accepts_its_first_result_once(self):
+        from academy.framework.workers.ai_sqs_worker import _dispatch_terminal_callback_from_message
+
+        submission, _, _ = self._make_done_zero_answer_submission()
+        Submission.objects.filter(pk=submission.pk).update(
+            status=Submission.Status.NEEDS_IDENTIFICATION, enrollment_id=None,
+        )
+        job = self._create_late_ai_result(submission)
+        for _ in range(2):
+            self.assertTrue(_dispatch_terminal_callback_from_message(job.job_id, {"tenant_id": str(self.tenant.pk)}, "basic"))
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.NEEDS_IDENTIFICATION)
+        self.assertEqual(submission.answers.count(), 2)
+        self.assertEqual(submission.omr_recognition_runs.count(), 1)
+
+    def test_recovery_does_not_select_an_old_result_when_latest_job_is_pending(self):
+        from django.apps import apps
+        from academy.application.use_cases.omr.late_answer_recovery import detect_late_ai_answer_candidates
+
+        submission, _, _ = self._make_done_zero_answer_submission()
+        AIJobModel = apps.get_model("ai_domain", "AIJobModel")
+        old = self._create_late_ai_result(submission)
+        self.assertIn(submission.pk, [row.submission_id for row in detect_late_ai_answer_candidates()])
+        AIJobModel.objects.create(job_id="retry-pending", job_type=old.job_type, status="PENDING",
+                                  tenant_id=old.tenant_id, source_domain=old.source_domain, source_id=old.source_id)
+        self.assertNotIn(submission.pk, [row.submission_id for row in detect_late_ai_answer_candidates()])
+        self.assertFalse(submission.answers.exists())
+
     def test_late_ai_callback_recovers_state_timeout_failure(self):
         from django.apps import apps
 

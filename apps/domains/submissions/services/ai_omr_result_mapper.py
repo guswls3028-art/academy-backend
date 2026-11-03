@@ -159,7 +159,10 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     if scope is None:
         logger.warning("apply_omr_ai_result: no submission in callback tenant scope")
         return None
-    from apps.support.submissions.dependencies import lock_submission_score_edit_scope_before_write
+    from apps.support.submissions.dependencies import (
+        latest_ai_job_for_submission,
+        lock_submission_score_edit_scope_before_write,
+    )
 
     lock_submission_score_edit_scope_before_write(submission=scope)
     submission = Submission.objects.select_for_update().filter(
@@ -173,6 +176,22 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         # without reviving the scan or causing an endless invalid-transition retry.
         return None
 
+    if submission.source == Submission.Source.OMR_SCAN:
+        current = latest_ai_job_for_submission(submission_id=submission_id, tenant_id=payload_tenant_id)
+        # Retry resets the row to SUBMITTED before dispatch creates the next job.
+        # Both dispatch and this check hold the submission lock.
+        if current and (
+            submission.status == Submission.Status.SUBMITTED or str(current.job_id) != str(job_id or "")
+        ):
+            return None
+        if submission.status == Submission.Status.NEEDS_IDENTIFICATION and (
+            (submission.meta or {}).get("ai_result")
+            or submission.answers.exists()
+            or submission.omr_recognition_runs.exists()
+        ):
+            # An existing recognition or teacher answer is waiting for manual matching.
+            return None
+
     status = payload.get("status")
     error = payload.get("error")
     failed_result = status in {"FAILED", "REJECTED_BAD_INPUT"} or bool(error)
@@ -185,6 +204,12 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         submission=submission,
         result=result,
     )
+    if (
+        submission.source == Submission.Source.OMR_SCAN
+        and submission.status == Submission.Status.FAILED
+        and not late_answer_hydration
+    ):
+        return None
     if submission.status in _ALREADY_PROCESSED_STATUSES:
         if not late_answer_hydration:
             logger.info(
