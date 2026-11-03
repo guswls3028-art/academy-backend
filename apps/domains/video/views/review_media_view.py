@@ -43,7 +43,7 @@ def rewrite_playlist(content, asset, tenant_code, signer):
         ):
             raise ValueError("invalid playlist path")
         params = {"tenant": tenant_code}
-        if not child.endswith(".m3u8") and signer:
+        if not child.endswith(".m3u8"):
             if span is None:
                 raise ValueError("missing segment duration")
             params["part"] = span + "." + signer.signature(f"{child}:{span}")
@@ -102,15 +102,19 @@ class ReviewMediaView(View):
         lifetime = min(15, transfer_seconds, int((stream.access_until - now).total_seconds()))
         if lifetime <= 0:
             return HttpResponse(status=403)
-        signer = Signer(salt=f"review-media:{key}") if video.review_watch_limit_enabled else None
-        if signer and not asset.endswith(".m3u8"):
+        # A playlist may outlive a policy toggle. Bind its fragment paths and time
+        # spans to this stream even while the teacher has disabled the limit.
+        signer = Signer(salt=f"review-media:{key}")
+        # An older playlist may already be buffered without signed parts while
+        # the video is unrestricted. It still requires this stream's exact entitlement.
+        if not asset.endswith(".m3u8") and (video.review_watch_limit_enabled or "part" in request.GET):
             span, _, mac = request.GET.get("part", "").partition(".")
             if not re.fullmatch(r"init|\d{1,16}-\d{1,16}", span) or not constant_time_compare(
                 mac, signer.signature(f"{asset}:{span}"),
             ):
                 return HttpResponse(status=403)
             times = None if span == "init" else tuple(map(int, span.split("-")))
-            if not prefetch_allows(stream, now, times):
+            if video.review_watch_limit_enabled and not prefetch_allows(stream, now, times):
                 return HttpResponse(status=429, headers={"Retry-After": "1", "Cache-Control": "no-store"})
         media_url = create_presigned_get_url(
             key=posixpath.join(posixpath.dirname(master), asset),

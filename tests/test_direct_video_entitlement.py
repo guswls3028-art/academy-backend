@@ -666,6 +666,89 @@ class DirectVideoEntitlementTests(TestCase):
         request.tenant = self.other_tenant
         self.assertEqual(view(request, key=key, asset="master.m3u8").status_code, 404)
 
+    def test_open_review_player_keeps_valid_fragment_links_across_limit_toggles(self):
+        from unittest.mock import patch
+        from urllib.parse import urlsplit
+
+        from apps.domains.video.models import VideoReviewWatchUsage
+        from apps.domains.video.views.review_media_view import ReviewMediaView
+        from apps.domains.video.views.video_views import VideoViewSet
+
+        entitlement = self._grant().entitlement
+        configure = VideoViewSet.as_view({"patch": "partial_update"})
+
+        def limit(enabled):
+            response = configure(self._request("patch", "/videos/", user=self.staff, data={
+                "review_watch_limit_enabled": enabled,
+            }), pk=self.video.pk)
+            self.assertEqual(response.status_code, 200, response.data)
+
+        limit(True)
+        opened = StudentVideoPlaybackView.as_view()(self._request(
+            "post", "/playback/", user=self.student_user, data={"review_watch": True},
+        ), video_id=self.video.pk)
+        self.assertEqual(opened.status_code, 200, opened.data)
+        key = opened.data["review_watch"]["stream"]
+        usage = VideoReviewWatchUsage.objects.get(video=self.video, student=self.student)
+        usage.prefetch_credit_ms = 0
+        usage.save(update_fields=["prefetch_credit_ms"])
+
+        def prepare(position):
+            return StudentReviewWatchView.as_view()(self._request(
+                "post", "/review-watch/", user=self.student_user, data={
+                    "stream": key, "sequence": 1, "prepare": True, "position_ms": position,
+                },
+            ), video_id=self.video.pk)
+
+        def read(url):
+            request = self.factory.get(url)
+            request.tenant = self.tenant
+            return ReviewMediaView.as_view()(request, key=key, asset=urlsplit(url).path)
+
+        media_module = "apps.domains.video.views.review_media_view"
+        with (patch(media_module + ".create_presigned_get_url", return_value="https://private.example.test/a"),
+              patch(media_module + ".read_review_playlist", return_value="#EXTM3U\n#EXTINF:6,\np000.m4s\n")):
+            self.assertEqual(prepare(0).status_code, 200)
+            limit(False)
+            manifest = read("master.m3u8")
+            self.assertEqual(manifest.status_code, 200)
+            fragment = manifest.content.decode().splitlines()[-1]
+            self.assertIn("part=", fragment)
+            self.assertEqual(read(fragment).status_code, 302)
+            self.assertEqual(read(fragment.replace("p000.m4s", "unlisted.m4s")).status_code, 403)
+            self.assertEqual(read("p000.m4s").status_code, 302)  # Previously buffered unsigned playlist.
+            seek = prepare(5_000)
+            self.assertEqual(seek.status_code, 200)
+            self.assertIsNone(seek.data["remaining_ms"])
+            self.assertNotIn("retry_after_ms", seek.data)
+
+            limit(True)
+            self.assertEqual(read(fragment).status_code, 302)
+            self.assertEqual(read("p000.m4s").status_code, 403)
+            usage.used_ms = self.video.duration * 1400
+            usage.save(update_fields=["used_ms"])
+            self.assertEqual(read(fragment).status_code, 403)
+            limit(False)
+            self.assertEqual(read(fragment).status_code, 302)
+
+            revoke_direct_video_entitlement(
+                tenant=self.tenant, entitlement_id=entitlement.pk, reason="Revoke while playing",
+                actor=self.staff, actor_reference=f"user:{self.staff.pk}",
+            )
+            self.assertEqual(read(fragment).status_code, 403)
+            self.assertEqual(prepare(0).status_code, 403)
+            self.assertEqual(read("p000.m4s").status_code, 403)
+
+            self._grant(confirmed_regrant=True)
+            self.assertEqual(read(fragment).status_code, 403)
+            fresh = StudentVideoPlaybackView.as_view()(self._request(
+                "post", "/playback/", user=self.student_user, data={"review_watch": True},
+            ), video_id=self.video.pk)
+            self.assertEqual(fresh.status_code, 200, fresh.data)
+            self.assertNotEqual(fresh.data["review_watch"]["stream"], key)
+            self.assertIsNone(fresh.data["review_watch"]["remaining_ms"])
+            self.assertEqual(fresh.data["review_watch"]["used_ms"], usage.used_ms)
+
     def test_direct_token_consumers_revalidate_exact_current_scope_without_writes(self):
         entitlement = self._grant().entitlement
         before = self._side_effect_counts()
