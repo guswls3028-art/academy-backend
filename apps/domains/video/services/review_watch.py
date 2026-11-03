@@ -140,13 +140,14 @@ def record_review_state(*, video, student, user_id, context, stream_key, sequenc
     if prepare:
         if stream.prepared_until and stream.prepared_until > now and stream.prepared_position_ms == position_ms:
             return snapshot(video, usage, stream, now)
-        if usage.prefetch_credit_ms < PREFETCH_WINDOW_MS:
-            if usage.last_prepare_at and usage.last_prepare_at + PREFETCH_TTL > now:
-                wait = (usage.last_prepare_at + PREFETCH_TTL - now).total_seconds()
-                return {**snapshot(video, usage, stream, now), "retry_after_ms": max(1, int(wait * 1000))}
-            usage.last_prepare_at = now
-        usage.prefetch_credit_ms = max(0, usage.prefetch_credit_ms - PREFETCH_WINDOW_MS)
-        usage.save(update_fields=["prefetch_credit_ms", "last_prepare_at"])
+        if video.review_watch_limit_enabled:
+            if usage.prefetch_credit_ms < PREFETCH_WINDOW_MS:
+                if usage.last_prepare_at and usage.last_prepare_at + PREFETCH_TTL > now:
+                    wait = (usage.last_prepare_at + PREFETCH_TTL - now).total_seconds()
+                    return {**snapshot(video, usage, stream, now), "retry_after_ms": max(1, int(wait * 1000))}
+                usage.last_prepare_at = now
+            usage.prefetch_credit_ms = max(0, usage.prefetch_credit_ms - PREFETCH_WINDOW_MS)
+            usage.save(update_fields=["prefetch_credit_ms", "last_prepare_at"])
         stream.prepared_position_ms = position_ms
         stream.prepared_until = now + PREFETCH_TTL
         stream.save(update_fields=["prepared_position_ms", "prepared_until"])
