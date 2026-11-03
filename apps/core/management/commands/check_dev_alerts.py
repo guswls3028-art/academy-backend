@@ -344,17 +344,24 @@ def _delivered_incident_fingerprints() -> set[str]:
     payloads = OpsAuditLog.objects.filter(
         action__in=(LEGACY_SMS_DELIVERY_ACTION, SLACK_DELIVERY_ACTION),
         created_at__gte=since,
-    ).values_list("result", "payload")
-    for result, payload in payloads:
+    ).values_list("action", "result", "payload")
+    for action, result, payload in payloads:
         attempt_state = str((payload or {}).get("attempt_state") or "")
-        if result != "success" and attempt_state not in {
+        fingerprints = (payload or {}).get("fingerprints") or []
+        if action == SLACK_DELIVERY_ACTION:
+            if result != "success":
+                continue
+            if "displayed_group_count" not in (payload or {}):
+                # Older receipts stored every pending group, but Slack showed only five.
+                fingerprints = fingerprints[:5]
+        elif result != "success" and attempt_state not in {
             "",
             "created",
             "registered",
             "ambiguous",
         }:
             continue
-        for fingerprint in (payload or {}).get("fingerprints", []):
+        for fingerprint in fingerprints:
             if isinstance(fingerprint, str):
                 delivered.add(fingerprint)
     return delivered
@@ -835,15 +842,18 @@ def _build_slack_blocks(triggered: list[tuple[Rule, dict]]) -> dict:
 
 
 def _record_user_incident_slack_delivery(data: dict) -> None:
-    """Slack이 수락한 사용자 오류 fingerprint를 저장해 반복 알림을 막는다."""
+    """Slack에 표시된 사용자 오류만 완료 처리한다."""
     from apps.core.models import OpsAuditLog
 
+    fingerprints = data["fingerprints"][:SLACK_RULE_ROW_LIMIT]
+    event_count = sum(row["count"] for row in data["rows"][:SLACK_RULE_ROW_LIMIT])
     OpsAuditLog.objects.create(
         action=SLACK_DELIVERY_ACTION,
-        summary=f"User incident Slack delivery ({data.get('total', 0)} events)",
+        summary=f"User incident Slack delivery ({event_count} events)",
         payload={
-            "fingerprints": list(data.get("fingerprints") or []),
-            "event_count": max(0, int(data.get("total") or 0)),
+            "fingerprints": fingerprints,
+            "displayed_group_count": len(fingerprints),
+            "event_count": event_count,
         },
         result="success",
     )
