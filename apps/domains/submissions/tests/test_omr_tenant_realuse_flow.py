@@ -2348,6 +2348,7 @@ class StateRecoveryTests(TestCase):
         ):
             response = SubmissionViewSet.as_view({"post": "retry"})(request, pk=submission.pk)
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], Submission.Status.DISPATCHED)
         new = AIJobModel.objects.exclude(pk=old.pk).get(source_domain="submissions", source_id=str(submission.pk))
         deliver(old)
         submission.refresh_from_db()
