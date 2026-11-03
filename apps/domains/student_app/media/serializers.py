@@ -47,6 +47,22 @@ class StudentVideoListItemSerializer(serializers.Serializer):
     )
 
 
+class LegacyStudentVideoListItemSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    session_id = serializers.IntegerField(allow_null=True)
+    title = serializers.CharField()
+    status = serializers.CharField()
+    duration = serializers.IntegerField(allow_null=True)
+    order = serializers.IntegerField()
+    thumbnail_url = serializers.CharField(allow_null=True)
+    allow_skip = serializers.BooleanField()
+    max_speed = serializers.FloatField()
+    show_watermark = serializers.BooleanField()
+    can_play = serializers.BooleanField()
+    reason = serializers.CharField(allow_null=True)
+    hls_url = serializers.CharField(allow_null=True)
+
+
 class ReviewSignalSerializer(serializers.Serializer):
     stream = serializers.UUIDField()
     sequence = serializers.IntegerField(min_value=1, max_value=2**53 - 1)

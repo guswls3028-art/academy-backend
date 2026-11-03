@@ -710,6 +710,7 @@ class VideoReviewWatchStream(models.Model):
     entitlement_id = models.PositiveBigIntegerField(null=True)
     active_since = models.DateTimeField(null=True)
     prepared_position_ms = models.PositiveBigIntegerField(null=True)
+    playback_position_ms = models.PositiveBigIntegerField(null=True)
     prepared_until = models.DateTimeField(null=True)
     closed = models.BooleanField(default=False)
 

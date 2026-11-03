@@ -5918,6 +5918,71 @@
         ],
         "type": "object"
       },
+      "LegacyStudentVideoListItem": {
+        "properties": {
+          "allow_skip": {
+            "type": "boolean"
+          },
+          "can_play": {
+            "type": "boolean"
+          },
+          "duration": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "hls_url": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "max_speed": {
+            "format": "double",
+            "type": "number"
+          },
+          "order": {
+            "type": "integer"
+          },
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "session_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "show_watermark": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string"
+          },
+          "thumbnail_url": {
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "allow_skip",
+          "can_play",
+          "duration",
+          "hls_url",
+          "id",
+          "max_speed",
+          "order",
+          "reason",
+          "session_id",
+          "show_watermark",
+          "status",
+          "thumbnail_url",
+          "title"
+        ],
+        "type": "object"
+      },
       "LevelEnum": {
         "description": "* `COURSE` - 강의\n* `SESSION` - 차시",
         "enum": [
@@ -14543,6 +14608,9 @@
           "enabled": {
             "type": "boolean"
           },
+          "source_type": {
+            "type": "string"
+          },
           "students": {
             "items": {
               "$ref": "#/components/schemas/ReviewStudent"
@@ -14551,13 +14619,19 @@
           },
           "threshold_ms": {
             "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
           }
         },
         "required": [
           "duration",
           "enabled",
+          "source_type",
           "students",
-          "threshold_ms"
+          "threshold_ms",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -41004,14 +41078,27 @@
     },
     "/api/v1/media/videos/student/": {
       "get": {
-        "description": "Video 관리 + 통계 + 학생 목록",
-        "operationId": "media_videos_student_retrieve",
+        "description": "GET /student/video/sessions/{session_id}/videos/",
+        "operationId": "media_videos_student_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "session",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SealedVideo"
+                  "items": {
+                    "$ref": "#/components/schemas/LegacyStudentVideoListItem"
+                  },
+                  "type": "array"
                 }
               }
             },

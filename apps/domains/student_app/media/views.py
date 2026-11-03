@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 from django.db import transaction
 from django.db.models import Prefetch, Q
 from django.http import Http404
+from apps.core.permissions import IsStudent
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, PolymorphicProxySerializer, extend_schema
@@ -59,7 +60,7 @@ from academy.application.use_cases.student_video_access_context import (
 )
 from academy.adapters.db.django import repositories_video as video_repo
 from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
-from apps.api.common.query_params import parse_query_bool
+from apps.api.common.query_params import parse_query_bool, parse_query_int
 from .serializers import (
     ReviewSignalSerializer,
     ReviewStateSerializer,
@@ -67,6 +68,7 @@ from .serializers import (
     StudentVideoForwardSkipRequestSerializer,
     StudentVideoForwardSkipResponseSerializer,
     StudentVideoListItemSerializer,
+    LegacyStudentVideoListItemSerializer,
     StudentVideoPlaybackSerializer,
     StudentVideoPlaybackRequestSerializer,
 )
@@ -783,10 +785,9 @@ class StudentSessionVideoListView(APIView):
         # ✅ 테넌트 early-filter (defense-in-depth) — 후속 access context도
         #    tenant 비교를 하지만, 1차 차단으로 cross-tenant lookup을 금지한다.
         tenant = getattr(request, "tenant", None)
-        session_qs = SessionModel.objects.select_related("lecture__tenant")
-        if tenant is not None:
-            session_qs = session_qs.filter(lecture__tenant=tenant)
-        session = session_qs.filter(id=session_id).first()
+        if tenant is None:
+            raise PermissionDenied("학원 정보를 확인할 수 없습니다.")
+        session = SessionModel.objects.select_related("lecture__tenant").filter(id=session_id, lecture__tenant=tenant).first()
         if session is None:
             raise Http404
 
@@ -807,7 +808,7 @@ class StudentSessionVideoListView(APIView):
 
         videos = list(
             Video.objects
-            .filter(session_id=session_id, deleted_at__isnull=True)
+            .filter(tenant=tenant, session_id=session_id, deleted_at__isnull=True)
             .select_related("tenant", "session__lecture__tenant")
             .order_by("order", "title", "id")
         )
@@ -912,7 +913,7 @@ class StudentSessionVideoListView(APIView):
                 "enrollment_id": int(enrollment_obj.id) if enrollment_obj else None,
                 "title": str(v.title),
                 "status": str(getattr(v, "status", "READY")),
-                **_video_source_payload(v),
+                **({"source_type": _source_type_from_video(v)} if access_mode_value == "BLOCKED" or _effective_rule(perm_obj) == "blocked" else _video_source_payload(v)),
                 "thumbnail_url": thumb,
                 "duration": getattr(v, "duration", None),
                 "progress": progress_percent,  # 0-100
@@ -932,6 +933,27 @@ class StudentSessionVideoListView(APIView):
         return Response({
             "items": StudentVideoListItemSerializer(items, many=True).data
         })
+
+
+class LegacyStudentSessionVideoListView(StudentSessionVideoListView):
+    permission_classes = [IsAuthenticated, IsStudent]
+
+    @extend_schema(parameters=[OpenApiParameter(name="session", type=int, required=True)],
+                   responses=LegacyStudentVideoListItemSerializer(many=True))
+    def get(self, request):
+        session_id = parse_query_int(request.query_params, "session", min_value=1)
+        if session_id is None:
+            return Response({"detail": "session is required"}, status=400)
+        catalog = super().get(request, session_id)
+        if catalog.status_code != 200:
+            return catalog
+        rows = []
+        for item in catalog.data["items"]:
+            if item["status"] != "READY":
+                continue
+            allowed = item.get("access_mode") != "BLOCKED" and item.get("effective_rule") != "blocked"
+            rows.append({**item, "can_play": allowed, "reason": None if allowed else "blocked", "hls_url": None})
+        return Response(LegacyStudentVideoListItemSerializer(rows, many=True).data)
 
 
 class StudentReviewWatchView(APIView):
@@ -954,7 +976,8 @@ class StudentReviewWatchView(APIView):
         if not student or context.access_mode_value not in (None, "FREE_REVIEW"):
             return Response({"detail": "복습 권한을 확인할 수 없습니다."}, status=403)
         return Response(record_review_state(
-            video=video, student=student, stream_key=data["stream"], sequence=data["sequence"],
+            video=video, student=student, user_id=request.user.pk, context=context,
+            stream_key=data["stream"], sequence=data["sequence"],
             playing=data["playing"], prepare=data["prepare"], position_ms=data["position_ms"],
         ))
 
@@ -1280,7 +1303,7 @@ class StudentVideoPlaybackView(APIView):
                     expires_at=playback_expires_at or int(timezone.now().timestamp()) + 600,
                 )
                 if review_watch is None:
-                    return Response({"detail": "이 영상의 복습 시청시간을 모두 사용했습니다."}, status=403)
+                    return Response({"code": "review_limit_exhausted", "detail": "이 영상의 복습 시청시간을 모두 사용했습니다."}, status=403)
                 if video.review_watch_limit_enabled and playback_token:
                     playback_token = bind_review_token(playback_token, review_watch["stream"], playback_expires_at)
                 if video.review_watch_limit_enabled and not is_youtube:

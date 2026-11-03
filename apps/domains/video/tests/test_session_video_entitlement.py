@@ -109,8 +109,17 @@ class SessionVideoEntitlementTests(APITestCase):
 
     def test_public_video_remains_available_without_session_registration(self):
         self.videos[0].visibility = Video.Visibility.PUBLIC
-        self.videos[0].save(update_fields=["visibility"])
+        self.videos[0].review_watch_limit_enabled = True
+        self.videos[0].save(update_fields=["visibility", "review_watch_limit_enabled"])
         self.assertEqual(self.access(0).status_code, 200)
+        with patch("apps.domains.student_app.media.views.pick_video_urls", return_value=("https://media.example.test/master.m3u8", None)):
+            opened = self.client.post(
+                f"/api/v1/student/video/videos/{self.videos[0].pk}/playback/",
+                {"review_watch": True}, format="json", **self.headers,
+            )
+        self.assertEqual(opened.status_code, 200, opened.data)
+        self.assertEqual(opened.data["review_watch"]["remaining_ms"], 840000)
+        self.assertIn("/media/review-stream/", opened.data["play_url"])
 
     def test_foreign_tenant_membership_cannot_grant_session_access(self):
         other = Tenant.objects.create(code="qa-other-video", name="Other", is_active=True)

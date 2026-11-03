@@ -2,12 +2,12 @@
 
 from django.conf import settings
 from rest_framework.response import Response
-from apps.api.common.query_params import parse_query_int
+
 
 
 from ..models import Video, AccessMode
 from academy.adapters.db.django import repositories_video as video_repo
-from ..serializers import VideoSerializer
+
 from ..services.access_resolver import get_effective_access_mode
 from ..services.playback_policy import build_effective_playback_policy
 
@@ -25,8 +25,6 @@ class VideoPlaybackMixin:
     - BLOCKED: 접근 차단
     """
 
-    def _get_student_for_user(self, request):
-        return getattr(request.user, "student_profile", None)
 
     # ==================================================
     # 접근 제어 (Access Control)
@@ -156,43 +154,3 @@ class VideoPlaybackMixin:
         # Cloudflare CDN은 쿠키 대신 query parameter 사용
         # 빈 함수 유지 (호환성)
         pass
-
-    # ==================================================
-    # 학생 영상 목록 (재생 가능 여부 판단)
-    # ==================================================
-    def _student_list_impl(self, request):
-        session_id = parse_query_int(request.query_params, "session", min_value=1)
-        if session_id is None:
-            return Response({"detail": "session is required"}, status=400)
-
-        student = self._get_student_for_user(request)
-        if student is None:
-            return Response({"detail": "student_profile_not_linked"}, status=403)
-
-        qs = video_repo.video_filter_by_session_ready(session_id)
-        session = video_repo.session_get_by_id_with_lecture(session_id)
-        lecture = session.lecture
-        enrollment = video_repo.enrollment_get_by_student_lecture_active(student, lecture)
-
-        data = []
-        for v in qs:
-            d = VideoSerializer(v).data
-
-            if not enrollment:
-                d["can_play"] = False
-                d["reason"] = "not_enrolled"
-                data.append(d)
-                continue
-
-            if not video_repo.session_enrollment_exists(session, enrollment):
-                d["can_play"] = False
-                d["reason"] = "no_session_access"
-                data.append(d)
-                continue
-
-            ok, reason = self._check_access(video=v, enrollment=enrollment)
-            d["can_play"] = bool(ok)
-            d["reason"] = reason if not ok else None
-            data.append(d)
-
-        return Response(data)

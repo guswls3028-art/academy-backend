@@ -90,6 +90,39 @@ class YouTubeVideoSourceTests(TestCase):
         force_authenticate(request, user=self.staff_user)
         return VideoViewSet.as_view({"post": "create_youtube"})(request)
 
+    def test_link_requires_original_length_only_when_staff_selects_review_limit(self):
+        payload = {"session": self.session.pk, "title": "복습", "url": "https://youtu.be/abcdefghijk", "review_watch_limit_enabled": True}
+        missing = self._post_youtube(payload)
+        self.assertEqual(missing.status_code, 400)
+        self.assertEqual(missing.data["code"], "review_duration_required")
+        self.assertFalse(Video.objects.filter(tenant=self.tenant, title="복습").exists())
+        saved = self._post_youtube({**payload, "duration": 3600})
+        self.assertEqual(saved.status_code, 201, saved.data)
+        video = Video.objects.get(tenant=self.tenant, title="복습")
+        self.assertTrue(video.review_watch_limit_enabled)
+        self.assertEqual(video.duration, 3600)
+        from datetime import timedelta
+        # Give the viewed revision a distinct timestamp even on coarse Windows test clocks.
+        Video.objects.filter(pk=video.pk).update(updated_at=video.updated_at - timedelta(seconds=1))
+        video.refresh_from_db()
+        revision = video.updated_at.isoformat()
+        view = VideoViewSet.as_view({"patch": "partial_update"})
+
+        def correct(seconds):
+            req = self.factory.patch("/media/videos/", {"duration": seconds}, format="json", HTTP_X_EXPECTED_UPDATED_AT=revision)
+            req.tenant = self.tenant
+            force_authenticate(req, user=self.staff_user)
+            return view(req, pk=video.pk)
+
+        self.assertEqual(correct(3660).status_code, 200)
+        video.refresh_from_db()
+        self.assertEqual(video.duration, 3660)
+        self.assertNotEqual(video.updated_at.isoformat(), revision)
+        self.assertEqual(correct(500).status_code, 409)
+        video.refresh_from_db()
+        self.assertEqual(video.duration, 3660)
+        self.assertTrue(video.review_watch_limit_enabled)
+
     def test_extracts_provided_youtube_share_url(self):
         video_id = extract_youtube_video_id(
             "https://youtu.be/VnqgmOJaMGc?si=HVOBHgoVObf0zukX"

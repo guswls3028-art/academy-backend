@@ -208,6 +208,8 @@ def create_video(
     source_type=None,
     youtube_video_id="",
     youtube_url="",
+    duration=None,
+    review_watch_limit_enabled=False,
 ):
     from apps.domains.video.models import Video
     kwargs = dict(
@@ -221,9 +223,13 @@ def create_video(
         show_watermark=show_watermark,
         youtube_video_id=youtube_video_id or "",
         youtube_url=youtube_url or "",
+        review_watch_limit_enabled=review_watch_limit_enabled,
     )
     if source_type is not None:
         kwargs["source_type"] = source_type
+    if duration is not None:
+        kwargs["duration"] = duration
+
     if uploaded_by is not None:
         kwargs["uploaded_by"] = uploaded_by
     if folder is not None:

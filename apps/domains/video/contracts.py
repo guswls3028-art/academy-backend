@@ -35,10 +35,10 @@ def open_review_stream(video, student, *, user_id, expires_at, context):
     return _impl(video, student, user_id=user_id, expires_at=expires_at, context=context)
 
 
-def record_review_state(*, video, student, stream_key, sequence, playing, prepare=False, position_ms=0):
+def record_review_state(*, video, student, user_id, context, stream_key, sequence, playing, prepare=False, position_ms=0):
     from .services.review_watch import record_review_state as _impl
 
-    return _impl(video=video, student=student, stream_key=stream_key, sequence=sequence,
+    return _impl(video=video, student=student, user_id=user_id, context=context, stream_key=stream_key, sequence=sequence,
                  playing=playing, prepare=prepare, position_ms=position_ms)
 
 

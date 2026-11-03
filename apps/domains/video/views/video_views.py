@@ -41,7 +41,8 @@ from academy.adapters.storage.r2_objects import head_object
 
 
 from apps.core.r2_paths import video_raw_key
-from apps.core.permissions import IsStudent, TenantResolvedAndStaff
+from apps.core.optimistic_concurrency import assert_expected_updated_at
+from apps.core.permissions import TenantResolvedAndStaff
 from academy.adapters.db.django import repositories_video as video_repo
 from apps.support.video.view_dependencies import (
     clinic_highlight_map_for_video_stats,
@@ -228,7 +229,14 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             pk=serializer.instance.pk,
             tenant=self.request.tenant,
         )
+        assert_expected_updated_at(request=self.request, instance=locked)
         serializer.instance = locked
+        data = serializer.validated_data
+        if "duration" in data and data["duration"] != locked.duration and (
+            locked.review_watch_limit_enabled or data.get("review_watch_limit_enabled")
+        ):
+            if locked.source_type != Video.SourceType.YOUTUBE or not data["duration"] or data["duration"] < 1:
+                raise ValidationError({"duration": "제한 영상은 YouTube 원본 길이만 양수로 수정할 수 있습니다."})
         policy_changed = any(
             field in serializer.validated_data
             and serializer.validated_data[field] != getattr(locked, field)
@@ -619,6 +627,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         session_id = request.data.get("session")
         title = request.data.get("title")
         filename = request.data.get("filename")
+        review_limit = parse_bool(request.data.get("review_watch_limit_enabled", False), field_name="review_watch_limit_enabled")
 
         allow_skip = parse_bool(request.data.get("allow_skip", False), field_name="allow_skip")
         try:
@@ -719,6 +728,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             session=session,
             title=title,
             file_key=key,
+            review_watch_limit_enabled=review_limit,
             order=order,
             status=Video.Status.PENDING,
             allow_skip=allow_skip,
@@ -757,6 +767,10 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         session_id = request.data.get("session")
         title = (request.data.get("title") or "").strip()
         raw_url = request.data.get("url") or request.data.get("youtube_url") or request.data.get("link")
+        review_limit = parse_bool(request.data.get("review_watch_limit_enabled", False), field_name="review_watch_limit_enabled")
+        duration = request.data.get("duration")
+        if duration is not None:
+            duration = serializers.IntegerField(min_value=1, max_value=2**31 - 1).run_validation(duration)
 
         if not session_id or not title or not raw_url:
             return Response(
@@ -797,6 +811,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         session = prepare_legacy_public_video_upload_session(session)
         is_public = getattr(session.lecture, "is_system", False)
+        if review_limit and duration is None:
+            return Response({"code": "review_duration_required", "detail": "복습 제한에 사용할 YouTube 원본 길이를 입력해 주세요."}, status=400)
         folder_id = request.data.get("folder")
         if folder_id not in (None, ""):
             if not is_public:
@@ -849,6 +865,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             session=session,
             title=title,
             file_key="",
+            review_watch_limit_enabled=review_limit,
+            duration=duration,
             order=order,
             status=Video.Status.READY,
             allow_skip=allow_skip,
@@ -1765,17 +1783,6 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             }
         )
 
-    # ==================================================
-    # student list
-    # ==================================================
-    @action(
-        detail=False,
-        methods=["get"],
-        url_path="student",
-        permission_classes=[IsAuthenticated, IsStudent],
-    )
-    def student_list(self, request):
-        return self._student_list_impl(request)
 
     # ==================================================
     # video folders — 공개 영상 폴더 관리
