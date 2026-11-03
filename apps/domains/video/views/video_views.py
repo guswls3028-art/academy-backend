@@ -627,6 +627,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         session_id = request.data.get("session")
         title = request.data.get("title")
         filename = request.data.get("filename")
+        review_limit = parse_bool(request.data.get("review_watch_limit_enabled", False), field_name="review_watch_limit_enabled")
 
         allow_skip = parse_bool(request.data.get("allow_skip", False), field_name="allow_skip")
         try:
@@ -727,6 +728,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             session=session,
             title=title,
             file_key=key,
+            review_watch_limit_enabled=review_limit,
             order=order,
             status=Video.Status.PENDING,
             allow_skip=allow_skip,
@@ -765,6 +767,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         session_id = request.data.get("session")
         title = (request.data.get("title") or "").strip()
         raw_url = request.data.get("url") or request.data.get("youtube_url") or request.data.get("link")
+        review_limit = parse_bool(request.data.get("review_watch_limit_enabled", False), field_name="review_watch_limit_enabled")
         duration = request.data.get("duration")
         if duration is not None:
             duration = serializers.IntegerField(min_value=1, max_value=2**31 - 1).run_validation(duration)
@@ -808,7 +811,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         session = prepare_legacy_public_video_upload_session(session)
         is_public = getattr(session.lecture, "is_system", False)
-        if tenant.review_limit_new_uploads and not is_public and duration is None:
+        if review_limit and duration is None:
             return Response({"code": "review_duration_required", "detail": "복습 제한에 사용할 YouTube 원본 길이를 입력해 주세요."}, status=400)
         folder_id = request.data.get("folder")
         if folder_id not in (None, ""):
@@ -862,6 +865,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             session=session,
             title=title,
             file_key="",
+            review_watch_limit_enabled=review_limit,
             duration=duration,
             order=order,
             status=Video.Status.READY,

@@ -123,7 +123,6 @@ class TenantInfoView(APIView):
             "og_title": (getattr(tenant, "og_title", None) or "").strip(),
             "og_description": (getattr(tenant, "og_description", None) or "").strip(),
             "og_image_url": (getattr(tenant, "og_image_url", None) or "").strip(),
-            "review_limit_new_uploads": tenant.review_limit_new_uploads,
             "video_max_sessions": int(getattr(tenant, "video_max_sessions", 2) or 0),
             "video_max_devices": int(getattr(tenant, "video_max_devices", 2) or 0),
             "pass_label": (getattr(tenant, "pass_label", None) or "").strip(),
@@ -188,9 +187,6 @@ class TenantInfoView(APIView):
                 update_fields.append(label_field)
 
         # 영상 정책 (동시시청·동시디바이스). 0~10 범위로 클램프. 0=무제한 fallback(settings).
-        if "review_limit_new_uploads" in request.data:
-            tenant.review_limit_new_uploads = parse_bool(request.data["review_limit_new_uploads"], field_name="review_limit_new_uploads")
-            update_fields.append("review_limit_new_uploads")
         for vf in ("video_max_sessions", "video_max_devices"):
             if vf in request.data:
                 try:

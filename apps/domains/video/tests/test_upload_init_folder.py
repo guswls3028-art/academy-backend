@@ -68,16 +68,20 @@ class VideoUploadInitFolderTests(TestCase):
         self.assertEqual(video.folder_id, folder.id)
         self.assertEqual(response.data["video"]["folder"], folder.id)
 
-    def test_school_default_applies_only_to_new_enrolled_file_uploads(self):
-        self.tenant.review_limit_new_uploads = True
-        self.tenant.save(update_fields=["review_limit_new_uploads"])
+    def test_upload_limit_is_chosen_per_file_for_enrolled_and_public_sessions(self):
         lecture = Lecture.objects.create(tenant=self.tenant, title="수업", name="수업", subject="MATH")
         lesson = Session.objects.create(lecture=lecture, title="차시", order=1)
         public = Session.objects.create(lecture=Lecture.get_or_create_system_lecture(self.tenant), title="공개", order=1)
-        for session, expected in ((lesson, True), (public, False)):
-            response = self._post_upload_init({"session": session.pk, "title": "복습 파일", "filename": "lesson.mp4"})
-            self.assertEqual(response.status_code, 201, response.data)
-            self.assertEqual(Video.objects.get(pk=response.data["video"]["id"]).review_watch_limit_enabled, expected)
+        for session in (lesson, public):
+            for option in ({}, {"review_watch_limit_enabled": True}, {"review_watch_limit_enabled": False}):
+                response = self._post_upload_init({"session": session.pk, "title": "복습 파일", "filename": "lesson.mp4", **option})
+                self.assertEqual(response.status_code, 201, response.data)
+                self.assertEqual(Video.objects.get(pk=response.data["video"]["id"]).review_watch_limit_enabled,
+                                 option.get("review_watch_limit_enabled", False))
+        invalid = self._post_upload_init({"session": lesson.pk, "title": "잘못된 선택", "filename": "lesson.mp4",
+                                          "review_watch_limit_enabled": "maybe"})
+        self.assertEqual(invalid.status_code, 400)
+        self.assertFalse(Video.objects.filter(tenant=self.tenant, title="잘못된 선택").exists())
 
     def test_folder_upload_order_uses_folder_collection_not_session(self):
         lecture = Lecture.get_or_create_system_lecture(self.tenant)
