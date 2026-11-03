@@ -96,7 +96,10 @@ class ReviewMediaView(View):
         master = str(video.hls_path or canonical).removeprefix("storage/").lstrip("/")
         if posixpath.dirname(master) != posixpath.dirname(canonical):
             return HttpResponse(status=403)
-        lifetime = min(15, (remaining + 999) // 1000, int((stream.access_until - now).total_seconds()))
+        # Admission above is exact to the millisecond. A presigned storage GET starts
+        # on a whole second and needs time to reach R2 even for the final admitted part.
+        transfer_seconds = max(5, (remaining + 999) // 1000)
+        lifetime = min(15, transfer_seconds, int((stream.access_until - now).total_seconds()))
         if lifetime <= 0:
             return HttpResponse(status=403)
         signer = Signer(salt=f"review-media:{key}") if video.review_watch_limit_enabled else None
