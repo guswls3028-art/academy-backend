@@ -2,6 +2,7 @@
 # ⚠️ 기존 코드 유지 + support.video 전환 + internal video-worker include
 
 from django.urls import path, include
+from apps.domains.student_app.media.views import LegacyStudentSessionVideoListView
 from apps.domains.video.views.internal_views import (
     VideoProcessingCompleteView,
     VideoBacklogCountView,
@@ -94,6 +95,7 @@ urlpatterns = [
     # - URL prefix는 기존 "media/" 유지 (외부 클라이언트 안정성)
     # - include 경로만 video로 전환
     # =========================
+    path("media/videos/student/", LegacyStudentSessionVideoListView.as_view(), name="videos-student-list"),
     path("media/", include("apps.domains.video.urls")),
 
     # =========================

@@ -224,6 +224,8 @@ def create_video(
     )
     if source_type is not None:
         kwargs["source_type"] = source_type
+    if tenant and visibility == Video.Visibility.ENROLLED and source_type in (None, Video.SourceType.UPLOADED):
+        kwargs["review_watch_limit_enabled"] = tenant.review_limit_new_uploads
     if uploaded_by is not None:
         kwargs["uploaded_by"] = uploaded_by
     if folder is not None:

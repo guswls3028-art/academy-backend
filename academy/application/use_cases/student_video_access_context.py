@@ -275,7 +275,7 @@ def resolve_student_session_video_context(
 
     if is_public and student_can_access_session(request, session):
         return StudentSessionVideoContext(
-            enrollment=ensure_public_lecture_enrollment(request, lecture),
+            enrollment=find_active_enrollment_for_lecture(request, lecture.id, explicit_enrollment_id),
             is_public_session=True,
         )
 

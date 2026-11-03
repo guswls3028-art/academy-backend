@@ -160,6 +160,32 @@ class DirectVideoEntitlementTests(TestCase):
             "scheduled_notification": ScheduledNotification.objects.count(),
         }
 
+    def test_legacy_catalog_checks_exact_scope_and_never_issues_playback_urls(self):
+        from rest_framework.test import APIClient
+
+        client = APIClient(HTTP_HOST="api.hakwonplus.com", HTTP_X_TENANT_CODE=self.tenant.code)
+        client.force_authenticate(self.student_user)
+        path = "/api/v1/media/videos/student/"
+        self.assertEqual(client.get(path, {"session": self.session.pk}).status_code, 403)
+        foreign = create_session_fixture(
+            lecture=create_lecture_fixture(tenant=self.other_tenant, title="Foreign", name="Other", subject="MATH"),
+            order=1, title="Private",
+        )
+        self.assertEqual(client.get(path, {"session": foreign.pk}).status_code, 404)
+        self._grant()
+        self.video.hls_path = f"tenants/{self.tenant.pk}/video/hls/{self.video.pk}/master.m3u8"
+        self.video.review_watch_limit_enabled = True
+        self.video.save(update_fields=["hls_path", "review_watch_limit_enabled"])
+        before = self._side_effect_counts()
+        response = client.get(path, {"session": self.session.pk})
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual([row["id"] for row in response.json()], [self.video.pk])
+        row = response.json()[0]
+        self.assertTrue(row["can_play"])
+        self.assertIsNone(row["hls_url"])
+        self.assertTrue({"hls_path", "file_key", "mp4_url", "play_url", "admin_memo"}.isdisjoint(row))
+        self.assertEqual(before, self._side_effect_counts())
+
     def test_grant_is_exact_idempotent_and_regrant_requires_confirmation(self):
         before = self._side_effect_counts()
 
@@ -502,7 +528,10 @@ class DirectVideoEntitlementTests(TestCase):
             self.assertEqual(signal(key, 1, True).status_code, 200)
         with patch("django.utils.timezone.now", return_value=started + timedelta(seconds=68)):
             self.assertEqual(signal(key, 2, True).data["remaining_ms"], 0)
-            self.assertEqual(open_player().status_code, 403)
+            self.assertEqual(signal(key, 2, True).data["remaining_ms"], 0)  # Lost terminal response.
+            denied = open_player()
+            self.assertEqual(denied.status_code, 403)
+            self.assertEqual(denied.data["code"], "review_limit_exhausted")
         report = ReviewWatchReportView.as_view()
         staff_request = self._request("get", "/report/", user=self.staff)
         self.assertEqual(report(staff_request, video_id=self.video.pk).data["students"][0]["used_ms"], 14_000)
@@ -519,7 +548,8 @@ class DirectVideoEntitlementTests(TestCase):
 
         self._grant()
         self.video.review_watch_limit_enabled = True
-        self.video.save(update_fields=["review_watch_limit_enabled"])
+        self.video.duration = 600
+        self.video.save(update_fields=["review_watch_limit_enabled", "duration"])
         opened = StudentVideoPlaybackView.as_view()(self._request(
             "post", "/playback/", user=self.student_user, data={"review_watch": True},
         ), video_id=self.video.pk).data
@@ -538,7 +568,7 @@ class DirectVideoEntitlementTests(TestCase):
                 "post", "/review-watch/", user=self.student_user, data={"stream": key, **data},
             ), video_id=self.video.pk).data
 
-        playlist = "#EXTM3U\n#EXTINF:32,\na.ts\n#EXTINF:10,\nb.ts\n"
+        playlist = "#EXTM3U\n#EXTINF:32,\na.ts\n#EXTINF:300,\nb.ts\n#EXTINF:8,\nfar.ts\n"
         started = timezone.now()
         module = "apps.domains.video.views.review_media_view"
         with (patch(module + ".create_presigned_get_url", return_value="https://private.example.test/a"),
@@ -547,7 +577,7 @@ class DirectVideoEntitlementTests(TestCase):
             before = state()
             response = client.get(master)
             self.assertEqual(response.status_code, 200, response.content)
-            first, second = [urljoin(master, line) for line in response.content.decode().splitlines() if ".ts?" in line]
+            first, second, far = [urljoin(master, line) for line in response.content.decode().splitlines() if ".ts?" in line]
             self.assertEqual(client.get(first).status_code, 429)
             self.assertEqual(before, state())
             self.assertEqual(signal(sequence=1, prepare=True)["used_ms"], 0)
@@ -566,15 +596,19 @@ class DirectVideoEntitlementTests(TestCase):
             signal(sequence=2, playing=True)
             active = state()
             self.assertEqual(client.get(second).status_code, 302)
+            self.assertEqual(client.get(far).status_code, 429)
             self.assertEqual(active, state())
+            signal(sequence=3, playing=True, position_ms=333000)
+            self.assertEqual(client.get(far).status_code, 429)
             with patch("django.utils.timezone.now", return_value=started + timedelta(seconds=3)):
-                self.assertEqual(signal(sequence=3, playing=False, position_ms=32000)["used_ms"], 3000)
+                self.assertEqual(signal(sequence=3, playing=True, position_ms=333000)["used_ms"], 3000)
+                self.assertEqual(signal(sequence=4, playing=False, position_ms=32000)["used_ms"], 3000)
             with patch("django.utils.timezone.now", return_value=started + timedelta(seconds=34)):
                 paused = state()
                 self.assertEqual(client.get(second).status_code, 429)
                 self.assertEqual(paused, state())
-                self.assertEqual(signal(sequence=4, prepare=True, position_ms=32000)["used_ms"], 3000)
-                self.assertEqual(client.get(second).status_code, 302)
+                self.assertEqual(signal(sequence=5, prepare=True, position_ms=333000)["used_ms"], 3000)
+                self.assertEqual(client.get(far).status_code, 302)
 
     @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="test-key")
     def test_review_media_uses_private_playlists_and_revocable_fragment_links(self):

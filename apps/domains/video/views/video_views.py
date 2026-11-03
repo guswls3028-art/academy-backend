@@ -41,7 +41,7 @@ from academy.adapters.storage.r2_objects import head_object
 
 
 from apps.core.r2_paths import video_raw_key
-from apps.core.permissions import IsStudent, TenantResolvedAndStaff
+from apps.core.permissions import TenantResolvedAndStaff
 from academy.adapters.db.django import repositories_video as video_repo
 from apps.support.video.view_dependencies import (
     clinic_highlight_map_for_video_stats,
@@ -1765,17 +1765,6 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             }
         )
 
-    # ==================================================
-    # student list
-    # ==================================================
-    @action(
-        detail=False,
-        methods=["get"],
-        url_path="student",
-        permission_classes=[IsAuthenticated, IsStudent],
-    )
-    def student_list(self, request):
-        return self._student_list_impl(request)
 
     # ==================================================
     # video folders — 공개 영상 폴더 관리

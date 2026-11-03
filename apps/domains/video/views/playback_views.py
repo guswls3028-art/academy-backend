@@ -669,7 +669,8 @@ class PlaybackRenewView(APIView):
             # A grant issued before activation may finish its already-admitted viewing.
             # Freeze that window across renewals. New capped grants always carry a stream.
             legacy_deadline = payload.get("prelimit_media_until")
-            if current_video.review_watch_limit_enabled and access_mode == AccessMode.FREE_REVIEW and not payload.get("review_stream"):
+            review_authorized = access_mode == AccessMode.FREE_REVIEW or (not direct_token and completed_review)
+            if current_video.review_watch_limit_enabled and review_authorized and not payload.get("review_stream"):
                 legacy_deadline = int(legacy_deadline or (int(payload["iat"]) + int(current_video.duration or 0) + ttl_seconds))
                 expires_at = min(expires_at, legacy_deadline)
                 if renewed_play_url and expires_at > now_timestamp:
