@@ -66,8 +66,11 @@ CloudWatch transition 문자 발송 예외는 모두 제거되었다. 운영 장
 카카오 템플릿이 없으므로 이 경로를 임의의 알림톡으로 대체하지 않고 fail-closed한다.
 
 같은 테넌트·경로·오류 유형은 15분 단위 fingerprint로 묶는다. Slack webhook이 성공을
-반환하면 `OpsAuditLog(action=alerts.user_incident_slack)`에 fingerprint를 저장해
-2일 보존 범위에서 반복 알림을 제외한다. Slack 실패나 webhook 미설정, `--dry-run`은
+반환하면 `OpsAuditLog(action=alerts.user_incident_slack)`에 메시지에 표시한
+최대 5개 그룹의 fingerprint와 해당 이벤트 수를 저장한다. 남은 그룹은 다음
+실행에서 오래된 순으로 전달한다. 이전 형식의 성공 영수증도 당시 표시된 첫
+5개 그룹만 중복에서 제외하며, 기존 기록은 수정하지 않는다. 재조회 범위는
+2일이다. Slack 실패나 webhook 미설정, `--dry-run`은
 fingerprint를 소비하지 않는다. 폐기 전 SMS가 남긴
 `OpsAuditLog(action=alerts.user_incident_sms)`는 기존 2일 중복 억제와 사고 이력
 조회에만 읽으며, 새 SMS provider 호출이나 재조회·재시도에는 사용하지 않는다.

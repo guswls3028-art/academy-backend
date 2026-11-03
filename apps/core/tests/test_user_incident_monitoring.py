@@ -306,6 +306,46 @@ class UserIncidentAlertRuleTests(TestCase):
         self.assertIsNone(rule_user_incidents())
 
     @override_settings(DEV_ALERTS_WEBHOOK_URL="https://hooks.example.invalid/test")
+    @patch("apps.core.management.commands.check_dev_alerts._post_slack", return_value=True)
+    def test_only_displayed_incident_groups_are_consumed(self, post_mock):
+        self._backend_incident()
+        self._backend_incident()
+        for index in range(5):
+            OpsAuditLog.objects.create(
+                action="user_incident.manual",
+                target_tenant=self.tenant,
+                payload={"route": f"/report/{index}"},
+            )
+        candidates = rule_user_incidents()
+        self.assertEqual(candidates["total"], 7)
+        call_command("check_dev_alerts", "--rule", "user_incidents", stdout=StringIO())
+        receipt = OpsAuditLog.objects.get(action=SLACK_DELIVERY_ACTION)
+        self.assertEqual(receipt.payload["fingerprints"], candidates["fingerprints"][:5])
+        self.assertEqual(receipt.payload["event_count"], 6)
+        self.assertNotIn("/report/4", str(post_mock.call_args.args[1]["blocks"]))
+
+        call_command("check_dev_alerts", "--rule", "user_incidents", stdout=StringIO())
+        self.assertIn("/report/4", str(post_mock.call_args.args[1]["blocks"]))
+        self.assertIsNone(rule_user_incidents())
+        call_command("check_dev_alerts", "--rule", "user_incidents", stdout=StringIO())
+        self.assertEqual(post_mock.call_count, 2)
+
+    def test_old_slack_receipt_keeps_unshown_groups_eligible(self):
+        for index in range(6):
+            OpsAuditLog.objects.create(
+                action="user_incident.manual",
+                target_tenant=self.tenant,
+                payload={"route": f"/report/{index}"},
+            )
+        fingerprints = rule_user_incidents()["fingerprints"]
+        OpsAuditLog.objects.create(
+            action=SLACK_DELIVERY_ACTION,
+            result="success",
+            payload={"fingerprints": fingerprints, "event_count": 6},
+        )
+        self.assertEqual(rule_user_incidents()["fingerprints"], fingerprints[5:])
+
+    @override_settings(DEV_ALERTS_WEBHOOK_URL="https://hooks.example.invalid/test")
     @patch(
         "apps.core.management.commands.check_dev_alerts._post_slack",
         return_value=False,
