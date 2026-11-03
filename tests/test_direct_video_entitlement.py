@@ -615,6 +615,7 @@ class DirectVideoEntitlementTests(TestCase):
         from unittest.mock import patch
         from urllib.parse import urlsplit
 
+        from apps.domains.video.models import VideoReviewWatchUsage
         from apps.domains.video.views.review_media_view import ReviewMediaView
 
         self._grant()
@@ -650,6 +651,17 @@ class DirectVideoEntitlementTests(TestCase):
         self.assertEqual(urlsplit(fragment.url).hostname, "private-storage.example.test")
         self.assertEqual(signed.call_args.kwargs["key"], f"tenants/{self.tenant.pk}/video/hls/{self.video.pk}/video/segment_001.ts")
         self.assertLessEqual(signed.call_args.kwargs["expires_in"], 15)
+        usage = VideoReviewWatchUsage.objects.get(video=self.video, student=self.student)
+        limit = self.video.duration * 1400
+        usage.used_ms = limit - 1
+        usage.save(update_fields=["used_ms"])
+        self.assertEqual(view(fragment_request, key=key, asset="video/segment_001.ts").status_code, 302)
+        self.assertEqual(signed.call_args.kwargs["expires_in"], 5)
+        usage.used_ms = limit
+        usage.save(update_fields=["used_ms"])
+        signed.reset_mock()
+        self.assertEqual(view(fragment_request, key=key, asset="video/segment_001.ts").status_code, 403)
+        signed.assert_not_called()
         self.assertEqual(view(request, key=key, asset="../other/master.m3u8").status_code, 403)
         request.tenant = self.other_tenant
         self.assertEqual(view(request, key=key, asset="master.m3u8").status_code, 404)
