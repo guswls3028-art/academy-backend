@@ -103,6 +103,20 @@ class YouTubeVideoSourceTests(TestCase):
         video = Video.objects.get(tenant=self.tenant, title="복습")
         self.assertTrue(video.review_watch_limit_enabled)
         self.assertEqual(video.duration, 3600)
+        revision = video.updated_at.isoformat()
+        view = VideoViewSet.as_view({"patch": "partial_update"})
+
+        def correct(seconds):
+            req = self.factory.patch("/media/videos/", {"duration": seconds}, format="json", HTTP_X_EXPECTED_UPDATED_AT=revision)
+            req.tenant = self.tenant
+            force_authenticate(req, user=self.staff_user)
+            return view(req, pk=video.pk)
+
+        self.assertEqual(correct(3660).status_code, 200)
+        self.assertEqual(correct(500).status_code, 409)
+        video.refresh_from_db()
+        self.assertEqual(video.duration, 3660)
+        self.assertTrue(video.review_watch_limit_enabled)
 
     def test_extracts_provided_youtube_share_url(self):
         video_id = extract_youtube_video_id(

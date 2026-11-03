@@ -14608,6 +14608,9 @@
           "enabled": {
             "type": "boolean"
           },
+          "source_type": {
+            "type": "string"
+          },
           "students": {
             "items": {
               "$ref": "#/components/schemas/ReviewStudent"
@@ -14616,13 +14619,19 @@
           },
           "threshold_ms": {
             "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
           }
         },
         "required": [
           "duration",
           "enabled",
+          "source_type",
           "students",
-          "threshold_ms"
+          "threshold_ms",
+          "updated_at"
         ],
         "type": "object"
       },

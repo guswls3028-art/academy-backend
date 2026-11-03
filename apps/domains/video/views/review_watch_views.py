@@ -25,6 +25,8 @@ class ReviewReportSerializer(serializers.Serializer):
     enabled = serializers.BooleanField()
     duration = serializers.IntegerField(allow_null=True)
     threshold_ms = serializers.IntegerField()
+    source_type = serializers.CharField()
+    updated_at = serializers.DateTimeField()
     students = ReviewStudentSerializer(many=True)
 
 
@@ -66,6 +68,8 @@ class ReviewWatchReportView(APIView):
             {
                 "enabled": video.review_watch_limit_enabled,
                 "threshold_ms": threshold_ms(video),
+                "source_type": video.source_type,
+                "updated_at": serializers.DateTimeField().to_representation(video.updated_at),
                 "duration": video.duration,
                 "students": rows,
             }

@@ -41,6 +41,7 @@ from academy.adapters.storage.r2_objects import head_object
 
 
 from apps.core.r2_paths import video_raw_key
+from apps.core.optimistic_concurrency import assert_expected_updated_at
 from apps.core.permissions import TenantResolvedAndStaff
 from academy.adapters.db.django import repositories_video as video_repo
 from apps.support.video.view_dependencies import (
@@ -228,7 +229,14 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             pk=serializer.instance.pk,
             tenant=self.request.tenant,
         )
+        assert_expected_updated_at(request=self.request, instance=locked)
         serializer.instance = locked
+        data = serializer.validated_data
+        if "duration" in data and data["duration"] != locked.duration and (
+            locked.review_watch_limit_enabled or data.get("review_watch_limit_enabled")
+        ):
+            if locked.source_type != Video.SourceType.YOUTUBE or not data["duration"] or data["duration"] < 1:
+                raise ValidationError({"duration": "제한 영상은 YouTube 원본 길이만 양수로 수정할 수 있습니다."})
         policy_changed = any(
             field in serializer.validated_data
             and serializer.validated_data[field] != getattr(locked, field)
