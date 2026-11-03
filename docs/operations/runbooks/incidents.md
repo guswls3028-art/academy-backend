@@ -122,6 +122,11 @@ Slack 수락 뒤에는 tenant/date, 현재 record/staff ID 및 각 기록의 최
 `apps/core/tests/test_work_record_date_alerts.py`와
 `apps/domains/staffs/tests/test_work_record_audit.py`가 소유한다.
 
+Django 뷰에서 경로·객체가 없거나 권한이 없으면 기본 처리기가 각각 404와 403을 반환한다.
+허용된 출처의 클라이언트도 같은 상태를 읽을 수 있다. 이 두 응답은 서버 장애 집계에서
+제외한다. 예상치 못한 예외는 상관 ID를 담은 500으로 반환하고 운영 응답에 내부 오류
+메시지를 싣지 않는다. 회귀 검사는 `apps/api/common/tests/test_unhandled_exception.py`에 있다.
+
 5xx 폭주가 장애 중 DB 부하를 증폭하지 않도록 같은 테넌트·경로·오류 유형은 API
 프로세스별 60초에 1건만 bounded 비동기 큐로 감사 로그에 저장한다. 사용자 응답은
 DB INSERT를 기다리지 않으며 PII 없는 동일 신호를 애플리케이션 로그에도 남긴다.

@@ -11,7 +11,8 @@ import threading
 import time
 
 from django.conf import settings
-from django.http import JsonResponse
+from django.core.exceptions import PermissionDenied
+from django.http import Http404, JsonResponse
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +290,8 @@ class UnhandledExceptionMiddleware:
         return response
 
     def process_exception(self, request, exception):
+        if isinstance(exception, (Http404, PermissionDenied)):
+            return None  # Keep Django's native not-found and permission-denied handlers.
         logger.exception("Unhandled exception: %s", exception)
         request._user_incident_exception_name = exception.__class__.__name__
         # 운영(DEBUG=False)에서는 내부 예외 메시지를 응답에 노출하지 않는다.
