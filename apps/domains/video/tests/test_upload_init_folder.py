@@ -69,12 +69,10 @@ class VideoUploadInitFolderTests(TestCase):
         self.assertEqual(response.data["video"]["folder"], folder.id)
 
     def test_school_default_applies_only_to_new_enrolled_file_uploads(self):
-        from apps.domains.lectures.test_support import create_lecture_fixture, create_session_fixture
-
         self.tenant.review_limit_new_uploads = True
         self.tenant.save(update_fields=["review_limit_new_uploads"])
-        lesson = create_session_fixture(lecture=create_lecture_fixture(tenant=self.tenant, title="수업", name="수업", subject="MATH"),
-                                        title="차시", order=1)
+        lecture = Lecture.objects.create(tenant=self.tenant, title="수업", name="수업", subject="MATH")
+        lesson = Session.objects.create(lecture=lecture, title="차시", order=1)
         public = Session.objects.create(lecture=Lecture.get_or_create_system_lecture(self.tenant), title="공개", order=1)
         for session, expected in ((lesson, True), (public, False)):
             response = self._post_upload_init({"session": session.pk, "title": "복습 파일", "filename": "lesson.mp4"})
