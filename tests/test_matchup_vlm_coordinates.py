@@ -20,8 +20,8 @@ def test_normalized_crop_maps_to_full_original_image(monkeypatch, tmp_path, size
             {"number": 12, "box_2d": [100, 200, 700, 900], "confidence": .95},
         ]}
 
-    monkeypatch.setattr(vlm_fallback, "_gemini_request", detect)
-    result = vlm_fallback.GeminiVLMVisionAdapter().detect_problems(
+    monkeypatch.setattr(vlm_fallback, "_openai_request", detect)
+    result = vlm_fallback.OpenAIVLMVisionAdapter().detect_problems(
         image_path=str(path), page_meta={"tenant_id": 17, "document_id": 23})
     assert len(result.problems) == 1
     w, h = size
@@ -30,7 +30,7 @@ def test_normalized_crop_maps_to_full_original_image(monkeypatch, tmp_path, size
         round(h * .7) - round(h * .1))
     assert result.problems[0].number == 12
     assert calls[0]["tenant_id"] == 17 and calls[0]["document_id"] == 23
-    sent = Image.open(io.BytesIO(base64.b64decode(calls[0]["parts"][1]["inline_data"]["data"])))
+    sent = Image.open(io.BytesIO(base64.b64decode(calls[0]["parts"][1]["image_url"].split(",", 1)[1])))
     assert max(sent.size) <= 1600
     sent.close()
 
@@ -52,11 +52,11 @@ def test_normalized_crop_maps_to_full_original_image(monkeypatch, tmp_path, size
 def test_invalid_provider_coordinates_cannot_become_question_crops(monkeypatch, tmp_path, bad):
     path = tmp_path / "page.png"
     Image.new("RGB", (1000, 800), "white").save(path)
-    monkeypatch.setattr(vlm_fallback, "_gemini_request", lambda **kwargs: {
+    monkeypatch.setattr(vlm_fallback, "_openai_request", lambda **kwargs: {
         "confidence": .95, "page_role": "problem", "problems": [
             bad, {"number": 7, "box_2d": [100, 100, 900, 900], "shared_with": [8]},
         ]})
-    result = vlm_fallback.GeminiVLMVisionAdapter().detect_problems(image_path=str(path))
+    result = vlm_fallback.OpenAIVLMVisionAdapter().detect_problems(image_path=str(path))
     assert [p.number for p in result.problems] == [7]
     assert result.problems[0].bbox == (100, 80, 800, 640)
     assert result.problems[0].shared_with == [8]

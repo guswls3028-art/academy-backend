@@ -40,7 +40,7 @@ QuotaKind = Literal[
     "problem_studio_transcription",
     "problem_studio_explanation",
     "problem_review_analysis",
-    "matchup_vlm",  # Gemini VLM 호출 (B-2 paper_type + 운영 자동분리, 2026-05-04)
+    "matchup_vlm",  # OpenAI VLM 호출 (B-2 paper_type + 운영 자동분리, 2026-05-04)
 ]
 
 # 가격정책 결정 전 보수적 default. 운영 폭증 방지가 목표 — 정상 학원 사용량 초과하지 않게.
@@ -60,7 +60,7 @@ DEFAULT_LIMITS: dict[str, dict[str, int]] = {
     "problem_studio_transcription": {"daily": 750, "monthly": 2500},
     "problem_review_analysis": {"daily": 80, "monthly": 1000},
     "schema_infer":       {"daily": 50,   "monthly": 500},
-    # B-2 (2026-05-04): VLM 호출 — Gemini Flash $0.005/call → daily 500=$2.5, monthly 10000=$50.
+    # VLM network-attempt allowance; actual USD depends on model and token usage.
     # in-memory _check_tenant_quota(MATCHUP_VLM_PER_TENANT_DAILY_LIMIT) fast-fail과 별도로
     # DB 영구 카운터로 모니터링 + enforcement 가능. 학원장 정책 변경 시 env 또는 dict.
     "matchup_vlm":        {"daily": 500,  "monthly": 10000},

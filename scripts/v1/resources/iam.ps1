@@ -812,6 +812,7 @@ function Ensure-GitHubActionsDeployIAM {
             "arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/r2/preprod/credentials",
             "arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/api/preprod/env"
         )},
+        [ordered]@{Sid="DevelopmentOpenAiKeyRead";Effect="Allow";Action="ssm:GetParameter";Resource="arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/providers/development/openai-api-key"},
         [ordered]@{Sid="ApiPreprodEnvPublish";Effect="Allow";Action="ssm:PutParameter";Resource="arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/api/preprod/env"},
         [ordered]@{Sid="ProductUsagePilotEnvPublish";Effect="Allow";Action="ssm:PutParameter";Resource="arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/api/env"},
         [ordered]@{Sid="DevAlertsAlarmRead";Effect="Allow";Action="cloudwatch:DescribeAlarms";Resource="*"},

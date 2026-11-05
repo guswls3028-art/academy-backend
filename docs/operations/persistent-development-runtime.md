@@ -494,13 +494,14 @@ lock/mutation job은 environment subject를 사용한다.
    개발 경계로 치환한다. 메시징은 dry-run 조기 종료를 쓰지 않고 durable outbox와
    전용 개발 SQS를 통과하며, API와 Messaging worker의 `SOLAPI_MOCK=true`가 외부
    공급자 호출과 비용을 차단한다. API의 외부 AI 자격증명은 제거한다. 개발 worker는
-   사용자가 승인한 기존 `GEMINI_API_KEY`를 재사용할 수 있으며 새 프로젝트·결제·별도
+   사용자가 승인한 기존 `OPENAI_API_KEY`를 개발 전용
+   `/academy/providers/development/openai-api-key`에서 읽어 재사용하며 새 프로젝트·결제·별도
    개발 키를 필수로 요구하지 않는다. 다른 외부 AI·정적 AWS 자격증명은 계속 제거한다.
    provider 호출은 고정한 합성/승인 fixture와 일회용 QA tenant에 한정하고 기존 통과
-   증거를 재사용한다. 혼합 7쪽 PDF의 전체 쪽 PPT와 직접 자르기 경로는 Gemini 호출이
+   증거를 재사용한다. 혼합 7쪽 PDF의 전체 쪽 PPT와 직접 자르기 경로는 OpenAI 호출이
    없으며, Matchup만 필요한 최소 fixture 호출을 수행한다. 키 값은 로그·Git·보고서에
    남기지 않는다. DB·R2·큐·Redis 격리와 정확한 생성물 정리 검증은 그대로 필수다.
-   이 개발 worker 예외는 preprod에 적용하지 않으며 preprod는 Gemini도 제거한다.
+   이 개발 worker 예외는 preprod에 적용하지 않으며 preprod는 OpenAI와 폐기된 Gemini 키를 모두 제거한다.
    채점된 OMR 학생 정정의 격리 실검증은 이 publisher의
    `-EnableOmrScoredReassignment`를 명시해 API와 worker 개발 복사본에만
    `OMR_SCORED_REASSIGNMENT_ENABLED=true`를 넣는다. 옵션이 없으면 기존 원본

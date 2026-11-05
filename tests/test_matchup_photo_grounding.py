@@ -257,31 +257,31 @@ def test_photo_adapter_uses_observed_pixels_and_bounded_thinking(monkeypatch, tm
         calls.append(kwargs)
         return copy.deepcopy(data)
 
-    monkeypatch.setattr(vlm_fallback, "_gemini_request", provider)
-    result = vlm_fallback.GeminiVLMVisionAdapter().detect_problems(
+    monkeypatch.setattr(vlm_fallback, "_openai_request", provider)
+    result = vlm_fallback.OpenAIVLMVisionAdapter().detect_problems(
         image_path=str(path), page_meta={"paper_type": "student_answer_photo", "tenant_id": 17, "document_id": 23})
     assert [p.number for p in result.problems] == [12, 13]
     assert all(p.ocr_grounded for p in result.problems)
     assert result.debug["coordinate_system"] == "ocr_source_pixels"
-    assert calls[0]["thinking_budget"] == 2048
+    assert calls[0]["reasoning_effort"] == "medium"
     assert calls[0]["tenant_id"] == 17 and calls[0]["document_id"] == 23
 
 
 @pytest.mark.parametrize("finish,text", [
-    ("MAX_TOKENS", '{"problems":[{"number":12}]}'),
-    ("MAX_TOKENS", '{"problems":[{"number":12},{"number":13'),
-    ("SAFETY", '{"problems":[{"number":12}]}'),
+    ("incomplete", '{"problems":[{"number":12}]}'),
+    ("incomplete", '{"problems":[{"number":12},{"number":13'),
+    ("failed", '{"problems":[{"number":12}]}'),
     ("", '{"problems":[{"number":12}]}'),
-    ("STOP", '{"problems":[{"number":12},{"number":13'),
+    ("completed", '{"problems":[{"number":12},{"number":13'),
 ])
 def test_provider_completion_and_full_json_are_required(monkeypatch, finish, text):
     import requests
-    monkeypatch.setenv("GEMINI_API_KEY", "synthetic")
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic")
     response = MagicMock(status_code=200)
-    response.json.return_value = {"candidates": [{"finishReason": finish, "content": {"parts": [{"text": text}]}}]}
+    response.json.return_value = {"status": finish, "output": [{"type": "message", "status": "completed", "content": [{"type": "output_text", "text": text}]}]}
     monkeypatch.setattr(requests, "post", lambda *args, **kwargs: response)
     with pytest.raises(RuntimeError):
-        vlm_fallback._gemini_request(model="gemini-2.5-flash", parts=[{"text": "synthetic"}])
+        vlm_fallback._openai_request(model="gpt-6.1-terra", parts=[{"text": "synthetic"}])
 
 
 def test_crop_writer_keeps_exact_grounded_bounds_without_extra_percentage_padding(monkeypatch, tmp_path):

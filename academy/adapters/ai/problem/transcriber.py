@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from academy.adapters.ai.openai_output import completed_response_text, reasoning_options
+
 import base64
 import io
 
@@ -56,9 +58,10 @@ def transcribe_problem_image(
                 {"type": "input_image", "image_url": f"data:{mime};base64,{encoded}", "detail": "high"},
             ],
         }],
-        max_output_tokens=6000,
+        max_output_tokens=6000, store=False,
+        **reasoning_options(model),
     )
-    return str(getattr(response, "output_text", "") or "").strip()
+    return completed_response_text(response).strip()
 
 
 def _bedrock_image(data: bytes, mime: str) -> tuple[bytes, str]:

@@ -17,7 +17,7 @@ SOURCES = {
         "workers_base": "/academy/workers/development/base-env",
         "db_credentials": "/academy/api/development/db-credentials",
         "r2_credentials": "/academy/r2/development/credentials",
-        "gemini_key": "/academy/providers/development/gemini-api-key",
+        "openai_key": "/academy/providers/development/openai-api-key",
     },
     "preprod": {
         "api_base": "/academy/api/preprod/base-env",
@@ -35,11 +35,14 @@ KEY_CLASSES = {
         "DB_SSL_MODE", "MATCHUP_HYBRID_VLM_TENANTS",
         "MATCHUP_VLM_FILL_EMPTY_PAGES", "MATCHUP_VLM_PAGE_ROLE_FILTER",
         "MATCHUP_VLM_TEXT_ADAPTER", "MATCHUP_VLM_VISION_ADAPTER", "SITE_URL",
+        "MATCHUP_VLM_TEXT_MODEL", "MATCHUP_VLM_VISION_MODEL", "MATCHUP_HYBRID_VLM_MODEL",
+        "PROBLEM_GEN_MODEL", "PROBLEM_STUDIO_EXPLANATION_MODEL",
+        "PROBLEM_TRANSCRIPTION_MODEL", "EXCEL_SCHEMA_INFER_MODEL",
     }),
     "credential_reference": frozenset({
         "DB_PASSWORD", "R2_ACCESS_KEY", "R2_SECRET_KEY",
     }),
-    "provider_secret": frozenset({"GEMINI_API_KEY"}),
+    "provider_secret": frozenset({"OPENAI_API_KEY"}),
     "generated_runtime_identity": frozenset({
         "ACADEMY_DEVELOPMENT_RELEASE_ID", "ACADEMY_PREPROD_RELEASE_ID",
         "ACADEMY_RUNTIME_ENV", "DB_NAME", "DB_USER", "DJANGO_SETTINGS_MODULE",
@@ -47,7 +50,7 @@ KEY_CLASSES = {
     }),
     "prohibited_production_only": frozenset({
         "ANTHROPIC_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN", "OPENAI_API_KEY", "SOLAPI_API_KEY",
+        "AWS_SESSION_TOKEN", "GEMINI_API_KEY", "SOLAPI_API_KEY",
         "SOLAPI_API_SECRET", "TOSS_PAYMENTS_SECRET_KEY", "VAPID_PRIVATE_KEY",
     }),
 }
@@ -93,12 +96,12 @@ def validate_metadata(stage: str, metadata: dict[str, dict]) -> dict[str, int]:
                     tags.get("SchemaVersion") != "1" or
                     not _assigned(tags.get("Owner"))):
                 raise CandidateSourceUnavailable(f"Missing base owner/schema tags for: {name}")
-        if kind == "gemini_key":
+        if kind == "openai_key":
             if (tags.get("Environment") != "development" or
                     tags.get("Purpose") != "matchup-synthetic-qa" or
                     not _assigned(tags.get("Owner")) or
                     not _assigned(tags.get("RotationOwner")) or
-                    not _assigned(tags.get("GoogleProjectId"))):
+                    not _assigned(tags.get("OpenAIProjectId"))):
                 raise CandidateSourceUnavailable(f"Missing provider owner tags for: {name}")
             try:
                 rotate_by = date.fromisoformat(tags["RotateBy"])

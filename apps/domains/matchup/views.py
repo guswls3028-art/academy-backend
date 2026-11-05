@@ -1501,7 +1501,7 @@ class DocumentPageIncludeView(View):
 class DocumentPageVlmClassifyView(View):
     """POST /api/v1/matchup/documents/<doc_id>/pages/<page_idx>/vlm-classify/
 
-    Phase 5-deep VLM 정밀 분석: low_conf 페이지 ondemand로 Gemini 호출.
+    Phase 5-deep VLM 정밀 분석: low_conf 페이지 ondemand로 OpenAI 호출.
     - 페이지 이미지를 R2에서 다운로드 → temp file → vision adapter 호출
     - 결과: {page_role, should_skip, problems[{number, bbox, confidence}], confidence, debug}
     - cost guard: doc당 호출 횟수 cap (vlm_fallback._VLM_DOC_CALL_LIMIT)
@@ -1551,6 +1551,7 @@ class DocumentPageVlmClassifyView(View):
                     image_path=tmp_path,
                     page_meta={
                         "document_id": doc.id,
+                        "tenant_id": request.tenant.id,
                         "page_index": page_idx_i,
                         "page_width": page.get("width"),
                         "page_height": page.get("height"),
@@ -1566,6 +1567,9 @@ class DocumentPageVlmClassifyView(View):
                 return JsonResponse({"detail": "VLM 분석 실패"}, status=500)
         finally:
             cleanup_tmp_for_path(tmp_path)
+
+        if result.debug.get("adapter") != "openai":
+            return JsonResponse({"detail": "AI 분석을 완료하지 못했습니다. 기존 문항은 유지됩니다. 잠시 후 다시 시도해 주세요."}, status=502)
 
         return JsonResponse({
             "ok": True,

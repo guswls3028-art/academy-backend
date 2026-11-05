@@ -159,3 +159,6 @@ python -m pytest tests/test_ppt_question_readability.py tests/test_ppt_pdf_quest
 생성 PPTX를 다시 열 수 있는지
 확인한다. 배포는 Tools worker를 포함한 정식 backend release를 사용하고 개발
 런타임·격리 preproduction의 Excel/PPT/R2 smoke를 모두 통과해야 한다.
+
+공급자·용도별 모델, 출력 검증과 키 전환/복구는
+[OpenAI 운영 계약](../operations/openai-provider.md)을 따른다.

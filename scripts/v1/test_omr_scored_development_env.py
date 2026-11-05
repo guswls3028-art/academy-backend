@@ -177,13 +177,14 @@ function Load-SSOT {
         return {
             "api": {**common, "DJANGO_SETTINGS_MODULE": "apps.api.config.settings.prod"},
             "workers": {**common, "DJANGO_SETTINGS_MODULE": "apps.api.config.settings.worker",
-                        "GEMINI_API_KEY": "synthetic-approved-provider"},
+                        "OPENAI_API_KEY": "synthetic-production-provider-must-be-replaced"},
         }
 
     @classmethod
     def publish(cls, values=None, fault="", homework=False):
         values = values or cls.source_values()
         sources = {
+            "/academy/providers/development/openai-api-key": "synthetic-approved-provider",
             "/test/source/api": json.dumps(values["api"], ensure_ascii=False),
             "/test/source/workers": base64.b64encode(json.dumps(values["workers"], ensure_ascii=False).encode()).decode(),
             "/test/credential/db": json.dumps({"DB_USER": "academy_api_development_app", "DB_PASSWORD": "synthetic-only-password-12345678901234567890"}),
@@ -245,7 +246,7 @@ exit $exitCode
             self.assertEqual(value["VIDEO_BATCH_JOB_QUEUE"], "")
             self.assertEqual(value["BILLING_KEY_ENCRYPTION_PRIMARY_KEY"], "")
             self.assertEqual(value["SOLAPI_MOCK"], "true")
-        self.assertEqual(worker["GEMINI_API_KEY"], "synthetic-approved-provider")
+        self.assertEqual(worker["OPENAI_API_KEY"], "synthetic-approved-provider")
         self.assertEqual(worker["HOMEWORK_PREVIEW_BATCH_JOB_DEFINITION"], "")
         self.assertRegex(api["HOMEWORK_PREVIEW_BATCH_JOB_DEFINITION"], r"^academy-development-homework-video-[a-f0-9]{12}-v411:1$")
         readbacks = [call["name"] for call in calls if call["operation"] == "get-parameter" and ":" in call["name"]]

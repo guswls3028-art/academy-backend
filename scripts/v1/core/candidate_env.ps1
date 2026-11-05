@@ -95,6 +95,7 @@ function Set-IsolatedPreprodApiValues {
         '^DEV_ALERTS_',
         '^VAPID_PRIVATE_KEY$',
         '^OPENAI_',
+        '^EMBEDDING_OPENAI_API_KEY$',
         '^ANTHROPIC_',
         '^GEMINI_',
         '^YOUTUBE_',

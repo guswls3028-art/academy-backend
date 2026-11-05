@@ -364,7 +364,7 @@ class ProblemSegmentationProposal(TimestampModel):
 
     ENGINE_CHOICES = [
         ("yolo", "YOLO segmentation"),
-        ("vlm", "VLM (Gemini)"),
+        ("vlm", "VLM"),
         ("ocr", "OCR + layout heuristic"),
         ("native_pdf", "Native PDF parser"),
         ("manual_assist", "사용자 수동 자르기 보조"),
@@ -828,7 +828,7 @@ class AutoSegmentationSnapshot(TimestampModel):
         ("yolo_v11", "YOLO V11"),
         ("yolo_v12", "YOLO V12"),
         ("yolo_v13", "YOLO V13"),
-        ("vlm", "VLM (Gemini)"),
+        ("vlm", "VLM"),
         ("ocr", "OCR + layout heuristic"),
         ("native_pdf", "Native PDF parser"),
         ("hybrid", "Hybrid (YOLO + VLM verifier)"),

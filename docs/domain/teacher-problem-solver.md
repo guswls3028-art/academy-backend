@@ -102,3 +102,6 @@ whitelist, provider 오류 은닉, 발행/worker 정리, 교차 테넌트 키
 보호를 포함해야 한다. 운영 확인은 합성 비개인정보 이미지만 사용하고
 완료 후 AI 큐·DLQ, worker warm baseline/health, API/DB health를 함께
 확인한다.
+
+공급자·용도별 모델, 출력 검증과 키 전환/복구는
+[OpenAI 운영 계약](../operations/openai-provider.md)을 따른다.

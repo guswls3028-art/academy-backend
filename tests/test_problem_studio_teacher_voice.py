@@ -464,6 +464,7 @@ class ProblemStudioTeacherVoiceTests(TestCase):
         get_client.return_value.chat.completions.create.return_value = SimpleNamespace(
             choices=[
                 SimpleNamespace(
+                    finish_reason="stop",
                     message=SimpleNamespace(
                         content=json.dumps(
                             {
@@ -523,6 +524,7 @@ class ProblemStudioTeacherVoiceTests(TestCase):
         get_client.return_value.chat.completions.create.return_value = SimpleNamespace(
             choices=[
                 SimpleNamespace(
+                    finish_reason="stop",
                     message=SimpleNamespace(
                         content=json.dumps(
                             {
@@ -578,6 +580,7 @@ class ProblemStudioTeacherVoiceTests(TestCase):
             PROBLEM_GEN_MODEL="fallback-model",
         )
         get_client.return_value.responses.create.return_value = SimpleNamespace(
+            status="completed",
             output_text=json.dumps({
                 "explanations": [{
                     "index": 1,

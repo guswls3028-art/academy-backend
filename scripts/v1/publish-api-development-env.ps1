@@ -75,6 +75,12 @@ try {
     throw "API development source parameters must contain the expected JSON/base64(JSON) objects."
 }
 
+# Read the approved provider from its development source before any write.
+# This lets the immutable candidate pass development without changing production credentials.
+$developmentOpenAiKey = (Get-RequiredSecureParameterValue -Name "/academy/providers/development/openai-api-key").Trim()
+if (-not $developmentOpenAiKey) { throw "Development OpenAI provider key is empty." }
+$productionWorkers | Add-Member -NotePropertyName OPENAI_API_KEY -NotePropertyValue $developmentOpenAiKey -Force
+
 $productionDatabaseName = [string]$production.DB_NAME
 $developmentYoutubeKey = ""
 if ([string]$production.YOUTUBE_DATA_API_KEY) {
@@ -198,6 +204,7 @@ function Set-IsolatedDevelopmentValues {
         '^CDN_HLS_SIGNING_',
         '^VAPID_PRIVATE_KEY$',
         '^OPENAI_',
+        '^EMBEDDING_OPENAI_API_KEY$',
         '^ANTHROPIC_',
         '^GEMINI_',
         '^YOUTUBE_',
@@ -210,7 +217,7 @@ function Set-IsolatedDevelopmentValues {
         # Reuse the approved provider only in isolated development workers.
         if (
             $SettingsModule -eq "apps.api.config.settings.worker" -and
-            $property.Name -eq "GEMINI_API_KEY"
+            $property.Name -eq "OPENAI_API_KEY"
         ) {
             continue
         }

@@ -108,7 +108,7 @@ _ALLOWED_TRANSFORMS_BY_STAGE: dict = {
     }),
     PreprocessingStage.VLM: frozenset({
         TransformKind.NONE,
-        TransformKind.SCALE,             # _GEMINI_VISION_MAX_DIM resize + scale 역변환
+        TransformKind.SCALE,             # _OPENAI_VISION_MAX_DIM resize + scale 역변환
         TransformKind.UNSHARP_MASK,
     }),
 }
@@ -227,7 +227,7 @@ class EmbeddingInputImage:
 
 @dataclass(frozen=True)
 class VlmInputImage:
-    """Gemini Vision 입력 전용.
+    """OpenAI Vision 입력 전용.
 
     현재 운영은 vlm_fallback.py:599~622 에서 SCALE (1600px max + JPEG 85) + bbox
     inverse 만 적용. 본 contract 도 이 범위 그대로 — VLM 자체가 perspective/그림자/

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from academy.adapters.ai.openai_output import completed_chat_text, reasoning_options
+
 import json
 import logging
 import os
@@ -62,13 +64,16 @@ Return ONLY valid JSON:
 {{"parent_phone_col_index": <int>, "confidence": <0.0 to 1.0>}}
 (parent_phone_col_index must be one of the col_index values above)"""
 
-    client = OpenAI(api_key=api_key)
+    client = OpenAI(api_key=api_key, timeout=60.0, max_retries=2)
+    model = os.getenv("EXCEL_SCHEMA_INFER_MODEL") or "gpt-6-luna"
     response = client.chat.completions.create(
-        model=os.getenv("EXCEL_SCHEMA_INFER_MODEL", "gpt-4o-mini"),
+        model=model,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0,
+        max_completion_tokens=2048, store=False,
+        response_format={"type": "json_object"},
+        **reasoning_options(model, chat=True),
     )
-    content = response.choices[0].message.content or "{}"
+    content = completed_chat_text(response)
     try:
         data = json.loads(content)
     except json.JSONDecodeError as e:

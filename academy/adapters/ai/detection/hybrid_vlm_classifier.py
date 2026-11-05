@@ -1,4 +1,4 @@
-"""Hybrid YOLO + Gemini VLM verifier — false positive 제거.
+"""Hybrid YOLO + OpenAI VLM verifier — false positive 제거.
 
 basic_definition_2026_05_09 SSOT MVP Phase: V11 paradigm 한계 (recall OK, precision
 0.55-0.7) 의 후처리 layer. PoC (`hybrid_vlm_filter_poc_v3`) 결과 doc 207 prec
@@ -8,19 +8,17 @@ basic_definition_2026_05_09 SSOT MVP Phase: V11 paradigm 한계 (recall OK, prec
   segment → questions (bbox + image_path)
   → filter_questions_by_hybrid_vlm()
     → 각 box → cv2 crop + JPEG 압축
-    → Gemini 2.5 Flash classify (PROMPT 9-class)
+    → GPT-6 Luna classify (PROMPT 9-class)
     → 'problem' 만 keep, 그 외 silent drop
   → _upload_cropped_images (운영 path 그대로)
 
-비용 (PoC 측정):
-  - Gemini 2.5 Flash @ ~$0.001/call
-  - doc 평균 50-100 box → ~$0.05-0.10/doc
-  - cost_cap_calls 200 = max ~$0.2/doc 안전 cap
+비용: cost_cap_calls=200, tenant daily cap, 1024 output tokens/request.
+실제 비용은 모델과 입력/출력 토큰에 따라 달라진다.
 
 fail-soft 정책:
-  - Gemini 실패 / timeout / quota → box raw keep (학원장 노동 손실 방지)
+  - OpenAI 실패 / timeout / quota → box raw keep (학원장 노동 손실 방지)
   - cost_cap 도달 → 나머지 raw keep
-  - GEMINI_API_KEY 미설정 → 즉시 returnRaw (no-op)
+  - OPENAI_API_KEY 미설정 → 즉시 returnRaw (no-op)
 
 ENV flag MATCHUP_HYBRID_VLM_TENANTS (콤마 구분 tenant id) 매치 시만 적용.
 default 빈 list → 모든 doc no-op (운영 영향 0).
@@ -61,8 +59,12 @@ PROMPT = """이 이미지는 한국어 시험지 PDF 의 일부 영역이다. �
 
 # problem 만 keep — 그 외 모두 reject.
 KEEP_CLASSES = {"problem"}
+VALID_CLASSES = KEEP_CLASSES | {
+    "problem_fragment", "cover", "chapter_intro", "concept_intro", "explanation",
+    "table_of_contents", "header_label", "empty_or_decoration", "other",
+}
 
-# Gemini classify 입력 image 의 max dimension (압축, 비용 절감).
+# OpenAI classify 입력 image 의 max dimension (압축, 비용 절감).
 _MAX_IMG_DIM = 800
 _JPEG_QUALITY = 80
 
@@ -73,40 +75,44 @@ def classify_box_image(
     document_id: Optional[str | int] = None,
     tenant_id: Optional[str | int] = None,
 ) -> str:
-    """단일 box image classify. Gemini 2.5 Flash 호출.
+    """단일 box image classify. GPT-6 Luna 호출.
 
     Returns:
       - classification 문자열 (problem / cover / ...) 또는
       - '_error:<exc_name>' / '_empty' (fail-soft)
     """
     try:
-        from academy.adapters.ai.detection.vlm_fallback import _gemini_request
+        from academy.adapters.ai.detection.vlm_fallback import _openai_request
     except ImportError:
-        return "_error:no_gemini_adapter"
+        return "_error:no_openai_adapter"
 
     import base64
     image_b64 = base64.b64encode(image_bytes).decode("ascii")
     parts = [
-        {"text": PROMPT},
-        {"inline_data": {"mime_type": "image/jpeg", "data": image_b64}},
+        {"type": "input_text", "text": PROMPT},
+        {"type": "input_image", "image_url": f"data:image/jpeg;base64,{image_b64}", "detail": "high"},
     ]
     try:
         # enforce_per_doc_cap=False (2026-05-11): VLM auto-split 이 같은 doc 의 50 cap
         # 소진 후 Hybrid filter 가 RuntimeError 로 fail-soft keep 하던 결함 fix.
         # Hybrid 는 자체 cost_cap_calls + tenant daily cap 으로 안전 관리.
-        resp = _gemini_request(
-            model="gemini-2.5-flash",
+        resp = _openai_request(
+            model=os.getenv("MATCHUP_HYBRID_VLM_MODEL") or "gpt-6-luna",
             parts=parts,
             response_schema_hint='{"classification": "..."}',
             document_id=document_id,
             tenant_id=tenant_id,
             enforce_per_doc_cap=False,
+            max_output_tokens=1024,
         )
     except Exception as e:
         return f"_error:{type(e).__name__}"
 
-    cls = (resp.get("classification") or "").strip().lower()
-    return cls or "_empty"
+    value = resp.get("classification")
+    if not isinstance(value, str):
+        return "_error:invalid_classification"
+    cls = value.strip().lower()
+    return cls if cls in VALID_CLASSES else "_error:invalid_classification"
 
 
 def filter_questions_by_hybrid_vlm(
@@ -116,7 +122,7 @@ def filter_questions_by_hybrid_vlm(
     tenant_id: Optional[str | int] = None,
     cost_cap_calls: int = 200,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """questions 의 각 box 에 Gemini classify → 'problem' 만 keep.
+    """questions 의 각 box 에 OpenAI classify → 'problem' 만 keep.
 
     fail-soft: classify 실패 / cost cap 도달 시 box raw keep (학원장 노동 손실 방지).
 

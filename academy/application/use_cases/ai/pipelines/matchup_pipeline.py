@@ -110,12 +110,14 @@ def _infer_source_type_from_names(source_type: str, *names: str) -> str:
 
 def _real_vlm_vision_configured() -> bool:
     adapter = os.environ.get("MATCHUP_VLM_VISION_ADAPTER", "mock").strip().lower()
-    return adapter.startswith("gemini") and bool(os.environ.get("GEMINI_API_KEY"))
+    from academy.adapters.ai.detection.vlm_fallback import is_openai_adapter
+    return is_openai_adapter(adapter) and bool(os.environ.get("OPENAI_API_KEY"))
 
 
 def _real_vlm_text_configured() -> bool:
     adapter = os.environ.get("MATCHUP_VLM_TEXT_ADAPTER", "mock").strip().lower()
-    return adapter.startswith("gemini") and bool(os.environ.get("GEMINI_API_KEY"))
+    from academy.adapters.ai.detection.vlm_fallback import is_openai_adapter
+    return is_openai_adapter(adapter) and bool(os.environ.get("OPENAI_API_KEY"))
 
 
 # ── 텍스트 정제 + format 감지 ──────────────────────────
@@ -1315,9 +1317,9 @@ def _detect_page_with_vlm(
     document_id,
     tenant_id: str | int | None = None,
 ) -> Tuple[Optional[Any], Optional[str]]:
-    """Gemini vision으로 page_role/paper_type/bbox 후보를 한 번 받아온다.
+    """OpenAI vision으로 page_role/paper_type/bbox 후보를 한 번 받아온다.
 
-    반환 result는 real Gemini 응답일 때만 제공한다. mock 또는 gemini 실패 후 mock
+    반환 result는 real OpenAI 응답일 때만 제공한다. mock 또는 openai 실패 후 mock
     fallback은 운영 판단 신호로 쓰지 않는다.
     """
     try:
@@ -1341,7 +1343,7 @@ def _detect_page_with_vlm(
         return None, None
 
     adapter = (result.debug or {}).get("adapter", "")
-    if adapter != "gemini":
+    if adapter != "openai":
         return None, None
 
     raw_paper_type = getattr(result, "paper_type", None)
@@ -1377,9 +1379,9 @@ def _classify_page_role_with_vlm_text(
     document_id,
     tenant_id: str | int | None = None,
 ) -> Optional[Any]:
-    """Gemini Flash-Lite text 분류로 page_role을 판정한다.
+    """GPT-6 Luna text 분류로 page_role을 판정한다.
 
-    real Gemini 응답만 운영 판단에 사용한다. Gemini 실패 후 mock fallback은 보수적으로
+    real OpenAI 응답만 운영 판단에 사용한다. OpenAI 실패 후 mock fallback은 보수적으로
     무시해서 기존 boxes를 지우지 않는다.
     """
     page_text = _page_text_for_vlm(page)
@@ -1404,7 +1406,7 @@ def _classify_page_role_with_vlm_text(
         return None
 
     adapter = (getattr(result, "debug", {}) or {}).get("adapter", "")
-    if adapter != "gemini":
+    if adapter != "openai":
         return None
     return result
 
@@ -1421,7 +1423,7 @@ def _apply_vlm_page_role_filter(
     document_id,
     tenant_id: str | int | None = None,
 ) -> Optional[Dict[str, Any]]:
-    """Gemini page-role로 표지/목차/해설/정답 페이지를 자동 제외한다.
+    """OpenAI page-role로 표지/목차/해설/정답 페이지를 자동 제외한다.
 
     기본 off. `MATCHUP_VLM_PAGE_ROLE_FILTER=1`일 때만 동작한다. 이 경로는
     기존 박스를 VLM bbox로 대체하지 않고, skip 확신이 높은 페이지의 기존
@@ -1539,7 +1541,7 @@ def _augment_questions_with_vlm_for_empty_pages(
     job_id: str,
     tenant_id: str | int | None = None,
 ) -> Optional[Dict[str, Any]]:
-    """일부 페이지만 자동분리 실패한 문서에서 빈 페이지를 Gemini로 보정한다."""
+    """일부 페이지만 자동분리 실패한 문서에서 빈 페이지를 OpenAI로 보정한다."""
     if not _env_flag("MATCHUP_VLM_AUTO_SPLIT", True):
         return None
     if not _env_flag("MATCHUP_VLM_FILL_EMPTY_PAGES", True):
@@ -1687,7 +1689,7 @@ def _augment_questions_with_vlm_for_underfilled_pages(
     document_id,
     tenant_id: str | int | None = None,
 ) -> Optional[Dict[str, Any]]:
-    """스캔/학생촬영 페이지가 일부만 잘린 경우 Gemini bbox로 누락 문항을 보강한다.
+    """스캔/학생촬영 페이지가 일부만 잘린 경우 OpenAI bbox로 누락 문항을 보강한다.
 
     Empty-page 보강만으로는 운영 T1 학생 촬영 시험지처럼 Q4/Q6/Q8만 잡히고
     Q1/Q2/Q3/Q5/Q7이 빠지는 under-cut을 복구할 수 없다. 이 경로는 기존 box를
@@ -2050,11 +2052,11 @@ def _try_vlm_problem_bboxes(
     bbox는 4종 결함(D-1~D-4) 게이트에서 reject되어도 paper_type 분류 신호는
     유효하므로 page meta에 보존. None은 VLM 호출 자체 실패 또는 unknown.
 
-    Cost cap (P0-2, 2026-05-04): tenant_id를 vlm_fallback._gemini_request에 전달
+    Cost cap (P0-2, 2026-05-04): tenant_id를 vlm_fallback._openai_request에 전달
     하여 tenant별 일별 호출 cap 적용.
 
     bbox validated_result:
-      1차 게이트: adapter == "gemini" + should_skip False + conf >= 0.80 + problems >= 2
+      1차 게이트: adapter == "openai" + should_skip False + conf >= 0.80 + problems >= 2
       2차 게이트: _validate_vlm_bboxes (D-1~D-4)
       통과 시 result, 실패 시 None.
     """
