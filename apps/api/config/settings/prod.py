@@ -84,9 +84,10 @@ ALLOWED_HOSTS = [
 
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
-# Cloudflare Pages *.pages.dev (프로젝트별 서브도메인)
+# Only deployment/branch aliases inside our exact Cloudflare Pages project.
+# Similar project names are independently registrable and must not be trusted.
 CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^https://[a-z0-9-]*academy-frontend[a-z0-9-]*\.pages\.dev$",
+    r"^https://[a-z0-9-]+\.academy-frontend\.pages\.dev\Z",
 ]
 
 CORS_ALLOWED_ORIGINS = [

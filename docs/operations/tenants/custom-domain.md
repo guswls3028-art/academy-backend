@@ -130,6 +130,33 @@ cd C:\academy\backend
 
 코드와 로고 준비는 병행할 수 있지만, DNS 활성화로 오인해 완료 처리하지 않는다.
 
+### 메일 발신과 도메인 사칭 방지
+
+웹 도메인 연결과 이메일 발신 인증은 별도 경계다. 도메인 소유자에게 실제
+발신 여부를 확인하고, 기존 MX·SPF·DKIM·DMARC와 하위 도메인의 발신 설정을
+읽은 뒤 정확한 소유 zone만 변경한다. 메일 제공자가 있으면 제공자의 승인된
+SPF/DKIM과 정렬을 먼저 검증하며, 미사용을 추정하여 `-all`을 적용하지 않는다.
+
+현재 `hakwonplus.com`, `tchul.com`은 소유자가 메일 발신에 사용하지 않음을
+확인한 도메인이다. 2026-11-05에 다음 TXT를 적용하고 공용 DNS 두 곳에서
+확인했다. 다른 테넌트 도메인은 이 확인 범위에 포함하지 않는다.
+
+| 이름 | TXT 값 | 목적 |
+|---|---|---|
+| 도메인 apex | `v=spf1 -all` | 허용된 메일 발신 서버 없음 |
+| `_dmarc.<도메인>` | `v=DMARC1; p=reject; sp=reject` | 정렬된 인증에 실패한 해당 도메인·하위 도메인 발신 거부 요청 |
+
+SPF·DMARC는 수신 서버의 정책 판단을 위한 DNS 설정이며 웹 로그인·API 권한을
+대체하지 않는다. DKIM 발신 키나 수신함·보고서 수신 주소를 임의로 만들지 않는다.
+웹 A/AAAA/CNAME과 기존 사용자 작성 레코드는 보존한다. 설정 후 authoritative
+API readback과 `1.1.1.1`, `8.8.8.8`의 TXT 조회에서 정책이 각각 하나인지 확인하고,
+웹 HTTPS와 API health가 정상인지 다시 확인한다. 메일을 도입할 때는 먼저 실제
+발신 제공자 SPF/DKIM을 등록하고 정렬된 정상 메일을 검증한 뒤 정책을 변경한다.
+잘못 적용했다면 이 작업에서 만든 정확한 레코드만 이전 상태로 복구한다.
+
+근거: [비발신 도메인 보호 지침](https://www.gov.uk/guidance/protect-domains-that-dont-send-email),
+[DMARC RFC 7489](https://www.rfc-editor.org/rfc/rfc7489.html).
+
 ## 3. 코드·브랜딩 준비
 
 ### 백엔드
@@ -139,6 +166,19 @@ cd C:\academy\backend
 - `ALLOWED_HOSTS`
 - `CORS_ALLOWED_ORIGINS`
 - `CSRF_TRUSTED_ORIGINS`
+
+Pages 배포의 CORS 정규식은 정확한 `academy-frontend.pages.dev` 프로젝트의
+`<배포 해시 또는 브랜치>.academy-frontend.pages.dev` HTTPS origin만 허용한다.
+프로젝트 기본 주소와 고객 도메인은 위 명시 목록을 사용한다. 이름에
+`academy-frontend`를 포함한 다른 Pages 프로젝트, 다른 suffix·scheme·port는
+허용하지 않는다. 이는 응답을 읽을 수 있는 브라우저 출처 경계이며 JWT·tenant·role
+검사를 생략하지 않는다. 미등록 고객 origin은 목록을 검토해 등록하고, CORS
+오류를 전체 wildcard 허용으로 복구하지 않는다. 회귀 검증은
+`tests/test_production_cors.py`의 실제 CORS middleware GET/OPTIONS와 기존
+`tests/test_tenant_isolation.py`, `tests/test_tenant_access_security.py`를 사용한다.
+배포 후 정상 고객 origin·소유 preview origin은 ACAO 일치, 유사 이름의 외부
+origin은 ACAO/credentials 미노출, 무인증 업무 요청은 계속 거부되는지 확인한다.
+Pages preview 이름의 형식은 [Cloudflare 소유 문서](https://developers.cloudflare.com/pages/configuration/preview-deployments/)를 따른다.
 
 영상 파일은 API가 발급한 URL로 브라우저에서 R2에 직접 전송되므로 API CORS만
 갱신해서는 부족하다. `setup_r2_cors`는 하드코딩된 고객 목록이 아니라 현재
