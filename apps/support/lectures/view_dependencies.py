@@ -32,6 +32,7 @@ def list_unassigned_active_enrollments(tenant: Any, lecture: Any, excluded_ids: 
 
 def first_session_delete_blocker(sessions: Any) -> str | None:
     from apps.domains.attendance.models import Attendance
+    from apps.domains.community.models import PostMapping
     from apps.domains.enrollment.models import SessionEnrollment
     from apps.domains.exams.models import Exam
     from apps.domains.homework.models import HomeworkAssignment, HomeworkEnrollment
@@ -47,6 +48,7 @@ def first_session_delete_blocker(sessions: Any) -> str | None:
 
     session_ids = sessions.values("id")
     checks = (
+        ("community posts", PostMapping.objects.filter(node__session_id__in=session_ids)),
         ("session enrollments", SessionEnrollment.objects.filter(session_id__in=session_ids)),
         ("attendance records", Attendance.objects.filter(session_id__in=session_ids)),
         ("exams", Exam.objects.filter(sessions__in=sessions)),
@@ -74,8 +76,11 @@ def first_session_delete_blocker(sessions: Any) -> str | None:
 
 
 def first_lecture_delete_blocker(lecture: Any) -> str | None:
+    from apps.domains.community.models import PostMapping
     from apps.domains.lectures.models import SectionAssignment, Session
 
+    if PostMapping.objects.filter(node__lecture=lecture).exists():
+        return "community posts"
     if lecture.enrollments.exists():
         return "lecture enrollments"
     if lecture.lecture_progress_rows.exists():

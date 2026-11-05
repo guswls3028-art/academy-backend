@@ -12,7 +12,9 @@ class PostMapping(models.Model):
     )
     node = models.ForeignKey(
         ScopeNode,
-        on_delete=models.CASCADE,
+        # Removing a scope must never turn restricted content into global content.
+        # RESTRICT still permits the owning tenant/post cascade cleanup.
+        on_delete=models.RESTRICT,
         related_name="post_mappings",
     )
     created_at = models.DateTimeField(auto_now_add=True)
