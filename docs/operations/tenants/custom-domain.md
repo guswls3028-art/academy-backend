@@ -167,14 +167,24 @@ API readback과 `1.1.1.1`, `8.8.8.8`의 TXT 조회에서 정책이 각각 하나
 - `CORS_ALLOWED_ORIGINS`
 - `CSRF_TRUSTED_ORIGINS`
 
-Pages 배포의 CORS 정규식은 정확한 `academy-frontend.pages.dev` 프로젝트의
-`<배포 해시 또는 브랜치>.academy-frontend.pages.dev` HTTPS origin만 허용한다.
-프로젝트 기본 주소와 고객 도메인은 위 명시 목록을 사용한다. 이름에
+Pages 배포의 CORS 정규식은 공식 계정 API로 확인한 `academy-frontend-26b.pages.dev` 할당 주소의
+`<배포 해시 또는 브랜치>.academy-frontend-26b.pages.dev` HTTPS origin만 허용한다.
+프로젝트 기본 주소와 고객 도메인은 위 명시 목록을 사용한다.
+Cloudflare 프로젝트 **이름** `academy-frontend`를 호스트로 추정하지 않는다.
+2026-11-05 공식 계정의 `/pages/projects/academy-frontend` 응답에서 `subdomain`은
+`academy-frontend-26b.pages.dev`이며 `domains`에는 현재 고객 도메인들이 연결돼 있다.
+호스트·CORS·CSRF의 명시 목록도 이 실제 주소를 사용한다. 소유가 확인되지 않은
+`academy-frontend.pages.dev`와 그 preview는 허용하지 않는다. 프로젝트 이전 시
+공식 API의 `subdomain`, 연결된 `domains`, 실제 `deployment.url`을 함께 확인한 뒤
+해당 경계와 테스트를 갱신한다. 프로젝트 이름만 확인하는 검증은 불충분하다.
+기존 광범위 정규식은 실제 `-26b` 기본 주소를 허용했지만 한 단계 preview는 이미
+거부하고 있었다. 새 정책은 실제 기본 주소를 유지하고 실제 preview를 복구하며,
+이름이 비슷한 별도 프로젝트를 차단한다. 이름에
 `academy-frontend`를 포함한 다른 Pages 프로젝트, 다른 suffix·scheme·port는
 허용하지 않는다. 이는 응답을 읽을 수 있는 브라우저 출처 경계이며 JWT·tenant·role
 검사를 생략하지 않는다. 미등록 고객 origin은 목록을 검토해 등록하고, CORS
 오류를 전체 wildcard 허용으로 복구하지 않는다. 회귀 검증은
-`tests/test_production_cors.py`의 실제 CORS middleware GET/OPTIONS와 기존
+`tests/test_production_cors.py`의 실제 CORS middleware GET/OPTIONS 34건과 기존
 `tests/test_tenant_isolation.py`, `tests/test_tenant_access_security.py`를 사용한다.
 배포 후 정상 고객 origin·소유 preview origin은 ACAO 일치, 유사 이름의 외부
 origin은 ACAO/credentials 미노출, 무인증 업무 요청은 계속 거부되는지 확인한다.
