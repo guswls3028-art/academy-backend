@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Iterable
 
-from django.db.models import Count, F, Q
+from django.db.models import BooleanField, Count, F, Q, Value
 from django.utils import timezone
 from apps.support.lectures.schedule_queries import student_schedule_annotations
 
@@ -43,7 +43,7 @@ def get_student_lecture_sessions(
     if student is not None:
         base = base.annotate(**student_schedule_annotations(tenant=tenant, student=student))
     else:
-        base = base.annotate(effective_date=F("date"))
+        base = base.annotate(effective_date=F("date"), schedule_configured=Value(False, output_field=BooleanField()))
     sessions = (
         base.filter(
             id__in=list(session_ids),
@@ -51,7 +51,8 @@ def get_student_lecture_sessions(
             lecture__is_active=True,
         )
         .filter(
-            Q(effective_date__lt=timezone.localdate())
+            Q(schedule_configured=True)
+            | Q(effective_date__lt=timezone.localdate())
             | Q(effective_date__isnull=True)
             | (
                 (Q(lecture__end_date__isnull=True) | Q(effective_date__lte=F("lecture__end_date")))

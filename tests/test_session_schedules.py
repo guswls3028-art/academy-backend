@@ -195,6 +195,19 @@ class TestSessionSchedules(LectureTestBase):
         Session.objects.filter(pk=self.session.pk).update(date=date(2026, 4, 10))
         self.assertEqual(self.schedules("put", {"version": first, "schedules": []}).status_code, 409)
 
+    def test_explicit_teaching_date_remains_visible_after_nominal_lecture_end(self):
+        state = self.configure()
+        state["schedules"][1]["date"] = "2026-05-01"
+        self.assertEqual(self.schedules("put", state).status_code, 200)
+        student = self.students[1]
+        self.assertTrue(today_lecture_sessions_for_dashboard(tenant=self.tenant, student=student, today=date(2026, 5, 1)).exists())
+        with patch("apps.support.student_app.session_dependencies.timezone.localdate", return_value=date(2026, 4, 1)):
+            rows = get_student_lecture_sessions(session_ids=[self.session.pk], tenant=self.tenant, student=student, hidden_before=None, hidden_session_ids=set())
+        self.assertEqual(rows[0].effective_date, date(2026, 5, 1))
+        self.lecture.is_active = False
+        self.lecture.save(update_fields=["is_active"])
+        self.assertFalse(today_lecture_sessions_for_dashboard(tenant=self.tenant, student=student, today=date(2026, 5, 1)).exists())
+
 
 class TestSessionScheduleConcurrencyPostgres(TransactionTestCase):
     @classmethod

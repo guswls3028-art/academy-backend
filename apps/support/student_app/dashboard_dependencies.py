@@ -46,8 +46,8 @@ def today_lecture_sessions_for_dashboard(*, tenant: Any, student: Any, today):
 
     return (
         LectureSession.objects.filter(
-            ongoing_lecture_filter(today=today),
-            Q(lecture__start_date__isnull=True) | Q(lecture__start_date__lte=today),
+            lecture__is_active=True,
+            lecture__is_system=False,
             session_enrollments__tenant=tenant,
             session_enrollments__enrollment__student=student,
             session_enrollments__enrollment__tenant=tenant,
@@ -58,6 +58,12 @@ def today_lecture_sessions_for_dashboard(*, tenant: Any, student: Any, today):
         )
         .annotate(**student_schedule_annotations(tenant=tenant, student=student))
         .filter(effective_date=today)
+        .filter(
+            Q(schedule_configured=True) | (
+                ongoing_lecture_filter(today=today)
+                & (Q(lecture__start_date__isnull=True) | Q(lecture__start_date__lte=today))
+            ),
+        )
         .select_related("lecture")
         .distinct()
         .order_by("order", "id")
