@@ -129,13 +129,14 @@ def test_sdk_refusal_and_chat_truncation_are_rejected():
     assert completed_response_text(SimpleNamespace(status="completed", output_text=" complete ")) == "complete"
 
 
-def test_manual_vlm_failure_is_visible_and_tenant_budget_is_scoped():
+@pytest.mark.parametrize("error,status", [("provider unavailable", 502), ("VLM 호출 한도 초과", 429)])
+def test_manual_vlm_failure_is_visible_and_tenant_budget_is_scoped(error, status):
     from apps.domains.matchup.views import DocumentPageVlmClassifyView
     from academy.adapters.ai.detection.vlm_fallback import ProblemBboxResult, PageRole
     tenant = SimpleNamespace(id=17)
     doc = SimpleNamespace(id=23)
     result = ProblemBboxResult(page_role=PageRole.PROBLEM, should_skip=False, problems=[],
-                              confidence=0, debug={"adapter": "mock_after_openai_fail"})
+                              confidence=0, debug={"adapter": "mock_after_openai_fail", "openai_error": error})
     with patch("apps.domains.matchup.views._is_tenant_staff", return_value=True), \
          patch("apps.domains.matchup.views.MatchupDocument.objects.get", return_value=doc) as get_doc, \
          patch("apps.domains.matchup.services.ensure_document_page_images", return_value=[{"url":"synthetic-url"}]), \
@@ -143,8 +144,8 @@ def test_manual_vlm_failure_is_visible_and_tenant_budget_is_scoped():
          patch("academy.adapters.ai.storage.downloader.cleanup_tmp_for_path") as cleanup, \
          patch("academy.adapters.ai.detection.vlm_fallback.detect_problems_vision", return_value=result) as detect:
         output = DocumentPageVlmClassifyView().post(SimpleNamespace(tenant=tenant), 23, 0)
-    assert output.status_code == 502
-    assert "다시 시도" in json.loads(output.content)["detail"]
+    assert output.status_code == status
+    assert "기존 문항은 유지" in json.loads(output.content)["detail"]
     get_doc.assert_called_once_with(id=23, tenant=tenant)
     assert detect.call_args.kwargs["page_meta"]["tenant_id"] == 17
     cleanup.assert_called_once_with("synthetic-path")
@@ -155,3 +156,21 @@ def test_unrecognized_crop_class_does_not_drop_a_question(monkeypatch, classific
     from academy.adapters.ai.detection.hybrid_vlm_classifier import classify_box_image
     monkeypatch.setattr(vlm, "_openai_request", lambda **kwargs: {"classification": classification})
     assert classify_box_image(b"synthetic-image", tenant_id=17).startswith("_error:")
+
+
+@pytest.mark.parametrize("overrides", [
+    {"should_skip": "false"}, {"confidence": "0.99"}, {"confidence": float("nan")},
+    {"page_role": "invented"}, {"page_role": "problem", "should_skip": True},
+])
+def test_malformed_page_classification_cannot_become_a_real_skip_decision(monkeypatch, overrides):
+    data = {"page_role": "cover", "should_skip": True, "confidence": .99, **overrides}
+    monkeypatch.setattr(vlm, "_openai_request", lambda **kwargs: data)
+    result = vlm.OpenAIVLMTextAdapter().classify(ocr_text="1. 2+3 = ?")
+    assert result.debug["adapter"] == "mock_after_openai_fail"
+
+
+def test_valid_page_classification_remains_real(monkeypatch):
+    monkeypatch.setattr(vlm, "_openai_request", lambda **kwargs: {
+        "page_role": "cover", "should_skip": True, "confidence": .99})
+    result = vlm.OpenAIVLMTextAdapter().classify(ocr_text="표지")
+    assert result.debug["adapter"] == "openai" and result.should_skip

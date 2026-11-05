@@ -16,7 +16,7 @@ def test_normalized_crop_maps_to_full_original_image(monkeypatch, tmp_path, size
 
     def detect(**kwargs):
         calls.append(kwargs)
-        return {"confidence": .95, "page_role": "problem", "problems": [
+        return {"confidence": .95, "page_role": "problem", "should_skip": False, "problems": [
             {"number": 12, "box_2d": [100, 200, 700, 900], "confidence": .95},
         ]}
 
@@ -53,7 +53,7 @@ def test_invalid_provider_coordinates_cannot_become_question_crops(monkeypatch, 
     path = tmp_path / "page.png"
     Image.new("RGB", (1000, 800), "white").save(path)
     monkeypatch.setattr(vlm_fallback, "_openai_request", lambda **kwargs: {
-        "confidence": .95, "page_role": "problem", "problems": [
+        "confidence": .95, "page_role": "problem", "should_skip": False, "problems": [
             bad, {"number": 7, "box_2d": [100, 100, 900, 900], "shared_with": [8]},
         ]})
     result = vlm_fallback.OpenAIVLMVisionAdapter().detect_problems(image_path=str(path))

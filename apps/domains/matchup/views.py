@@ -1569,6 +1569,8 @@ class DocumentPageVlmClassifyView(View):
             cleanup_tmp_for_path(tmp_path)
 
         if result.debug.get("adapter") != "openai":
+            if "한도 초과" in str(result.debug.get("openai_error", "")):
+                return JsonResponse({"detail": "AI 분석 호출 한도에 도달했습니다. 기존 문항은 유지됩니다."}, status=429)
             return JsonResponse({"detail": "AI 분석을 완료하지 못했습니다. 기존 문항은 유지됩니다. 잠시 후 다시 시도해 주세요."}, status=502)
 
         return JsonResponse({

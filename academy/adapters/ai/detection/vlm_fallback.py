@@ -480,6 +480,22 @@ def _normalize_role(raw: str) -> PageRole:
         return PageRole.PROBLEM
 
 
+def _validate_page_response(data: Dict[str, Any], *, vision: bool = False) -> None:
+    """Do not promote malformed model output into a real page decision."""
+    import math
+    if data.get("page_role") not in {role.value for role in PageRole}:
+        raise RuntimeError("OpenAI page role is invalid")
+    if type(data.get("should_skip")) is not bool:
+        raise RuntimeError("OpenAI page skip flag is invalid")
+    confidence = data.get("confidence")
+    if type(confidence) not in (int, float) or not math.isfinite(confidence) or not 0 <= confidence <= 1:
+        raise RuntimeError("OpenAI page confidence is invalid")
+    if data["should_skip"] and data["page_role"] in {"problem", "mixed"}:
+        raise RuntimeError("OpenAI page role and skip flag conflict")
+    if vision and not isinstance(data.get("problems"), list):
+        raise RuntimeError("OpenAI problem list is invalid")
+
+
 class OpenAIVLMTextAdapter:
     """Tier 2 — OpenAI text 호출로 page_role 분류."""
 
@@ -505,6 +521,7 @@ class OpenAIVLMTextAdapter:
                 document_id=document_id,
                 tenant_id=tenant_id,
             )
+            _validate_page_response(data)
         except Exception as e:
             logger.warning("OpenAI text classify 실패: %s", e)
             # 명시적 fallback: keyword heuristic mock + 실패 reason debug에 노출.
@@ -607,6 +624,8 @@ class OpenAIVLMVisionAdapter:
                 tenant_id=tenant_id,
                 reasoning_effort="medium" if grounded_blocks is not None else "low",
             )
+            if grounded_blocks is None:
+                _validate_page_response(data, vision=True)
             if grounded_blocks is not None:
                 regions = grounded_photo_regions(data, grounded_blocks, orig_w, orig_h)
                 confidence = float(data.get("confidence", 0.7))
