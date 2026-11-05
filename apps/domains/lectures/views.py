@@ -3,6 +3,7 @@
 from django.db import transaction, IntegrityError
 from django.db.models import Case, Count, F, IntegerField, Max, OuterRef, Q, Subquery, Value, When
 from django.db.models.functions import Coalesce
+from django.db.models.deletion import RestrictedError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -36,6 +37,13 @@ from apps.core.models import Tenant, TenantMembership
 from apps.api.common.query_params import parse_query_bool, parse_query_int
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
+
+
+_COMMUNITY_SCOPE_DELETE_MESSAGE = (
+    "연결된 커뮤니티 글이 있어 삭제할 수 없습니다. "
+    "커뮤니티에서 연결된 글을 확인하고 불필요한 글을 삭제한 뒤 다시 시도해 주세요. "
+    "글을 보존하려면 해당 강의·차시도 유지해 주세요."
+)
 
 
 def _session_scope(lecture: Lecture, section: Section | None):
@@ -277,9 +285,14 @@ class LectureViewSet(ModelViewSet):
         blocker = first_lecture_delete_blocker(lecture)
         if blocker:
             raise PermissionDenied(
+                _COMMUNITY_SCOPE_DELETE_MESSAGE if blocker == "community posts" else
                 f"This lecture has {blocker} and cannot be deleted."
             )
-        return super().destroy(request, *args, **kwargs)
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except RestrictedError as exc:
+            # A reference may appear after the explanatory preflight query.
+            raise PermissionDenied(_COMMUNITY_SCOPE_DELETE_MESSAGE) from exc
 
     @action(detail=False, methods=["get"], url_path="instructor-options")
     def instructor_options(self, request):
@@ -636,9 +649,14 @@ class SessionViewSet(ModelViewSet):
         )
         if blocker:
             raise PermissionDenied(
+                _COMMUNITY_SCOPE_DELETE_MESSAGE if blocker == "community posts" else
                 f"This session has {blocker} and cannot be deleted."
             )
-        return super().destroy(request, *args, **kwargs)
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except RestrictedError as exc:
+            # A reference may appear after the explanatory preflight query.
+            raise PermissionDenied(_COMMUNITY_SCOPE_DELETE_MESSAGE) from exc
 
 
 class SectionViewSet(ModelViewSet):
