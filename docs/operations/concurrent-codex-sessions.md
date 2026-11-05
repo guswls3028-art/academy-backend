@@ -19,8 +19,12 @@ target safe, waive tenant or user-data protection, bypass an explicitly applicab
 continuity gate, or make an external approval true without platform readback.
 Same-user Academy tasks and owned subagents can share non-sensitive paths,
 SHAs, PR/CI state, and verification evidence without per-message approval.
-External recipients, account authentication, secret transfers, ambiguous
-destructive targets, and higher-priority action-time approvals remain separate.
+Standing authorization covers in-scope authentication and configured credential/
+secret-key use without another confirmation. Use the existing secret store and
+owning procedure without exposing values, weakening ACLs or transferring secrets.
+External messages, secret transfers, unresolved destructive targets and managed
+action-time requirements retain their exact scope; authority is not platform
+readback or permission to broaden the task.
 Confirm target and impact read-only when needed. Present the exact current user
 instruction to formal approval review; never route around a denial. Managed
 session permissions and release gates still apply.
@@ -33,6 +37,11 @@ before mutation, and never remove the protection, approve another queued run,
 or infer approval from the instruction alone. If GitHub rejects the review or
 the configured identity is ineligible, preserve the error and report that
 technical blocker without asking the user to repeat the same authorization.
+Do not send inquiry/support email, introduce a support handoff, or request manual
+platform approval as the default recovery. Check supported paths available to
+the configured authorized identity; an alternative must preserve the same gates
+and must not evade a denial. If none works, retain exact failure/owner/release
+condition under Delivery completion and continuation; do not invent success.
 
 Compatible patches do not wait for a default 04:00 slot. Use the current
 [deployment timing and continuity policy](deployment-modes.md) and retain
@@ -78,10 +87,24 @@ product deployment. Respect explicit read-only, local-only and PR-only scope.
   End an authorized completion monitor only when its entire tracked scope has
   delivery evidence or the user explicitly cancels/narrows that scope.
 
+## Incident priority
+
+A confirmed production outage or data-integrity incident preempts routine feature
+and documentation work. Preserve evidence, identify the affected scope and one
+release executor, then restore service via the smallest safe hotfix or verified
+rollback. Keep tenant/data boundaries, required checks, locks and rollout gates;
+urgency is not permission to skip them. Verify exact runtime and affected user
+journey recovery before declaring restoration, then address recurrence and resume
+the interrupted task. Distinguish suspected/static risks from observed incidents;
+do not turn every hypothetical concern into an emergency or a global HOLD.
+
 ## Execution efficiency
 
-Optimize verified completion including rework, not prompt length alone. Reuse
-applicable instructions already in context; read only the needed subsection.
+Prioritize reliable completion, work efficiency and system performance, including
+rework; optimize token use within that objective. Spend necessary reasoning,
+tools, independent review and tests when they improve the result. Remove duplicate
+reads, repeated unchanged checks, avoidable waits and coordination overhead.
+Reuse applicable instructions already in context; read only the needed subsection.
 Safety, successful outcomes, current HOLDs, required CI and delivery still apply.
 
 ### Reasoning by actual change impact
@@ -122,9 +145,11 @@ claiming Web routing. Use only model/effort values advertised by the interface.
 
 ### Output recovery and complete review
 
-Keep `tool_output_token_limit=4000` unless measured recurring recovery cost
-justifies a change. It limits stored tool output, not the task token budget or
-original stdout; tool-side limits also apply. Search before full-file reads.
+Choose bounded tool output that is sufficient for the next decision; avoid a
+fixed small cap that forces repeated recovery. Preserve user model/settings and
+do not alter global configuration just for this policy. Stored output, original
+stdout and the task token budget are distinct; tool-side limits also apply.
+Search before full-file reads.
 Batch independent reads, cap aggregate returned text, and keep large results
 in a tool store/log for selective extraction. Do not print entire tool schemas,
 connector results, documents or successful logs when a bounded summary suffices.
