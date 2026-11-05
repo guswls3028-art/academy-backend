@@ -583,15 +583,6 @@ class DirectVideoEntitlementTests(TestCase):
             self.assertEqual(signal(sequence=1, prepare=True)["used_ms"], 0)
             prepared = state()
             self.assertEqual(signal(sequence=1, prepare=True)["used_ms"], 0)
-            for position in (8000, 15999):
-                reused = signal(sequence=1, prepare=True, position_ms=position)
-                self.assertNotIn("retry_after_ms", reused)
-                self.assertEqual(prepared, state())
-            # Reusing the end of a grant must not move its anchor or extend its TTL.
-            with patch("django.utils.timezone.now", return_value=started + timedelta(seconds=29)):
-                self.assertNotIn("retry_after_ms", signal(sequence=1, prepare=True, position_ms=15999))
-                self.assertEqual(prepared, state())
-            self.assertGreater(signal(sequence=1, prepare=True, position_ms=16000)["retry_after_ms"], 0)
             self.assertEqual(client.get(first).status_code, 302)
             self.assertEqual(client.head(first).status_code, 302)
             self.assertEqual(client.get(first, HTTP_RANGE="bytes=0-1").status_code, 302)
@@ -612,6 +603,16 @@ class DirectVideoEntitlementTests(TestCase):
             with patch("django.utils.timezone.now", return_value=started + timedelta(seconds=3)):
                 self.assertEqual(signal(sequence=3, playing=True, position_ms=333000)["used_ms"], 3000)
                 self.assertEqual(signal(sequence=4, playing=False, position_ms=32000)["used_ms"], 3000)
+                paused_at_current_position = state()
+                self.assertNotIn("retry_after_ms", signal(sequence=4, prepare=True, position_ms=32000))
+                self.assertEqual(state(), paused_at_current_position)
+                self.assertGreater(signal(sequence=4, prepare=True, position_ms=32001)["retry_after_ms"], 0)
+            with patch("django.utils.timezone.now", return_value=started + timedelta(seconds=17)):
+                self.assertNotIn("retry_after_ms", signal(sequence=4, prepare=True, position_ms=32000))
+                self.assertEqual(state(), paused_at_current_position)
+            with patch("django.utils.timezone.now", return_value=started + timedelta(seconds=18)):
+                self.assertGreater(signal(sequence=4, prepare=True, position_ms=32000)["retry_after_ms"], 0)
+                self.assertEqual(state(), paused_at_current_position)
             with patch("django.utils.timezone.now", return_value=started + timedelta(seconds=34)):
                 paused = state()
                 self.assertEqual(client.get(second).status_code, 429)
@@ -629,6 +630,31 @@ class DirectVideoEntitlementTests(TestCase):
                     crosses_window = client.get(master).content.decode().splitlines()[-1]
                 self.assertEqual(client.get(urljoin(master, crosses_window)).status_code, 429)
                 self.assertEqual(state(), resume_state)
+
+            # A cold seek needs a fresh forward window, including the next fragment.
+            # Reusing 2s..18s for 17.999s can deadlock the actual HLS decoder on 18s.
+            VideoReviewWatchUsage.objects.filter(pk=stream.usage_id).update(prefetch_credit_ms=32000)
+            VideoReviewWatchStream.objects.filter(pk=stream.pk).update(
+                prepared_position_ms=2000, prepared_until=started + timedelta(seconds=30),
+                playback_position_ms=None, active_since=None,
+            )
+            with patch("django.utils.timezone.now", return_value=started + timedelta(seconds=1)):
+                self.assertNotIn("retry_after_ms", signal(sequence=6, prepare=True, position_ms=17999))
+                usage_state, stream_state = state()
+                self.assertEqual(usage_state["prefetch_credit_ms"], 16000)
+                self.assertEqual(stream_state["prepared_position_ms"], 17999)
+                self.assertEqual(stream_state["prepared_until"], started + timedelta(seconds=31))
+
+            # A near-expiry preparation must also renew normally when credit exists.
+            VideoReviewWatchStream.objects.filter(pk=stream.pk).update(
+                prepared_position_ms=2000, prepared_until=started + timedelta(milliseconds=1100),
+            )
+            with patch("django.utils.timezone.now", return_value=started + timedelta(seconds=1)):
+                self.assertNotIn("retry_after_ms", signal(sequence=6, prepare=True, position_ms=8000))
+                usage_state, stream_state = state()
+                self.assertEqual(usage_state["prefetch_credit_ms"], 0)
+                self.assertEqual(stream_state["prepared_position_ms"], 8000)
+                self.assertEqual(stream_state["prepared_until"], started + timedelta(seconds=31))
 
     @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="test-key")
     def test_review_media_uses_private_playlists_and_revocable_fragment_links(self):
