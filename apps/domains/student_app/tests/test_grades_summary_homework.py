@@ -768,10 +768,13 @@ class MyGradesSummaryHomeworkTests(TestCase):
         analytics_exam = next(row for row in self._call_analytics().data["trends"] if row["exam_id"] == exam.id)
         self.assertEqual(summary_exam["rank"], 1)
         self.assertIsNone(summary_exam["cohort_size"])
+        self.assertIsNone(summary_exam["percentile"])
         self.assertEqual(detail.data["rank"], 1)
         self.assertIsNone(detail.data["cohort_size"])
+        self.assertIsNone(detail.data["percentile"])
         self.assertEqual(analytics_exam["rank"], 1)
         self.assertIsNone(analytics_exam["cohort_size"])
+        self.assertIsNone(analytics_exam["percentile"])
 
     def test_rank_cohort_excludes_nonfinite_peer_and_response_renders(self):
         local_result = self._score_exam(

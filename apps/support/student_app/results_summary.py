@@ -366,7 +366,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         rank_info = exam_rank_maps.get(exam_id, {}).get(enrollment_id, {})
         rank_published, cohort_size_published = exam_rank_visibility.get(
             exam_id,
-            (True, True),
+            (False, False),
         )
         rank_payload = student_rank_visibility_payload(
             rank_info,

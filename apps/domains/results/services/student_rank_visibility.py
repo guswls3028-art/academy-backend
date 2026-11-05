@@ -12,7 +12,8 @@ def student_rank_visibility_payload(
     can_show_rank = rank_published and comparable_cohort
     return {
         "rank": rank_info.get("rank") if can_show_rank else None,
-        "percentile": rank_info.get("percentile") if can_show_rank else None,
+        # Rank / percentile would disclose the hidden cohort size.
+        "percentile": rank_info.get("percentile") if can_show_rank and cohort_size_published else None,
         "cohort_size": cohort_size if cohort_size_published else None,
         "cohort_avg": rank_info.get("cohort_avg") if can_show_rank else None,
     }

@@ -48,7 +48,7 @@ API 오류 모양으로 구분할 수 없다.
 | `segmentation_status` | `none`, `processing`, `review_required`, `ready`, `failed`, `conversion_required` | 원본 문항 분리와 교직원 검수 상태다. |
 | `student_results_published` | `true`, `false` | 학생·학부모 성적 공개 여부다. 기본값 `true`는 기존 시험 노출을 유지한다. |
 | `student_rank_published` | `true`, `false` | 학생·학부모 성적 화면의 등수·상위 비율·평균 비교 표시 여부다. 기본값 `true`다. |
-| `student_cohort_size_published` | `true`, `false` | 순위 산정 응시 인원 표시 여부다. 등수 공개와 별도로 설정하며 기본값 `true`다. |
+| `student_cohort_size_published` | `true`, `false` | 순위 산정 응시 인원 표시 여부다. 숨기면 인원 역산을 막기 위해 상위 비율도 숨긴다. 등수 공개와 별도로 설정하며 기본값 `true`다. |
 
 교직원은 기존 tenant·역할 범위와 `updated_at` 동시 수정 조건을 따르는
 `PATCH /exams/{id}/`로 번호 표시를 저장한다. `GET /exams/{id}/`, 학생의

@@ -37,7 +37,7 @@ class StudentRankVisibilityTests(SimpleTestCase):
 
         self.assertEqual(payload, {
             "rank": 2,
-            "percentile": 20.0,
+            "percentile": None,
             "cohort_size": None,
             "cohort_avg": 72.5,
         })
