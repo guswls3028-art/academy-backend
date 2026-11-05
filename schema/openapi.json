@@ -5788,8 +5788,10 @@
             "type": "integer"
           },
           "attendance_total": {
+            "description": "진척률 표시용 분모. include_progress 컨텍스트가 켜진 경우에만 계산.\n- section이 있으면: 해당 section의 ACTIVE class_assignments 수\n- 없으면: lecture의 ACTIVE enrollments 수",
+            "nullable": true,
             "readOnly": true,
-            "type": "string"
+            "type": "integer"
           },
           "created_at": {
             "format": "date-time",
@@ -5839,6 +5841,13 @@
             "nullable": true,
             "type": "integer"
           },
+          "schedule_dates": {
+            "items": {
+              "$ref": "#/components/schemas/SessionScheduleSummary"
+            },
+            "readOnly": true,
+            "type": "array"
+          },
           "section": {
             "description": "반별 차시 (section_mode=true). null이면 반 무관 공통 차시.",
             "nullable": true,
@@ -5886,6 +5895,7 @@
           "lecture_color",
           "lecture_title",
           "location",
+          "schedule_dates",
           "section_label",
           "section_type",
           "start_time",
@@ -14826,6 +14836,100 @@
         ],
         "type": "integer"
       },
+      "ScheduleInput": {
+        "properties": {
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "end_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "enrollment_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 2000,
+            "type": "array"
+          },
+          "id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "label": {
+            "maxLength": 40,
+            "type": "string"
+          },
+          "start_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "enrollment_ids",
+          "label"
+        ],
+        "type": "object"
+      },
+      "ScheduleInputRequest": {
+        "properties": {
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "end_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "enrollment_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 2000,
+            "type": "array"
+          },
+          "id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "label": {
+            "maxLength": 40,
+            "minLength": 1,
+            "type": "string"
+          },
+          "start_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "enrollment_ids",
+          "label"
+        ],
+        "type": "object"
+      },
+      "ScheduleRosterEntry": {
+        "properties": {
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "student_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "student_name"
+        ],
+        "type": "object"
+      },
       "SchoolTypeEnum": {
         "description": "* `ELEMENTARY` - 초등\n* `MIDDLE` - 중등\n* `HIGH` - 고등",
         "enum": [
@@ -15984,6 +16088,134 @@
           "id",
           "session",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "SessionScheduleCopyRequest": {
+        "properties": {
+          "source_session": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "version": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_session",
+          "version"
+        ],
+        "type": "object"
+      },
+      "SessionScheduleState": {
+        "properties": {
+          "roster": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleRosterEntry"
+            },
+            "type": "array"
+          },
+          "schedules": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleInput"
+            },
+            "type": "array"
+          },
+          "unassigned_enrollment_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "roster",
+          "schedules",
+          "unassigned_enrollment_ids",
+          "version"
+        ],
+        "type": "object"
+      },
+      "SessionScheduleSummary": {
+        "properties": {
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "end_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "label": {
+            "maxLength": 40,
+            "type": "string"
+          },
+          "start_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "id",
+          "label"
+        ],
+        "type": "object"
+      },
+      "SessionScheduleSummaryRequest": {
+        "properties": {
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "end_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 40,
+            "minLength": 1,
+            "type": "string"
+          },
+          "start_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "label"
+        ],
+        "type": "object"
+      },
+      "SessionScheduleWriteRequest": {
+        "properties": {
+          "schedules": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleInputRequest"
+            },
+            "type": "array"
+          },
+          "version": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "schedules",
+          "version"
         ],
         "type": "object"
       },
@@ -38555,12 +38787,35 @@
         "operationId": "lectures_sessions_list",
         "parameters": [
           {
+            "description": "실제 수업일. 수업일 미설정 차시는 기존 기준일로 조회합니다.",
+            "in": "query",
+            "name": "date",
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lecture",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
             "description": "검색어.",
             "in": "query",
             "name": "search",
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "section",
+            "schema": {
+              "type": "integer"
             }
           }
         ],
@@ -38643,11 +38898,12 @@
         "operationId": "lectures_sessions_destroy",
         "parameters": [
           {
+            "description": "session을 식별하는 고유한 정수 값.",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer"
             }
           }
         ],
@@ -38672,11 +38928,12 @@
         "operationId": "lectures_sessions_retrieve",
         "parameters": [
           {
+            "description": "session을 식별하는 고유한 정수 값.",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer"
             }
           }
         ],
@@ -38708,11 +38965,12 @@
         "operationId": "lectures_sessions_partial_update",
         "parameters": [
           {
+            "description": "session을 식별하는 고유한 정수 값.",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer"
             }
           }
         ],
@@ -38763,11 +39021,12 @@
         "operationId": "lectures_sessions_update",
         "parameters": [
           {
+            "description": "session을 식별하는 고유한 정수 값.",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer"
             }
           }
         ],
@@ -38797,6 +39056,159 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LectureSession"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "lectures"
+        ]
+      }
+    },
+    "/api/v1/lectures/sessions/{id}/schedules/": {
+      "get": {
+        "operationId": "lectures_sessions_schedules_retrieve",
+        "parameters": [
+          {
+            "description": "session을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionScheduleState"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "lectures"
+        ]
+      },
+      "post": {
+        "operationId": "lectures_sessions_schedules_create",
+        "parameters": [
+          {
+            "description": "session을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionScheduleCopyRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionScheduleCopyRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionScheduleCopyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionScheduleState"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "lectures"
+        ]
+      },
+      "put": {
+        "operationId": "lectures_sessions_schedules_update",
+        "parameters": [
+          {
+            "description": "session을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionScheduleWriteRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionScheduleWriteRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionScheduleWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionScheduleState"
                 }
               }
             },

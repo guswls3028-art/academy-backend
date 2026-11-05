@@ -108,10 +108,12 @@ class StudentDashboardView(APIView):
                         "session_type": s.session_type,
                         "regular_order": s.regular_order,
                         "display_label": s.display_label,
-                        "date": s.date.isoformat() if s.date else None,
+                        "date": s.effective_date.isoformat() if s.effective_date else None,
+                        "schedule_label": s.schedule_label,
+                        "schedule_configured": s.schedule_configured,
                         "status": None,
                         "type": "session",
-                        "start_time": _parse_lecture_start_time(
+                        "start_time": s.schedule_start_time if s.schedule_configured else _parse_lecture_start_time(
                             getattr(s.lecture, "lecture_time", "") or ""
                         ),
                     }

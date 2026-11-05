@@ -25,6 +25,7 @@ from .serializers import (
 from .filters import AttendanceFilter
 from .services import create_attendance_roster
 from .services.arrival_overview import build_arrival_overview
+from apps.support.lectures.schedule_queries import schedule_enrollment_ids
 
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
@@ -166,6 +167,12 @@ class AttendanceViewSet(ModelViewSet):
         )
         action = getattr(self, "action", None)
         if action == "list":
+            schedule_ids = schedule_enrollment_ids(
+                tenant=tenant, session_id=self.request.query_params.get("session"),
+                value=self.request.query_params.get("schedule"),
+            )
+            if schedule_ids is not None:
+                qs = qs.filter(enrollment_id__in=schedule_ids)
             qs = _apply_attendance_ordering(
                 qs,
                 self.request.query_params.get("ordering"),
@@ -418,6 +425,9 @@ class AttendanceViewSet(ModelViewSet):
         ).exclude(
             enrollment__status="INACTIVE",
         )
+        schedule_ids = schedule_enrollment_ids(tenant=tenant, session_id=session.id, value=request.data.get("schedule"))
+        if schedule_ids is not None:
+            target_qs = target_qs.filter(enrollment_id__in=schedule_ids)
         target_rows = [(row.id, row.status) for row in self._lock_attendance_rows(target_qs)]
         target_ids = [attendance_id for attendance_id, _ in target_rows]
 

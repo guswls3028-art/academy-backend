@@ -388,3 +388,31 @@ class Session(TimestampModel):
     def __str__(self):
         section_label = f" ({self.section.label}반)" if self.section else ""
         return f"{self.lecture.title} - {self.display_label}{section_label}"
+
+
+class SessionSchedule(TimestampModel):
+    """A teaching date for one shared lesson; learning records remain on Session."""
+
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="schedules")
+    label = models.CharField(max_length=40)
+    date = models.DateField()
+    start_time = models.TimeField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["date", "start_time", "id"]
+        constraints = [models.UniqueConstraint(fields=["session", "label"], name="uniq_session_schedule_label")]
+
+
+class SessionScheduleMembership(models.Model):
+    session_enrollment = models.OneToOneField(
+        "enrollment.SessionEnrollment", on_delete=models.CASCADE, related_name="schedule_membership",
+    )
+    schedule = models.ForeignKey(SessionSchedule, on_delete=models.CASCADE, related_name="memberships")
+
+
+class SessionScheduleChange(TimestampModel):
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="schedule_changes")
+    actor_id = models.BigIntegerField(null=True)
+    before = models.JSONField(default=dict)
+    after = models.JSONField(default=dict)

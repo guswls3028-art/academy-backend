@@ -42,11 +42,12 @@ def notice_posts_for_dashboard(*, tenant: Any, student: Any | None):
 
 def today_lecture_sessions_for_dashboard(*, tenant: Any, student: Any, today):
     from apps.domains.lectures.models import Session as LectureSession
+    from apps.support.lectures.schedule_queries import student_schedule_annotations
 
     return (
         LectureSession.objects.filter(
-            ongoing_lecture_filter(today=today),
-            Q(lecture__start_date__isnull=True) | Q(lecture__start_date__lte=today),
+            lecture__is_active=True,
+            lecture__is_system=False,
             session_enrollments__tenant=tenant,
             session_enrollments__enrollment__student=student,
             session_enrollments__enrollment__tenant=tenant,
@@ -54,7 +55,14 @@ def today_lecture_sessions_for_dashboard(*, tenant: Any, student: Any, today):
             session_enrollments__enrollment__lecture_id=F("lecture_id"),
             session_enrollments__enrollment__student__deleted_at__isnull=True,
             lecture__tenant=tenant,
-            date=today,
+        )
+        .annotate(**student_schedule_annotations(tenant=tenant, student=student))
+        .filter(effective_date=today)
+        .filter(
+            Q(schedule_configured=True) | (
+                ongoing_lecture_filter(today=today)
+                & (Q(lecture__start_date__isnull=True) | Q(lecture__start_date__lte=today))
+            ),
         )
         .select_related("lecture")
         .distinct()
