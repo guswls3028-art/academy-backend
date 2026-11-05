@@ -17,13 +17,13 @@ from apps.domains.results.services.manual_subjective_score import (
     is_consumed_manual_total_placeholder,
     latest_subjective_grading_facts,
 )
-from apps.support.omr.score_shape import get_exam_score_shape
-from apps.support.exams.numeric_short_answer import math_numeric_short_answer_question_ids
-from apps.support.results.admin_exam_result_detail_dependencies import get_answer_key_answers
+from apps.support.omr.score_shape_batch import load_exam_scoring_details
+from apps.support.exams.numeric_short_answer import numeric_short_answer_question_ids
 from apps.support.results.exam_policy_dependencies import effective_exam_pass_score
 from apps.support.results.omr_subjective_completion_dependencies import (
     enrollments_by_id,
     exams_by_id,
+    math_exam_ids,
     submissions_by_id,
 )
 
@@ -158,19 +158,21 @@ def omr_subjective_completion_states(
 
     required_by_exam: dict[int, frozenset[int]] = {}
     numeric_by_exam: dict[int, set[int]] = {}
+    scoring_details = load_exam_scoring_details(exams.values())
+    math_ids = math_exam_ids(exams)
     for exam_id, exam in exams.items():
-        score_shape = get_exam_score_shape(exam)
+        details = scoring_details[exam_id]
+        score_shape = details.shape
         required_by_exam[int(exam_id)] = frozenset(
             int(question_id)
             for question_id, kind in score_shape.question_kind_by_id.items()
             if kind == "essay" and score_shape.subjective_max_score > 0
         )
-        numeric_by_exam[int(exam_id)] = math_numeric_short_answer_question_ids(
-            exam=exam,
+        numeric_by_exam[int(exam_id)] = numeric_short_answer_question_ids(
             question_ids=score_shape.question_kind_by_id,
             question_kind=score_shape.question_kind,
-            answers=get_answer_key_answers(template_exam_id=score_shape.template_exam_id),
-        )
+            answers=details.answers,
+        ) if exam_id in math_ids else set()
 
     latest_facts = latest_subjective_grading_facts(
         [row for row in result_rows if int(row.id) in omr_result_ids],

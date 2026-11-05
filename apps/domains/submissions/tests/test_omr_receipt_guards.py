@@ -1,4 +1,6 @@
 """Phase A protects receipt history, including the future phase-B archive shape."""
+from unittest.mock import patch
+
 from django.test import TestCase
 
 from apps.domains.submissions.models import OmrUploadBatchItem, Submission, SubmissionAnswer
@@ -118,3 +120,43 @@ class OmrReceiptGuardTests(OmrReceiptFixture, TestCase):
         retry = self.request(OmrUploadBatchRetryView.as_view(), {"item_ordinals": [1]}, batch_id=item.batch_id)
         self.assertEqual(retry.data["retried_ordinals"], [1])
         self.assertEqual(self.dispatch.call_count, 2)
+
+    def test_retry_reports_immediate_dispatch_rejection_for_single_and_batch(self):
+        from apps.domains.submissions.services.dispatcher import dispatch_submission
+        from apps.domains.submissions.views.submission_view import SubmissionViewSet
+
+        item, _ = self.upload()
+        Submission.objects.filter(pk=item.submission_id).update(status=Submission.Status.FAILED)
+        self.dispatch.side_effect = dispatch_submission
+        with (
+            patch("apps.domains.submissions.services.dispatcher._build_ai_payload", return_value={}),
+            patch("apps.domains.submissions.services.dispatcher.dispatch_job",
+                  return_value={"ok": False, "error": "synthetic-rejection"}),
+        ):
+            single = self.request(SubmissionViewSet.as_view({"post": "retry"}), pk=item.submission_id)
+            batch = self.request(OmrUploadBatchRetryView.as_view(), {"item_ordinals": [1]}, batch_id=item.batch_id)
+        self.assertEqual((single.status_code, batch.status_code), (409, 409))
+        self.assertEqual(single.data["status"], Submission.Status.FAILED)
+        self.assertEqual(batch.data["retried_ordinals"], [])
+        self.assertEqual(batch.data["failed_ordinals"], [1])
+        self.assertNotIn("synthetic-rejection", single.data["detail"])
+        item.submission.refresh_from_db()
+        self.assertEqual(item.submission.status, Submission.Status.FAILED)
+
+    def test_batch_retry_counts_only_items_that_started(self):
+        from apps.domains.submissions.services.dispatcher import dispatch_submission
+
+        batch_id = self.initialize(total_count=2)
+        first, _ = self.upload(batch_id)
+        second, _ = self.upload(batch_id, ordinal=2, content=b"another scan")
+        Submission.objects.filter(pk__in=[first.submission_id, second.submission_id]).update(status=Submission.Status.FAILED)
+        self.dispatch.side_effect = dispatch_submission
+        with (
+            patch("apps.domains.submissions.services.dispatcher._build_ai_payload", return_value={}),
+            patch("apps.domains.submissions.services.dispatcher.dispatch_job",
+                  side_effect=[{"ok": False, "error": "rejected"}, {"ok": True, "job_id": "test-new-job"}]),
+        ):
+            batch = self.request(OmrUploadBatchRetryView.as_view(), {"item_ordinals": [1, 2]}, batch_id=batch_id)
+        self.assertEqual(batch.status_code, 200)
+        self.assertEqual(batch.data["retried_ordinals"], [2])
+        self.assertEqual(batch.data["failed_ordinals"], [1])

@@ -803,6 +803,11 @@ def mark_needs_identification(
     actor: str,
     error_message: str = "",
 ) -> None:
+    if submission.status == S.NEEDS_IDENTIFICATION:
+        # A legacy scan can already await identification before its first result.
+        if error_message:
+            submission.error_message = error_message
+        return
     transit(
         submission,
         S.NEEDS_IDENTIFICATION,

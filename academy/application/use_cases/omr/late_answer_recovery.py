@@ -16,9 +16,10 @@ from typing import Any
 from django.db.models import Count
 from django.utils import timezone
 
-from apps.domains.ai.models import AIJobModel, AIResultModel
+from apps.domains.ai.models import AIJobModel
 from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.domains.submissions.services.ai_omr_result_mapper import apply_omr_ai_result
+from apps.support.submissions.dependencies import ai_result_payload_for_job, latest_ai_job_for_submission
 from academy.application.use_cases.omr.grading_readiness import (
     grade_omr_submission_if_ready,
 )
@@ -84,21 +85,11 @@ def _answers_len(worker_result: dict[str, Any]) -> int:
 
 
 def _latest_done_ai_result_with_answers(
-    submission_id: int,
+    submission_id: int, tenant_id: int,
 ) -> tuple[AIJobModel | None, dict[str, Any]]:
-    jobs = (
-        AIJobModel.objects.filter(
-            source_domain="submissions",
-            source_id=str(submission_id),
-            status="DONE",
-        )
-        .order_by("-updated_at", "-id")[:5]
-    )
-    for job in jobs:
-        result = AIResultModel.objects.filter(job=job).first()
-        if result is None:
-            continue
-        worker_result = _extract_worker_result(result.payload)
+    job = latest_ai_job_for_submission(submission_id=submission_id, tenant_id=tenant_id)
+    if job is not None and job.status == "DONE":
+        worker_result = _extract_worker_result(ai_result_payload_for_job(job))
         if _answers_len(worker_result) > 0:
             return job, worker_result
     return None, {}
@@ -130,7 +121,7 @@ def detect_late_ai_answer_candidates(
     now = timezone.now()
     out: list[LateAIAnswerCandidate] = []
     for submission in qs:
-        job, worker_result = _latest_done_ai_result_with_answers(int(submission.id))
+        job, worker_result = _latest_done_ai_result_with_answers(int(submission.id), int(submission.tenant_id))
         if job is None:
             continue
         age_min = (now - submission.updated_at).total_seconds() / 60.0
@@ -241,19 +232,25 @@ def recover_late_ai_answers(
                 continue
 
             job, worker_result = _latest_done_ai_result_with_answers(
-                candidate.submission_id
+                candidate.submission_id, candidate.tenant_id
             )
             if job is None or _answers_len(worker_result) == 0:
                 report.skipped.append((candidate.submission_id, "ai_answers_missing"))
                 continue
 
-            apply_omr_ai_result(
+            if job.job_id != candidate.ai_job_id:
+                report.skipped.append((candidate.submission_id, "ai_job_changed"))
+                continue
+            applied = apply_omr_ai_result(
                 _build_callback_payload(
                     candidate=candidate,
                     job=job,
                     worker_result=worker_result,
                 )
             )
+            if applied is None:
+                report.skipped.append((candidate.submission_id, "callback_ineligible"))
+                continue
 
             submission = Submission.objects.get(id=candidate.submission_id)
             answer_count = SubmissionAnswer.objects.filter(

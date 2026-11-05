@@ -83,6 +83,47 @@ class OmrRosterConcurrencyPostgresTests(TransactionTestCase):
             self.assertFalse(worker.is_alive(), f"{worker.name} did not finish")
         self.assertEqual(self.errors, [])
 
+    def test_old_callback_waits_for_redispatch_and_sees_the_committed_new_job(self):
+        from django.apps import apps
+
+        submission = Submission.objects.create(
+            tenant=self.tenant, user=self.teacher, target_type="exam", target_id=self.exam.pk,
+            source=Submission.Source.OMR_SCAN, status=Submission.Status.DISPATCHED,
+        )
+        jobs = apps.get_model("ai_domain", "AIJobModel").objects
+        scope = {"tenant_id": str(self.tenant.pk), "source_domain": "submissions",
+                 "source_id": str(submission.pk), "job_type": "omr_grading"}
+        old = jobs.create(**scope, job_id="old-recognition", status="DONE")
+        at_submission_lock = threading.Event()
+
+        def callback():
+            def observe(execute, sql, params, many, context):
+                if Submission._meta.db_table in sql and "FOR UPDATE" in sql:
+                    at_submission_lock.set()
+                return execute(sql, params, many, context)
+
+            with connection.execute_wrapper(observe):
+                return apply_omr_ai_result({
+                    "submission_id": submission.pk, "tenant_id": self.tenant.pk, "job_id": old.job_id,
+                    "status": "DONE", "version": "v15", "aligned": True,
+                    "answers": [{"question_id": 1, "detected": ["1"], "status": "ok", "confidence": 0.99}],
+                })
+
+        worker = None
+        try:
+            with transaction.atomic():
+                Submission.objects.select_for_update().get(pk=submission.pk)
+                jobs.create(**scope, job_id="new-recognition", status="PENDING")
+                worker = self._thread("old-callback", callback)
+                self.assertTrue(at_submission_lock.wait(timeout=5))
+        finally:
+            if worker is not None:
+                self._join(worker)
+        self.assertIsNone(self.values["old-callback"])
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.DISPATCHED)
+        self.assertFalse(submission.answers.exists())
+
     def _ensure(self, enrollment):
         return ensure_exam_enrollment_candidate(
             tenant=self.tenant, exam_id=self.exam.id, enrollment_id=enrollment.id,

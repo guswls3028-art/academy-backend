@@ -997,13 +997,18 @@ class OmrUploadBatchRetryView(APIView):
                 retried.append(int(ordinal))
 
         response_data = _batch_summary(batch)
+        failed_after_retry = set(retried).intersection(response_data["failed_ordinals"])
+        started = [ordinal for ordinal in retried if ordinal not in failed_after_retry]
         response_data.update(
             {
-                "retried_ordinals": retried,
+                "retried_ordinals": started,
                 "requires_file_ordinals": requires_file,
                 "skipped_ordinals": skipped,
             }
         )
+        if failed_after_retry and not started and not requires_file:
+            response_data["detail"] = "재시도한 항목이 모두 실패 상태입니다. 원본 파일과 제출 상태를 확인해 주세요."
+            return Response(response_data, status=status.HTTP_409_CONFLICT)
         return Response(response_data, status=status.HTTP_200_OK)
 
 
