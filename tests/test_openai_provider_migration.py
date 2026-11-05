@@ -102,11 +102,12 @@ def test_unknown_config_is_not_a_silent_mock(monkeypatch):
 
 
 def test_default_models_preserve_embedding_space(monkeypatch):
-    for name in ("PROBLEM_GEN_MODEL", "PROBLEM_TRANSCRIPTION_MODEL", "PROBLEM_STUDIO_EXPLANATION_MODEL"):
+    for name in ("PROBLEM_GEN_MODEL", "PROBLEM_TRANSCRIPTION_MODEL", "PROBLEM_STUDIO_EXPLANATION_MODEL", "EMBEDDING_BACKEND"):
         monkeypatch.delenv(name, raising=False)
     cfg = AIConfig.load()
     assert cfg.PROBLEM_GEN_MODEL == cfg.PROBLEM_STUDIO_EXPLANATION_MODEL == "gpt-6.1-sol"
     assert cfg.PROBLEM_TRANSCRIPTION_MODEL == "gpt-6.1-terra"
+    assert cfg.EMBEDDING_BACKEND == "local"
     assert cfg.EMBEDDING_OPENAI_MODEL == "text-embedding-3-small"
     assert cfg.EMBEDDING_LOCAL_MODEL == "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     assert reasoning_options("gpt-6.1-sol") == {"reasoning": {"effort": "low"}}
@@ -174,3 +175,14 @@ def test_valid_page_classification_remains_real(monkeypatch):
         "page_role": "cover", "should_skip": True, "confidence": .99})
     result = vlm.OpenAIVLMTextAdapter().classify(ocr_text="표지")
     assert result.debug["adapter"] == "openai" and result.should_skip
+
+
+def test_new_general_ai_key_cannot_silently_switch_the_embedding_space(monkeypatch):
+    from academy.adapters.ai.embedding import service
+    monkeypatch.delenv("EMBEDDING_BACKEND", raising=False)
+    monkeypatch.setattr(service, "_embed_local", MagicMock(side_effect=RuntimeError("local model unavailable")))
+    remote = MagicMock()
+    monkeypatch.setattr(service, "_embed_openai", remote)
+    with pytest.raises(RuntimeError, match="local model unavailable"):
+        service.get_embeddings(["synthetic problem"])
+    remote.assert_not_called()

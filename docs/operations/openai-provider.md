@@ -33,8 +33,10 @@ vision은 MATCHUP_VLM_MAX_OUTPUT_TOKENS(기본8192)로 제한한다. 고정 달�
 보장하는 제한은 아니며 모델/토큰별 사용량을 배포 검증에서 기록한다.
 전체 페이지를 무조건 AI로 보내지 않고 기존 low-confidence/tenant 게이트를 유지한다.
 
-임베딩 알고리즘·차원·기존 벡터는 변경하지 않는다. 키 추가 시 auto 모드의 기존
-local-first 선택도 유지하며 운영 모델이 로드되는지 배포 readback으로 확인한다.
+임베딩 알고리즘·차원·기존 벡터는 변경하지 않는다. 운영의 기존 EMBEDDING_BACKEND는
+미설정이므로 기본값을 local로 명시한다. 새 범용 OpenAI 키가 local 모델 오류 때
+1536차원 OpenAI fallback을 활성화해 기존 벡터와 섞이지 않도록 한다. 명시적인
+openai/auto override는 유지한다. 운영 local 모델 로드는 배포 readback으로 확인한다.
 키가 없는 환경의 기존 Bedrock fallback은 롤백 호환용으로 유지한다. 키가 있는
 OpenAI 호출 실패를 다른 유료 공급자로 조용히 재시도하지 않는다.
 

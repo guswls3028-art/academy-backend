@@ -71,7 +71,7 @@ class AIConfig:
     YOLO_QUESTION_CONF_MAP: Dict[str, float] = field(default_factory=lambda: dict(_DEFAULT_CONF_MAP))
 
     # Embedding
-    EMBEDDING_BACKEND: str = "auto"  # local|openai|auto
+    EMBEDDING_BACKEND: str = "local"  # Keep persisted vectors in their existing space; explicit openai|auto remain supported.
     EMBEDDING_LOCAL_MODEL: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     EMBEDDING_OPENAI_MODEL: str = "text-embedding-3-small"
     OPENAI_API_KEY: Optional[str] = None
@@ -98,7 +98,7 @@ class AIConfig:
             YOLO_QUESTION_IOU_THRESHOLD=float(_env("YOLO_QUESTION_IOU_THRESHOLD", "0.5") or "0.5"),
             YOLO_QUESTION_CONF_MAP=_load_conf_map(),
 
-            EMBEDDING_BACKEND=_env("EMBEDDING_BACKEND", "auto") or "auto",
+            EMBEDDING_BACKEND=_env("EMBEDDING_BACKEND", "local") or "local",
             EMBEDDING_LOCAL_MODEL=_env(
                 "EMBEDDING_LOCAL_MODEL",
                 "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
