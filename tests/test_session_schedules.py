@@ -3,8 +3,9 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 import threading
 import unittest
+from unittest.mock import patch
 
-from django.db import close_old_connections, connection
+from django.db import close_old_connections, connection, transaction
 from django.test import TransactionTestCase
 from rest_framework.test import force_authenticate
 
@@ -22,6 +23,7 @@ from apps.domains.students.models import Student
 from apps.domains.student_app.sessions.views import StudentSessionDetailView, StudentSessionListView
 from apps.domains.video.models import Video, VideoProgress
 from apps.support.lectures.schedule_queries import student_schedule_annotations
+from apps.support.lectures.schedule_dependencies import lock_attendance_parent_rows
 from apps.support.student_app.dashboard_dependencies import today_lecture_sessions_for_dashboard
 from apps.support.student_app.session_dependencies import get_student_lecture_sessions
 
@@ -183,6 +185,16 @@ class TestSessionSchedules(LectureTestBase):
         self.assertEqual(session.effective_date, date(2026, 4, 8))
         self.assertFalse(session.schedule_configured)
 
+    def test_version_is_bound_to_the_lesson_and_its_reference_date(self):
+        first = schedule_state(self.session)["version"]
+        target = Session.objects.create(lecture=self.lecture, order=2, title="다음 차시", date=self.session.date)
+        for enrollment in self.enrollments:
+            SessionEnrollment.objects.create(tenant=self.tenant, session=target, enrollment=enrollment)
+        response = self.schedules("put", {"version": first, "schedules": []}, target)
+        self.assertEqual(response.status_code, 409)
+        Session.objects.filter(pk=self.session.pk).update(date=date(2026, 4, 10))
+        self.assertEqual(self.schedules("put", {"version": first, "schedules": []}).status_code, 409)
+
 
 class TestSessionScheduleConcurrencyPostgres(TransactionTestCase):
     @classmethod
@@ -223,3 +235,46 @@ class TestSessionScheduleConcurrencyPostgres(TransactionTestCase):
         self.assertIsInstance(errors[0], ScheduleConflict)
         self.assertEqual(schedule_state(session), saved[0])
         self.assertEqual(SessionScheduleChange.objects.filter(session=session).count(), 1)
+
+    def test_copy_waits_for_lifecycle_parents_before_locking_target_session(self):
+        tenant = Tenant.objects.create(code="schedule-copy-lock", name="복사 잠금")
+        lecture = Lecture.objects.create(tenant=tenant, title="강의", name="강의")
+        source = Session.objects.create(lecture=lecture, order=1, title="이전 차시", date=date(2026, 4, 8))
+        target = Session.objects.create(lecture=lecture, order=2, title="다음 차시", date=date(2026, 4, 15))
+        user = User.objects.create_user(tenant=tenant, username="copy-lock-student")
+        student = Student.objects.create(tenant=tenant, user=user, name="학생", ps_number="COPY", omr_code="12345678", parent_phone="01000000000")
+        enrollment = Enrollment.objects.create(tenant=tenant, lecture=lecture, student=student)
+        SessionEnrollment.objects.create(tenant=tenant, session=source, enrollment=enrollment)
+        save_schedules(session=source, actor_id=None, data={"version": schedule_state(source)["version"], "schedules": [
+            {"label": "수요일", "date": "2026-04-08", "enrollment_ids": [enrollment.pk]},
+        ]})
+        version = schedule_state(target)["version"]
+        attempting = threading.Event()
+        results, errors = [], []
+
+        def lock_parents(**kwargs):
+            attempting.set()
+            return lock_attendance_parent_rows(**kwargs)
+
+        def copy():
+            close_old_connections()
+            try:
+                results.append(save_schedules(session=target, actor_id=None, source_session=source.pk, data={"version": version}))
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                close_old_connections()
+
+        thread = threading.Thread(target=copy)
+        with patch("apps.domains.lectures.services.schedules.lock_attendance_parent_rows", side_effect=lock_parents):
+            try:
+                with transaction.atomic():
+                    Student.objects.select_for_update().get(pk=student.pk)
+                    thread.start()
+                    self.assertTrue(attempting.wait(timeout=10))
+                    Session.objects.select_for_update(nowait=True).get(pk=target.pk)
+            finally:
+                thread.join(timeout=20)
+        self.assertFalse(thread.is_alive(), "copy lock order deadlock")
+        self.assertEqual(errors, [])
+        self.assertEqual(results[0]["schedules"][0]["enrollment_ids"], [enrollment.pk])

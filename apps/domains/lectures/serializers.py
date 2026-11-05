@@ -93,7 +93,7 @@ class SessionSerializer(serializers.ModelSerializer):
         # 커스텀 validate() + DB 제약에서 중복 검증
         validators = []
 
-    def get_attendance_total(self, obj):
+    def get_attendance_total(self, obj) -> int | None:
         """
         진척률 표시용 분모. include_progress 컨텍스트가 켜진 경우에만 계산.
         - section이 있으면: 해당 section의 ACTIVE class_assignments 수

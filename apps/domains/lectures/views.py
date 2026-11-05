@@ -6,6 +6,8 @@ from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.filters import SearchFilter
@@ -25,6 +27,7 @@ from apps.support.lectures.view_dependencies import (
     list_unassigned_active_enrollments,
 )
 from .models import Lecture, Session, Section, SectionAssignment
+from .services.schedules import SessionScheduleCopy, SessionScheduleState, SessionScheduleWrite
 from .serializers import (
     LectureSerializer,
     SessionSerializer,
@@ -451,7 +454,11 @@ class LectureViewSet(ModelViewSet):
         })
 
 
+@extend_schema_view(list=extend_schema(parameters=[
+    OpenApiParameter("date", OpenApiTypes.DATE, description="실제 수업일. 수업일 미설정 차시는 기존 기준일로 조회합니다."),
+]))
 class SessionViewSet(ModelViewSet):
+    queryset = Session.objects.none()  # Schema model; runtime reads always use the tenant-scoped get_queryset.
     serializer_class = SessionSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     # 강의/차시 트리, 성적, 시험, 영상 진입점은 차시 전체가 보여야 한다.
@@ -462,6 +469,9 @@ class SessionViewSet(ModelViewSet):
     filterset_fields = ["lecture", "section"]
     search_fields = ["title"]
 
+    @extend_schema(methods=["GET"], responses=SessionScheduleState)
+    @extend_schema(methods=["PUT"], request=SessionScheduleWrite, responses=SessionScheduleState)
+    @extend_schema(methods=["POST"], request=SessionScheduleCopy, responses=SessionScheduleState)
     @action(detail=True, methods=["get", "put", "post"])
     def schedules(self, request, pk=None):
         from .services.schedules import save_schedules, schedule_state

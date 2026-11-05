@@ -9,7 +9,9 @@ from django.db.models import F
 from rest_framework import serializers
 from rest_framework.exceptions import APIException, NotFound, ValidationError
 
-from apps.support.lectures.schedule_dependencies import Attendance, SessionEnrollment, bulk_create_session_enrollments
+from apps.support.lectures.schedule_dependencies import (
+    Attendance, SessionEnrollment, bulk_create_session_enrollments, lock_attendance_parent_rows,
+)
 from ..models import Session, SessionSchedule, SessionScheduleChange, SessionScheduleMembership
 
 
@@ -44,6 +46,28 @@ class ScheduleInput(serializers.Serializer):
         return attrs
 
 
+class ScheduleRosterEntry(serializers.Serializer):
+    enrollment_id = serializers.IntegerField()
+    student_name = serializers.CharField()
+
+
+class SessionScheduleState(serializers.Serializer):
+    version = serializers.CharField()
+    schedules = ScheduleInput(many=True)
+    roster = ScheduleRosterEntry(many=True)
+    unassigned_enrollment_ids = serializers.ListField(child=serializers.IntegerField())
+
+
+class SessionScheduleWrite(serializers.Serializer):
+    version = serializers.CharField()
+    schedules = ScheduleInput(many=True)
+
+
+class SessionScheduleCopy(serializers.Serializer):
+    version = serializers.CharField()
+    source_session = serializers.IntegerField(min_value=1)
+
+
 def roster_for(session):
     return SessionEnrollment.objects.filter(
         session=session, tenant_id=session.lecture.tenant_id,
@@ -75,7 +99,8 @@ def schedule_state(session):
         "roster": [{"enrollment_id": r.enrollment_id, "student_name": r.enrollment.student.name} for r in roster],
         "unassigned_enrollment_ids": [r.enrollment_id for r in roster if r.enrollment_id not in assigned],
     }
-    payload["version"] = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    version_state = {"session_id": session.pk, "base_date": str(session.date) if session.date else None, "state": payload}
+    payload["version"] = hashlib.sha256(json.dumps(version_state, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return payload
 
 
@@ -83,16 +108,29 @@ def schedule_state(session):
 def save_schedules(*, session, data, actor_id, source_session=None):
     if not isinstance(data, dict):
         raise ValidationError("수업일 설정을 다시 불러와 주세요.")
-    session = Session.objects.select_for_update().select_related("lecture").get(pk=session.pk)
+    source = None
+    locked_copy_ids = set()
+    if source_session is not None:
+        source = Session.objects.filter(pk=source_session, lecture=session.lecture).first()
+        if source is None or source.pk == session.pk:
+            raise ValidationError("같은 강의의 다른 차시를 선택해 주세요.")
+        # Copy may register students: acquire lifecycle parents before the Session lock.
+        parents = list(roster_for(source).filter(enrollment__status="ACTIVE").values_list("enrollment_id", "enrollment__student_id"))
+        enrollment_ids = sorted({eid for eid, _ in parents})
+        student_ids = sorted({sid for _, sid in parents})
+        locked_students, locked_enrollments = lock_attendance_parent_rows(
+            tenant=session.lecture.tenant, student_ids=student_ids, enrollment_ids=enrollment_ids,
+        )
+        if locked_students != tuple(student_ids) or locked_enrollments != tuple(enrollment_ids):
+            raise ScheduleConflict()
+        locked_copy_ids = set(locked_enrollments)
+    session = Session.objects.select_for_update(of=("self",)).select_related("lecture").get(pk=session.pk)
     before = schedule_state(session)
     if data.get("version") != before["version"]:
         raise ScheduleConflict()
     rows = data.get("schedules")
     if source_session is not None:
         # Copy explicitly requested active memberships only. Past attendance and scores stay put.
-        source = Session.objects.filter(pk=source_session, lecture=session.lecture).first()
-        if source is None or source.pk == session.pk:
-            raise ValidationError("같은 강의의 다른 차시를 선택해 주세요.")
         source_state = schedule_state(source)
         if not source_state["schedules"]:
             raise ValidationError("선택한 차시에 가져올 수업일이 없습니다.")
@@ -100,6 +138,8 @@ def save_schedules(*, session, data, actor_id, source_session=None):
             raise ValidationError("기존 수업일을 덮어쓰지 않도록, 수업일이 없는 차시에서만 가져올 수 있습니다.")
         removed = Attendance.objects.filter(tenant=session.lecture.tenant, session=session, status="SECESSION").values_list("enrollment_id", flat=True)
         eligible = set(roster_for(source).filter(enrollment__status="ACTIVE").exclude(enrollment_id__in=removed).values_list("enrollment_id", flat=True))
+        if not eligible.issubset(locked_copy_ids):
+            raise ScheduleConflict()
         existing = {r["enrollment_id"] for r in before["roster"]}
         missing = sorted(set(eligible) - existing)
         for offset in range(0, len(missing), 200):
