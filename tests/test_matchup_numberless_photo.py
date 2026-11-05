@@ -10,8 +10,8 @@ def run_photo(monkeypatch, numbers, *, source="student_exam_photo", trusted=Fals
               other_page_number=None, result=True):
     monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
     monkeypatch.setenv("MATCHUP_VLM_FILL_UNDERFILLED_PAGES", "1")
-    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     page = {"page_index": 0, "image_path": "/fake/photo.png",
             "paper_type": "student_answer_photo", "numbers": [None, None],
             "boxes": [(0, 100, 1900, 1000), (0, 1100, 1900, 1000)]}

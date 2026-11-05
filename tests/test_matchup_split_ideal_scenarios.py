@@ -329,7 +329,7 @@ def test_vlm_gate_allows_single_problem_per_page(monkeypatch):
         paper_type="clean_pdf_dual",
     )
     # adapter 메타 필수 — _try_vlm_problem_bboxes의 1차 게이트에서 검사
-    single_prob_result.debug = {"adapter": "gemini", "model": "gemini-2.5-flash"}
+    single_prob_result.debug = {"adapter": "openai", "model": "gpt-6.1-terra"}
 
     page = {
         "page_index": 0,
@@ -391,7 +391,7 @@ def test_multi_question_per_page_allowed(monkeypatch):
         confidence=0.95,
         paper_type="clean_pdf_dual",
     )
-    multi_q_result.debug = {"adapter": "gemini", "model": "gemini-2.5-flash"}
+    multi_q_result.debug = {"adapter": "openai", "model": "gpt-6.1-terra"}
 
     page = {
         "page_index": 0,
@@ -511,8 +511,8 @@ def test_vlm_underfilled_relabels_numberless_counter_fallback(monkeypatch):
     """VLM이 기존 fallback box와 겹치면 box를 중복 추가하지 않고 번호만 보정한다."""
     from academy.application.use_cases.ai.pipelines import matchup_pipeline
 
-    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
     page = {
         "page_index": 0,
