@@ -139,7 +139,14 @@ def record_review_state(*, video, student, user_id, context, stream_key, sequenc
         return snapshot(video, usage, stream, now)
     position_ms = min(position_ms, int(video.duration or 0) * 1000)
     if prepare:
-        if stream.prepared_until and stream.prepared_until > now and stream.prepared_position_ms == position_ms:
+        # A pause/resume or seek inside the existing grant needs no new credit.
+        # Keep its anchor and deadline unchanged so repeated prepares cannot
+        # walk the allowed window forward or extend its lifetime.
+        if (
+            stream.prepared_until and stream.prepared_until > now
+            and stream.prepared_position_ms is not None
+            and stream.prepared_position_ms <= position_ms < stream.prepared_position_ms + PREFETCH_WINDOW_MS
+        ):
             return snapshot(video, usage, stream, now)
         if video.review_watch_limit_enabled:
             if usage.prefetch_credit_ms < PREFETCH_WINDOW_MS:

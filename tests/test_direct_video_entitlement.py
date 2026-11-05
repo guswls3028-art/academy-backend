@@ -583,6 +583,15 @@ class DirectVideoEntitlementTests(TestCase):
             self.assertEqual(signal(sequence=1, prepare=True)["used_ms"], 0)
             prepared = state()
             self.assertEqual(signal(sequence=1, prepare=True)["used_ms"], 0)
+            for position in (8000, 15999):
+                reused = signal(sequence=1, prepare=True, position_ms=position)
+                self.assertNotIn("retry_after_ms", reused)
+                self.assertEqual(prepared, state())
+            # Reusing the end of a grant must not move its anchor or extend its TTL.
+            with patch("django.utils.timezone.now", return_value=started + timedelta(seconds=29)):
+                self.assertNotIn("retry_after_ms", signal(sequence=1, prepare=True, position_ms=15999))
+                self.assertEqual(prepared, state())
+            self.assertGreater(signal(sequence=1, prepare=True, position_ms=16000)["retry_after_ms"], 0)
             self.assertEqual(client.get(first).status_code, 302)
             self.assertEqual(client.head(first).status_code, 302)
             self.assertEqual(client.get(first, HTTP_RANGE="bytes=0-1").status_code, 302)
