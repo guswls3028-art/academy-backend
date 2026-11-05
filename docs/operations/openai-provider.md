@@ -56,7 +56,11 @@ ssm:GetParameter만 허용한다. 운영 key/env를 먼저 바꾸지 않는다. 
 기존 소유 helper와 공유 잠금·fresh source 절차를 따르며 현재 implicitDeny를
 우회하지 않는다. publisher는 이 정확한 개발 source를 읽은 뒤에만 환경을 발행한다.
 동일 immutable 후보의 격리개발 실사용(합성/승인 fixture)·preprod를 통과한 후
-운영 전환 단계에서 API/worker의 OPENAI_API_KEY를 반영한다. 개발 worker만 승인된 OpenAI 키를
+운영 전환 단계에서 API/worker의 OPENAI_API_KEY와 EMBEDDING_BACKEND=local을
+각 환경 payload에 함께 반영한다. 구·신 이미지 공존 중에는 명시적 모델 override를
+추가하지 않고 각 이미지의 호환 기본값을 사용한다. 적용 직전의 SSM 버전과
+현재 successful manifest를 다시 읽어 롤백 기준으로 보존하며 과거 manifest로
+최신 배포 기록을 덮어쓰지 않는다. 개발 worker만 승인된 OpenAI 키를
 재사용하며 API와 preprod는 외부 AI 키 제거를 유지한다. 개발 수동 API 정밀분석은
 키 없는 경계에서 명시적 실패를 검증하고 정상 모델 호출은 개발 worker에서 검증한다.
 기존 DB/R2/SQS 격리, QA tenant/user cleanup zero, AI DLQ HOLD는 변경하지 않는다.

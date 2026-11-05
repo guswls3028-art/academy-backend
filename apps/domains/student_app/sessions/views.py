@@ -76,6 +76,7 @@ class StudentSessionListView(APIView):
             tenant=tenant,
             hidden_before=hidden_before,
             hidden_session_ids=hidden_session_ids,
+            student=student,
         )
         data = [
             {
@@ -85,11 +86,13 @@ class StudentSessionListView(APIView):
                 "session_type": s.session_type,
                 "regular_order": s.regular_order,
                 "display_label": s.display_label,
-                "date": s.date.isoformat() if s.date else None,
+                "date": s.effective_date.isoformat() if s.effective_date else None,
+                "schedule_label": getattr(s, "schedule_label", None),
+                "schedule_configured": s.schedule_configured,
                 "status": None,
                 "exam_ids": [],
                 "type": "session",
-                "start_time": _parse_lecture_start_time(
+                "start_time": s.schedule_start_time if s.schedule_configured else _parse_lecture_start_time(
                     getattr(s.lecture, "lecture_time", "") or ""
                 ),
             }
@@ -167,6 +170,7 @@ class StudentSessionClearPastView(APIView):
                     session_ids=future_hidden_session_ids,
                     tenant=tenant,
                     cutoff=cutoff,
+                    student=student,
                 )
             )
         if future_hidden_clinic_participant_ids:
@@ -321,7 +325,10 @@ class StudentSessionDetailView(APIView):
         data = {
             "id": session.id,
             "title": getattr(session, "title", "") or f"{getattr(session.lecture, 'title', '')} {session.display_label}",
-            "date": session.date.isoformat() if session.date else None,
+            "date": session.effective_date.isoformat() if session.effective_date else None,
+            "schedule_label": getattr(session, "schedule_label", None),
+            "schedule_configured": session.schedule_configured,
+            "start_time": getattr(session, "schedule_start_time", None),
             "status": None,
             "exam_ids": exam_ids,
         }

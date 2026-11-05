@@ -439,7 +439,15 @@ class EnterpriseAnalyticsTests(TestCase):
         admin_response = AdminStudentGradesView.as_view()(admin_request)
 
         self.assertEqual(admin_response.status_code, 200, admin_response.data)
-        self.assertEqual(admin_response.data["exam_trend"], summary_response.data["exam_trend"])
+        # Staff retain comparison data; student/parent views omit singleton ranks.
+        admin_trend = admin_response.data["exam_trend"]
+        student_trend = summary_response.data["exam_trend"]
+        self.assertEqual(admin_trend[0]["rank"], 1)
+        self.assertEqual(student_trend[0]["cohort_size"], 1)
+        self.assertEqual(
+            [{**row, "rank": None, "percentile": None, "cohort_avg": None} for row in admin_trend],
+            student_trend,
+        )
         self.assertEqual(admin_response.data["exam_summary"], summary_response.data["exam_summary"])
 
         unlinked_child = self._student(self.tenant, "unlinked")

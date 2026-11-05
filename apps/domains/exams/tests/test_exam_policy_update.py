@@ -311,6 +311,26 @@ class ExamPolicyUpdateTests(TestCase):
         self.exam.refresh_from_db()
         self.assertFalse(self.exam.student_results_published)
 
+    def test_student_rank_and_attempt_count_visibility_are_independent(self):
+        defaults = ExamSerializer(self.exam).data
+        self.assertTrue(defaults["student_rank_published"])
+        self.assertTrue(defaults["student_cohort_size_published"])
+
+        response = self.patch(
+            {
+                "student_rank_published": False,
+                "student_cohort_size_published": True,
+            },
+            expected_updated_at=defaults["updated_at"],
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data["student_rank_published"])
+        self.assertTrue(response.data["student_cohort_size_published"])
+        self.exam.refresh_from_db()
+        self.assertFalse(self.exam.student_rank_published)
+        self.assertTrue(self.exam.student_cohort_size_published)
+
     def test_patch_rejects_stale_version_without_overwriting_newer_value(self):
         stale_updated_at = ExamSerializer(self.exam).data["updated_at"]
         newer_updated_at = timezone.now() + timedelta(seconds=1)

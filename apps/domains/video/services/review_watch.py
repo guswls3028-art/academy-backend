@@ -144,6 +144,16 @@ def record_review_state(*, video, student, user_id, context, stream_key, sequenc
         if video.review_watch_limit_enabled:
             if usage.prefetch_credit_ms < PREFETCH_WINDOW_MS:
                 if usage.last_prepare_at and usage.last_prepare_at + PREFETCH_TTL > now:
+                    # Resume at the confirmed paused position using its existing
+                    # media window. Retain a full preparation interval on the lease;
+                    # cold seeks and expiring grants need the normal admission path.
+                    if (
+                        stream.active_since is None
+                        and stream.playback_position_ms == position_ms
+                        and stream.prepared_until
+                        and stream.prepared_until >= now + timedelta(milliseconds=PREFETCH_WINDOW_MS)
+                    ):
+                        return snapshot(video, usage, stream, now)
                     wait = (usage.last_prepare_at + PREFETCH_TTL - now).total_seconds()
                     return {**snapshot(video, usage, stream, now), "retry_after_ms": max(1, int(wait * 1000))}
                 usage.last_prepare_at = now

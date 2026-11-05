@@ -3,9 +3,12 @@
 from django.db import transaction, IntegrityError
 from django.db.models import Case, Count, F, IntegerField, Max, OuterRef, Q, Subquery, Value, When
 from django.db.models.functions import Coalesce
+from django.db.models.deletion import RestrictedError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.filters import SearchFilter
@@ -25,6 +28,7 @@ from apps.support.lectures.view_dependencies import (
     list_unassigned_active_enrollments,
 )
 from .models import Lecture, Session, Section, SectionAssignment
+from .services.schedules import SessionScheduleCopy, SessionScheduleState, SessionScheduleWrite
 from .serializers import (
     LectureSerializer,
     SessionSerializer,
@@ -36,6 +40,13 @@ from apps.core.models import Tenant, TenantMembership
 from apps.api.common.query_params import parse_query_bool, parse_query_int
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
+
+
+_COMMUNITY_SCOPE_DELETE_MESSAGE = (
+    "연결된 커뮤니티 글이 있어 삭제할 수 없습니다. "
+    "커뮤니티에서 연결된 글을 확인하고 불필요한 글을 삭제한 뒤 다시 시도해 주세요. "
+    "글을 보존하려면 해당 강의·차시도 유지해 주세요."
+)
 
 
 def _session_scope(lecture: Lecture, section: Section | None):
@@ -277,9 +288,14 @@ class LectureViewSet(ModelViewSet):
         blocker = first_lecture_delete_blocker(lecture)
         if blocker:
             raise PermissionDenied(
+                _COMMUNITY_SCOPE_DELETE_MESSAGE if blocker == "community posts" else
                 f"This lecture has {blocker} and cannot be deleted."
             )
-        return super().destroy(request, *args, **kwargs)
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except RestrictedError as exc:
+            # A reference may appear after the explanatory preflight query.
+            raise PermissionDenied(_COMMUNITY_SCOPE_DELETE_MESSAGE) from exc
 
     @action(detail=False, methods=["get"], url_path="instructor-options")
     def instructor_options(self, request):
@@ -451,7 +467,11 @@ class LectureViewSet(ModelViewSet):
         })
 
 
+@extend_schema_view(list=extend_schema(parameters=[
+    OpenApiParameter("date", OpenApiTypes.DATE, description="실제 수업일. 수업일 미설정 차시는 기존 기준일로 조회합니다."),
+]))
 class SessionViewSet(ModelViewSet):
+    queryset = Session.objects.none()  # Schema model; runtime reads always use the tenant-scoped get_queryset.
     serializer_class = SessionSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     # 강의/차시 트리, 성적, 시험, 영상 진입점은 차시 전체가 보여야 한다.
@@ -459,8 +479,27 @@ class SessionViewSet(ModelViewSet):
     pagination_class = None
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ["lecture", "date", "section"]
+    filterset_fields = ["lecture", "section"]
     search_fields = ["title"]
+
+    @extend_schema(methods=["GET"], responses=SessionScheduleState)
+    @extend_schema(methods=["PUT"], request=SessionScheduleWrite, responses=SessionScheduleState)
+    @extend_schema(methods=["POST"], request=SessionScheduleCopy, responses=SessionScheduleState)
+    @action(detail=True, methods=["get", "put", "post"])
+    def schedules(self, request, pk=None):
+        from .services.schedules import save_schedules, schedule_state
+
+        session = self.get_object()
+        if request.method == "GET":
+            return Response(schedule_state(session))
+        if not isinstance(request.data, dict):
+            raise ValidationError("수업일 설정을 다시 불러와 주세요.")
+        source = None
+        if request.method == "POST":
+            source = request.data.get("source_session")
+            if type(source) is not int or not 0 < source <= 2**63 - 1:
+                raise ValidationError("가져올 차시를 선택해 주세요.")
+        return Response(save_schedules(session=session, data=request.data, actor_id=request.user.pk, source_session=source))
 
     def get_queryset(self):
         """
@@ -468,7 +507,7 @@ class SessionViewSet(ModelViewSet):
         section 필터 지원 (section_mode=true일 때).
         """
         qs = enroll_repo.session_queryset_select_related_lecture()
-        qs = qs.select_related("section")
+        qs = qs.select_related("section").prefetch_related("schedules")
         qs = qs.filter(lecture__tenant=self.request.tenant)
 
         lecture = parse_query_int(self.request.query_params, "lecture", min_value=1)
@@ -483,7 +522,7 @@ class SessionViewSet(ModelViewSet):
                 date = None
             if date is None:
                 raise ValidationError({"date": "YYYY-MM-DD 형식의 날짜를 입력해 주세요."})
-            qs = qs.filter(date=date)
+            qs = qs.filter(Q(schedules__date=date) | Q(schedules__isnull=True, date=date)).distinct()
 
         section = parse_query_int(self.request.query_params, "section", min_value=1)
         if section is not None:
@@ -521,6 +560,9 @@ class SessionViewSet(ModelViewSet):
                     output_field=IntegerField(),
                 ),
             )
+            if raw_date:
+                from apps.support.lectures.schedule_queries import staff_schedule_progress_annotations
+                qs = qs.annotate(**staff_schedule_progress_annotations(tenant=self.request.tenant, day=date))
 
         return qs.order_by("order", "id")
 
@@ -636,9 +678,14 @@ class SessionViewSet(ModelViewSet):
         )
         if blocker:
             raise PermissionDenied(
+                _COMMUNITY_SCOPE_DELETE_MESSAGE if blocker == "community posts" else
                 f"This session has {blocker} and cannot be deleted."
             )
-        return super().destroy(request, *args, **kwargs)
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except RestrictedError as exc:
+            # A reference may appear after the explanatory preflight query.
+            raise PermissionDenied(_COMMUNITY_SCOPE_DELETE_MESSAGE) from exc
 
 
 class SectionViewSet(ModelViewSet):

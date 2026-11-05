@@ -10,6 +10,7 @@ from rest_framework.exceptions import APIException, NotFound, PermissionDenied
 
 from apps.domains.attendance.models import Attendance, AttendanceQrPoint
 from apps.support.attendance.learning_todo_eligibility import reconcile_learning_todo_targets
+from apps.support.lectures.schedule_queries import student_schedule_annotations
 from apps.support.attendance.qr_dependencies import (
     Enrollment, SessionEnrollment, SessionParticipant, Student, Lecture,
     booking_window, session_window, change_participant_status, checkout_participant,
@@ -42,8 +43,10 @@ def class_roster(*, tenant, student, point, now):
         tenant=tenant, enrollment__tenant=tenant, enrollment__student=student,
         enrollment__student__tenant=tenant, enrollment__status="ACTIVE",
         enrollment__lecture_id=point.lecture_id, session__lecture_id=point.lecture_id,
-        session__lecture__tenant=tenant, session__date=now.date(),
-    ).filter(
+        session__lecture__tenant=tenant,
+    ).annotate(**student_schedule_annotations(
+        tenant=tenant, student=student, session_ref="session_id", date_ref="session__date",
+    )).filter(effective_date=now.date()).filter(
         Q(session__section__isnull=True)
         | Q(session__section__lecture_id=F("session__lecture_id"), session__section__tenant=tenant, session__section__is_active=True)
     ).select_related("session", "session__section", "enrollment").order_by("session__order", "id")
@@ -86,7 +89,7 @@ def resolve(*, tenant, student, point, now=None):
             status = row.status if row else "UNSET"
             choices.append({
                 "id": membership.session_id, "label": membership.session.title,
-                "date": membership.session.date, "start_time": None,
+                "date": membership.effective_date, "start_time": membership.schedule_start_time,
                 "status": status, "checked_in_at": row.qr_checked_in_at if row else None,
                 "checked_out_at": None, "can_check_in": status in ("UNSET", "PRESENT", "LATE"),
                 "can_check_out": False,

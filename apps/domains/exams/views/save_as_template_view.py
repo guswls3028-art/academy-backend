@@ -121,6 +121,8 @@ class SaveAsTemplateView(APIView):
                 max_score=exam.max_score,
                 answer_visibility=exam.answer_visibility,
                 essay_numbering=exam.essay_numbering,
+                student_rank_published=exam.student_rank_published,
+                student_cohort_size_published=exam.student_cohort_size_published,
             )
             question_id_map = _copy_sheet(exam, template)
             _copy_answer_key(exam, template, question_id_map)
