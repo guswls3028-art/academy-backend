@@ -5,7 +5,8 @@ for package in apt libapt-pkg7.0; do
     test "$(dpkg-query -W -f='${Version}' "$package")" = '3.0.4'
     test "$(dpkg-query -W -f='${source:Package}' "$package")" = 'apt'
 done
-apt-get check
+# The final image runs as appuser; check dependencies without taking root locks.
+apt-get --simulate check
 
 test "$(dpkg-query -W -f='${Version}' libexpat1)" = '2.9.0+academy1-1'
 test "$(dpkg-query -W -f='${Source}' libexpat1)" = 'expat'
