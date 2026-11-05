@@ -9,41 +9,47 @@ class Migration(migrations.Migration):
         ("matchup", "0025_alter_matchupdocument_exam_cycle"),
     ]
 
+    # Choices labels are Django state only; existing columns and engine values stay intact.
     operations = [
-        migrations.AlterField(
-            model_name="autosegmentationsnapshot",
-            name="engine",
-            field=models.CharField(
-                choices=[
-                    ("yolo", "YOLO segmentation"),
-                    ("yolo_v11", "YOLO V11"),
-                    ("yolo_v12", "YOLO V12"),
-                    ("yolo_v13", "YOLO V13"),
-                    ("vlm", "VLM"),
-                    ("ocr", "OCR + layout heuristic"),
-                    ("native_pdf", "Native PDF parser"),
-                    ("hybrid", "Hybrid (YOLO + VLM verifier)"),
-                    ("manual_assist", "사용자 수동 자르기 보조"),
-                    ("unknown", "엔진 미상"),
-                ],
-                db_index=True,
-                default="unknown",
-                max_length=32,
-            ),
-        ),
-        migrations.AlterField(
-            model_name="problemsegmentationproposal",
-            name="engine",
-            field=models.CharField(
-                choices=[
-                    ("yolo", "YOLO segmentation"),
-                    ("vlm", "VLM"),
-                    ("ocr", "OCR + layout heuristic"),
-                    ("native_pdf", "Native PDF parser"),
-                    ("manual_assist", "사용자 수동 자르기 보조"),
-                ],
-                db_index=True,
-                max_length=32,
-            ),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[],
+            state_operations=[
+                migrations.AlterField(
+                    model_name="autosegmentationsnapshot",
+                    name="engine",
+                    field=models.CharField(
+                        choices=[
+                            ("yolo", "YOLO segmentation"),
+                            ("yolo_v11", "YOLO V11"),
+                            ("yolo_v12", "YOLO V12"),
+                            ("yolo_v13", "YOLO V13"),
+                            ("vlm", "VLM"),
+                            ("ocr", "OCR + layout heuristic"),
+                            ("native_pdf", "Native PDF parser"),
+                            ("hybrid", "Hybrid (YOLO + VLM verifier)"),
+                            ("manual_assist", "사용자 수동 자르기 보조"),
+                            ("unknown", "엔진 미상"),
+                        ],
+                        db_index=True,
+                        default="unknown",
+                        max_length=32,
+                    ),
+                ),
+                migrations.AlterField(
+                    model_name="problemsegmentationproposal",
+                    name="engine",
+                    field=models.CharField(
+                        choices=[
+                            ("yolo", "YOLO segmentation"),
+                            ("vlm", "VLM"),
+                            ("ocr", "OCR + layout heuristic"),
+                            ("native_pdf", "Native PDF parser"),
+                            ("manual_assist", "사용자 수동 자르기 보조"),
+                        ],
+                        db_index=True,
+                        max_length=32,
+                    ),
+                ),
+            ],
         ),
     ]

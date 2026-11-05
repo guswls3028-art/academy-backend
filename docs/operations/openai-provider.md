@@ -76,3 +76,7 @@ Terra 입력1.00/출력5.00, Sol 입력2.00/출력10.00이다. 30분 cache write
 [요금 출처](https://developers.openai.com/api/docs/pricing). 합성 2문항 후보 어댑터
 검증은 Terra 입력1955(그중 cache write1952), 출력137 토큰, 5.24초였다. 이는
 공급자/좌표 계약의 독립 검증이며 실제 교재 품질이나 전체 실사용 검증의 대체가 아니다.
+
+마이그레이션 `0026_neutral_vlm_provider_label`은 `SeparateDatabaseAndState`의
+빈 `database_operations`로 VLM 선택지 표시명만 갱신한다. DB 컬럼·인덱스·
+저장된 `engine=vlm` 값은 유지되며 구·신 이미지가 같은 데이터를 사용할 수 있다.
