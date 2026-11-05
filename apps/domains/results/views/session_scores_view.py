@@ -271,6 +271,12 @@ class SessionScoresView(APIView):
             tenant=tenant,
             session=session,
         )
+        from apps.support.lectures.schedule_queries import schedule_enrollment_ids
+        schedule_ids = schedule_enrollment_ids(
+            tenant=tenant, session_id=session.id, value=request.query_params.get("schedule"),
+        )
+        if schedule_ids is not None:
+            active_session_enrollment_ids = set(active_session_enrollment_ids) & set(schedule_ids)
 
         # SSOT: 성적탭은 차시에 붙은 학생 roster를 먼저 보여준다.
         # OMR 채점은 명시 ExamEnrollment가 없어도 이 roster 학생을 후보로 삼고,

@@ -15,6 +15,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework import status
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
+from apps.support.lectures.schedule_queries import student_schedule_annotations
 from apps.support.student_app.video_dependencies import (
     active_inactive_video_entitlements_for_student,
     active_enrollments_for_student,
@@ -339,7 +340,9 @@ class StudentVideoMeView(APIView):
                 tenant=tenant,
             )
             .filter(Q(is_active=True) | Q(is_system=True))
-            .prefetch_related("sessions")
+            .prefetch_related(Prefetch("sessions", queryset=Session.objects.annotate(
+                **student_schedule_annotations(tenant=tenant, student=student),
+            )))
             .order_by("title")
         )
 
@@ -429,7 +432,9 @@ class StudentVideoMeView(APIView):
                     "session_type": s.session_type,
                     "regular_order": s.regular_order,
                     "display_label": s.display_label,
-                    "date": s.date.isoformat() if s.date else None,
+                    "date": s.effective_date.isoformat() if s.effective_date else None,
+                    "schedule_label": s.schedule_label,
+                    "schedule_configured": s.schedule_configured,
                 }
                 for s in sessions
             ]

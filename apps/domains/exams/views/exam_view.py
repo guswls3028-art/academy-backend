@@ -218,6 +218,13 @@ class ExamViewSet(ModelViewSet):
             source_numbering_exam = template_exam or source_exam
             if source_numbering_exam and "essay_numbering" not in serializer.validated_data:
                 save_kwargs["essay_numbering"] = source_numbering_exam.essay_numbering
+            if source_numbering_exam:
+                for policy_field in (
+                    "student_rank_published",
+                    "student_cohort_size_published",
+                ):
+                    if policy_field not in self.request.data:
+                        save_kwargs[policy_field] = getattr(source_numbering_exam, policy_field, True)
             exam = serializer.save(**save_kwargs)
 
             with refresh_exam_target_projections(exam=exam):

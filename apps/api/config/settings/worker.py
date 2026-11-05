@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     "apps.domains.assets",
     "apps.domains.tools.problem_studio.apps.ProblemStudioConfig",
     "apps.domains.inventory",  # MatchupDocument.inventory_file FK NOT NULL (Storage-Matchup 통합)
+    "apps.domains.surveys",  # 학생 정리·인벤토리 보호가 설문 응답 관계를 함께 참조
     "apps.domains.matchup",  # AI 콜백이 MatchupDocument/MatchupProblem 모델 사용
     "apps.domains.student_app",
     "apps.domains.video",

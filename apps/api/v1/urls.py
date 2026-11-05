@@ -25,6 +25,7 @@ urlpatterns = [
     # Core Domains
     # =========================
     path("students/", include("apps.domains.students.urls")),
+    path("surveys/", include("apps.domains.surveys.urls")),
     path("enrollments/", include("apps.domains.enrollment.urls")),
     path("fees/", include("apps.domains.fees.urls")),
     path("submissions/", include("apps.domains.submissions.urls")),
