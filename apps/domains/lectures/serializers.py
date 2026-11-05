@@ -1,7 +1,7 @@
 # PATH: apps/domains/lectures/serializers.py
 
 from rest_framework import serializers
-from .models import Lecture, Session, Section, SectionAssignment
+from .models import Lecture, Session, Section, SectionAssignment, SessionSchedule
 from apps.support.lectures.filter_dependencies import active_enrollment_count_for_lecture
 
 
@@ -40,7 +40,14 @@ class LectureSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class SessionScheduleSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SessionSchedule
+        fields = ["id", "label", "date", "start_time", "end_time"]
+
+
 class SessionSerializer(serializers.ModelSerializer):
+    schedule_dates = SessionScheduleSummarySerializer(source="schedules", many=True, read_only=True)
     title = serializers.CharField(required=False, allow_blank=True, max_length=255)
     order = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     session_type = serializers.ChoiceField(
@@ -74,7 +81,7 @@ class SessionSerializer(serializers.ModelSerializer):
         model = Session
         fields = [
             "id", "lecture", "section", "order", "session_type", "regular_order",
-            "insert_after_order", "display_label", "title", "date",
+            "insert_after_order", "display_label", "title", "date", "schedule_dates",
             "section_label", "section_type",
             "lecture_title", "lecture_color",
             "start_time", "end_time", "location",

@@ -20,6 +20,8 @@ class DashboardSessionSerializer(serializers.Serializer):
     status = serializers.CharField(allow_null=True, required=False)
     type = serializers.CharField(default="session", required=False)
     start_time = serializers.TimeField(allow_null=True, required=False)
+    schedule_label = serializers.CharField(allow_null=True, required=False)
+    schedule_configured = serializers.BooleanField(required=False, default=False)
 
 
 class StudentDashboardSerializer(serializers.Serializer):

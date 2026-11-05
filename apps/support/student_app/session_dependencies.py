@@ -7,6 +7,7 @@ from typing import Any, Iterable
 
 from django.db.models import Count, F, Q
 from django.utils import timezone
+from apps.support.lectures.schedule_queries import student_schedule_annotations
 
 
 def get_active_student_session_ids(*, student: Any, tenant: Any) -> list[int]:
@@ -34,28 +35,34 @@ def get_student_lecture_sessions(
     tenant: Any,
     hidden_before: date | None,
     hidden_session_ids: set[int],
+    student: Any = None,
 ) -> list[Any]:
     from apps.domains.lectures.models import Session as LectureSession
 
+    base = LectureSession.objects.all()
+    if student is not None:
+        base = base.annotate(**student_schedule_annotations(tenant=tenant, student=student))
+    else:
+        base = base.annotate(effective_date=F("date"))
     sessions = (
-        LectureSession.objects.filter(
+        base.filter(
             id__in=list(session_ids),
             lecture__tenant=tenant,
             lecture__is_active=True,
         )
         .filter(
-            Q(date__lt=timezone.localdate())
-            | Q(date__isnull=True)
+            Q(effective_date__lt=timezone.localdate())
+            | Q(effective_date__isnull=True)
             | (
-                (Q(lecture__end_date__isnull=True) | Q(date__lte=F("lecture__end_date")))
-                & (Q(lecture__start_date__isnull=True) | Q(date__gte=F("lecture__start_date")))
+                (Q(lecture__end_date__isnull=True) | Q(effective_date__lte=F("lecture__end_date")))
+                & (Q(lecture__start_date__isnull=True) | Q(effective_date__gte=F("lecture__start_date")))
             )
         )
         .select_related("lecture")
-        .order_by("date", "order", "id")
+        .order_by("effective_date", "order", "id")
     )
     if hidden_before is not None:
-        sessions = sessions.exclude(date__lte=hidden_before)
+        sessions = sessions.exclude(effective_date__lte=hidden_before)
     if hidden_session_ids:
         sessions = sessions.exclude(id__in=hidden_session_ids)
     return list(sessions)
@@ -84,6 +91,7 @@ def get_future_hidden_session_ids(
     session_ids: set[int],
     tenant: Any,
     cutoff: date,
+    student: Any = None,
 ) -> list[int]:
     if not session_ids:
         return []
@@ -95,7 +103,8 @@ def get_future_hidden_session_ids(
         for session_id in (
             LectureSession.objects
             .filter(id__in=session_ids, lecture__tenant=tenant)
-            .exclude(date__lte=cutoff)
+            .annotate(**(student_schedule_annotations(tenant=tenant, student=student) if student else {"effective_date": F("date")}))
+            .exclude(effective_date__lte=cutoff)
             .values_list("id", flat=True)
         )
     ]
@@ -181,8 +190,9 @@ def get_student_attendance_payload(*, student: Any, tenant: Any) -> tuple[dict, 
     recent = []
     for attendance in (
         attendances
+        .annotate(**student_schedule_annotations(tenant=tenant, student=student, session_ref="session_id", date_ref="session__date"))
         .select_related("session", "session__lecture")
-        .order_by("-session__date", "-id")[:20]
+        .order_by("-effective_date", "-id")[:20]
     ):
         session = attendance.session
         recent.append({
@@ -191,7 +201,7 @@ def get_student_attendance_payload(*, student: Any, tenant: Any) -> tuple[dict, 
                 getattr(session.lecture, "title", "") if session.lecture_id else ""
             ),
             "session_title": session.title or session.display_label,
-            "date": session.date.isoformat() if session.date else None,
+            "date": attendance.effective_date.isoformat() if attendance.effective_date else None,
             "status": attendance.status,
             "qr_checked_in_at": attendance.qr_checked_in_at,
             "can_view_session": session.id in accessible_session_ids,
@@ -216,6 +226,7 @@ def get_student_detail_session(*, student: Any, tenant: Any, session_id: Any) ->
     return (
         LectureSession.objects
         .filter(id=session_id, lecture__tenant=tenant)
+        .annotate(**student_schedule_annotations(tenant=tenant, student=student))
         .select_related("lecture")
         .first()
     )
