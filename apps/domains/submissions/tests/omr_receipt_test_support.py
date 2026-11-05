@@ -34,22 +34,22 @@ class OmrReceiptFixture:
         force_authenticate(request, user=self.user)
         return view(request, **kwargs)
 
-    def initialize(self):
-        response = self.request(ExamOMRBatchInitializeView.as_view(), {"total_count": 1}, exam_id=self.exam.id)
+    def initialize(self, total_count=1):
+        response = self.request(ExamOMRBatchInitializeView.as_view(), {"total_count": total_count}, exam_id=self.exam.id)
         self.assertEqual(response.status_code, 201, response.data)
         return response.data["id"]
 
-    def upload(self, batch_id=None, *, content=b"same-readmission-scan"):
+    def upload(self, batch_id=None, *, content=b"same-readmission-scan", ordinal=1):
         batch_id = batch_id or self.initialize()
         request = APIRequestFactory().post("/", {
-            "batch_id": str(batch_id), "item_ordinals": ["1"],
+            "batch_id": str(batch_id), "item_ordinals": [str(ordinal)],
             "files": [SimpleUploadedFile("scan.jpg", content, content_type="image/jpeg")],
         }, format="multipart")
         request.tenant = self.tenant
         force_authenticate(request, user=self.user)
         response = ExamOMRBatchUploadView.as_view()(request, exam_id=self.exam.id)
         self.assertEqual(response.status_code, 201, response.data)
-        return OmrUploadBatchItem.objects.get(batch_id=batch_id, ordinal=1), response
+        return OmrUploadBatchItem.objects.get(batch_id=batch_id, ordinal=ordinal), response
 
     def discard(self, submission):
         response = self.request(
