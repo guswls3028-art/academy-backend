@@ -719,6 +719,7 @@ class MyGradesSummaryHomeworkTests(TestCase):
             lecture=self.lecture,
             status="ACTIVE",
         )
+        self.ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
         self.ExamEnrollment.objects.create(exam=exam, enrollment=peer_enrollment)
         self.Result.objects.create(
             target_type="exam",
