@@ -13,6 +13,7 @@ from apps.support.results.student_reported_scores import (
     inventory_files_have_any_reported_score,
 )
 from apps.support.inventory.student_dependencies import active_student_id_for_storage
+from apps.support.surveys import survey_attachment_protection
 from apps.support.students.namespace_lock import (
     lock_student_creation_tenant_reference,
     lock_student_ps_namespaces,
@@ -49,6 +50,9 @@ def _same_scope(row, *, tenant, scope, student_ps):
 
 def _prepare_delete(*, tenant, files, single_file=False):
     file_ids = [file.id for file in files]
+    survey_protection = survey_attachment_protection(tenant=tenant, file_ids=file_ids)
+    if survey_protection:
+        return set(), 0, survey_protection
     protected_score = (
         inventory_file_has_reported_score(tenant=tenant, file_id=file_ids[0])
         if single_file else inventory_files_have_any_reported_score(tenant=tenant, file_ids=file_ids)

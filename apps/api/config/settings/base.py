@@ -164,6 +164,7 @@ INSTALLED_APPS = [
     "apps.domains.assets",
     "apps.domains.tools.problem_studio.apps.ProblemStudioConfig",
     "apps.domains.inventory",
+    "apps.domains.surveys",
     "apps.domains.matchup",
     "apps.domains.fees",
 

@@ -36,6 +36,8 @@ PERMANENT_DELETE_STUDENT_RELATIONS = frozenset({
     ("community_postentity", "created_by_id"),
     ("community_postreply", "created_by_id"),
     ("results_student_reported_score", "student_id"),
+    ("surveys_response", "student_id"),
+    ("surveys_recipient", "student_id"),
     ("clinic_sessionparticipant", "student_id"),
     ("clinic_submission", "student_id"),
     ("student_fee", "student_id"),
@@ -774,6 +776,7 @@ def _permanently_delete_selected_students(
         "submissions_homeworkmediapreview",
         "submissions_submission",
         "results_student_reported_score", "student_support_session",
+        "surveys_response", "surveys_recipient",
         "homework_results_homeworkscore", "homework_assignment", "homework_enrollment",
         "lectures_sectionassignment",
         "student_fee", "student_invoice", "student_invoice_item", "fee_payment",
@@ -840,6 +843,8 @@ def _permanently_delete_selected_students(
                 ("community_postentity", "created_by_id"),
                 ("community_postreply", "created_by_id"),
                 ("results_student_reported_score", "student_id"),
+                ("surveys_response", "student_id"),
+                ("surveys_recipient", "student_id"),
                 ("student_support_session", "student_id"),
                 ("video_inactivevideoentitlement", "student_id"),
                 ("video_directvideoentitlement", "student_id"),
@@ -1085,6 +1090,12 @@ def _permanently_delete_selected_students(
                 f"WHERE id IN {submission_id_clause} AND tenant_id = %s",
                 [*submission_id_params, tenant.id],
             )
+
+        # Remove owned survey joins before deleting score/evidence records. Django
+        # cascades only the response's through rows, never the attached originals.
+        for model_name in ("SurveyResponse", "SurveyRecipient"):
+            survey_model = apps.get_model("surveys", model_name)
+            survey_model._base_manager.filter(tenant=tenant, student_id__in=student_id_params).delete()
 
         review_usage.filter(video__tenant=tenant, student__tenant=tenant).delete()
 

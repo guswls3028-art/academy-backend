@@ -52,6 +52,7 @@ backend/docs/
 
 | 용도 | 경로 |
 |------|------|
+| 설문·성적 취합·학생 메모 응답 | [domain/surveys.md](domain/surveys.md) |
 | Excel 전체 경로·입력 한도·장애 복구 | [operations/excel-operations.md](operations/excel-operations.md) |
 | 공개 매치업·분석자료 게시판 | [domain/public-resource-board.md](domain/public-resource-board.md) |
 | 공개 YouTube 영상·대표 영상·지정 게시자 | [domain/public-video-showcase.md](domain/public-video-showcase.md) |
@@ -69,13 +70,12 @@ backend/docs/
 | 홈페이지 상담 수신함 전체 집계·페이지·읽음/메모 동시 저장 | [domain/landing-consult-inbox.md](domain/landing-consult-inbox.md) |
 | 출결 명단 정렬·페이지네이션 | [domain/attendance.md](domain/attendance.md) |
 | 학생 QR 출석·클리닉 등원/하원 | [domain/attendance-qr.md](domain/attendance-qr.md) |
-| 커뮤니티 권한·공개 범위·삭제와 복구 | [domain/community.md](domain/community.md) |
+| 커뮤니티 권한·공개 범위·동시 저장·사용자 차단·삭제와 복구 | [domain/community.md](domain/community.md) |
 | 강의 정규 수업·보강, 공통 차시의 수업일·학생 배정 | [domain/lecture-sessions.md](domain/lecture-sessions.md) |
 | 과제 만점·합격 정책·성적 저장 | [domain/homework-grading.md](domain/homework-grading.md) |
 | 차시별 시험·점수형 과제 선택 총점 | [domain/assessment-totals.md](domain/assessment-totals.md) |
 | 학생별 누적 성적·정규/보강 범위 | [domain/student-performance-console.md](domain/student-performance-console.md) |
 | 학생 성적표 오답 상태·학원별 성장 그래프 구성 | [domain/student-grade-report.md](domain/student-grade-report.md) |
-| 커뮤니티 게시 대상·역할·동시 저장·사용자 차단 | [domain/community.md](domain/community.md#23-현재-역할과-게시-대상-변경-경계-2026-10-09) |
 | 교직원 저장소·학생 인벤토리 파일과 R2 보상 정리 | [domain/inventory-storage.md](domain/inventory-storage.md) |
 | 보강·클리닉 등원 예정 운영 | [domain/arrival-operations.md](domain/arrival-operations.md) |
 | 현재 클리닉 대상·강의 종료·학생 예약 자격 | [domain/clinic-targets.md](domain/clinic-targets.md) |

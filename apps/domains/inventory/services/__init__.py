@@ -20,6 +20,7 @@ from apps.support.inventory.storage_cleanup_dependencies import (
 )
 from apps.support.inventory.student_dependencies import active_student_id_for_storage
 from apps.support.results.student_reported_scores import inventory_files_have_any_reported_score
+from apps.support.surveys import survey_attachment_protection
 from apps.support.students.namespace_lock import (
     lock_student_creation_tenant_reference,
     lock_student_ps_namespaces,
@@ -167,6 +168,9 @@ def _raise_if_locked_files_are_protected(
     folder: bool,
     matchup: bool,
 ) -> None:
+    protection = survey_attachment_protection(tenant=tenant, file_ids=file_ids)
+    if protection:
+        raise _InventoryMoveRejected(protection)
     if matchup:
         protection_result = lock_matchup_delete_protection_result(
             tenant=tenant,
