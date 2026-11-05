@@ -16,7 +16,8 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.community.api.views.post_views import PostViewSet
 from apps.domains.community.models import PostEntity, PostMapping, ScopeNode
-from apps.domains.lectures.models import Lecture, Session
+Lecture = apps.get_model("lectures", "Lecture")
+Session = apps.get_model("lectures", "Session")
 
 
 class AudienceFixture:
