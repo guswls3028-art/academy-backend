@@ -72,4 +72,3 @@ class SurveyResponse(TimestampModel):
         ordering = ["-updated_at", "-id"]
         constraints = [models.UniqueConstraint(fields=["survey", "student"], name="survey_response_unique")]
         indexes = [models.Index(fields=["tenant", "student", "-updated_at"], name="survey_student_history_idx")]
-
