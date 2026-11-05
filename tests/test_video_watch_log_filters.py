@@ -25,7 +25,7 @@ class VideoWatchLogFilterTests(TestCase):
         self.lecture = create_lecture_fixture(tenant=self.tenant, title="Video lecture", name="Video lecture", subject="MATH")
         self.session = create_session_fixture(lecture=self.lecture, title="Session", order=1)
         self.video = Video.objects.create(tenant=self.tenant, session=self.session, title="Watch log", duration=60)
-        self.student = create_student_fixture(tenant=self.tenant, user=self.student_user, name="=Student", ps_number="WL-1", omr_code="11110001")
+        self.student = create_student_fixture(tenant=self.tenant, user=self.student_user, name="=학생", ps_number="WL-1", omr_code="11110001")
         self.second = create_student_fixture(tenant=self.tenant, user=User.objects.create_user(username="watch-second", tenant=self.tenant), name="Another", ps_number="WL-2", omr_code="11110002")
         self.foreign = create_student_fixture(tenant=self.other, user=User.objects.create_user(username="watch-foreign", tenant=self.other), name="Foreign", ps_number="WL-3", omr_code="11110003")
         self.enrollment = create_enrollment_fixture(tenant=self.tenant, lecture=self.lecture, student=self.student)
@@ -57,9 +57,11 @@ class VideoWatchLogFilterTests(TestCase):
         risk = self.request("risk", student=self.student.pk)
         self.assertEqual([row["enrollment_id"] for row in risk.data], [self.enrollment.pk])
         exported = self.request("export_csv", student=self.student.pk)
-        rows = list(csv.reader(io.StringIO(exported.content.decode())))
+        self.assertTrue(exported.content.startswith(b"\xef\xbb\xbf"))
+        rows = list(csv.reader(io.StringIO(exported.content.decode("utf-8-sig"))))
         self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[1][1], "'=Student")
+        self.assertEqual(rows[0][0], "occurred_at")
+        self.assertEqual(rows[1][1], "'=학생")
 
     def test_foreign_student_and_malformed_identity_do_not_widen_query(self):
         self.assertEqual(self.request(student=self.foreign.pk).data["count"], 0)

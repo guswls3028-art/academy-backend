@@ -195,6 +195,8 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
         resp["Content-Disposition"] = (
             f'attachment; filename="video_{video_id}_events_{range_key}.csv"'
         )
+        # Excel's file-open path needs the UTF-8 marker to preserve Korean text.
+        resp.write("\ufeff")
 
         writer = csv.writer(resp)
         writer.writerow([
