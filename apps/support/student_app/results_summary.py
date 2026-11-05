@@ -23,6 +23,7 @@ from apps.domains.results.services.assessment_correction_status import (
     exam_correction_fingerprint,
 )
 from apps.domains.results.utils.ranking import compute_exam_rankings_batch
+from apps.domains.results.services.student_rank_visibility import student_rank_visibility_payload
 from apps.support.results.student_grade_history import (
     build_exam_progression,
     build_student_exam_history,
@@ -324,6 +325,17 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         enrollment_ids=enrollment_ids,
         tenant=tenant,
     )
+    exam_rank_visibility = {
+        int(exam_id): (bool(rank_published), bool(cohort_size_published))
+        for exam_id, rank_published, cohort_size_published in Exam.objects.filter(
+            tenant=tenant,
+            id__in=exam_ids,
+        ).values_list(
+            "id",
+            "student_rank_published",
+            "student_cohort_size_published",
+        )
+    }
 
     for exam in exam_list:
         result_id = int(exam.pop("_result_id"))
@@ -352,6 +364,15 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             })
             continue
         rank_info = exam_rank_maps.get(exam_id, {}).get(enrollment_id, {})
+        rank_published, cohort_size_published = exam_rank_visibility.get(
+            exam_id,
+            (True, True),
+        )
+        rank_payload = student_rank_visibility_payload(
+            rank_info,
+            rank_published=rank_published,
+            cohort_size_published=cohort_size_published,
+        )
         item_analysis = result_analysis_map.get(result_id) or _empty_result_item_analysis()
         session_id = exam.get("session_id")
         correction = correction_map.get((
@@ -375,10 +396,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             correction=correction,
         )
         exam.update({
-            "rank": rank_info.get("rank"),
-            "percentile": rank_info.get("percentile"),
-            "cohort_size": rank_info.get("cohort_size"),
-            "cohort_avg": rank_info.get("cohort_avg"),
+            **rank_payload,
             "total_questions": item_analysis["total_questions"],
             "correct_count": item_analysis["correct_count"],
             "wrong_count": item_analysis["wrong_count"],

@@ -204,6 +204,8 @@ class ApplyBundleView(GenericAPIView):
                         subject=item.exam_template.subject,
                         max_score=config.get("max_score", item.exam_template.max_score),
                         pass_score=config.get("pass_score", item.exam_template.pass_score),
+                        student_rank_published=item.exam_template.student_rank_published,
+                        student_cohort_size_published=item.exam_template.student_cohort_size_published,
                     )
                     exam.sessions.add(session)
                     copy_exam_structure(source_exam=item.exam_template, target_exam=exam)

@@ -120,6 +120,8 @@ class RegularStructureCopyTests(TestCase):
 
     def test_regular_from_template_gets_editable_snapshot_without_mutating_template(self):
         template, template_questions = self._make_template()
+        template.student_rank_published = False
+        template.save(update_fields=["student_rank_published"])
 
         regular = RegularExamFactory().create_regular_from_template(
             template_exam=template,
@@ -132,6 +134,8 @@ class RegularStructureCopyTests(TestCase):
         self.assertEqual([q.number for q in regular_questions], [1, 2])
         self.assertNotEqual(regular_questions[0].id, template_questions[0].id)
         self.assertEqual(regular_questions[0].image_key, "questions/q1.png")
+        self.assertFalse(regular.student_rank_published)
+        self.assertTrue(regular.student_cohort_size_published)
         self.assertEqual(regular_questions[0].region_meta["w"], 3)
         self.assertEqual(regular_questions[0].explanation.text, "source explanation")
         self.assertEqual(

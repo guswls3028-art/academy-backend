@@ -17,7 +17,7 @@ from apps.domains.enrollment.models import Enrollment
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.student_app.results.views import MyExamResultView, MyGradesSummaryView
+from apps.domains.student_app.results.views import MyExamResultView, MyGradesAnalyticsView, MyGradesSummaryView
 from apps.domains.students.models import Student
 from apps.support.submissions.dependencies import homework_submission_revisions
 
@@ -116,6 +116,12 @@ class MyGradesSummaryHomeworkTests(TestCase):
         request.tenant = self.tenant
         force_authenticate(request, user=self.user)
         return MyExamResultView.as_view()(request, exam_id=exam_id)
+
+    def _call_analytics(self):
+        request = self.factory.get("/api/v1/student/grades/analytics/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.user)
+        return MyGradesAnalyticsView.as_view()(request)
 
     def _score_exam(
         self,
@@ -679,12 +685,92 @@ class MyGradesSummaryHomeworkTests(TestCase):
         response = self._call()
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["exams"][0]["rank"], 1)
+        self.assertIsNone(response.data["exams"][0]["rank"])
         self.assertEqual(response.data["exams"][0]["cohort_size"], 1)
-        self.assertEqual(response.data["exams"][0]["cohort_avg"], 80.0)
-        self.assertEqual(response.data["exam_trend"][0]["rank"], 1)
-        self.assertEqual(response.data["exam_trend"][0]["percentile"], 100.0)
+        self.assertIsNone(response.data["exams"][0]["cohort_avg"])
+        self.assertIsNone(response.data["exam_trend"][0]["rank"])
+        self.assertIsNone(response.data["exam_trend"][0]["percentile"])
         self.assertEqual(response.data["exam_trend"][0]["cohort_size"], 1)
+
+    def test_student_rank_and_attempt_count_visibility_apply_to_summary_and_detail(self):
+        local_result = self._score_exam(
+            title="공개 선택 시험",
+            order=2,
+            score=80,
+            max_score=100,
+        )
+        exam = self.Exam.objects.get(id=local_result.target_id)
+        peer_user = User.objects.create_user(
+            username="student-rank-visibility-peer",
+            password="pw1234",
+            tenant=self.tenant,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=peer_user, role="student")
+        peer = Student.objects.create(
+            tenant=self.tenant,
+            user=peer_user,
+            ps_number="SRV002",
+            omr_code="22224444",
+            name="다른 학생",
+        )
+        peer_enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=peer,
+            lecture=self.lecture,
+            status="ACTIVE",
+        )
+        self.ExamEnrollment.objects.create(exam=exam, enrollment=peer_enrollment)
+        self.Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=peer_enrollment,
+            total_score=60,
+            max_score=100,
+        )
+
+        exam.student_rank_published = False
+        exam.student_cohort_size_published = True
+        exam.save(update_fields=[
+            "student_rank_published",
+            "student_cohort_size_published",
+            "updated_at",
+        ])
+
+        summary = self._call()
+        detail = self._call_exam_result(exam.id)
+        analytics = self._call_analytics()
+        summary_exam = next(row for row in summary.data["exams"] if row["exam_id"] == exam.id)
+        analytics_exam = next(row for row in analytics.data["trends"] if row["exam_id"] == exam.id)
+        self.assertEqual(summary.status_code, 200, summary.data)
+        self.assertIsNone(summary_exam["rank"])
+        self.assertIsNone(summary_exam["percentile"])
+        self.assertIsNone(summary_exam["cohort_avg"])
+        self.assertEqual(summary_exam["cohort_size"], 2)
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertIsNone(detail.data["rank"])
+        self.assertEqual(detail.data["cohort_size"], 2)
+        self.assertEqual(analytics.status_code, 200, analytics.data)
+        self.assertIsNone(analytics_exam["rank"])
+        self.assertIsNone(analytics_exam["percentile"])
+        self.assertIsNone(analytics_exam["cohort_avg_pct"])
+        self.assertEqual(analytics_exam["cohort_size"], 2)
+
+        exam.student_rank_published = True
+        exam.student_cohort_size_published = False
+        exam.save(update_fields=[
+            "student_rank_published",
+            "student_cohort_size_published",
+            "updated_at",
+        ])
+        summary_exam = next(row for row in self._call().data["exams"] if row["exam_id"] == exam.id)
+        detail = self._call_exam_result(exam.id)
+        analytics_exam = next(row for row in self._call_analytics().data["trends"] if row["exam_id"] == exam.id)
+        self.assertEqual(summary_exam["rank"], 1)
+        self.assertIsNone(summary_exam["cohort_size"])
+        self.assertEqual(detail.data["rank"], 1)
+        self.assertIsNone(detail.data["cohort_size"])
+        self.assertEqual(analytics_exam["rank"], 1)
+        self.assertIsNone(analytics_exam["cohort_size"])
 
     def test_rank_cohort_excludes_nonfinite_peer_and_response_renders(self):
         local_result = self._score_exam(
@@ -730,7 +816,7 @@ class MyGradesSummaryHomeworkTests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["exams"][0]["cohort_size"], 1)
-        self.assertEqual(response.data["exams"][0]["cohort_avg"], 80.0)
+        self.assertIsNone(response.data["exams"][0]["cohort_avg"])
         response.render()
         self.assertNotIn(b"Infinity", response.content)
 
