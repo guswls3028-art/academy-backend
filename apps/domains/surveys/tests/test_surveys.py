@@ -1,12 +1,14 @@
 from datetime import timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import resolve
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
+from rest_framework.throttling import UserRateThrottle
 from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.core.models import Tenant, TenantMembership
@@ -19,6 +21,20 @@ InventoryFile = apps.get_model("inventory", "InventoryFile")
 Parent = apps.get_model("parents", "Parent")
 StudentReportedScore = apps.get_model("results", "StudentReportedScore")
 Student = apps.get_model("students", "Student")
+
+
+@override_settings(CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "survey-export-throttle-test"}})
+class SurveyExportThrottleTests(SimpleTestCase):
+    def test_normal_browsing_does_not_consume_export_budget(self):
+        class OrdinaryTraffic(UserRateThrottle):
+            rate = "300/min"
+
+        request = SimpleNamespace(user=SimpleNamespace(pk=424242, is_authenticated=True))
+        for _ in range(8):
+            self.assertTrue(OrdinaryTraffic().allow_request(request, None))
+        for _ in range(4):
+            self.assertTrue(views.SurveyExportThrottle().allow_request(request, None))
+        self.assertFalse(views.SurveyExportThrottle().allow_request(request, None))
 
 class SurveyJourneyTests(TestCase):
     def setUp(self):

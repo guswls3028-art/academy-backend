@@ -208,6 +208,7 @@ class SurveyStatisticsView(StaffSurveyView):
 
 
 class SurveyExportThrottle(UserRateThrottle):
+    scope = "survey_export"
     rate = "4/min"
 
 
