@@ -5,6 +5,28 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-11-05 APT stable 보안 수정
+
+영상 이어보기 PR736의 배포41983409246은 후보 scan에서 신규 High
+`CVE-2026-109518 / apt / 3.0.3`을 발견해 development 전에 중단됐다.
+[Debian DSA-6607-1](https://lists.debian.org/debian-security-announce/2026/msg00526.html)과
+[공식 tracker](https://security-tracker.debian.org/tracker/CVE-2026-109518)는
+trixie-security의 `3.0.4`를 수정본으로 기록한다. 악성 mirror 또는 통신 경로가
+APT 다운로드의 redirect와 retry를 이용하면 검증되지 않은 패키지가 설치될 수 있다.
+
+기존 Python digest의 공통 builder·runtime과 Tools의 별도 CUPS builder는
+다른 패키지 설치 전에 `upgrade-apt.sh`로 `apt`와 `libapt-pkg7.0`을 공식
+`3.0.4`로 설치한다. 이 최초 update/install에는 `Acquire::Retries=0`을 지정해
+구버전의 취약한 retry 경로를 막는다. 설치된 두 패키지의 exact version과 source
+`apt`, 패키지 의존성을 검증한 뒤 기존 빌드를 계속한다. mirror에 수정본이 없거나
+버전·source·의존성이 맞지 않으면 빌드를 중단한다. 패키지 metadata는 보존한다.
+
+공통 base를 상속하는 다섯 서비스에도 같은 수정이 전달된다. native 이미지 계약은
+`verify-fixed-libs.sh`에서 설치 결과와 의존성을 재검증하며, 여섯 exact candidate의
+fresh COMPLETE scan과 격리 development·preprod·임시 서버 종료·운영 승인·rolling·
+runtime readback을 모두 요구한다. 기존 High/Critical 수용 정책과 HOLD는 유지한다.
+이 절은 빌드 계약이며 해당 후보의 배포 완료를 뜻하지 않는다.
+
 ## 2026-11-02 SQLite 공식 수정 라이브러리 소스 계약
 
 새 scan의 `CVE-2026-119373`, `CVE-2026-119374`, `CVE-2026-119379`는

@@ -102,8 +102,9 @@ def prefetch_allows(stream, now, span):
     if span is None:
         return True
     begin, end = span
-    # Native players may need the first short media segment to discover track metadata before seeking.
-    if begin == 0 and end <= PREFETCH_WINDOW_MS:
+    # Native HLS can probe several short segments before seeking to the saved
+    # position. Only whole segments inside the initial preparation window qualify.
+    if 0 <= begin < end <= PREFETCH_WINDOW_MS:
         return True
     if playing and stream.playback_position_ms is None:
         # One in-flight interval issued by the old server; the next signal records its position.

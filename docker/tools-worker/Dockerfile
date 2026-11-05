@@ -7,7 +7,8 @@
 
 ARG BASE_IMAGE=academy-base:latest
 FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff AS cups-openssl-build
-RUN apt-get update && apt-get install -y --no-install-recommends \
+COPY docker/native-security/upgrade-apt.sh /usr/local/bin/upgrade-apt.sh
+RUN sh /usr/local/bin/upgrade-apt.sh && apt-get install -y --no-install-recommends \
     autoconf build-essential ca-certificates curl dpkg-dev gettext \
     libavahi-client-dev libdbus-1-dev libkrb5-dev libpaper-dev libssl-dev \
     pkg-config quilt zlib1g-dev
