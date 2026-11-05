@@ -124,7 +124,20 @@ def save_schedules(*, session, data, actor_id, source_session=None):
         if locked_students != tuple(student_ids) or locked_enrollments != tuple(enrollment_ids):
             raise ScheduleConflict()
         locked_copy_ids = set(locked_enrollments)
-    session = Session.objects.select_for_update(of=("self",)).select_related("lecture").get(pk=session.pk)
+    # A copy reads several source queries: lock both lessons in stable order so
+    # source labels and memberships always belong to the same saved configuration.
+    session_ids = [session.pk] + ([source.pk] if source else [])
+    locked_sessions = {
+        row.pk: row for row in Session.objects.select_for_update(of=("self",))
+        .select_related("lecture").filter(pk__in=session_ids, lecture__tenant_id=session.lecture.tenant_id).order_by("pk")
+    }
+    if set(locked_sessions) != set(session_ids):
+        raise NotFound("수업일을 설정할 차시를 찾을 수 없습니다.")
+    session = locked_sessions[session.pk]
+    if source is not None:
+        source = locked_sessions[source.pk]
+        if source.lecture_id != session.lecture_id:
+            raise ScheduleConflict()
     before = schedule_state(session)
     if data.get("version") != before["version"]:
         raise ScheduleConflict()
@@ -204,11 +217,18 @@ def schedule_enrollment_ids(*, tenant, session_id, value):
     """None means all; 0 explicitly selects unassigned. Invalid scope never means all."""
     if value is None:
         return None
-    if not session_id:
+    session_text = str(session_id)
+    if (isinstance(session_id, bool) or len(session_text) > 19
+            or not session_text.isascii() or not session_text.isdigit()):
         raise ValidationError({"session": "수업일을 조회할 차시를 선택해 주세요."})
-    if isinstance(value, bool) or not str(value).isascii() or not str(value).isdigit():
+    session_id = int(session_text)
+    if not 0 < session_id <= 2**63 - 1:
+        raise ValidationError({"session": "수업일을 조회할 차시를 선택해 주세요."})
+    value_text = str(value)
+    if (isinstance(value, bool) or len(value_text) > 19
+            or not value_text.isascii() or not value_text.isdigit()):
         raise ValidationError({"schedule": "수업일을 다시 선택해 주세요."})
-    schedule_id = int(value)
+    schedule_id = int(value_text)
     if schedule_id > 2**63 - 1:
         raise ValidationError({"schedule": "수업일을 다시 선택해 주세요."})
     roster = SessionEnrollment.objects.filter(

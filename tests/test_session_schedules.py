@@ -5,7 +5,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from django.db import close_old_connections, connection, transaction
+from django.db import OperationalError, close_old_connections, connection, transaction
 from django.test import TransactionTestCase
 from rest_framework.test import force_authenticate
 
@@ -14,7 +14,7 @@ from apps.domains.attendance.models import Attendance, AttendanceQrPoint
 from apps.domains.attendance.services.qr import class_roster
 from apps.domains.attendance.views import AttendanceViewSet
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.lectures.models import Lecture, Session, SessionScheduleChange
+from apps.domains.lectures.models import Lecture, Session, SessionScheduleChange, SessionScheduleMembership
 from apps.domains.lectures.services.schedules import ScheduleConflict, save_schedules, schedule_state
 from apps.domains.lectures.tests.test_lecture_stabilization import LectureTestBase, User
 from apps.domains.lectures.views import SessionViewSet
@@ -126,6 +126,15 @@ class TestSessionSchedules(LectureTestBase):
             self.assertEqual(invalid.status_code, 400)
         unassigned = self.request("get", SessionScoresView.as_view(), {"schedule": "0"}, session_id=self.session.pk)
         self.assertEqual([r["enrollment_id"] for r in unassigned.data["rows"]], [self.enrollments[2].pk])
+
+    def test_malformed_scope_and_session_ids_are_client_errors(self):
+        for params in (
+            {"session": "wrong", "schedule": "0"},
+            {"session": "9223372036854775808", "schedule": "0"},
+            {"session": self.session.pk, "schedule": "9" * 5000},
+        ):
+            response = self.request("get", AttendanceViewSet.as_view({"get": "list"}), params)
+            self.assertEqual(response.status_code, 400)
 
     def test_student_calendar_today_and_qr_follow_assigned_date(self):
         self.configure()
@@ -291,3 +300,50 @@ class TestSessionScheduleConcurrencyPostgres(TransactionTestCase):
         self.assertFalse(thread.is_alive(), "copy lock order deadlock")
         self.assertEqual(errors, [])
         self.assertEqual(results[0]["schedules"][0]["enrollment_ids"], [enrollment.pk])
+
+    def test_copy_holds_source_lock_until_labels_and_memberships_are_read(self):
+        tenant = Tenant.objects.create(code="schedule-source-lock", name="원본 잠금")
+        lecture = Lecture.objects.create(tenant=tenant, title="강의", name="강의")
+        source = Session.objects.create(lecture=lecture, order=1, title="원본", date=date(2026, 4, 8))
+        target = Session.objects.create(lecture=lecture, order=2, title="다음", date=date(2026, 4, 15))
+        user = User.objects.create_user(tenant=tenant, username="source-lock-student")
+        student = Student.objects.create(tenant=tenant, user=user, name="학생", ps_number="SOURCE", omr_code="12345678", parent_phone="01000000000")
+        enrollment = Enrollment.objects.create(tenant=tenant, lecture=lecture, student=student)
+        SessionEnrollment.objects.create(tenant=tenant, session=source, enrollment=enrollment)
+        save_schedules(session=source, actor_id=None, data={"version": schedule_state(source)["version"], "schedules": [
+            {"label": "수요일", "date": "2026-04-08", "enrollment_ids": [enrollment.pk]},
+        ]})
+        version = schedule_state(target)["version"]
+        reading, proceed = threading.Event(), threading.Event()
+        saved, errors = [], []
+        original_filter = SessionScheduleMembership.objects.filter
+
+        def source_memberships(*args, **kwargs):
+            if getattr(kwargs.get("schedule__session"), "pk", None) == source.pk:
+                reading.set()
+                if not proceed.wait(timeout=10):
+                    raise AssertionError("source snapshot was not resumed")
+            return original_filter(*args, **kwargs)
+
+        def copy():
+            close_old_connections()
+            try:
+                saved.append(save_schedules(session=target, actor_id=None, source_session=source.pk, data={"version": version}))
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                close_old_connections()
+
+        thread = threading.Thread(target=copy)
+        with patch.object(SessionScheduleMembership.objects, "filter", side_effect=source_memberships):
+            try:
+                thread.start()
+                self.assertTrue(reading.wait(timeout=10))
+                with self.assertRaises(OperationalError), transaction.atomic():
+                    Session.objects.select_for_update(nowait=True).get(pk=source.pk)
+            finally:
+                proceed.set()
+                thread.join(timeout=20)
+        self.assertFalse(thread.is_alive(), "source copy lock deadlock")
+        self.assertEqual(errors, [])
+        self.assertEqual(saved[0]["schedules"][0]["enrollment_ids"], [enrollment.pk])
