@@ -32,6 +32,14 @@ def _range_to_since(range_key: str):
     return None
 
 
+def _csv_cell(value):
+    """Keep user-authored names and event text literal in spreadsheet apps."""
+    text = str(value)
+    if text.lstrip().startswith(("=", "+", "-", "@")) or text.startswith(("\t", "\r", "\n")):
+        return "'" + text
+    return value
+
+
 def _event_score(event_type: str, violated: bool, violation_reason: str | None):
     weights = {
         "VISIBILITY_HIDDEN": 1,
@@ -76,7 +84,11 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         qs = (
             VideoPlaybackEvent.objects
-            .filter(video__tenant=tenant)
+            .filter(
+                video__tenant=tenant,
+                enrollment__tenant=tenant,
+                enrollment__student__tenant=tenant,
+            )
             .select_related("enrollment", "enrollment__student", "video")
         ) if tenant else VideoPlaybackEvent.objects.none()
 
@@ -85,6 +97,14 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
         )
         if video_id is not None:
             qs = qs.filter(video_id=video_id)
+
+        # A student can have several enrollments; the log detail follows the
+        # same student identity as the cumulative playback ledger.
+        student_id = parse_query_int(
+            self.request.query_params, "student", min_value=1
+        )
+        if student_id is not None:
+            qs = qs.filter(enrollment__student_id=student_id)
 
         range_key = self.request.query_params.get("range", "24h")
         since = _range_to_since(range_key)
@@ -115,11 +135,7 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
             parse_query_int(request.query_params, "limit", default=5, min_value=1),
             100,
         )
-        range_key = request.query_params.get("range", "24h")
-        since = _range_to_since(range_key)
-
-        from academy.adapters.db.django import repositories_video as video_repo
-        qs = video_repo.playback_event_filter_by_video_id(video_id, since=since)
+        qs = self.filter_queryset(self.get_queryset())
 
         agg = {}
         for ev in qs.iterator():
@@ -171,10 +187,7 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
             return Response({"detail": "video is required"}, status=400)
 
         range_key = request.query_params.get("range", "24h")
-        since = _range_to_since(range_key)
-
-        from academy.adapters.db.django import repositories_video as video_repo
-        qs = video_repo.playback_event_filter_by_video_id(video_id, since=since)
+        qs = self.filter_queryset(self.get_queryset())
 
         qs = qs.order_by("-occurred_at", "-id")
 
@@ -182,6 +195,8 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
         resp["Content-Disposition"] = (
             f'attachment; filename="video_{video_id}_events_{range_key}.csv"'
         )
+        # Excel's file-open path needs the UTF-8 marker to preserve Korean text.
+        resp.write("\ufeff")
 
         writer = csv.writer(resp)
         writer.writerow([
@@ -198,7 +213,7 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
         ])
 
         for ev in qs.iterator():
-            writer.writerow([
+            writer.writerow([_csv_cell(value) for value in [
                 ev.occurred_at.isoformat(),
                 ev.enrollment.student.name if ev.enrollment_id else "",
                 ev.enrollment_id,
@@ -209,6 +224,6 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
                 ev.user_id,
                 _event_score(ev.event_type, bool(ev.violated), ev.violation_reason),
                 ev.event_payload,
-            ])
+            ]])
 
         return resp

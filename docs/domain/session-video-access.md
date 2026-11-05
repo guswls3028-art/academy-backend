@@ -109,3 +109,24 @@ inactive entitlement 회귀를 함께 실행한다. 운영 모양의 로그인·
 - 회귀 검증: `tests/test_student_video_contract_regressions.py`와 기존
   student progress/session/direct/inactive entitlement 및 video access/security
   테스트. 실제 행 잠금의 동시성 검증은 PostgreSQL 환경에서 수행한다.
+
+## 관리자 시청 기록 조회
+
+관리자는 영상 상세의 시청 로그에서 누적 시간 목록을 확인하고 학생 상세의 활동으로
+들어간다. 프런트 동선 정본은 frontend `docs/STUDENT-VIDEO-WATCH.md`다.
+`review-watch/report/`는 기존 학생·영상별 원장을 그대로 읽으며 제한 OFF·직접 부여도
+포함한다. `started_at`은 원장 집계 시작이며 최초 시청/최근 접속/세션 시작이 아니다.
+임시 재생 스트림으로 과거 세션 시간을 재구성하지 않는다. 기존 원장/이벤트/설정은 보존한다.
+
+`GET /api/v1/media/video-playback-events/`의 선택적 양의 정수 `student`는 수강 ID가
+아닌 학생 ID를 받아 그 학생의 수강 이벤트만 조회한다. `risk/`와 `export/`도 동일한
+video/student/range/enrollment 필터를 적용한다. 잘못된 학생 ID 형식은 400이며,
+다른 tenant 학생/수강/영상 연결은 결과에서 제외한다. tenant staff 권한은 필수이며
+학생·학부모는 접근할 수 없다. 직접 부여에는 수강 이벤트를 새로 만들지 않는다.
+페이지네이션은 기존 공통 계약을 사용하고 기본 로그 화면은 위험점수 전체 집계를 호출하지 않는다.
+CSV의 사용자 작성 문자열은 스프레드시트 수식으로 해석되지 않도록 리터럴로 내보낸다.
+CSV는 UTF-8 BOM을 포함해 Excel에서 직접 열어도 한글 이름과 활동 내용이 유지되도록 한다.
+기록 조회는 읽기 전용이며 오류 시 프런트는 명시적 재시도를 제공한다.
+
+검증: `tests/test_video_watch_log_filters.py`의 학생 필터/list·risk·CSV 일치,
+비정상 tenant 연결 차단, 잘못된 ID, 학생 권한 거부, OFF/직접 부여 누적 보존.
