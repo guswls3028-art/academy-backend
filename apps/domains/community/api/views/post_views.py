@@ -14,7 +14,7 @@ from django.db.models import Exists, OuterRef, Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.api.common.query_params import parse_query_int
 
@@ -82,6 +82,16 @@ class PostViewSet(viewsets.ModelViewSet):
     permission_classes = [TenantResolvedAndMember]
     STUDENT_WRITABLE_POST_TYPES = {"board", "qna", "counsel"}
     STUDENT_UPDATE_FIELDS = {"title", "content", "category_label"}
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        # Apply the existing block to every content/reaction addition and
+        # edit. Reads and authorized removal keep their existing behavior.
+        if request.method in {"POST", "PUT", "PATCH"} and self._is_user_blocked(request):
+            raise PermissionDenied({
+                "detail": "학원 운영진에 의해 커뮤니티 활동이 제한되었습니다.",
+                "code": "user_blocked",
+            })
 
     def update(self, request, *args, **kwargs):
         """학생/학부모는 현재 학생 컨텍스트의 본인 글만 수정 가능."""
@@ -502,9 +512,6 @@ class PostViewSet(viewsets.ModelViewSet):
         return Response(data)
 
     def create(self, request, *args, **kwargs):
-        # 사용자 커뮤니티 차단 check(#49)
-        if self._is_user_blocked(request):
-            return Response({"detail": "학원 운영진에 의해 커뮤니티 작성이 제한되었습니다.", "code": "user_blocked"}, status=status.HTTP_403_FORBIDDEN)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         tenant = getattr(request, "tenant", None)
@@ -707,9 +714,6 @@ class PostViewSet(viewsets.ModelViewSet):
         # POST: 답변 등록
         if getattr(request.user, "parent_profile", None) is not None:
             return self._parent_read_only_response("댓글 작성")
-        # 사용자 커뮤니티 차단 check(#49)
-        if self._is_user_blocked(request):
-            return Response({"detail": "학원 운영진에 의해 커뮤니티 작성이 제한되었습니다.", "code": "user_blocked"}, status=status.HTTP_403_FORBIDDEN)
         # 자료실은 일방향 다운로드용 — 모든 사용자(staff 포함) 댓글 차단
         # (정책 SSOT: models/post.py:DOWNLOAD_ONLY_POST_TYPES)
         from apps.domains.community.models.post import DOWNLOAD_ONLY_POST_TYPES
@@ -1174,9 +1178,6 @@ class PostViewSet(viewsets.ModelViewSet):
             return Response({"detail": "authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
         if getattr(request.user, "parent_profile", None) is not None:
             return self._parent_read_only_response("좋아요")
-        # 차단 사용자 reaction 차단(#49) — POST에서만 (DELETE는 본인 좋아요 취소 허용)
-        if request.method == "POST" and self._is_user_blocked(request):
-            return Response({"detail": "학원 운영진에 의해 커뮤니티 활동이 제한되었습니다.", "code": "user_blocked"}, status=status.HTTP_403_FORBIDDEN)
 
         if request.method == "DELETE":
             PostLike.objects.filter(post=post, user=user, tenant=tenant).delete()
@@ -1211,9 +1212,6 @@ class PostViewSet(viewsets.ModelViewSet):
             return Response({"detail": "authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
         if getattr(request.user, "parent_profile", None) is not None:
             return self._parent_read_only_response("댓글 좋아요")
-        # 차단 사용자 reaction 차단(#49) — POST에서만
-        if request.method == "POST" and self._is_user_blocked(request):
-            return Response({"detail": "학원 운영진에 의해 커뮤니티 활동이 제한되었습니다.", "code": "user_blocked"}, status=status.HTTP_403_FORBIDDEN)
 
         if request.method == "DELETE":
             PostReplyLike.objects.filter(reply=reply, user=user, tenant=tenant).delete()

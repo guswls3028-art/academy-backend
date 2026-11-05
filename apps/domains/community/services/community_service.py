@@ -44,7 +44,10 @@ class CommunityService:
             self._replace_mappings_for_post(post_id, node_ids)
 
     def _replace_mappings_for_post(self, post_id: int, node_ids: list[int]) -> None:
-        post = PostEntity.objects.filter(id=post_id, tenant=self.tenant).first()
+        # Serialize complete audience replacements, including empty mappings.
+        # Both callers own an atomic transaction; locking only mapping rows
+        # cannot protect an initially empty set or stale removal snapshots.
+        post = PostEntity.objects.select_for_update().filter(id=post_id, tenant=self.tenant).first()
         if not post:
             return
         unique_ids = list(dict.fromkeys(int(node_id) for node_id in node_ids))
