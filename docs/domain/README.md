@@ -32,6 +32,7 @@
 
 | 파일 | 도메인 |
 |------|--------|
+| [surveys.md](surveys.md) | 설문·성적 취합·학생별 응답과 원본 보존 |
 | [community.md](community.md) | 커뮤니티 |
 | [matchup.md](matchup.md) | 매치업 사용자 흐름 |
 | [omr.md](omr.md) | OMR v15 인식 시스템 |

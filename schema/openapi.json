@@ -5178,14 +5178,6 @@
         ],
         "type": "string"
       },
-      "KindEnum": {
-        "description": "* `class` - 수업\n* `clinic` - 클리닉",
-        "enum": [
-          "class",
-          "clinic"
-        ],
-        "type": "string"
-      },
       "Lecture": {
         "properties": {
           "active_enrollment_count": {
@@ -10397,7 +10389,7 @@
             "type": "boolean"
           },
           "kind": {
-            "$ref": "#/components/schemas/KindEnum"
+            "$ref": "#/components/schemas/QrPointKindEnum"
           },
           "label": {
             "maxLength": 100,
@@ -11275,6 +11267,55 @@
           },
           "tenant": {
             "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedSurveyWriteRequest": {
+        "properties": {
+          "allow_attachments": {
+            "type": "boolean"
+          },
+          "audience": {},
+          "closes_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "creation_key": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 5000,
+            "type": "string"
+          },
+          "expected_version": {
+            "minimum": 0,
+            "type": "integer",
+            "writeOnly": true
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SurveyKind"
+          },
+          "opens_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "questions": {},
+          "response_limit": {
+            "maximum": 10000,
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "score_defaults": {},
+          "title": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
           }
         },
         "type": "object"
@@ -13493,7 +13534,7 @@
             "type": "integer"
           },
           "kind": {
-            "$ref": "#/components/schemas/KindEnum"
+            "$ref": "#/components/schemas/QrPointKindEnum"
           },
           "label": {
             "maxLength": 100,
@@ -13537,13 +13578,21 @@
         ],
         "type": "object"
       },
+      "QrPointKindEnum": {
+        "description": "* `class` - 수업\n* `clinic` - 클리닉",
+        "enum": [
+          "class",
+          "clinic"
+        ],
+        "type": "string"
+      },
       "QrPointRequest": {
         "properties": {
           "active": {
             "type": "boolean"
           },
           "kind": {
-            "$ref": "#/components/schemas/KindEnum"
+            "$ref": "#/components/schemas/QrPointKindEnum"
           },
           "label": {
             "maxLength": 100,
@@ -19181,6 +19230,26 @@
         ],
         "type": "object"
       },
+      "StudentSurveyDetail": {
+        "properties": {
+          "response": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SurveyResponseRead"
+              }
+            ],
+            "nullable": true
+          },
+          "survey": {
+            "$ref": "#/components/schemas/SurveyRead"
+          }
+        },
+        "required": [
+          "response",
+          "survey"
+        ],
+        "type": "object"
+      },
       "StudentTag": {
         "properties": {
           "color": {
@@ -20026,6 +20095,413 @@
           "feedback"
         ],
         "type": "string"
+      },
+      "SurveyActionRequest": {
+        "properties": {
+          "expected_version": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "type": "object"
+      },
+      "SurveyAttachment": {
+        "properties": {
+          "content_type": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "r2_key": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "content_type",
+          "id",
+          "name",
+          "r2_key",
+          "size_bytes"
+        ],
+        "type": "object"
+      },
+      "SurveyHistoryPage": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SurveyResponseRead"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "results"
+        ],
+        "type": "object"
+      },
+      "SurveyKind": {
+        "description": "* `general` - 일반 설문\n* `school_score` - 성적 취합\n* `memo` - 학생 메모",
+        "enum": [
+          "general",
+          "school_score",
+          "memo"
+        ],
+        "type": "string"
+      },
+      "SurveyPage": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SurveyRead"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "results"
+        ],
+        "type": "object"
+      },
+      "SurveyRead": {
+        "properties": {
+          "allow_attachments": {
+            "type": "boolean"
+          },
+          "answered": {
+            "type": "boolean"
+          },
+          "audience": {},
+          "can_respond": {
+            "type": "boolean"
+          },
+          "closes_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SurveyKind"
+          },
+          "opens_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "questions": {},
+          "response_count": {
+            "type": "integer"
+          },
+          "response_limit": {
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "response_unavailable_reason": {
+            "type": "string"
+          },
+          "score_defaults": {},
+          "selected_students": {
+            "items": {
+              "$ref": "#/components/schemas/SurveySelectedStudent"
+            },
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SurveyStatus"
+          },
+          "target_count": {
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "answered",
+          "can_respond",
+          "created_at",
+          "id",
+          "response_count",
+          "response_unavailable_reason",
+          "title",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "SurveyRecipientRead": {
+        "properties": {
+          "answered": {
+            "type": "boolean"
+          },
+          "response": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SurveyResponseRead"
+              }
+            ],
+            "nullable": true
+          },
+          "student_id": {
+            "type": "integer"
+          },
+          "student_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "answered",
+          "response",
+          "student_id",
+          "student_name"
+        ],
+        "type": "object"
+      },
+      "SurveyRecipientsPage": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SurveyRecipientRead"
+            },
+            "type": "array"
+          },
+          "survey": {
+            "$ref": "#/components/schemas/SurveyRead"
+          }
+        },
+        "required": [
+          "count",
+          "results",
+          "survey"
+        ],
+        "type": "object"
+      },
+      "SurveyResponseRead": {
+        "properties": {
+          "answers": {},
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/SurveyAttachment"
+            },
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SurveyKind"
+          },
+          "questions": {},
+          "score_submissions": {
+            "items": {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "student_id": {
+            "type": "integer"
+          },
+          "student_name": {
+            "type": "string"
+          },
+          "student_ps": {
+            "type": "string"
+          },
+          "survey_id": {
+            "type": "integer"
+          },
+          "survey_title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "answers",
+          "attachments",
+          "created_at",
+          "id",
+          "kind",
+          "questions",
+          "score_submissions",
+          "student_id",
+          "student_name",
+          "student_ps",
+          "survey_id",
+          "survey_title",
+          "updated_at",
+          "version"
+        ],
+        "type": "object"
+      },
+      "SurveyResponseWriteRequest": {
+        "properties": {
+          "answers": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "attachment_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 10,
+            "type": "array"
+          },
+          "expected_version": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "score_submission_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 20,
+            "type": "array"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "type": "object"
+      },
+      "SurveySelectedStudent": {
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "SurveyStatus": {
+        "description": "* `draft` - 작성 중\n* `open` - 응답 받는 중\n* `closed` - 마감",
+        "enum": [
+          "draft",
+          "open",
+          "closed"
+        ],
+        "type": "string"
+      },
+      "SurveyWriteRequest": {
+        "properties": {
+          "allow_attachments": {
+            "type": "boolean"
+          },
+          "audience": {},
+          "closes_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "creation_key": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 5000,
+            "type": "string"
+          },
+          "expected_version": {
+            "minimum": 0,
+            "type": "integer",
+            "writeOnly": true
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SurveyKind"
+          },
+          "opens_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "questions": {},
+          "response_limit": {
+            "maximum": 10000,
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "score_defaults": {},
+          "title": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
       },
       "TargetEnum": {
         "description": "* `student` - student\n* `parent` - parent\n* `initial` - initial",
@@ -54623,6 +55099,747 @@
         ],
         "tags": [
           "submissions"
+        ]
+      }
+    },
+    "/api/v1/surveys/": {
+      "get": {
+        "operationId": "surveys_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "enum": [
+                "closed",
+                "draft",
+                "open"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyPage"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "Surveys"
+        ]
+      },
+      "post": {
+        "operationId": "surveys_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SurveyWriteRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/SurveyWriteRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/SurveyWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyRead"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyRead"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "Surveys"
+        ]
+      }
+    },
+    "/api/v1/surveys/student-choices/": {
+      "get": {
+        "operationId": "surveys_student_choices_retrieve",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "Surveys"
+        ]
+      }
+    },
+    "/api/v1/surveys/student/": {
+      "get": {
+        "operationId": "student_surveys_list",
+        "parameters": [
+          {
+            "description": "Required for a linked parent; identifies the selected child.",
+            "in": "header",
+            "name": "X-Student-Id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyPage"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "Student surveys"
+        ]
+      }
+    },
+    "/api/v1/surveys/student/{survey_id}/": {
+      "get": {
+        "operationId": "surveys_student_retrieve",
+        "parameters": [
+          {
+            "description": "Required for a linked parent; identifies the selected child.",
+            "in": "header",
+            "name": "X-Student-Id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "survey_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentSurveyDetail"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "Student surveys"
+        ]
+      }
+    },
+    "/api/v1/surveys/student/{survey_id}/response/": {
+      "put": {
+        "operationId": "surveys_student_response_update",
+        "parameters": [
+          {
+            "description": "Required for a linked parent; identifies the selected child.",
+            "in": "header",
+            "name": "X-Student-Id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "survey_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SurveyResponseWriteRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/SurveyResponseWriteRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/SurveyResponseWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyResponseRead"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "Student surveys"
+        ]
+      }
+    },
+    "/api/v1/surveys/students/{student_id}/responses/": {
+      "get": {
+        "operationId": "surveys_students_responses_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyHistoryPage"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "Surveys"
+        ]
+      }
+    },
+    "/api/v1/surveys/{survey_id}/": {
+      "get": {
+        "operationId": "surveys_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "survey_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyRead"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "Surveys"
+        ]
+      },
+      "patch": {
+        "operationId": "surveys_partial_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "survey_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedSurveyWriteRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedSurveyWriteRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedSurveyWriteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyRead"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "Surveys"
+        ]
+      }
+    },
+    "/api/v1/surveys/{survey_id}/close/": {
+      "post": {
+        "operationId": "surveys_close_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "survey_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SurveyActionRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/SurveyActionRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/SurveyActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyRead"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "Surveys"
+        ]
+      }
+    },
+    "/api/v1/surveys/{survey_id}/export/": {
+      "get": {
+        "operationId": "surveys_export_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "response_status",
+            "schema": {
+              "enum": [
+                "all",
+                "answered",
+                "unanswered"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "survey_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "Surveys"
+        ]
+      }
+    },
+    "/api/v1/surveys/{survey_id}/publish/": {
+      "post": {
+        "operationId": "surveys_publish_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "survey_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SurveyActionRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/SurveyActionRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/SurveyActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyRead"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "Surveys"
+        ]
+      }
+    },
+    "/api/v1/surveys/{survey_id}/responses/": {
+      "get": {
+        "operationId": "surveys_responses_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "response_status",
+            "schema": {
+              "enum": [
+                "all",
+                "answered",
+                "unanswered"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "survey_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyRecipientsPage"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "Surveys"
+        ]
+      }
+    },
+    "/api/v1/surveys/{survey_id}/statistics/": {
+      "get": {
+        "operationId": "surveys_statistics_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "survey_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "Surveys"
         ]
       }
     },

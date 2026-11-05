@@ -20,6 +20,8 @@ SPECTACULAR_SETTINGS = {
     "COMPONENT_SPLIT_REQUEST": True,
     "DISABLE_ERRORS_AND_WARNINGS": True,
     "ENUM_NAME_OVERRIDES": {
+        "SurveyKind": "apps.domains.surveys.models.Survey.Kind",
+        "SurveyStatus": "apps.domains.surveys.models.Survey.Status",
         "PublicVideoCategory": ["interview", "lesson", "news"],
         "PublicVideoFormat": ["landscape", "vertical"],
         "PublicVideoStatus": ["draft", "published", "unpublished"],

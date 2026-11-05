@@ -52,6 +52,7 @@ backend/docs/
 
 | 용도 | 경로 |
 |------|------|
+| 설문·성적 취합·학생 메모 응답 | [domain/surveys.md](domain/surveys.md) |
 | Excel 전체 경로·입력 한도·장애 복구 | [operations/excel-operations.md](operations/excel-operations.md) |
 | 공개 매치업·분석자료 게시판 | [domain/public-resource-board.md](domain/public-resource-board.md) |
 | 공개 YouTube 영상·대표 영상·지정 게시자 | [domain/public-video-showcase.md](domain/public-video-showcase.md) |
