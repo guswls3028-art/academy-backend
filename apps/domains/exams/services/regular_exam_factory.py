@@ -60,6 +60,8 @@ class RegularExamFactory:
             exam_type=Exam.ExamType.REGULAR,
             template_exam=template_exam,
             essay_numbering=template_exam.essay_numbering,
+            student_rank_published=template_exam.student_rank_published,
+            student_cohort_size_published=template_exam.student_cohort_size_published,
             is_active=True,
             tenant=tenant,
         )

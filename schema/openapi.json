@@ -3178,6 +3178,14 @@
             "readOnly": true,
             "type": "integer"
           },
+          "student_cohort_size_published": {
+            "description": "등수 산정에 포함된 응시 인원을 학생·학부모 성적 화면에 표시한다.",
+            "type": "boolean"
+          },
+          "student_rank_published": {
+            "description": "학생·학부모 성적 화면에 등수를 표시한다.",
+            "type": "boolean"
+          },
           "student_results_published": {
             "description": "학생·학부모 성적 공개 여부. 비공개여도 교직원 채점·통계 기록은 유지한다.",
             "type": "boolean"
@@ -3590,6 +3598,14 @@
             "format": "double",
             "type": "number"
           },
+          "student_cohort_size_published": {
+            "description": "등수 산정에 포함된 응시 인원을 학생·학부모 성적 화면에 표시한다.",
+            "type": "boolean"
+          },
+          "student_rank_published": {
+            "description": "학생·학부모 성적 화면에 등수를 표시한다.",
+            "type": "boolean"
+          },
           "student_results_published": {
             "description": "학생·학부모 성적 공개 여부. 비공개여도 교직원 채점·통계 기록은 유지한다.",
             "type": "boolean"
@@ -3697,6 +3713,14 @@
           "pass_score": {
             "format": "double",
             "type": "number"
+          },
+          "student_cohort_size_published": {
+            "description": "등수 산정에 포함된 응시 인원을 학생·학부모 성적 화면에 표시한다.",
+            "type": "boolean"
+          },
+          "student_rank_published": {
+            "description": "학생·학부모 성적 화면에 등수를 표시한다.",
+            "type": "boolean"
           },
           "student_results_published": {
             "description": "학생·학부모 성적 공개 여부. 비공개여도 교직원 채점·통계 기록은 유지한다.",
@@ -9732,6 +9756,14 @@
           "pass_score": {
             "format": "double",
             "type": "number"
+          },
+          "student_cohort_size_published": {
+            "description": "등수 산정에 포함된 응시 인원을 학생·학부모 성적 화면에 표시한다.",
+            "type": "boolean"
+          },
+          "student_rank_published": {
+            "description": "학생·학부모 성적 화면에 등수를 표시한다.",
+            "type": "boolean"
           },
           "student_results_published": {
             "description": "학생·학부모 성적 공개 여부. 비공개여도 교직원 채점·통계 기록은 유지한다.",

@@ -15,6 +15,7 @@ from apps.domains.results.serializers.student_exam_result import StudentExamResu
 from apps.domains.results.utils.session_exam import get_sessions_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.ranking import compute_exam_rankings
+from apps.domains.results.services.student_rank_visibility import student_rank_visibility_payload
 from apps.domains.results.utils.initial_exam_score import (
     load_initial_exam_scores,
     project_initial_exam_score,
@@ -327,9 +328,10 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         lecture_ids={int(enrollment.lecture_id)},
     )
     rank_info = {} if is_not_submitted else rank_map.get(enrollment_id, {})
-    data["rank"] = rank_info.get("rank")
-    data["percentile"] = rank_info.get("percentile")
-    data["cohort_size"] = rank_info.get("cohort_size")
-    data["cohort_avg"] = rank_info.get("cohort_avg")
+    data.update(student_rank_visibility_payload(
+        rank_info,
+        rank_published=bool(getattr(exam, "student_rank_published", True)),
+        cohort_size_published=bool(getattr(exam, "student_cohort_size_published", True)),
+    ))
 
     return data

@@ -162,6 +162,16 @@ class Exam(BaseModel):
             "학생·학부모 성적 공개 여부. 비공개여도 교직원 채점·통계 기록은 유지한다."
         ),
     )
+    student_rank_published = models.BooleanField(
+        default=True,
+        db_default=True,
+        help_text="학생·학부모 성적 화면에 등수를 표시한다.",
+    )
+    student_cohort_size_published = models.BooleanField(
+        default=True,
+        db_default=True,
+        help_text="등수 산정에 포함된 응시 인원을 학생·학부모 성적 화면에 표시한다.",
+    )
 
     class Meta:
         db_table = "exams_exam"
