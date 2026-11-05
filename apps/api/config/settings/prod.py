@@ -68,7 +68,7 @@ ALLOWED_HOSTS = [
     "www.movementhui.com",
     "godmin.kr",
     "www.godmin.kr",
-    "academy-frontend.pages.dev",
+    "academy-frontend-26b.pages.dev",
     # 로컬/EC2 내부 health check·ALB 타깃·Lambda backlog (Host: private IP)
     "localhost",
     "127.0.0.1",
@@ -84,17 +84,19 @@ ALLOWED_HOSTS = [
 
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
-# Only deployment/branch aliases inside our exact Cloudflare Pages project.
+# Use the verified Pages project.subdomain, not the project name.
+# Cloudflare project "academy-frontend" is assigned "academy-frontend-26b.pages.dev".
+# Only deployment/branch aliases inside that exact assigned subdomain are trusted.
 # Similar project names are independently registrable and must not be trusted.
 CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^https://[a-z0-9-]+\.academy-frontend\.pages\.dev\Z",
+    r"^https://[a-z0-9-]+\.academy-frontend-26b\.pages\.dev\Z",
 ]
 
 CORS_ALLOWED_ORIGINS = [
     "https://hakwonplus.com",
     "https://www.hakwonplus.com",
     "https://dev.hakwonplus.com",
-    "https://academy-frontend.pages.dev",
+    "https://academy-frontend-26b.pages.dev",
     "https://limglish.kr",
     "https://www.limglish.kr",
     "https://tchul.com",
@@ -138,7 +140,7 @@ CSRF_TRUSTED_ORIGINS = [
     "https://hakwonplus.com",
     "https://www.hakwonplus.com",
     "https://dev.hakwonplus.com",
-    "https://academy-frontend.pages.dev",
+    "https://academy-frontend-26b.pages.dev",
     "https://limglish.kr",
     "https://www.limglish.kr",
     "https://tchul.com",
