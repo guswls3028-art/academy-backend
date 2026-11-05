@@ -609,6 +609,17 @@ class DirectVideoEntitlementTests(TestCase):
                 self.assertEqual(paused, state())
                 self.assertEqual(signal(sequence=5, prepare=True, position_ms=333000)["used_ms"], 3000)
                 self.assertEqual(client.get(far).status_code, 302)
+                resume_state = state()
+                startup = "#EXTM3U\n#EXTINF:6,\np0.ts\n#EXTINF:6,\np1.ts\n#EXTINF:4,\np2.ts\n#EXTINF:6,\nout.ts\n"
+                with patch(module + ".read_review_playlist", return_value=startup):
+                    cached = client.get(master).content.decode().splitlines()
+                startup_urls = [urljoin(master, line) for line in cached if ".ts?" in line]
+                self.assertEqual([client.get(url).status_code for url in startup_urls], [302, 302, 302, 429])
+                crossing = "#EXTM3U\n#EXTINF:12,\np0.ts\n#EXTINF:6,\ncross.ts\n"
+                with patch(module + ".read_review_playlist", return_value=crossing):
+                    crosses_window = client.get(master).content.decode().splitlines()[-1]
+                self.assertEqual(client.get(urljoin(master, crosses_window)).status_code, 429)
+                self.assertEqual(state(), resume_state)
 
     @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="test-key")
     def test_review_media_uses_private_playlists_and_revocable_fragment_links(self):
