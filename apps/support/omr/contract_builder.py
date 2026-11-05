@@ -8,16 +8,32 @@ from apps.domains.assets.omr.services.meta_generator import build_objective_temp
 
 
 _CHOICE_LABELS = {"1", "2", "3", "4", "5"}
+_NOT_LOADED = object()
 
 
 def build_omr_sheet_contract(*, sheet, exam=None, n_choices: int = 5) -> OMRSheetContract:
     template_exam = _resolve_template_exam(exam or getattr(sheet, "exam", None))
     questions = _load_sheet_questions(sheet)
-    total, choice_count, essay_count, source = _resolve_counts(
+    counts = _resolve_counts(
         sheet=sheet,
         template_exam=template_exam,
         questions=questions,
     )
+    return _build_contract(sheet, template_exam, questions, counts, n_choices)
+
+
+def build_omr_sheet_contract_from_data(
+    *, sheet, template_exam, questions: list, answers, n_choices: int = 5,
+) -> OMRSheetContract:
+    """Use the same shape rules with explicitly loaded, request-local inputs."""
+    counts = _resolve_counts(
+        sheet=sheet, template_exam=template_exam, questions=questions, answers=answers,
+    )
+    return _build_contract(sheet, template_exam, questions, counts, n_choices)
+
+
+def _build_contract(sheet, template_exam, questions, counts, n_choices):
+    total, choice_count, essay_count, source = counts
     question_contracts = _build_question_contracts(
         questions=questions,
         total_questions=total,
@@ -62,7 +78,7 @@ def _load_sheet_questions(sheet) -> list:
     )
 
 
-def _resolve_counts(*, sheet, template_exam, questions: list) -> tuple[int, int, int, str]:
+def _resolve_counts(*, sheet, template_exam, questions: list, answers=_NOT_LOADED) -> tuple[int, int, int, str]:
     max_question_number = max((int(getattr(q, "number", 0) or 0) for q in questions), default=0)
     total = max(int(getattr(sheet, "total_questions", 0) or 0), max_question_number)
     explicit_kinds = {
@@ -98,6 +114,7 @@ def _resolve_counts(*, sheet, template_exam, questions: list) -> tuple[int, int,
         sheet=sheet,
         template_exam=template_exam,
         questions=questions,
+        answers=answers,
     )
     if inferred is not None:
         total, choice_count, essay_count = _normalize_counts(
@@ -144,18 +161,20 @@ def _normalize_counts(
     return total, choice_count, essay_count
 
 
-def _infer_choice_count_from_answer_key(*, sheet, template_exam, questions: list) -> int | None:
+def _infer_choice_count_from_answer_key(*, sheet, template_exam, questions: list, answers=_NOT_LOADED) -> int | None:
     try:
         from apps.domains.exams.models import AnswerKey
 
-        answer_key = AnswerKey.objects.filter(exam=template_exam).order_by("id").first()
-        if not answer_key or not isinstance(answer_key.answers, dict) or not questions:
+        if answers is _NOT_LOADED:
+            answer_key = AnswerKey.objects.filter(exam=template_exam).order_by("id").first()
+            answers = answer_key.answers if answer_key else None
+        if not isinstance(answers, dict) or not questions:
             return None
 
         last_choice_number = 0
         seen_non_choice = False
         for question in questions:
-            raw = answer_key.answers.get(str(question.id))
+            raw = answers.get(str(question.id))
             if raw is None or str(raw).strip() == "":
                 return None
             if _is_choice_answer(raw):

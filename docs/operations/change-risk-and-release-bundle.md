@@ -21,6 +21,21 @@ mutation lock, backend의 검증된 release manifest, frontend의 운영
 `version.json`에서 현재 상태를 읽는다. 두 저장소는 독립 Git 저장소이므로 하나의
 transaction이나 하나의 통합 SHA가 존재한다고 표현하지 않는다.
 
+## 안정성·성능과 완료 기준
+
+기능 수보다 숨은 결함, 데이터 손상·격리 위험, 실패 복구와 체감 지연을 우선한다.
+지연·반복 조회·과도한 재시도는 실제 경로의 관측/재현으로 확인하고, 해당 변경의
+전후 증거로 개선을 판단한다. 문서 크기나 테스트 수를 성능 개선으로 표현하지
+않는다. 모든 작업에 전수 감사·벤치마크를 추가하지 않고 영향과 위험에 맞춘다.
+확인된 운영장애는 일반 작업보다 먼저 안전한 hotfix/rollback으로 복구한다.
+우선순위·소유권·재개 기준은 [동시 작업 계약](concurrent-codex-sessions.md#incident-priority)을 따른다.
+
+완성은 해당 역할의 정상 실사용, 실패·복구, 저장/reload/소비 화면, 필요한 검토와
+테스트가 모두 통과한 상태다. 검증하지 못한 범위는 미검증으로 남긴다. 공개하는
+미완성 기능은 진입 전 Beta와 지원 범위·제한·복구를 알리고, 정식 전환은 동일한
+완료 증거로 판단한다. Beta도 데이터·권한·격리를 지키며 기존 회귀를 가리지 않는다.
+UI 발견성과 단순한 기본 화면의 기준은 [실사용 리뷰 매뉴얼](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/REAL-USE-REVIEW-MANUAL.md)이 소유한다.
+
 ## 2. 변경 위험 라우팅
 
 `get-change-risk-plan.ps1`은 지정한 base ref부터 현재 branch와 미커밋 변경까지의

@@ -131,9 +131,6 @@ def _has_essay_scoring_evidence(
 
 
 def get_exam_score_shape(exam) -> ExamScoreShape:
-    exam_id = int(getattr(exam, "id", 0) or 0)
-    exam_max_score = float(getattr(exam, "max_score", 0.0) or 0.0)
-
     try:
         template_exam = resolve_template_exam(exam)
     except Exception:
@@ -150,23 +147,9 @@ def get_exam_score_shape(exam) -> ExamScoreShape:
         else None
     )
 
-    if sheet is None:
-        return ExamScoreShape(
-            exam_id=exam_id,
-            template_exam_id=template_exam_id,
-            sheet_id=None,
-            total_questions=0,
-            choice_count=0,
-            essay_count=0,
-            objective_max_score=exam_max_score,
-            subjective_max_score=exam_max_score,
-            total_max_score=exam_max_score,
-            shape_source="no_sheet",
-        )
-
-    contract = build_omr_sheet_contract(sheet=sheet, exam=exam)
+    contract = build_omr_sheet_contract(sheet=sheet, exam=exam) if sheet else None
     answer_key = None
-    if template_exam_id is not None:
+    if sheet is not None and template_exam_id is not None:
         from apps.domains.exams.models import AnswerKey
 
         answer_key = (
@@ -175,14 +158,34 @@ def get_exam_score_shape(exam) -> ExamScoreShape:
             .only("answers")
             .first()
         )
-    score_adjustment = get_score_adjustment_from_answers(
-        getattr(answer_key, "answers", None),
-    )
     questions = list(
         ExamQuestion.objects.filter(sheet=sheet)
         .only("id", "number", "score")
         .order_by("number")
+    ) if sheet else []
+    return build_exam_score_shape_from_data(
+        exam=exam, template_exam_id=template_exam_id, sheet=sheet,
+        contract=contract, questions=questions,
+        answers=getattr(answer_key, "answers", None),
+        essay_scoring_evidence=_has_essay_scoring_evidence,
     )
+
+
+def build_exam_score_shape_from_data(
+    *, exam, template_exam_id, sheet, contract, questions, answers,
+    essay_scoring_evidence,
+) -> ExamScoreShape:
+    """Calculate one score shape; the caller supplies all reads and evidence."""
+    exam_id = int(getattr(exam, "id", 0) or 0)
+    exam_max_score = float(getattr(exam, "max_score", 0.0) or 0.0)
+    if sheet is None:
+        return ExamScoreShape(
+            exam_id=exam_id, template_exam_id=template_exam_id, sheet_id=None,
+            total_questions=0, choice_count=0, essay_count=0,
+            objective_max_score=exam_max_score, subjective_max_score=exam_max_score,
+            total_max_score=exam_max_score, shape_source="no_sheet",
+        )
+    score_adjustment = get_score_adjustment_from_answers(answers)
     question_by_number = {int(q.number): q for q in questions}
 
     objective_max = 0.0
@@ -222,7 +225,7 @@ def get_exam_score_shape(exam) -> ExamScoreShape:
             for question_id, kind in kind_by_id.items()
             if kind == "essay"
         }
-        has_scoreable_essay = _has_essay_scoring_evidence(
+        has_scoreable_essay = essay_scoring_evidence(
             exam_id=exam_id,
             template_exam_id=template_exam_id,
             essay_question_ids=essay_question_ids,

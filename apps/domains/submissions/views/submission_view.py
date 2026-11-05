@@ -533,6 +533,14 @@ class SubmissionViewSet(ModelViewSet):
 
         dispatch_submission(submission)
 
+        if submission.source == Submission.Source.OMR_SCAN:
+            submission.refresh_from_db(fields=["status"])
+            if submission.status == Submission.Status.FAILED:
+                return Response(
+                    {"submission_id": submission.id, "status": submission.status,
+                     "detail": "재시도 후에도 제출이 실패 상태입니다. 원본 파일과 제출 상태를 확인해 주세요."},
+                    status=status.HTTP_409_CONFLICT,
+                )
         return Response(
             {
                 "submission_id": submission.id,

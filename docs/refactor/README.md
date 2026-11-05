@@ -13,6 +13,7 @@ Academy 전체의 실행 순서는 [실행 계획](../PLAN.md)이 소유한다.
 | [structure-reform/DOMAIN_BOUNDARIES.md](structure-reform/DOMAIN_BOUNDARIES.md) | verified/proposed | 도메인별 현재 책임과 공개 인터페이스 후보 |
 | [structure-reform/DUPLICATE_ROOTS.md](structure-reform/DUPLICATE_ROOTS.md) | verified/proposed | 중복 진입점과 canonical 후보 |
 | [structure-reform/PRE_PROMOTION_STRUCTURE_PLAN.md](structure-reform/PRE_PROMOTION_STRUCTURE_PLAN.md) | proposed | 운영 홍보 직전 배포·작업트리·구조조정 착수 계획 |
+| [rust-backend-migration-plan.md](rust-backend-migration-plan.md) | approved · queued after current work | 백엔드 전면 Rust 전환 확정. 현재 작업 완료 후 단계 이관, 임시 Python 경로와 Django 종료 조건; 실행 순서는 PLAN-20261105-RUST |
 | [roadmap.md](roadmap.md) | historical proposal | 초기 구조 이동 제안; 현재 가드레일/실행 상태로 사용하지 않음 |
 | [inventory.md](inventory.md) | historical snapshot | 2026-06-23 구조 실측·추론; 현재 수치로 재사용하지 않음 |
 | [phase-0-guardrails.md](phase-0-guardrails.md) | historical proposal | 초기 안전망 설계; 현재 구현/검사는 실행 소스 확인 |
