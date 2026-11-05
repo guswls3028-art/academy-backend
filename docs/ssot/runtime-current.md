@@ -77,6 +77,23 @@ instance. Batch-managed ASGs should have desired 0 when no Batch job is active.
 | RDS | `academy-db`, PostgreSQL `15.17`, `db.t4g.medium`, Single-AZ, 20 GB, status `available`, pending `{}`; direct-RDS API runtime uses `DB_CONN_MAX_AGE=0` |
 | Redis | `academy-v1-redis-001`, Redis `7.1.0`, `cache.t4g.small`, 1 node, status `available` |
 
+### AI Dead-Letter Queue Retention
+
+On 2026-11-05 at 09:53 UTC, the user-approved preservation change set
+`academy-v1-ai-queue-dlq` retention from 345600 seconds (4 days) to 1209600 seconds
+(14 days). The exact queue in this account/region reported 17 visible messages
+and 0 in flight; its other configuration remained unchanged. The operation used
+fresh successful main, the shared production mutation lock and attribute readback,
+then released the lock and confirmed an empty lock key.
+
+This queue-wide retention applies to existing and future messages. The existing
+message HOLD remains: no body access, receive, replay, reprocessing or deletion was
+performed or authorized by the preservation change. Standard SQS retention still
+uses the original enqueue timestamp, so the DLQ age metric is not an exact expiry
+time. A later retention reduction needs separate review because it can expire older
+messages; do not automatically restore the former four-day value. This records the
+verified live setting, not a change to other queues or bootstrap defaults.
+
 ## Video Batch And Ops
 
 | Resource | Current runtime |
