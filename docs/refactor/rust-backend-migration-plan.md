@@ -1,24 +1,39 @@
 # Rust Backend Migration Plan
 
-**Status:** Proposed · Deferred until the current Academy execution plan is complete or explicitly reprioritized
+**Status:** Approved direction · Queued after current Academy work is completed
 **Owner:** Backend
 **Last reviewed:** 2026-11-05 KST
 **Scope:** Django API and worker runtime; React/TypeScript client remains in place
 
-**Decision basis:** The long-term Rust direction is a strategic preference.
+**Decision basis:** Full backend migration to Rust is the confirmed target.
 Measure performance to choose priorities and validate releases; do not require
 every endpoint to deliver the same speedup before it can leave Django.
 
-This is a long-term architecture proposal. It does not change the current
-execution order in [`docs/PLAN.md`](../PLAN.md), authorize a rewrite, or replace
-any release/HOLD gate. Implementation starts only as a separately owned task
-after the current product work is complete or its owner explicitly changes
-priority.
+## Confirmed decision — 2026-11-05
+
+The user confirmed: “백엔드 전면 Rust 전환을 목표로 계획 확정해줘. 지금 진행 중인
+작업 완료 후 단계적으로 이관하는 걸로.”
+
+The approved program is tracked as **PLAN-20261105-RUST** in
+[`docs/PLAN.md`](../PLAN.md). Finish the Academy work and releases already in
+progress before starting migration implementation. Record their completion,
+verification and cleanup evidence before Phase 0 becomes active. The current
+task confirms and publishes the plan; implementation remains queued.
+
+The final application runtime covers the backend API, business workers and
+Django-dependent scheduled/admin/management execution paths. Rust is the
+destination; Python/Django coexistence is transitional. Frontend TypeScript,
+external native converters/codecs, and development/verification scripts are
+outside this language-replacement scope. Existing release and HOLD gates remain
+binding. Routine implementation choices and phase progression do not require
+reconfirmation of this strategic decision; changing the full-migration target
+or starting ahead of existing work requires an explicit user priority/scope
+decision.
 
 ## 1. Direction
 
-Make Rust the eventual primary language for Academy's backend API and worker
-processes. Keep the existing React/TypeScript frontend, PostgreSQL data model,
+Migrate Academy's backend API and application worker processes fully to Rust.
+Keep the existing React/TypeScript frontend, PostgreSQL data model,
 Redis, R2, SQS message boundaries, and AWS Batch video-encoding boundary stable
 through the migration unless measured evidence requires a separately approved
 change.
@@ -32,12 +47,15 @@ actions and workers that can write the same state. Multiple replicas of that
 implementation remain valid.
 
 Retire Django runtime paths after their production workflows have moved. A
-specialist Python document or AI dependency may remain behind an existing worker
-boundary when output compatibility requires it. Record its purpose, owner,
-replacement criteria and review date; a date alone never justifies removing a
-working capability. Such exceptions must not create a second owner of product
-permissions or business rules. Operational scripts and test tools do not need
-translation merely to eliminate all Python files.
+specialist Python document or AI dependency may be retained temporarily behind
+an existing worker boundary to preserve output compatibility. Record its
+purpose, owner, replacement work and review date. It remains unfinished
+migration scope until replaced; a date alone never justifies removing a working
+capability. A permanent Python application-runtime exception would change the
+confirmed scope and needs an explicit user decision. Transitional processors
+must not create a second owner of product permissions or business rules.
+Operational scripts and test tools do not need translation merely to eliminate
+all Python files.
 
 Keep the backend in the existing `academy-backend` repository. During migration,
 place Rust code in one Cargo workspace rather than creating another repository
@@ -98,6 +116,9 @@ still migrate to retire Django and simplify ownership. A disappointing pilot
 requires revising the implementation, target workload or program economics;
 it does not automatically turn the target into an indefinite hybrid. Claims of
 large savings or a fixed schedule require measured evidence.
+Evidence may change sequencing, implementation and estimates. It does not
+silently replace the approved full-Rust destination with a permanent mixed
+application runtime.
 
 ### Known migration obligations in the inspected source
 
@@ -192,10 +213,12 @@ existing worker deployment boundaries.
 
 ### Phase 0 — Start gate and baseline
 
-Define a finite set of current work items and their completion evidence in
-`docs/PLAN.md`, then start after that milestone, or after its owner explicitly
-reprioritizes work. Avoid an undefined requirement that all future product work
-must be finished. Reconcile active release ownership and preserve
+Use PLAN-20261105-RUST's prerequisite record to identify the work and releases
+already in progress at the 2026-11-05 decision, their owners and completion
+evidence. Start after that finite milestone; a different order requires an
+explicit user priority decision. Later unrelated feature requests do not
+silently expand the prerequisite set indefinitely. Reconcile active release
+ownership and preserve
 all current HOLDs. Record exact starting backend/frontend SHAs and current
 runtime evidence. Inventory API routes, role journeys, auth/tenant middleware,
 domain writes, Django app labels/migrations, worker envelopes, external SDKs,
@@ -256,13 +279,12 @@ after the shared Rust platform has a proven production track record.
 ### Phase 5 — Retire Python backend paths
 
 After every production API route and worker consumer has an identified Rust
-owner, drain old consumers, verify no Django/Python production entrypoint or
-scheduled job remains outside explicitly accepted specialist exceptions, and
+owner, drain old consumers, verify no Django/Python application production
+entrypoint, scheduled job or transitional specialist processor remains, and
 complete the migration-history handover. Replace any required Django admin and
 operational commands before removing their runtime. Remove
 obsolete Django runtime dependencies, settings, images and configuration,
-compatibility shims, and documentation only after exact live readback. Keep any
-approved Python-only exception isolated, owned, and review-dated. Preserve the
+compatibility shims, and documentation only after exact live readback. Preserve the
 existing business queues and data unless a separate reviewed retirement is
 required. Remove the temporary API pool and routing rules after the final
 stabilization window; count remaining production entrypoints, not Python files.
@@ -286,8 +308,8 @@ stabilization window; count remaining production entrypoints, not Python files.
   paths until the new owner is live, persisted state is read back, downstream
   roles pass, and rollback is no longer needed.
 - Declare the migration complete only when every production route and worker
-  has an explicit Rust owner, old Python runtime paths are retired or approved
-  as exceptions, measured service budgets and the program's agreed operating
+  has an explicit Rust owner, old Python application runtime paths and temporary
+  processors are retired, measured service budgets and the program's agreed operating
   objectives are met, and the
   current architecture/domain/deployment documentation and CI gates describe
   the new state.
@@ -299,7 +321,7 @@ stabilization window; count remaining production entrypoints, not Python files.
 | Tenant/auth behavior diverges between runtimes | Port the complete fail-closed contract, including token version, refresh, session and membership behavior; verify every route cutover. |
 | Django and Rust both write the same operation | Map API, signals, jobs and admin writes; one authoritative business-command implementation, without dual writes. |
 | API or queue contract drifts | Keep OpenAPI and versioned SQS envelopes as compatibility gates; run real role/job journeys. |
-| Migration period becomes permanent hybrid | Track complete workflows, active entrypoints and temporary routing; specialist exceptions have an owner, purpose, replacement criteria and review date. |
+| Migration period becomes permanent hybrid | Track complete workflows, active entrypoints and temporary routing; Python specialist bridges remain unfinished scope with an owner and replacement work. |
 | Rust adds services and deployment complexity | One Rust API deployment, preserve existing worker boundaries, no domain-per-service split, one cutover at a time. |
 | Rewrite ships without useful benefit | Compare representative service budgets, total operating cost and delivery effort; revise the program on evidence, while allowing neutral routes to migrate for consolidation. |
 | Database migration history becomes ambiguous | Choose one migration authority before the first Rust write; preserve current schema and app-label history through coexistence. |
@@ -316,10 +338,12 @@ The kickoff must verify current source and runtime state before deciding:
 6. workload-specific service budgets, total-cost objectives and stabilization
    period from the baseline and product requirements.
 
-This proposal has no fixed calendar estimate. Size the phases after the route,
-worker, migration, and dependency inventory. When execution is authorized, add
-one owned Rust-migration work item to `docs/PLAN.md`; this proposal alone does
-not change active priority or authorize production changes.
+The approved program has no fixed calendar estimate. Size the phases after the
+route, worker, migration and dependency inventory. PLAN-20261105-RUST already
+records the direction and sequencing. Once its prerequisite evidence is complete,
+the implementation owner records the starting SHAs and Phase 0 work card there
+and proceeds within the confirmed scope. Current work remains first, and every
+runtime change still follows the existing release gates.
 
 Estimate the remaining work from completed pilot delivery and the inventory,
 including migration adapters, CI, operations, parity verification and removal.
