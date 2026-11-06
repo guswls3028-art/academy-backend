@@ -64,3 +64,10 @@ print(json.dumps({
         Remove-Item -LiteralPath $tempRoot -Recurse -Force
     }
 }
+
+# Exercise the real stdin-only child process on both Windows and Linux CI.
+Push-Location (Join-Path $PSScriptRoot '..\..')
+try {
+    & python -B -m unittest scripts.v1.test_ssm_secure_put -v
+    if ($LASTEXITCODE -ne 0) { throw 'SecureString transport contract failed.' }
+} finally { Pop-Location }

@@ -1106,6 +1106,9 @@ jobs:
   verify-api-development:
     name: Verify candidate on persistent isolated development runtime
     runs-on: ubuntu-latest
+    outputs:
+      workers_parameter_version: ${{ steps.development-env.outputs.workers_parameter_version }}
+      release_id: ${{ steps.development-env.outputs.release_id }}
     permissions:
       contents: read
       id-token: write
@@ -1129,6 +1132,14 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
           action-timeout-s: 180
+
+      - name: Set up Python for secure parameter publication
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install existing constrained AWS SDK
+        run: python -m pip install --constraint requirements/constraints.txt boto3 botocore
 
       - name: Publish release-bound isolated development environment
         id: development-env
@@ -1275,7 +1286,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    needs: [detect-changes, build-and-push, verify-api-preprod]
+    needs: [detect-changes, build-and-push, verify-api-development, verify-api-preprod]
     if: |
       always() &&
       needs.build-and-push.result == 'success' &&
@@ -1292,6 +1303,14 @@ jobs:
         with:
           name: ci-build-report
           path: docs/reports
+
+      - name: Set up Python for production environment publication
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install existing constrained AWS SDK
+        run: python -m pip install --constraint requirements/constraints.txt boto3 botocore
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
@@ -1325,6 +1344,27 @@ jobs:
         with:
           name: account-cutover-plan-${{ github.run_attempt }}
           path: ${{ runner.temp }}/account-cutover-plan.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish candidate-only OpenAI key after approval and exact development verification
+        env:
+          VERIFIED_DEVELOPMENT_VERSION: ${{ needs.verify-api-development.outputs.workers_parameter_version }}
+          VERIFIED_DEVELOPMENT_RELEASE: ${{ needs.verify-api-development.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          test "$VERIFIED_DEVELOPMENT_RELEASE" = "$RELEASE_IMAGE_TAG"
+          python scripts/v1/publish_openai_production_env.py \
+            --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --source "$GITHUB_SHA" \
+            --release "$RELEASE_IMAGE_TAG" --development-version "$VERIFIED_DEVELOPMENT_VERSION" \
+            --candidate docs/reports/release-manifest.candidate.json \
+            | tee "$RUNNER_TEMP/openai-env-receipt.json"
+
+      - name: Preserve nonsecret OpenAI publication versions
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: openai-env-publication-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/openai-env-receipt.json
           if-no-files-found: error
           retention-days: 14
 

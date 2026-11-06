@@ -63,7 +63,9 @@ def test_direct_runtime_parameter_writer_inventory_is_explicit() -> None:
     )
     for path in SCRIPTS.rglob("*.ps1"):
         content = _text(path)
-        if "put-parameter" in content and protected_reference.search(content):
+        if (
+            "put-parameter" in content or "Invoke-SsmSecureStringPut" in content
+        ) and protected_reference.search(content):
             detected.add(path.relative_to(SCRIPTS).as_posix())
 
     detected -= NON_PRODUCTION_PARAMETER_WRITERS
@@ -86,6 +88,7 @@ def test_python_and_workflow_direct_runtime_writers_are_explicit() -> None:
         if (
             "put_parameter" in _text(path)
             or "runtime.put_environment(" in _text(path)
+            or "put_secure_parameter(" in _text(path)
         )
         and (
             "/academy/api/env" in _text(path)
@@ -95,6 +98,7 @@ def test_python_and_workflow_direct_runtime_writers_are_explicit() -> None:
     assert python_writers == {
         "scripts/v1/reconcile_common_alimtalk_owner_tenant.py",
         "scripts/v1/reconcile_common_alimtalk_sender.py",
+        "scripts/v1/publish_openai_production_env.py",
     }
 
     for pattern in ("*.yml", "*.yaml"):
@@ -328,7 +332,18 @@ def test_generic_safe_update_and_deploy_owned_writers_assert_lock_ownership() ->
 
     assert "Assert-AcademyRuntimeEnvMutationLock -Region $Region" in safe_update
     assert "Assert-DeployLockAcquired -Reg $script:Region" in bootstrap
-    assert sync_env.count("Assert-DeployLockAcquired -Reg $script:Region") >= 4
+    production_publishers = sync_env.split("function Publish-ApiEnvCandidate", maxsplit=1)[1].split(
+        "function Publish-ApiPreprodEnvCandidate", maxsplit=1
+    )[0]
+    secure_puts = list(re.finditer(
+        r"(?m)^[ \t]*(?:\$\w+\s*=\s*)?Invoke-SsmSecureStringPut\b",
+        production_publishers,
+    ))
+    assert len(secure_puts) == 4  # API/workers promotion and their compensation writes.
+    for secure_put in secure_puts:
+        assert production_publishers[:secure_put.start()].rstrip().endswith(
+            "Assert-DeployLockAcquired -Reg $script:Region"
+        )
     acquire = deploy.index("Acquire-DeployLock")
     bootstrap_call = deploy.index("Invoke-Bootstrap ", acquire)
     sync_call = deploy.index("Invoke-SyncEnvFromSSOT", bootstrap_call)

@@ -183,25 +183,31 @@ class TeacherProblemExplanationJobStatusView(APIView):
             ))
 
         public_result = None
+        public_status = job.status
         if job.status == "DONE":
             stored_result = (
                 ai_repo.DjangoAIJobRepository().get_result_payload_for_job(job) or {}
             )
-            public_result = {
-                "answer": str(stored_result.get("answer") or ""),
-                "explanation": str(stored_result.get("explanation") or ""),
-                "answer_check": str(stored_result.get("answer_check") or ""),
-                "confidence": str(stored_result.get("confidence") or "low"),
-                "review_status": "teacher_review_required",
-                "subject": str(stored_result.get("subject") or ""),
-            }
+            if not stored_result and (getattr(job, "error_message", "") or getattr(job, "last_error", "")):
+                # Basic-tier failures can persist as DONE without a success result.
+                # Translate only this view; retain the shared job status policy.
+                public_status = "FAILED"
+            else:
+                public_result = {
+                    "answer": str(stored_result.get("answer") or ""),
+                    "explanation": str(stored_result.get("explanation") or ""),
+                    "answer_check": str(stored_result.get("answer_check") or ""),
+                    "confidence": str(stored_result.get("confidence") or "low"),
+                    "review_status": "teacher_review_required",
+                    "subject": str(stored_result.get("subject") or ""),
+                }
 
         response_body = {
             "job_id": job.job_id,
-            "status": job.status,
+            "status": public_status,
             "error": (
                 GENERIC_FAILURE_MESSAGE
-                if job.status in {
+                if public_status in {
                     "FAILED",
                     "REJECTED_BAD_INPUT",
                     "FALLBACK_TO_GPU",

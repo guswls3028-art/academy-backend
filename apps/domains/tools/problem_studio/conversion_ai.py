@@ -8,6 +8,7 @@ import math
 from pathlib import Path
 
 from academy.adapters.ai.config import AIConfig
+from academy.adapters.ai.openai_output import completed_response_text, reasoning_options
 from academy.adapters.ai.problem.generator import _generate_package_content_with_bedrock, _json_from_content
 from academy.adapters.ai.problem.transcriber import _bedrock_image
 from apps.support.tools.ai_dependencies import consume_tools_ai_quota
@@ -26,8 +27,10 @@ def _ask(system, prompt, image, mime, *, thorough=False):
         response = OpenAI(api_key=cfg.OPENAI_API_KEY, timeout=120, max_retries=2).responses.create(
             model=cfg.PROBLEM_TRANSCRIPTION_MODEL, instructions=system,
             input=[{"role": "user", "content": content}], max_output_tokens=12000 if thorough else 6000,
+            store=False, text={"format": {"type": "json_object"}},
+            **reasoning_options(cfg.PROBLEM_TRANSCRIPTION_MODEL, effort="medium" if thorough else "low"),
         )
-        return _json_from_content(response.output_text)
+        return _json_from_content(completed_response_text(response))
     images = []
     if image:
         data, fmt = _bedrock_image(image, mime)

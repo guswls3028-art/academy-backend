@@ -127,3 +127,87 @@ function Invoke-Aws {
     }
     return $out
 }
+
+function Invoke-SsmSecureStringPut {
+    # Keep Value inside this process and the child's stdin, never CLI arguments.
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Request,
+        [string]$Region = $env:AWS_DEFAULT_REGION,
+        [ValidateRange(1, 300)][int]$TimeoutSeconds = 90
+    )
+    if ($script:PlanMode) { return $null }
+    $process = $null
+    $started = $false
+    $deadline = [Threading.CancellationTokenSource]::new()
+    $deadline.CancelAfter($TimeoutSeconds * 1000)
+    $failureCode = 'SSM_SECURE_PUT_FAILED'
+    try {
+        $python = Get-Command python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $python) {
+            $python = Get-Command python3 -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        }
+        $info = [Diagnostics.ProcessStartInfo]::new()
+        $info.FileName = $python.Source
+        $info.UseShellExecute = $false
+        $info.CreateNoWindow = $true
+        $info.RedirectStandardInput = $true
+        $info.RedirectStandardOutput = $true
+        $info.RedirectStandardError = $true
+        $info.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+        $info.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+        $info.Environment['PYTHONUTF8'] = '1'
+        $info.Environment['PYTHONIOENCODING'] = 'utf-8'
+        $info.ArgumentList.Add('-B')
+        $info.ArgumentList.Add((Join-Path $PSScriptRoot '..\ssm_secure_put.py'))
+        $process = [Diagnostics.Process]::new()
+        $process.StartInfo = $info
+        $deadline.Token.ThrowIfCancellationRequested()
+        [void]$process.Start()
+        $started = $true
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync($deadline.Token)
+        $stderrTask = $process.StandardError.ReadToEndAsync($deadline.Token)
+        $exitTask = $process.WaitForExitAsync($deadline.Token)
+        $envelope = @{
+            request = $Request
+            region = $Region
+            profile = $env:AWS_PROFILE
+        } | ConvertTo-Json -Depth 10 -Compress
+        $bytes = [Text.Encoding]::UTF8.GetBytes($envelope)
+        $writeTask = $process.StandardInput.BaseStream.WriteAsync($bytes, 0, $bytes.Length, $deadline.Token)
+        [void]$writeTask.WaitAsync($deadline.Token).GetAwaiter().GetResult()
+        $process.StandardInput.Close()
+        [void]$exitTask.WaitAsync($deadline.Token).GetAwaiter().GetResult()
+        # A descendant may keep the output pipes open after the child exits.
+        # Every wait shares the original deadline, including stdin backpressure.
+        $stdout = $stdoutTask.WaitAsync($deadline.Token).GetAwaiter().GetResult()
+        $stderr = $stderrTask.WaitAsync($deadline.Token).GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0) {
+            $knownCodes = @('SSM_SECURE_PUT_INVALID_REQUEST', 'SSM_SECURE_PUT_SDK_UNAVAILABLE', 'SSM_SECURE_PUT_INVALID_RESPONSE')
+            if ($stderr.Trim() -cin $knownCodes) { $failureCode = $stderr.Trim() }
+            throw 'child failed'
+        }
+        $failureCode = 'SSM_SECURE_PUT_INVALID_RESPONSE'
+        $result = $stdout | ConvertFrom-Json -ErrorAction Stop
+        $names = @($result.PSObject.Properties.Name)
+        if (@($names | Where-Object { $_ -cnotin @('Version', 'Tier') }).Count -or
+            $result.Version -isnot [long] -and $result.Version -isnot [int] -or
+            $result.Version -lt 1 -or
+            ($names -ccontains 'Tier' -and $result.Tier -cnotin @('Standard', 'Advanced', 'Intelligent-Tiering'))) {
+            throw 'invalid child metadata'
+        }
+        $deadline.Token.ThrowIfCancellationRequested()
+        return $result
+    } catch {
+        # Never include child output, request JSON or the original exception.
+        if ($deadline.IsCancellationRequested) { $failureCode = 'SSM_SECURE_PUT_TIMEOUT' }
+        throw $failureCode
+    } finally {
+        $deadline.Cancel()
+        if ($process) {
+            # Termination is best effort; never add an unbounded cleanup wait.
+            try { if ($started -and -not $process.HasExited) { $process.Kill($true) } } catch {}
+            $process.Dispose()
+        }
+        $deadline.Dispose()
+    }
+}

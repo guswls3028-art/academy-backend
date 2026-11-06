@@ -3,11 +3,11 @@
 
 학원장 directive (2026-05-02): VLM은 메인 엔진 X, fallback only.
 
-Tier 구조 (가성비 우선, 2026-05-03 GPT→Gemini 전환):
+Tier 구조 (2026-11-05 OpenAI 전환):
   Tier 1 (free):     OpenCV + OCR + YOLO (이미 운영)
-  Tier 2 (text):     Gemini 2.5 Flash-Lite text — page_role 분류 (OCR 결과 입력)
-  Tier 3 (vision):   Gemini 2.5 Flash vision — bbox 추출 / 손글씨/그림 dominant 페이지
-  Tier 4 (재시도):   Gemini 2.5 Flash retry (text-only)
+  Tier 2 (text):     GPT-6 Luna text — page_role 분류 (OCR 결과 입력)
+  Tier 3 (vision):   GPT-6.1 Terra vision — bbox 추출 / 손글씨/그림 dominant 페이지
+  Tier 4 (재시도):   동일 OpenAI 모델 retry (text-only)
   Tier 5 (금지):     Pro 등 비싼 모델 사용 X
 
 호출 시점: low_conf_pages (paper_type_summary.low_conf_pages) 가 비지 않을 때만.
@@ -18,9 +18,9 @@ Public API:
   detect_problems_vision(image_path, page_meta) -> ProblemBboxResult  # Tier 3
 
 env 설정:
-  MATCHUP_VLM_TEXT_ADAPTER=gemini_flash_lite  # 또는 mock (default)
-  MATCHUP_VLM_VISION_ADAPTER=gemini_flash     # 또는 mock (default)
-  GEMINI_API_KEY=...                          # SSM /academy/workers/env에 통합
+  MATCHUP_VLM_TEXT_ADAPTER=openai  # 또는 mock (default)
+  MATCHUP_VLM_VISION_ADAPTER=openai     # 또는 mock (default)
+  OPENAI_API_KEY=...                          # SSM /academy/workers/env에 통합
 """
 from __future__ import annotations
 
@@ -206,34 +206,24 @@ _TEXT_ADAPTER: Optional[VLMTextAdapter] = None
 _VISION_ADAPTER: Optional[VLMVisionAdapter] = None
 
 
-# ── Gemini REST 호출 헬퍼 + cost guard ──────────────────────────
+# ── OpenAI REST 호출 헬퍼 + cost guard ──────────────────────────
 
 
-# Gemini API 가격 (2026-05 시점, 페이지당 추정):
-#   gemini-2.5-flash-lite (text+vision):  input $0.10/Mtok / output $0.40/Mtok
-#   gemini-2.5-flash      (text+vision):  input $0.30/Mtok / output $1.20/Mtok
-# 호출 1건당 평균 cost (text 1k+200, vision 1500+300):
-#   flash-lite text: ~$0.0002 / vision: ~$0.0005
-#   flash      text: ~$0.0006 / vision: ~$0.0015
-# doc 1건당 호출 수 cap = 50 (cost worst-case ~$0.075). 학원장 directive($5/doc)
-# 보다 매우 보수적이지만, 사고 시 비용 폭주를 in-memory counter로 차단.
+# Call budgets bound network attempts, including retries; dollar costs vary by model/tokens.
 _VLM_DOC_CALL_LIMIT = int(os.getenv("MATCHUP_VLM_PER_DOC_LIMIT", "50"))
 # Tenant 단위 일별 호출 cap (P0-2 cost cap, 2026-05-04). 한 학원이 다수 doc 업로드 시
-# cost 폭주 방지. default 500 = ~$2.5/일 (flash vision $0.005 × 500). 학원장 정책에
+# cost 폭주 방지. default 500 network attempts/day. 학원장 정책에
 # 따라 env로 조정. 일 reset은 자동 (date key 변경 시 새 카운터).
 _VLM_TENANT_DAILY_LIMIT = int(os.getenv("MATCHUP_VLM_PER_TENANT_DAILY_LIMIT", "500"))
-_GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
-# 큰 시험지 폰사진(2~4MB) vision 처리는 cold start 시 30s 초과. 90s 까지 허용.
-_GEMINI_TIMEOUT = int(os.getenv("MATCHUP_VLM_TIMEOUT_SEC", "90"))
+# Network timeout is bounded per attempt; the caller allows one transient retry.
+_OPENAI_TIMEOUT = int(os.getenv("MATCHUP_VLM_TIMEOUT_SEC", "90"))
 # 페이지당 30+ 문항이 있는 dual-col commercial_workbook도 응답 잘리지 않도록 8192로 확장.
-_GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("MATCHUP_VLM_MAX_OUTPUT_TOKENS", "8192"))
-# 429(quota)/503(서버 deadline) 시 백오프 후 1회 retry. 그래도 실패하면 RuntimeError로 명시.
-_GEMINI_RETRY_BACKOFF_SEC = int(os.getenv("MATCHUP_VLM_RETRY_BACKOFF", "5"))
-# Vision 호출 전 이미지 압축 — Gemini 서버 측 deadline(~30s) 초과 차단. 큰 폰사진 PDF
-# 페이지(2~4MB)가 가장 빈번한 503 원인. 1600px max + JPEG 85 quality로 보내면 정확도
-# 손실 거의 없이 호출 시간 1/3로 단축됨.
-_GEMINI_VISION_MAX_DIM = int(os.getenv("MATCHUP_VLM_VISION_MAX_DIM", "1600"))
-_GEMINI_VISION_JPEG_Q = int(os.getenv("MATCHUP_VLM_VISION_JPEG_Q", "85"))
+_OPENAI_MAX_OUTPUT_TOKENS = int(os.getenv("MATCHUP_VLM_MAX_OUTPUT_TOKENS", "8192"))
+# 429/transient 5xx: one bounded retry; failures remain explicit.
+_OPENAI_RETRY_BACKOFF_SEC = int(os.getenv("MATCHUP_VLM_RETRY_BACKOFF", "5"))
+# Bound transmitted image size; normalized coordinates still map to original pixels.
+_OPENAI_VISION_MAX_DIM = int(os.getenv("MATCHUP_VLM_VISION_MAX_DIM", "1600"))
+_OPENAI_VISION_JPEG_Q = int(os.getenv("MATCHUP_VLM_VISION_JPEG_Q", "85"))
 
 _doc_call_counter: Dict[str, int] = {}
 _tenant_call_counter: Dict[tuple, int] = {}  # (tenant_id_str, date_str) → count
@@ -286,7 +276,7 @@ def reset_tenant_quota(tenant_id: str | int | None = None) -> None:
         }
 
 
-def _gemini_request(
+def _openai_request(
     *,
     model: str,
     parts: List[Dict[str, Any]],
@@ -294,123 +284,84 @@ def _gemini_request(
     document_id: str | int | None = None,
     tenant_id: str | int | None = None,
     enforce_per_doc_cap: bool = True,
-    thinking_budget: int | None = None,
+    reasoning_effort: str = "low",
+    max_output_tokens: int | None = None,
 ) -> Dict[str, Any]:
-    """Gemini generateContent REST 호출. JSON 응답 강제.
+    """OpenAI Responses JSON request; incomplete/refused output fails closed.
 
-    실패 정책 (silent mock fallback 금지 — 호출자에서 RuntimeError catch):
-    - timeout / 5xx → RuntimeError
-    - 429 (quota) → backoff 후 1회 retry, 재실패 시 RuntimeError
-    - STOP 이외의 완료 사유 또는 불완전 JSON → RuntimeError (부분 문항 복구 금지)
-
-    Cost cap (P0-2, 2026-05-04):
-    - doc별: _check_doc_quota (ASG 재기동 시 reset)
-    - tenant별 일별: _check_tenant_quota (date key 변경 시 자동 reset)
-
-    enforce_per_doc_cap (2026-05-11):
-    - True (default): VLM auto-split path — doc 50 cap 적용 (cost 보호 본 의도).
-    - False: 동일 doc의 별도 path (Hybrid VLM verifier 등) — doc cap 우회.
-      tenant cap (daily 500) + 호출자 자체 cost_cap_calls 는 그대로 적용.
-      사유: auto-split 이 doc cap 소진 후 Hybrid filter 가 같은 doc 의 모든 box 를
-      RuntimeError 로 fail-soft keep → filter 효과 0 결함 fix.
+    Each network attempt consumes the existing document/tenant call budgets.
+    Provider bodies, input documents and credentials are never error details.
+    Hybrid verification may use its own document cap, but not bypass tenant caps.
     """
-    import json as _json
-    import time as _time
-    import re as _re
+    import json
+    import time
     import requests
 
-    api_key = os.getenv("GEMINI_API_KEY")
+    from academy.adapters.ai.openai_credentials import resolve_openai_api_key
+
+    api_key = resolve_openai_api_key()
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY not set")
-
-    def safe_detail(value: object, limit: int = 300) -> str:
-        return str(value).replace(api_key, "[REDACTED]")[:limit]
-
-    _check_tenant_quota(tenant_id)  # tenant cap 먼저 (광범위)
-    if enforce_per_doc_cap:
-        _check_doc_quota(document_id)
-
-    # DB 영구 카운터 — quota service 통합 (모니터링 + enforcement 가능, P0-2 보강)
-    # tenant context 없으면 silent skip (admin script 등에서 호출 시).
-    try:
-        from apps.domains.ai.services.quota import consume_ai_quota
-        consume_ai_quota("matchup_vlm")
-    except Exception as _e:  # tracking 실패는 본 호출 죽이면 안 됨
-        logger.warning("matchup_vlm quota tracking failed: %s", _e)
-
+        raise RuntimeError("OPENAI_API_KEY not set")
     payload: Dict[str, Any] = {
-        "contents": [{"parts": parts}],
-        "generationConfig": {
-            "temperature": 0.0,
-            "responseMimeType": "application/json",
-            "maxOutputTokens": _GEMINI_MAX_OUTPUT_TOKENS,
-        },
+        "model": model,
+        "input": [{"role": "user", "content": parts}],
+        "instructions": "Return one complete JSON object. " + response_schema_hint,
+        "text": {"format": {"type": "json_object"}},
+        "reasoning": {"effort": reasoning_effort},
+        "max_output_tokens": max_output_tokens or _OPENAI_MAX_OUTPUT_TOKENS,
+        "store": False,
     }
-    if thinking_budget is not None:
-        payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": thinking_budget}
-    url = f"{_GEMINI_API_BASE}/models/{model}:generateContent"
-
-    # 호출 + 429/503 단발 retry. 503 = Gemini 서버 deadline(~30s) 초과 (큰 vision payload).
     resp = None
     for attempt in (0, 1):
+        _check_tenant_quota(tenant_id)
+        if enforce_per_doc_cap:
+            _check_doc_quota(document_id)
+        try:
+            from apps.domains.ai.services.quota import consume_ai_quota
+            consume_ai_quota("matchup_vlm")
+        except Exception:
+            logger.warning("matchup_vlm quota tracking unavailable")
         try:
             resp = requests.post(
-                url, json=payload, timeout=_GEMINI_TIMEOUT,
-                headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+                "https://api.openai.com/v1/responses", json=payload,
+                timeout=_OPENAI_TIMEOUT,
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
             )
-        except requests.Timeout as e:
-            raise RuntimeError(
-                f"Gemini API timeout({_GEMINI_TIMEOUT}s): {safe_detail(e)}"
-            ) from None
-        except Exception as e:
-            raise RuntimeError(f"Gemini API 호출 실패: {safe_detail(e)}") from None
-
-        if resp.status_code in (429, 503) and attempt == 0:
-            _time.sleep(_GEMINI_RETRY_BACKOFF_SEC)
+        except requests.Timeout:
+            raise RuntimeError(f"OpenAI API timeout({_OPENAI_TIMEOUT}s)") from None
+        except Exception:
+            raise RuntimeError("OpenAI API transport failed") from None
+        if resp.status_code in (429, 500, 502, 503, 504) and attempt == 0:
+            time.sleep(_OPENAI_RETRY_BACKOFF_SEC)
             continue
         break
-
     if resp is None or resp.status_code != 200:
-        body = (safe_detail(resp.text) if resp is not None else "no-response")
-        code = (resp.status_code if resp is not None else 0)
-        raise RuntimeError(f"Gemini API {code}: {body}")
-
+        code = resp.status_code if resp is not None else 0
+        raise RuntimeError(f"OpenAI API request failed (status={code})")
     try:
         data = resp.json()
-    except Exception as e:
-        raise RuntimeError(f"Gemini 응답 JSON 디코딩 실패: {safe_detail(e)}") from None
-    candidates = data.get("candidates") or []
-    if not candidates:
-        raise RuntimeError(f"Gemini 응답에 candidates 없음: {safe_detail(data)}")
-
-    cand0 = candidates[0]
-    finish_reason = cand0.get("finishReason") or ""
-    if finish_reason != "STOP":
-        raise RuntimeError(f"Gemini 응답이 완료되지 않았습니다 (finish={safe_detail(finish_reason)})")
-    parts_out = (cand0.get("content") or {}).get("parts") or []
-    text = "".join(p.get("text", "") for p in parts_out).strip()
-    if not text:
-        raise RuntimeError(
-            f"Gemini 응답 텍스트 비어있음 (finish={safe_detail(finish_reason)})"
-        )
-
+    except Exception:
+        raise RuntimeError("OpenAI response JSON decoding failed") from None
+    if not isinstance(data, dict) or data.get("status") != "completed":
+        raise RuntimeError("OpenAI response incomplete")
+    texts = []
+    for item in data.get("output") or []:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        if item.get("status") != "completed":
+            raise RuntimeError("OpenAI message incomplete")
+        for content in item.get("content") or []:
+            if content.get("type") == "refusal":
+                raise RuntimeError("OpenAI response refused")
+            if content.get("type") == "output_text":
+                texts.append(content.get("text", ""))
     try:
-        return _json.loads(text)
-    except _json.JSONDecodeError:
-        pass
-
-    # 1차: 가장 바깥 { } 매칭
-    m = _re.search(r"\{[\s\S]*\}", text)
-    if m:
-        try:
-            return _json.loads(m.group(0))
-        except _json.JSONDecodeError:
-            pass
-
-    raise RuntimeError(
-        f"Gemini 응답 JSON 파싱 실패 (finish={safe_detail(finish_reason)}, "
-        f"len={len(text)}): {safe_detail(text, 200)}"
-    )
+        result = json.loads("".join(texts))
+    except (TypeError, ValueError):
+        raise RuntimeError("OpenAI response is not complete JSON") from None
+    if not isinstance(result, dict):
+        raise RuntimeError("OpenAI response must be a JSON object")
+    return result
 
 
 def reset_doc_quota(document_id: str | int | None = None) -> None:
@@ -421,7 +372,7 @@ def reset_doc_quota(document_id: str | int | None = None) -> None:
         _doc_call_counter.pop(str(document_id), None)
 
 
-# ── Gemini 어댑터 ───────────────────────────────────────────────
+# ── OpenAI 어댑터 ───────────────────────────────────────────────
 
 
 _PAGE_ROLE_PROMPT = """당신은 한국어 시험지/학습자료 페이지를 분석하는 분류기입니다.
@@ -492,7 +443,7 @@ _PROBLEM_BBOX_PROMPT = """당신은 한국어 시험지·교재 페이지의 문
   - 서술형 답안 영역 = problem 페이지의 일부 (학생이 푸는 곳, 정답 X)
 - 서술형 페이지를 answer_key/non_question으로 분류하지 마세요. should_skip=false, page_role=problem.
 
-bbox 좌표 (Gemini 정규화 좌표계):
+bbox 좌표 (프로젝트 정규화 좌표계):
 - box_2d = [ymin, xmin, ymax, xmax], 각 값은 0~1000 범위의 정수입니다.
 - 페이지 좌상단이 (0, 0), 우하단이 (1000, 1000)입니다.
 - 원본이나 압축 이미지의 픽셀 수를 좌표로 사용하지 마세요.
@@ -531,10 +482,26 @@ def _normalize_role(raw: str) -> PageRole:
         return PageRole.PROBLEM
 
 
-class GeminiVLMTextAdapter:
-    """Tier 2 — Gemini text 호출로 page_role 분류."""
+def _validate_page_response(data: Dict[str, Any], *, vision: bool = False) -> None:
+    """Do not promote malformed model output into a real page decision."""
+    import math
+    if data.get("page_role") not in {role.value for role in PageRole}:
+        raise RuntimeError("OpenAI page role is invalid")
+    if type(data.get("should_skip")) is not bool:
+        raise RuntimeError("OpenAI page skip flag is invalid")
+    confidence = data.get("confidence")
+    if type(confidence) not in (int, float) or not math.isfinite(confidence) or not 0 <= confidence <= 1:
+        raise RuntimeError("OpenAI page confidence is invalid")
+    if data["should_skip"] and data["page_role"] in {"problem", "mixed"}:
+        raise RuntimeError("OpenAI page role and skip flag conflict")
+    if vision and not isinstance(data.get("problems"), list):
+        raise RuntimeError("OpenAI problem list is invalid")
 
-    def __init__(self, model: str = "gemini-2.5-flash-lite"):
+
+class OpenAIVLMTextAdapter:
+    """Tier 2 — OpenAI text 호출로 page_role 분류."""
+
+    def __init__(self, model: str = "gpt-6-luna"):
         self.model = model
 
     def classify(
@@ -549,20 +516,22 @@ class GeminiVLMTextAdapter:
         tenant_id = meta.get("tenant_id")
         prompt = _PAGE_ROLE_PROMPT + (ocr_text or "")[:6000]
         try:
-            data = _gemini_request(
+            data = _openai_request(
                 model=self.model,
-                parts=[{"text": prompt}],
+                parts=[{"type": "input_text", "text": prompt}],
+                max_output_tokens=2048,
                 document_id=document_id,
                 tenant_id=tenant_id,
             )
+            _validate_page_response(data)
         except Exception as e:
-            logger.warning("Gemini text classify 실패: %s", e)
+            logger.warning("OpenAI text classify 실패: %s", e)
             # 명시적 fallback: keyword heuristic mock + 실패 reason debug에 노출.
             mock_result = MockVLMTextAdapter().classify(
                 ocr_text=ocr_text, ocr_blocks=ocr_blocks, page_meta=page_meta,
             )
-            mock_result.debug["adapter"] = "mock_after_gemini_fail"
-            mock_result.debug["gemini_error"] = str(e)[:300]
+            mock_result.debug["adapter"] = "mock_after_openai_fail"
+            mock_result.debug["openai_error"] = str(e)[:300]
             mock_result.debug["model"] = self.model
             return mock_result
         return PageRoleResult(
@@ -570,17 +539,17 @@ class GeminiVLMTextAdapter:
             should_skip=bool(data.get("should_skip", False)),
             confidence=float(data.get("confidence", 0.6)),
             debug={
-                "adapter": "gemini",
+                "adapter": "openai",
                 "model": self.model,
                 "reason": str(data.get("reason", ""))[:200],
             },
         )
 
 
-class GeminiVLMVisionAdapter:
-    """Tier 3 — Gemini vision 호출로 페이지 이미지에서 문항 bbox 검출."""
+class OpenAIVLMVisionAdapter:
+    """Tier 3 — OpenAI vision 호출로 페이지 이미지에서 문항 bbox 검출."""
 
-    def __init__(self, model: str = "gemini-2.5-flash"):
+    def __init__(self, model: str = "gpt-6.1-terra"):
         self.model = model
 
     def detect_problems(
@@ -602,7 +571,7 @@ class GeminiVLMVisionAdapter:
         except Exception as e:
             raise RuntimeError(f"VLM vision 이미지 읽기 실패: {e}") from e
 
-        # Gemini 서버 deadline(~30s) 차단을 위해 큰 이미지를 1600px / JPEG 85로 압축.
+        # 전송 비용을 제한하기 위해 큰 이미지를 1600px / JPEG 85로 압축.
         # 0..1000 yxyx 응답을 원본 너비/높이로 환산한다. 전송 압축 비율과 무관하다.
         scale = 1.0
         orig_w = orig_h = 0
@@ -610,15 +579,15 @@ class GeminiVLMVisionAdapter:
             from PIL import Image  # type: ignore
             _orig = Image.open(_io.BytesIO(img_bytes))
             orig_w, orig_h = _orig.size
-            if max(orig_w, orig_h) > _GEMINI_VISION_MAX_DIM:
-                scale = _GEMINI_VISION_MAX_DIM / max(orig_w, orig_h)
+            if max(orig_w, orig_h) > _OPENAI_VISION_MAX_DIM:
+                scale = _OPENAI_VISION_MAX_DIM / max(orig_w, orig_h)
                 new_size = (int(orig_w * scale), int(orig_h * scale))
                 _rsz = _orig.convert("RGB").resize(new_size, Image.LANCZOS)
-                # 원본 이미지(최대 ~275MB) 즉시 해제 — Gemini 호출(~30s) 동안 메모리 점유 방지
+                # 원본 이미지를 즉시 해제해 provider 호출 중 메모리 점유를 줄인다.
                 _orig.close()
                 del _orig
                 buf = _io.BytesIO()
-                _rsz.save(buf, format="JPEG", quality=_GEMINI_VISION_JPEG_Q, optimize=True)
+                _rsz.save(buf, format="JPEG", quality=_OPENAI_VISION_JPEG_Q, optimize=True)
                 _rsz.close()
                 del _rsz
                 img_bytes = buf.getvalue()
@@ -647,16 +616,18 @@ class GeminiVLMVisionAdapter:
                 )
                 grounded_blocks = photo_ocr_blocks(google_ocr_blocks(image_path), orig_w, orig_h)
                 prompt = photo_grounding_prompt(grounded_blocks, orig_w, orig_h)
-            data = _gemini_request(
+            data = _openai_request(
                 model=self.model,
                 parts=[
-                    {"text": prompt},
-                    {"inline_data": {"mime_type": mime, "data": b64}},
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_image", "image_url": f"data:{mime};base64,{b64}", "detail": "high"},
                 ],
                 document_id=document_id,
                 tenant_id=tenant_id,
-                **({"thinking_budget": 2048} if grounded_blocks is not None else {}),
+                reasoning_effort="medium" if grounded_blocks is not None else "low",
             )
+            if grounded_blocks is None:
+                _validate_page_response(data, vision=True)
             if grounded_blocks is not None:
                 regions = grounded_photo_regions(data, grounded_blocks, orig_w, orig_h)
                 confidence = float(data.get("confidence", 0.7))
@@ -667,18 +638,18 @@ class GeminiVLMVisionAdapter:
                         shared_with=r["shared_with"], ocr_grounded=True,
                     ) for r in regions],
                     confidence=confidence, paper_type="student_answer_photo",
-                    debug={"adapter": "gemini", "model": self.model,
+                    debug={"adapter": "openai", "model": self.model,
                            "raw_count": len(regions), "ocr_blocks": len(grounded_blocks),
                            "coordinate_system": "ocr_source_pixels", "ocr_grounded": True},
                 )
         except Exception as e:
-            logger.warning("Gemini vision detect 실패: %s", e)
+            logger.warning("OpenAI vision detect 실패: %s", e)
             # 명시적 fallback — debug에 실패 사유 표시 (검수 UI에서 사용자가 판단 가능).
             mock_result = MockVLMVisionAdapter().detect_problems(
                 image_path=image_path, page_meta=page_meta,
             )
-            mock_result.debug["adapter"] = "mock_after_gemini_fail"
-            mock_result.debug["gemini_error"] = str(e)[:300]
+            mock_result.debug["adapter"] = "mock_after_openai_fail"
+            mock_result.debug["openai_error"] = str(e)[:300]
             mock_result.debug["model"] = self.model
             return mock_result
 
@@ -716,7 +687,7 @@ class GeminiVLMVisionAdapter:
             confidence=float(data.get("confidence", 0.7)),
             paper_type=_normalize_paper_type(data.get("paper_type")),
             debug={
-                "adapter": "gemini", "model": self.model,
+                "adapter": "openai", "model": self.model,
                 "raw_count": len(problems_raw),
                 "scale": round(scale, 3),
                 "coordinate_system": "normalized_1000_yxyx",
@@ -728,49 +699,40 @@ class GeminiVLMVisionAdapter:
 # ── Factory ─────────────────────────────────────────────────────
 
 
-def get_text_adapter() -> VLMTextAdapter:
-    """env MATCHUP_VLM_TEXT_ADAPTER 기반 어댑터 반환.
+# Legacy environment names are rollout aliases only: they never call Google.
+_LEGACY_ADAPTERS = {"gemini_flash", "gemini_flash_lite"}
 
-    값:
-      "mock" (default)       — MockVLMTextAdapter
-      "gemini_flash_lite"    — GeminiVLMTextAdapter (gemini-2.5-flash-lite)
-      "gemini_flash"         — GeminiVLMTextAdapter (gemini-2.5-flash)
-    """
+
+def is_openai_adapter(choice: str) -> bool:
+    return choice.strip().lower() in {"openai", "openai_luna", "openai_terra"} | _LEGACY_ADAPTERS
+
+
+def get_text_adapter() -> VLMTextAdapter:
+    """Explicit mock remains disabled; legacy provider selections migrate to OpenAI."""
     global _TEXT_ADAPTER
     if _TEXT_ADAPTER is None:
-        choice = os.getenv("MATCHUP_VLM_TEXT_ADAPTER", "mock").lower()
-        if choice == "gemini_flash_lite":
-            _TEXT_ADAPTER = GeminiVLMTextAdapter(model="gemini-2.5-flash-lite")
-        elif choice == "gemini_flash":
-            _TEXT_ADAPTER = GeminiVLMTextAdapter(model="gemini-2.5-flash")
+        choice = os.getenv("MATCHUP_VLM_TEXT_ADAPTER", "mock").strip().lower()
+        if is_openai_adapter(choice):
+            _TEXT_ADAPTER = OpenAIVLMTextAdapter(
+                model=os.getenv("MATCHUP_VLM_TEXT_MODEL") or "gpt-6-luna")
         elif choice == "mock":
             _TEXT_ADAPTER = MockVLMTextAdapter()
         else:
-            logger.warning("Unknown text adapter %r, falling back to mock", choice)
-            _TEXT_ADAPTER = MockVLMTextAdapter()
+            raise ValueError("Unknown MATCHUP_VLM_TEXT_ADAPTER")
     return _TEXT_ADAPTER
 
 
 def get_vision_adapter() -> VLMVisionAdapter:
-    """env MATCHUP_VLM_VISION_ADAPTER 기반 어댑터 반환.
-
-    값:
-      "mock" (default)       — MockVLMVisionAdapter
-      "gemini_flash_lite"    — GeminiVLMVisionAdapter (가벼움 / 정확도 ↓)
-      "gemini_flash"         — GeminiVLMVisionAdapter (default vision tier)
-    """
     global _VISION_ADAPTER
     if _VISION_ADAPTER is None:
-        choice = os.getenv("MATCHUP_VLM_VISION_ADAPTER", "mock").lower()
-        if choice == "gemini_flash":
-            _VISION_ADAPTER = GeminiVLMVisionAdapter(model="gemini-2.5-flash")
-        elif choice == "gemini_flash_lite":
-            _VISION_ADAPTER = GeminiVLMVisionAdapter(model="gemini-2.5-flash-lite")
+        choice = os.getenv("MATCHUP_VLM_VISION_ADAPTER", "mock").strip().lower()
+        if is_openai_adapter(choice):
+            _VISION_ADAPTER = OpenAIVLMVisionAdapter(
+                model=os.getenv("MATCHUP_VLM_VISION_MODEL") or "gpt-6.1-terra")
         elif choice == "mock":
             _VISION_ADAPTER = MockVLMVisionAdapter()
         else:
-            logger.warning("Unknown vision adapter %r, falling back to mock", choice)
-            _VISION_ADAPTER = MockVLMVisionAdapter()
+            raise ValueError("Unknown MATCHUP_VLM_VISION_ADAPTER")
     return _VISION_ADAPTER
 
 

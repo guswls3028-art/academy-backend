@@ -54,7 +54,7 @@ foreach ($marker in $requiredProductionMarkers) {
 }
 $migrationJob = [regex]::Match($productionWorkflow, '(?ms)^  run-migrations:\r?\n(?:(?!^  [a-zA-Z0-9_-]+:).)*').Value
 if ($migrationJob -notmatch '(?m)^    environment: production\s*$' -or
-    -not $migrationJob.Contains('needs: [detect-changes, build-and-push, verify-api-preprod]')) {
+    -not $migrationJob.Contains('needs: [detect-changes, build-and-push, verify-api-development, verify-api-preprod]')) {
     $failures += "Production migrations must await isolated preprod and the exact production environment review."
 }
 foreach ($jobName in @('deploy-api', 'deploy-messaging', 'deploy-ai', 'deploy-tools', 'deploy-video')) {

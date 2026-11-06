@@ -42,37 +42,37 @@ def _bbox_result(
             for (n, x, y, w, h) in (problems or [])
         ],
         confidence=confidence,
-        debug={"adapter": "gemini"},
+        debug={"adapter": "openai"},
     )
 
 
-def test_gemini_request_keeps_key_out_of_url_and_errors(monkeypatch, caplog):
+def test_openai_request_keeps_key_out_of_url_and_errors(monkeypatch, caplog):
     """The provider key travels in a header and is redacted from failures."""
     import logging
     import traceback
 
     import requests
 
-    from academy.adapters.ai.detection.vlm_fallback import _gemini_request
+    from academy.adapters.ai.detection.vlm_fallback import _openai_request
 
     key = "synthetic-provider-key"
-    monkeypatch.setenv("GEMINI_API_KEY", key)
+    monkeypatch.setenv("OPENAI_API_KEY", key)
     calls = []
 
     def success(url, **kwargs):
         calls.append((url, kwargs))
         response = MagicMock(status_code=200)
         response.json.return_value = {
-            "candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": "{}"}]}}]
+            "status": "completed", "output": [{"type": "message", "status": "completed", "content": [{"type": "output_text", "text": "{}"}]}]
         }
         return response
 
     monkeypatch.setattr(requests, "post", success)
-    assert _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}]) == {}
+    assert _openai_request(model="gpt-6.1-terra", parts=[{"text": "test"}]) == {}
     assert key not in calls[0][0]
     assert "?key=" not in calls[0][0]
     assert "params" not in calls[0][1]
-    assert calls[0][1]["headers"]["x-goog-api-key"] == key
+    assert calls[0][1]["headers"]["Authorization"] == f"Bearer {key}"
 
     def provider_error(url, **kwargs):
         response = MagicMock(status_code=400)
@@ -81,7 +81,7 @@ def test_gemini_request_keeps_key_out_of_url_and_errors(monkeypatch, caplog):
 
     monkeypatch.setattr(requests, "post", provider_error)
     with pytest.raises(RuntimeError) as provider_exc:
-        _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}])
+        _openai_request(model="gpt-6.1-terra", parts=[{"text": "test"}])
     assert key not in str(provider_exc.value)
 
     def transport_error(url, **kwargs):
@@ -89,7 +89,7 @@ def test_gemini_request_keeps_key_out_of_url_and_errors(monkeypatch, caplog):
 
     monkeypatch.setattr(requests, "post", transport_error)
     with pytest.raises(RuntimeError) as transport_exc:
-        _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}])
+        _openai_request(model="gpt-6.1-terra", parts=[{"text": "test"}])
     assert key not in str(transport_exc.value)
 
     def invalid_json(url, **kwargs):
@@ -99,7 +99,7 @@ def test_gemini_request_keeps_key_out_of_url_and_errors(monkeypatch, caplog):
 
     monkeypatch.setattr(requests, "post", invalid_json)
     with pytest.raises(RuntimeError) as json_exc:
-        _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}])
+        _openai_request(model="gpt-6.1-terra", parts=[{"text": "test"}])
     assert key not in str(json_exc.value)
 
     def timeout(url, **kwargs):
@@ -107,7 +107,7 @@ def test_gemini_request_keeps_key_out_of_url_and_errors(monkeypatch, caplog):
 
     monkeypatch.setattr(requests, "post", timeout)
     with pytest.raises(RuntimeError) as timeout_exc:
-        _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}])
+        _openai_request(model="gpt-6.1-terra", parts=[{"text": "test"}])
 
     for error in (provider_exc.value, transport_exc.value, json_exc.value, timeout_exc.value):
         assert key not in repr(error)
@@ -119,16 +119,16 @@ def test_gemini_request_keeps_key_out_of_url_and_errors(monkeypatch, caplog):
     assert key not in caplog.text
 
 
-def test_gemini_request_without_key_does_not_call_provider(monkeypatch):
+def test_openai_request_without_key_does_not_call_provider(monkeypatch):
     import requests
 
-    from academy.adapters.ai.detection.vlm_fallback import _gemini_request
+    from academy.adapters.ai.detection.vlm_fallback import _openai_request
 
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     post = MagicMock()
     monkeypatch.setattr(requests, "post", post)
-    with pytest.raises(RuntimeError, match="GEMINI_API_KEY not set"):
-        _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}])
+    with pytest.raises(RuntimeError, match="OPENAI_API_KEY not set"):
+        _openai_request(model="gpt-6.1-terra", parts=[{"text": "test"}])
     post.assert_not_called()
 
 
@@ -583,11 +583,11 @@ def test_vlm_page_role_filter_skips_non_problem_page(monkeypatch):
         page_role=PageRole.EXPLANATION,
         should_skip=True,
         confidence=0.91,
-        debug={"adapter": "gemini"},
+        debug={"adapter": "openai"},
     )
     monkeypatch.setenv("MATCHUP_VLM_PAGE_ROLE_FILTER", "1")
-    monkeypatch.setenv("MATCHUP_VLM_TEXT_ADAPTER", "gemini_flash_lite")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("MATCHUP_VLM_TEXT_ADAPTER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(
         matchup_pipeline, "_classify_page_role_with_vlm_text",
         lambda page, doc_id, tenant_id=None: result,
@@ -639,14 +639,14 @@ def test_vlm_page_role_filter_disabled_by_default(monkeypatch):
     assert called["value"] is False
 
 
-def test_vlm_page_role_filter_requires_real_gemini_config(monkeypatch):
+def test_vlm_page_role_filter_requires_real_openai_config(monkeypatch):
     """Gemini key/adapter가 없으면 page-role filter가 기존 box를 건드리지 않는다."""
     from academy.application.use_cases.ai.pipelines import matchup_pipeline
 
     monkeypatch.setenv("MATCHUP_VLM_PAGE_ROLE_FILTER", "1")
     monkeypatch.delenv("MATCHUP_VLM_TEXT_ADAPTER", raising=False)
     monkeypatch.delenv("MATCHUP_VLM_VISION_ADAPTER", raising=False)
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     called = {"value": False}
 
     def fake_classify(*args, **kwargs):
@@ -680,9 +680,9 @@ def test_vlm_page_role_filter_does_not_use_vision_by_default(monkeypatch):
     from academy.application.use_cases.ai.pipelines import matchup_pipeline
 
     monkeypatch.setenv("MATCHUP_VLM_PAGE_ROLE_FILTER", "1")
-    monkeypatch.setenv("MATCHUP_VLM_TEXT_ADAPTER", "gemini_flash_lite")
-    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("MATCHUP_VLM_TEXT_ADAPTER", "openai")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.delenv("MATCHUP_VLM_PAGE_ROLE_USE_VISION_FALLBACK", raising=False)
     called = {"vision": False}
 
@@ -743,8 +743,8 @@ def test_vlm_empty_page_fill_appends_and_remaps_duplicate(monkeypatch):
 
     monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
     monkeypatch.setenv("MATCHUP_VLM_FILL_EMPTY_PAGES", "1")
-    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(
         matchup_pipeline, "_pages_via_vlm",
         lambda pages, document_id, job_id, tenant_id=None: (
@@ -794,8 +794,8 @@ def test_vlm_underfilled_page_fill_appends_missing_and_skips_existing(monkeypatc
 
     monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
     monkeypatch.setenv("MATCHUP_VLM_FILL_UNDERFILLED_PAGES", "1")
-    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(
         matchup_pipeline,
         "_try_vlm_problem_bboxes",

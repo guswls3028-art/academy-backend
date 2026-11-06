@@ -6,6 +6,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Optional, Dict
 
+from academy.adapters.ai.openai_credentials import resolve_openai_api_key
+
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
     v = os.getenv(name)
@@ -71,16 +73,16 @@ class AIConfig:
     YOLO_QUESTION_CONF_MAP: Dict[str, float] = field(default_factory=lambda: dict(_DEFAULT_CONF_MAP))
 
     # Embedding
-    EMBEDDING_BACKEND: str = "auto"  # local|openai|auto
+    EMBEDDING_BACKEND: str = "local"  # Keep persisted vectors in their existing space; explicit openai|auto remain supported.
     EMBEDDING_LOCAL_MODEL: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     EMBEDDING_OPENAI_MODEL: str = "text-embedding-3-small"
     OPENAI_API_KEY: Optional[str] = None
 
     # Problem generation
-    PROBLEM_GEN_MODEL: str = "gpt-4.1-mini"  # default
+    PROBLEM_GEN_MODEL: str = "gpt-6.1-sol"  # default
     PROBLEM_GEN_BEDROCK_MODEL: str = "global.amazon.nova-2-lite-v1:0"
-    PROBLEM_STUDIO_EXPLANATION_MODEL: str = "gpt-5.6-luna"
-    PROBLEM_TRANSCRIPTION_MODEL: str = "gpt-5.6-luna"
+    PROBLEM_STUDIO_EXPLANATION_MODEL: str = "gpt-6.1-sol"
+    PROBLEM_TRANSCRIPTION_MODEL: str = "gpt-6.1-terra"
     PROBLEM_TRANSCRIPTION_BEDROCK_MODEL: str = "global.amazon.nova-2-lite-v1:0"
     BEDROCK_REGION: str = "ap-northeast-2"
 
@@ -98,25 +100,25 @@ class AIConfig:
             YOLO_QUESTION_IOU_THRESHOLD=float(_env("YOLO_QUESTION_IOU_THRESHOLD", "0.5") or "0.5"),
             YOLO_QUESTION_CONF_MAP=_load_conf_map(),
 
-            EMBEDDING_BACKEND=_env("EMBEDDING_BACKEND", "auto") or "auto",
+            EMBEDDING_BACKEND=_env("EMBEDDING_BACKEND", "local") or "local",
             EMBEDDING_LOCAL_MODEL=_env(
                 "EMBEDDING_LOCAL_MODEL",
                 "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
             ) or "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
             EMBEDDING_OPENAI_MODEL=_env("EMBEDDING_OPENAI_MODEL", "text-embedding-3-small") or "text-embedding-3-small",
-            OPENAI_API_KEY=_env("OPENAI_API_KEY") or _env("EMBEDDING_OPENAI_API_KEY"),
+            OPENAI_API_KEY=resolve_openai_api_key(),
 
-            PROBLEM_GEN_MODEL=_env("PROBLEM_GEN_MODEL", "gpt-4.1-mini") or "gpt-4.1-mini",
+            PROBLEM_GEN_MODEL=_env("PROBLEM_GEN_MODEL", "gpt-6.1-sol") or "gpt-6.1-sol",
             PROBLEM_GEN_BEDROCK_MODEL=(
                 _env("PROBLEM_GEN_BEDROCK_MODEL", "global.amazon.nova-2-lite-v1:0")
                 or "global.amazon.nova-2-lite-v1:0"
             ),
             PROBLEM_STUDIO_EXPLANATION_MODEL=(
-                _env("PROBLEM_STUDIO_EXPLANATION_MODEL", "gpt-5.6-luna")
-                or "gpt-5.6-luna"
+                _env("PROBLEM_STUDIO_EXPLANATION_MODEL", "gpt-6.1-sol")
+                or "gpt-6.1-sol"
             ),
             PROBLEM_TRANSCRIPTION_MODEL=(
-                _env("PROBLEM_TRANSCRIPTION_MODEL", "gpt-5.6-luna") or "gpt-5.6-luna"
+                _env("PROBLEM_TRANSCRIPTION_MODEL", "gpt-6.1-terra") or "gpt-6.1-terra"
             ),
             PROBLEM_TRANSCRIPTION_BEDROCK_MODEL=(
                 _env("PROBLEM_TRANSCRIPTION_BEDROCK_MODEL", "global.amazon.nova-2-lite-v1:0")

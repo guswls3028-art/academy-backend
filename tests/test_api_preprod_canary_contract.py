@@ -155,7 +155,16 @@ def test_api_env_sync_fails_closed_on_cross_role_or_missing_source() -> None:
     assert "Publish-ApiPreprodEnvCandidate" in sync
     assert "Publish-RuntimeEnvCandidates" in sync
     assert "restoring prior parameter values" in sync
-    assert '"--tier", "Advanced"' in sync
+    preprod = sync.split("function Publish-ApiPreprodEnvCandidate", maxsplit=1)[1]
+    secure_put = re.search(
+        r"Invoke-SsmSecureStringPut\s+-Region \$script:Region\s+-Request @\{([^}]+)\}",
+        preprod,
+    )
+    assert secure_put is not None
+    request = secure_put.group(1)
+    assert "Name = $ParameterName" in request
+    assert 'Type = "SecureString"' in request
+    assert 'Tier = "Advanced"' in request
     assert "Invoke-RequiredAwsJson" in sync
     assert "/academy/api/preprod/db-credentials" in sync
     assert "ACADEMY_PREPROD_RELEASE_ID" in sync

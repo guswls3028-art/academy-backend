@@ -10,6 +10,7 @@ from typing import Optional
 from botocore.config import Config
 
 from academy.adapters.ai.config import AIConfig
+from academy.adapters.ai.openai_output import completed_chat_text, completed_response_text, reasoning_options
 from academy.adapters.ai.problem.prompt import BASE_PROMPT, PACKAGE_PROMPT
 
 try:
@@ -85,7 +86,7 @@ def _get_client() -> "OpenAI":
     if not cfg.OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY not set")
 
-    _client = OpenAI(api_key=cfg.OPENAI_API_KEY)
+    _client = OpenAI(api_key=cfg.OPENAI_API_KEY, timeout=150.0, max_retries=2)
     return _client
 
 
@@ -108,12 +109,12 @@ def generate_problem_from_ocr(ocr_text: str) -> ParsedProblem:
             {"role": "system", "content": "당신은 교육용 시험 문제를 자동 생성하는 엔진입니다."},
             {"role": "user", "content": prompt},
         ],
-        temperature=0.2,
+        max_completion_tokens=12000, store=False,
+        response_format={"type": "json_object"},
+        **reasoning_options(cfg.PROBLEM_GEN_MODEL, effort="medium", chat=True),
     )
 
-    # SDK 형태 차이 방어
-    msg = response.choices[0].message
-    content = getattr(msg, "content", None) or msg.get("content")  # type: ignore
+    content = completed_chat_text(response)
 
     data = json.loads(content)
 
@@ -291,10 +292,11 @@ def generate_problem_package_from_text(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.25,
+            max_completion_tokens=12000, store=False,
+            response_format={"type": "json_object"},
+            **reasoning_options(cfg.PROBLEM_GEN_MODEL, effort="medium", chat=True),
         )
-        msg = response.choices[0].message
-        content = getattr(msg, "content", None) or msg.get("content")  # type: ignore
+        content = completed_chat_text(response)
     else:
         content = _generate_package_content_with_bedrock(
             cfg=cfg,
@@ -455,9 +457,11 @@ def generate_transcribed_explanations(
                 model=model,
                 instructions=system_prompt,
                 input=[{"role": "user", "content": response_content}],
-                max_output_tokens=6000,
+                max_output_tokens=12000, store=False,
+                text={"format": {"type": "json_object"}},
+                **reasoning_options(model, effort="medium"),
             )
-            content = str(getattr(response, "output_text", "") or "")
+            content = completed_response_text(response)
         else:
             response = client.chat.completions.create(
                 model=cfg.PROBLEM_GEN_MODEL,
@@ -465,10 +469,11 @@ def generate_transcribed_explanations(
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.2,
+                max_completion_tokens=12000, store=False,
+                response_format={"type": "json_object"},
+                **reasoning_options(cfg.PROBLEM_GEN_MODEL, effort="medium", chat=True),
             )
-            msg = response.choices[0].message
-            content = getattr(msg, "content", None) or msg.get("content")  # type: ignore
+            content = completed_chat_text(response)
     else:
         content = _generate_package_content_with_bedrock(
             cfg=cfg,

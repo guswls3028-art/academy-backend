@@ -1,6 +1,9 @@
 # api.txt — API 전용 (표현 계층)
 -r ./common.txt
 
+# OpenAI consumers share the existing AI worker SDK requirement/constraints.
+openai
+
 # Django REST / API
 djangorestframework
 django-filter

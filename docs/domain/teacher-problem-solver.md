@@ -74,6 +74,12 @@
   객체에만 수행한다.
 - worker 내부 오류는 구조화 로그에 남기되 상태 API에는
   `풀이 초안을 만들지 못했습니다...` 일반 메시지만 노출한다.
+- basic tier의 기존 공통 정책으로 DB 상태가 `DONE`이어도 성공 결과가 없고
+  `error_message` 또는 `last_error`가 있으면 이 전용 상태 API는 `FAILED`,
+  고정된 재시도 안내, `result=null`을 반환한다. DB 상태나 다른 작업의 정책은
+  바꾸지 않는다. 실제 성공 결과가 있으면 기존 교사 검수 초안을 유지한다.
+- 실패 화면은 선택한 이미지·과목·개인정보 확인을 유지한다. 사용자가 다시
+  실행하면 같은 입력으로 새 작업을 만들며 자동 재발행하지 않는다.
 - 상태 조회가 일시 실패해도 기존 작업은 유지된다. 클라이언트는 같은
   작업 ID를 다시 조회하며 새 AI 작업을 만들지 않는다.
 - 최종 상태는 `DONE`, `FAILED`, `REJECTED_BAD_INPUT`,
@@ -102,3 +108,6 @@ whitelist, provider 오류 은닉, 발행/worker 정리, 교차 테넌트 키
 보호를 포함해야 한다. 운영 확인은 합성 비개인정보 이미지만 사용하고
 완료 후 AI 큐·DLQ, worker warm baseline/health, API/DB health를 함께
 확인한다.
+
+공급자·용도별 모델, 출력 검증과 키 전환/복구는
+[OpenAI 운영 계약](../operations/openai-provider.md)을 따른다.

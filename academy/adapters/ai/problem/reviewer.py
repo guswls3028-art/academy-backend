@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from academy.adapters.ai.openai_output import completed_response_text, reasoning_options
+
 import json
 from typing import Any
 
@@ -30,9 +32,10 @@ def _openai_content(*, cfg: AIConfig, system_prompt: str, user_prompt: str) -> s
         model=cfg.PROBLEM_STUDIO_EXPLANATION_MODEL,
         instructions=system_prompt,
         input=[{"role": "user", "content": user_prompt}],
-        max_output_tokens=14000,
+        max_output_tokens=14000, store=False,
+        **reasoning_options(cfg.PROBLEM_STUDIO_EXPLANATION_MODEL, effort="medium"),
     )
-    return str(getattr(response, "output_text", "") or "")
+    return completed_response_text(response)
 
 
 def _bedrock_content(*, cfg: AIConfig, system_prompt: str, user_prompt: str) -> str:

@@ -18,13 +18,13 @@ def _metadata(stage: str) -> dict[str, dict]:
                 "SchemaVersion": "1",
                 "Owner": "academy-release-ops",
             }
-        if kind == "gemini_key":
+        if kind == "openai_key":
             tags = {
                 "Environment": "development",
                 "Purpose": "matchup-synthetic-qa",
                 "Owner": "academy-release-ops",
                 "RotationOwner": "provider-key-operator",
-                "GoogleProjectId": "academy-dev-example",
+                "OpenAIProjectId": "academy-dev-example",
                 "RotateBy": (date.today() + timedelta(days=30)).isoformat(),
             }
         result[name] = {"Name": name, "Type": "SecureString", "Version": 1, "Tags": tags}
@@ -41,13 +41,13 @@ def test_candidate_source_names_and_key_classes_exclude_production_blobs():
     assert len(names) == sum(len(sources) for sources in contract.SOURCES.values())
     classes = list(contract.KEY_CLASSES.values())
     assert all(not (left & right) for i, left in enumerate(classes) for right in classes[i + 1:])
-    assert "GEMINI_API_KEY" in contract.KEY_CLASSES["provider_secret"]
-    assert "GEMINI_API_KEY" not in contract.KEY_CLASSES["nonsecret_base"]
+    assert "OPENAI_API_KEY" in contract.KEY_CLASSES["provider_secret"]
+    assert "OPENAI_API_KEY" not in contract.KEY_CLASSES["nonsecret_base"]
 
 
 def test_candidate_sources_fail_closed_on_missing_or_unowned_inputs():
     development = _metadata("development")
-    assert contract.validate_metadata("development", development)["gemini_key"] == 1
+    assert contract.validate_metadata("development", development)["openai_key"] == 1
     assert contract.validate_metadata("preprod", _metadata("preprod"))["api_base"] == 1
 
     missing = dict(development)
@@ -61,21 +61,21 @@ def test_candidate_sources_fail_closed_on_missing_or_unowned_inputs():
         contract.validate_metadata("development", unowned)
 
     expired = _metadata("development")
-    expired[contract.SOURCES["development"]["gemini_key"]]["Tags"]["RotateBy"] = (
+    expired[contract.SOURCES["development"]["openai_key"]]["Tags"]["RotateBy"] = (
         date.today() - timedelta(days=1)
     ).isoformat()
     with pytest.raises(contract.CandidateSourceUnavailable, match="outside 90 days"):
         contract.validate_metadata("development", expired)
 
     unassigned = _metadata("development")
-    unassigned[contract.SOURCES["development"]["gemini_key"]]["Tags"]["Owner"] = "TBD"
+    unassigned[contract.SOURCES["development"]["openai_key"]]["Tags"]["Owner"] = "TBD"
     with pytest.raises(contract.CandidateSourceUnavailable, match="provider owner"):
         contract.validate_metadata("development", unassigned)
 
 
 def test_candidate_base_accepts_only_named_nonsecret_settings():
     contract.validate_base_keys(["AWS_DEFAULT_REGION", "DB_HOST", "DB_PORT"])
-    for invalid in ("GEMINI_API_KEY", "DB_PASSWORD", "SOLAPI_API_KEY", "UNKNOWN"):
+    for invalid in ("OPENAI_API_KEY", "DB_PASSWORD", "SOLAPI_API_KEY", "UNKNOWN"):
         with pytest.raises(contract.CandidateSourceUnavailable, match="unclassified"):
             contract.validate_base_keys(["AWS_DEFAULT_REGION", "DB_HOST", "DB_PORT", invalid])
     with pytest.raises(contract.CandidateSourceUnavailable, match="missing"):
@@ -104,4 +104,4 @@ def test_candidate_preflight_reads_metadata_only():
             raise AssertionError("Preflight must not publish environments")
 
     metadata = contract.read_metadata(MetadataOnlySSM(), "development")
-    assert contract.validate_metadata("development", metadata)["gemini_key"] == 1
+    assert contract.validate_metadata("development", metadata)["openai_key"] == 1

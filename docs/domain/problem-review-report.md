@@ -233,3 +233,6 @@ C:\academy\backend\.venv\Scripts\python.exe -m ruff check apps/domains/tools/pro
 배포 후에는 실제 tenant의 안전한 시험 fixture로 API upload → AI worker → draft
 저장 → tools worker PDF/PPTX → fresh download URL을 확인하고, 생성 PDF/PPTX를
 각각 다시 열어 페이지/슬라이드와 한글 조판 및 실제 검수본 문항 수를 점검한다.
+
+공급자·용도별 모델, 출력 검증과 키 전환/복구는
+[OpenAI 운영 계약](../operations/openai-provider.md)을 따른다.

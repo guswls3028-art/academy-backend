@@ -573,9 +573,10 @@ function Legacy-GitHubActionsDeployIAM {
     Write-Ok "GitHub Actions deploy IAM converged and read back with exact SSOT resources"
 }
 
-function Ensure-AccountCutoverManagedPolicy {
-    param([string]$PolicyJson, [string]$RoleName)
-    $policyName = "academy-gha-account-cutover"
+function Ensure-GitHubActionsManagedPolicy {
+    param([string]$PolicyJson, [string]$RoleName,
+        [ValidateSet("academy-gha-account-cutover", "academy-gha-openai-runtime")]
+        [string]$PolicyName)
     $policyArn = "arn:aws:iam::$($script:AccountId):policy/$policyName"
     $expected = ($PolicyJson | ConvertFrom-Json) | ConvertTo-Json -Depth 30 -Compress
     $current = $null
@@ -592,23 +593,23 @@ function Ensure-AccountCutoverManagedPolicy {
         try {
             if (-not $current) {
                 Invoke-Aws @("iam", "create-policy", "--policy-name", $policyName, "--policy-document", $policyRef,
-                    "--tags", "Key=Project,Value=academy", "Key=ManagedBy,Value=academy-bootstrap") -ErrorMessage "create account cutover policy" | Out-Null
+                    "--tags", "Key=Project,Value=academy", "Key=ManagedBy,Value=academy-bootstrap") -ErrorMessage "create owned release policy" | Out-Null
             } else {
                 $versions = Invoke-AwsJson @("iam", "list-policy-versions", "--policy-arn", $policyArn, "--output", "json")
                 if (@($versions.Versions).Count -ge 5) {
                     $oldest = $versions.Versions | Where-Object { -not $_.IsDefaultVersion } | Sort-Object CreateDate | Select-Object -First 1
-                    if (-not $oldest.VersionId) { throw "No owned nondefault cutover policy version can be retired." }
-                    Invoke-Aws @("iam", "delete-policy-version", "--policy-arn", $policyArn, "--version-id", $oldest.VersionId) -ErrorMessage "retire oldest cutover policy version" | Out-Null
+                    if (-not $oldest.VersionId) { throw "No owned nondefault release policy version can be retired." }
+                    Invoke-Aws @("iam", "delete-policy-version", "--policy-arn", $policyArn, "--version-id", $oldest.VersionId) -ErrorMessage "retire oldest release policy version" | Out-Null
                 }
-                Invoke-Aws @("iam", "create-policy-version", "--policy-arn", $policyArn, "--policy-document", $policyRef, "--set-as-default") -ErrorMessage "update account cutover policy" | Out-Null
+                Invoke-Aws @("iam", "create-policy-version", "--policy-arn", $policyArn, "--policy-document", $policyRef, "--set-as-default") -ErrorMessage "update owned release policy" | Out-Null
             }
         } finally { Remove-TempFiles @($policyFile) }
     }
-    Invoke-Aws @("iam", "attach-role-policy", "--role-name", $RoleName, "--policy-arn", $policyArn) -ErrorMessage "attach account cutover policy" | Out-Null
+    Invoke-Aws @("iam", "attach-role-policy", "--role-name", $RoleName, "--policy-arn", $policyArn) -ErrorMessage "attach owned release policy" | Out-Null
     $readback = Invoke-AwsJson @("iam", "get-policy", "--policy-arn", $policyArn, "--output", "json")
     $version = Invoke-AwsJson @("iam", "get-policy-version", "--policy-arn", $policyArn, "--version-id", $readback.Policy.DefaultVersionId, "--output", "json")
     if (($version.PolicyVersion.Document | ConvertTo-Json -Depth 30 -Compress) -ne $expected) {
-        throw "Account cutover managed policy readback mismatch."
+        throw "Owned release managed policy readback mismatch."
     }
 }
 
@@ -848,6 +849,11 @@ function Ensure-GitHubActionsDeployIAM {
         Replace("__RULE_ARN_PREFIX__", $cutoverListenerArn.Replace(":listener/", ":listener-rule/")).
         Replace("__AI_QUEUE_ARN__", "arn:aws:sqs:$($script:Region):$($script:AccountId):$($script:AiSqsQueueName)").
         Replace("__TOOLS_QUEUE_ARN__", "arn:aws:sqs:$($script:Region):$($script:AccountId):$($script:ToolsSqsQueueName)")
+    # Keep the inline role policy below its aggregate size limit. This dedicated
+    # policy is attached/read back before the old inline source-read grant moves.
+    $openAiPolicy = Get-Content -LiteralPath (Join-Path $TemplatesPath "policy_gha_openai_runtime.json") -Raw
+    $openAiPolicy = $openAiPolicy.Replace("__ACCOUNT_ID__", $script:AccountId).Replace("__REGION__", $script:Region)
+    Ensure-GitHubActionsManagedPolicy -PolicyJson $openAiPolicy -RoleName $roleName -PolicyName "academy-gha-openai-runtime"
     $expected = [ordered]@{Version="2012-10-17";Statement=$statements}
     $expectedJson = $expected | ConvertTo-Json -Depth 50 -Compress
     $currentJson = if ($currentPolicy -and $currentPolicy.PolicyDocument) { $currentPolicy.PolicyDocument | ConvertTo-Json -Depth 50 -Compress } else { "" }
@@ -863,7 +869,7 @@ function Ensure-GitHubActionsDeployIAM {
     if ($actualJson -ne $expectedJson) { throw "GitHub Actions IAM full-policy readback does not exactly match the managed least-privilege contract." }
     # The existing inline policy is already near the 10,240-character role
     # limit. Keep cutover permissions in one separately owned managed policy.
-    Ensure-AccountCutoverManagedPolicy -PolicyJson $cutoverPolicy -RoleName $roleName
+    Ensure-GitHubActionsManagedPolicy -PolicyJson $cutoverPolicy -RoleName $roleName -PolicyName "academy-gha-account-cutover"
     $developmentConverger = Join-Path (Get-Item $PSScriptRoot).Parent.FullName "converge-api-development-oidc.ps1"
     $convergerAwsProfile = if ($env:AWS_PROFILE) {
         [string]$env:AWS_PROFILE
@@ -887,10 +893,11 @@ function Ensure-GitHubActionsDeployIAM {
     )
     if (
         ($attachedArns -join "`n") -cne ((@(
-            $developmentPolicyArn, "arn:aws:iam::$($script:AccountId):policy/academy-gha-account-cutover"
+            $developmentPolicyArn, "arn:aws:iam::$($script:AccountId):policy/academy-gha-account-cutover",
+            "arn:aws:iam::$($script:AccountId):policy/academy-gha-openai-runtime"
         ) | Sort-Object) -join "`n")
     ) {
-        throw "GitHub Actions role must have exactly the owned development and account-cutover managed policies attached."
+        throw "GitHub Actions role must have exactly the owned development, account-cutover and OpenAI runtime managed policies attached."
     }
     Write-Ok "GitHub Actions deploy IAM converged with exact inline and attached policy inventory"
 }
