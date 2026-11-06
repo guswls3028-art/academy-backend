@@ -71,9 +71,20 @@ ssm:GetParameter만 허용한다. 운영 key/env를 먼저 바꾸지 않는다. 
 실패는 고정 오류코드만 전달한다. 정상 개발 배포 job은 기존 constraints의
 boto3/botocore pin을 설치하며 수동 실행도 해당 SDK가 있는 Python을 사용한다.
 SDK 부재는 쓰기 전에 실패한다. 불명확한 쓰기를 helper가 재시도하지 않는다.
+stdin 전송·프로세스 종료·stdout/stderr 수집은 하나의 제한시간을 공유한다.
+자식이 입력을 읽지 않거나 후손이 출력 pipe를 계속 열고 있어도 고정 timeout
+오류로 종료하며, 정리 과정에서 무제한 종료 대기를 추가하지 않는다.
 두 parameter는 순차 쓰기이며 기존 부분 실패·보상·exact readback 절차를 유지한다.
 `candidate_prepare_sources.py`의 프로젝트/회전 메타데이터 검증은 별도 미래
 candidate 경로의 계약이며 현재 정상 6이미지 release의 선행조건이 아니다.
+
+SDK가 필요한 실행 host는 `verify-api-development` job과 수동
+`deploy.ps1`/`initialize-api-development.ps1` host다. 수동 host는 실행 전에
+동일 PATH의 `python -c "import boto3, botocore"`가 성공하는 기존 환경을 사용한다.
+`core/sync_env.ps1`의 운영·보상·preprod candidate 쓰기는 수동 `deploy.ps1`
+경로다. 독립 `verify-api-preprod` job은 별도 `publish-api-preprod-env.ps1`의
+기존 CLI publisher를 사용하며 이번 helper를 호출하지 않는다. canary runner가
+`sync_env.ps1`을 로드하는 것만으로 해당 쓰기 함수가 실행되는 것은 아니다.
 
 새 API/AI/Tools revision·일반 사용 성공·reload/후속 역할·오류 복구가 확인된 뒤
 운영 adapter 설정을 openai로 정리하고 Gemini 키를 환경에서 제거한다. 기존 키의

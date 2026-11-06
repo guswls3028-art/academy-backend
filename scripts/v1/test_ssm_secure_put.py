@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -177,6 +178,67 @@ try {
                     self.assertNotIn(SENTINEL, " ".join(call["argv"]))
                 elif fault == "timeout":
                     self.assertEqual(result.stdout.strip(), "SSM_SECURE_PUT_TIMEOUT")
+
+    def test_one_deadline_bounds_blocked_stdin_and_inherited_output_pipes(self):
+        for boundary in ("stdin", "stdout", "stderr"):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as temp:
+                directory = Path(temp)
+                (directory / "core").mkdir()
+                shutil.copyfile(ROOT / "scripts/v1/core/aws.ps1", directory / "core/aws.ps1")
+                if boundary == "stdin":
+                    child = """import pathlib,time
+pathlib.Path(__file__).with_name('child-started').touch()
+time.sleep(30)
+"""
+                else:
+                    # A descendant retains exactly one output pipe after the
+                    # direct child exits. It exits on our fixture cleanup flag.
+                    child = f"""import json,pathlib,subprocess,sys
+root=pathlib.Path(__file__).parent
+json.load(sys.stdin)
+(root/'child-started').touch()
+holder="import pathlib,sys,time; p=pathlib.Path(sys.argv[1]); end=time.monotonic()+15; exec('while not p.exists() and time.monotonic()<end: time.sleep(0.02)'); p.with_name('holder-exited').touch()"
+subprocess.Popen([sys.executable,'-c',holder,str(root/'release-pipe')],
+    stdin=subprocess.DEVNULL,
+    stdout={'sys.stdout' if boundary == 'stdout' else 'subprocess.DEVNULL'},
+    stderr={'sys.stderr' if boundary == 'stderr' else 'subprocess.DEVNULL'})
+print('{{"Version":1}}',flush=True)
+"""
+                (directory / "ssm_secure_put.py").write_text(child, encoding="utf-8")
+                request = self.envelope()["request"]
+                if boundary == "stdin":
+                    # Exceeds OS pipe capacity; the child never reads one byte.
+                    request["Value"] = SENTINEL + "x" * (4 * 1024 * 1024)
+                (directory / "request.json").write_text(json.dumps(request), encoding="utf-8")
+                harness = directory / "run.ps1"
+                harness.write_text('''
+$ErrorActionPreference = 'Stop'
+$script:PlanMode = $false
+. (Join-Path $PSScriptRoot 'core/aws.ps1')
+$request = Get-Content (Join-Path $PSScriptRoot 'request.json') -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+$timer = [Diagnostics.Stopwatch]::StartNew()
+try { Invoke-SsmSecureStringPut -Request $request -Region test-region -TimeoutSeconds 1 }
+catch { Write-Output $_.Exception.Message }
+finally { Write-Output "ELAPSED_MS=$($timer.ElapsedMilliseconds)" }
+''', encoding="utf-8")
+                try:
+                    result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-File", str(harness)],
+                        capture_output=True, text=True, encoding="utf-8",
+                        env=offline_environment(directory), timeout=8)
+                finally:
+                    (directory / "release-pipe").touch()
+                    if boundary != "stdin":
+                        cleanup_deadline = time.monotonic() + 2
+                        while not (directory / "holder-exited").exists() and time.monotonic() < cleanup_deadline:
+                            time.sleep(0.02)
+                        self.assertTrue((directory / "holder-exited").exists(), "Synthetic pipe holder did not exit")
+                self.assertTrue((directory / "child-started").exists())
+                self.assertEqual(result.returncode, 0)
+                self.assertNotIn("forbidden-secret-marker", result.stdout + result.stderr)
+                lines = result.stdout.strip().splitlines()
+                self.assertEqual(lines[0], "SSM_SECURE_PUT_TIMEOUT")
+                self.assertTrue(lines[1].startswith("ELAPSED_MS="))
+                self.assertLess(int(lines[1].split("=", 1)[1]), 2500)
 
 
 if __name__ == "__main__":
