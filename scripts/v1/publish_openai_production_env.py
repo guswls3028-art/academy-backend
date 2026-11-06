@@ -58,6 +58,8 @@ def decode(raw, workers=False):
 
 def candidate(raw, key, workers=False):
     value = decode(raw, workers)
+    backend = value.get("EMBEDDING_BACKEND", "")
+    require(isinstance(backend, str) and backend.strip() in {"", "local"}, "embedding-policy-conflict")
     value[KEY] = key
     value["EMBEDDING_BACKEND"] = "local"
     encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)

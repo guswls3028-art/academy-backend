@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -78,6 +78,7 @@ class SSM:
     def __init__(self):
         api = {"DJANGO_SETTINGS_MODULE": "apps.api.config.settings.prod", "OPENAI_API_KEY": "legacy-must-stay",
                "EMBEDDING_OPENAI_API_KEY": "embedding-legacy-must-stay", "GEMINI_API_KEY": "gemini-must-stay",
+               "PROBLEM_GEN_MODEL": "operator-problem-model", "EMBEDDING_OPENAI_MODEL": "operator-embedding-model",
                "DB_PASSWORD": "synthetic-db-private-value", "CUSTOM": "keep"}
         workers = {**api, "DJANGO_SETTINGS_MODULE": "apps.api.config.settings.worker"}
         self.history = {
@@ -115,8 +116,16 @@ def boundary(monkeypatch):
     return dynamo, ssm, env.Publisher(ssm, OWNER, SHA, 7, RELEASE)
 
 
-def test_publish_preserves_legacy_keys_and_unrelated_values_then_is_idempotent(boundary):
+@pytest.mark.parametrize("backend", ["missing", "", "local", " "])
+def test_publish_preserves_legacy_keys_and_unrelated_values_then_is_idempotent(boundary, backend):
     dynamo, ssm, publisher = boundary
+    if backend != "missing":
+        for name in env.TARGETS:
+            raw, version = ssm.value(name)
+            values = env.decode(raw, name == env.WORKERS)
+            values["EMBEDDING_BACKEND"] = backend
+            updated = json.dumps(values)
+            ssm.history[name][version] = base64.b64encode(updated.encode()).decode() if name == env.WORKERS else updated
     originals = {name: env.decode(ssm.value(name)[0], name == env.WORKERS) for name in env.TARGETS}
     result = publisher.publish()
     assert result == {"status": "published", "versions": {env.API: 87, env.WORKERS: 140},
@@ -132,6 +141,25 @@ def test_publish_preserves_legacy_keys_and_unrelated_values_then_is_idempotent(b
     assert len(ssm.calls) == 2
     env.lock.release(env.lock.DEFAULT_TABLE, OWNER)
     assert dynamo.item == {}
+
+
+@pytest.mark.parametrize("target", env.TARGETS)
+@pytest.mark.parametrize("backend", ["auto", "openai", None, False, 0, [], {}])
+def test_explicit_nonlocal_or_malformed_embedding_policy_prevents_all_mutation(boundary, target, backend):
+    dynamo, ssm, publisher = boundary
+    raw, version = ssm.value(target)
+    values = env.decode(raw, target == env.WORKERS)
+    values["EMBEDDING_BACKEND"] = backend
+    updated = json.dumps(values)
+    ssm.history[target][version] = base64.b64encode(updated.encode()).decode() if target == env.WORKERS else updated
+    before_history, before_lock = copy.deepcopy(ssm.history), copy.deepcopy(dynamo.item)
+    with patch.object(env.lock, "save_env_transition", wraps=env.lock.save_env_transition) as save:
+        with pytest.raises(env.TransitionError, match="NOT_PUBLISHED"):
+            publisher.publish()
+        save.assert_not_called()
+    assert ssm.calls == []
+    assert ssm.history == before_history
+    assert dynamo.item == before_lock
 
 
 @pytest.mark.parametrize("changed", ["release", "key", "legacy", "oversize"])

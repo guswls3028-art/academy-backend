@@ -50,6 +50,9 @@ OpenAI 호출 실패를 다른 유료 공급자로 조용히 재시도하지 않
 배포 총괄이 현재 실행을 종료/공식 unlock한 뒤 exact 후보를 인수한다.
 대상은 /academy/api/env(JSON), /academy/workers/env(base64 JSON)의
 ACADEMY_OPENAI_API_KEY와 EMBEDDING_BACKEND=local 두 값뿐이다.
+두 원본 환경의 EMBEDDING_BACKEND가 미설정·빈 문자열·local인 경우만 게시한다.
+명시적 auto/openai 등 비local 정책이나 잘못된 타입은 pin/SSM 쓰기 전에 중단해
+기존 정책을 보존한다.
 legacy OpenAI/embedding 키와 명시적 모델 override는 변경하거나 전환 키로 사용하지
 않는다. 구 버전과의 공존 기간에는 Gemini 키와 기존 adapter 선택 이름을
 보존한다. 새 코드는 gemini_flash/gemini_flash_lite 설정을 OpenAI rollout alias로만
