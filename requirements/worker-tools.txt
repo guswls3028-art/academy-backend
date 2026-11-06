@@ -1,6 +1,9 @@
 # Tools Worker — lightweight document conversion jobs.
 -r ./common.txt
 
+# Problem Studio transcription, explanation and conversion use the SDK here.
+openai
+
 pillow
 reportlab
 python-pptx==1.0.2

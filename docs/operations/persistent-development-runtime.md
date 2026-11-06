@@ -481,8 +481,9 @@ environment 두 subject만 허용하는 trust와 정책 readback을 강제한다
 development job은 main-ref subject를 사용하고, production environment가 붙은
 lock/mutation job은 environment subject를 사용한다.
 역할에 연결된 관리형 정책은 development와 별도 운영 전환 정책
-`academy-gha-account-cutover` 두 개로 정확히 검증한다. 운영 전환 권한은 개발 정책에
-섞지 않는다. `Ensure-GitHubActionsDeployIAM`이 두 정책을 소유 순서대로 수렴한 뒤
+`academy-gha-account-cutover`, `academy-gha-openai-runtime`까지 세 개로 정확히 검증한다.
+OpenAI source/게시 권한은 [공급자 전환 계약](openai-provider.md)이 소유하며 운영 전환
+권한을 개발 정책에 섞지 않는다. `Ensure-GitHubActionsDeployIAM`이 세 정책을 소유 순서대로 수렴한 뒤
 전체 inventory를 readback하며, 개발 정책만 수렴하는 스크립트는 운영 정책을 변경하지 않는다.
 
 ## 릴리스 순서

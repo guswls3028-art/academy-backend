@@ -321,7 +321,10 @@ exit $exitCode
             self.assertEqual(value["VIDEO_BATCH_JOB_QUEUE"], "")
             self.assertEqual(value["BILLING_KEY_ENCRYPTION_PRIMARY_KEY"], "")
             self.assertEqual(value["SOLAPI_MOCK"], "true")
-        self.assertEqual(worker["OPENAI_API_KEY"], "synthetic-approved-provider")
+        self.assertEqual(worker["ACADEMY_OPENAI_API_KEY"], "synthetic-approved-provider")
+        self.assertNotIn("OPENAI_API_KEY", worker)
+        self.assertNotIn("EMBEDDING_OPENAI_API_KEY", worker)
+        self.assertNotIn("ACADEMY_OPENAI_API_KEY", api)
         self.assertEqual(worker["HOMEWORK_PREVIEW_BATCH_JOB_DEFINITION"], "")
         self.assertRegex(api["HOMEWORK_PREVIEW_BATCH_JOB_DEFINITION"], r"^academy-development-homework-video-[a-f0-9]{12}-v411:1$")
         readbacks = [call["name"] for call in calls if call["operation"] == "get-parameter" and ":" in call["name"]]

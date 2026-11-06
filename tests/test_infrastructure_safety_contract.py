@@ -1431,6 +1431,10 @@ def test_atomic_lock_uses_conditional_put_renew_and_owner_release(monkeypatch) -
 
     def fake_run(command, **_kwargs):
         commands.append(command)
+        if "get-item" in command:
+            return SimpleNamespace(returncode=0, stdout=json.dumps({
+                "Item": {"owner": {"S": "owner-1"}, "ttl": {"N": "1600"}}
+            }), stderr="")
         return SimpleNamespace(returncode=0, stdout="{}", stderr="")
 
     monkeypatch.setattr(lock.subprocess, "run", fake_run)
@@ -1441,13 +1445,16 @@ def test_atomic_lock_uses_conditional_put_renew_and_owner_release(monkeypatch) -
     lock.seal_legacy(lock.DEFAULT_TABLE, "cutover")
 
     joined = [" ".join(command) for command in commands]
+    assert [command[2] for command in commands] == ["put-item", "get-item", "update-item", "delete-item", "put-item"]
     assert "attribute_not_exists(videoId) OR #ttl < :now" in joined[0]
-    assert "#owner = :owner AND #ttl >= :now" in joined[1]
-    assert "#owner = :owner" in joined[2]
+    assert "--consistent-read" in joined[1]
+    assert "#owner = :owner AND #ttl >= :now" in joined[2]
+    assert "#owner = :owner" in joined[3]
+    assert "attribute_not_exists(#env) AND attribute_not_exists(#envTtl)" in joined[3]
     assert lock.LOCK_KEY == "__deployment_control_v2__"
     assert lock.LEGACY_LOCK_KEY == "__deployment_control__"
-    assert "begins_with(#owner, :retired)" in joined[3]
-    assert "retired:cutover" in joined[3]
+    assert "begins_with(#owner, :retired)" in joined[4]
+    assert "retired:cutover" in joined[4]
     assert all(lock.DEFAULT_TABLE in command for command in joined)
     assert all(lock.DEFAULT_REGION in command for command in joined)
 

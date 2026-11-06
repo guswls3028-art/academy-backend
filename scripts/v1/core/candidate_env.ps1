@@ -95,6 +95,7 @@ function Set-IsolatedPreprodApiValues {
         '^DEV_ALERTS_',
         '^VAPID_PRIVATE_KEY$',
         '^OPENAI_',
+        '^ACADEMY_OPENAI_',
         '^EMBEDDING_OPENAI_API_KEY$',
         '^ANTHROPIC_',
         '^GEMINI_',
@@ -152,6 +153,7 @@ function Set-IsolatedPreprodApiValues {
         BILLING_KEY_ENCRYPTION_FALLBACK_KEYS = ""
         VAPID_PRIVATE_KEY = ""
         OPENAI_API_KEY = ""
+        ACADEMY_OPENAI_API_KEY = ""
         ANTHROPIC_API_KEY = ""
         GEMINI_API_KEY = ""
         YOUTUBE_DATA_API_KEY = ""
@@ -191,6 +193,7 @@ function Assert-IsolatedPreprodApiValues {
         "BILLING_KEY_ENCRYPTION_FALLBACK_KEYS",
         "VAPID_PRIVATE_KEY",
         "OPENAI_API_KEY",
+        "ACADEMY_OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
         "GEMINI_API_KEY",
         "YOUTUBE_DATA_API_KEY",

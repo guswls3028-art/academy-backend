@@ -14,6 +14,7 @@ LOCK_KEY = "__deployment_control_v2__"
 LEGACY_LOCK_KEY = "__deployment_control__"
 LEGACY_SEAL_TTL = 4_102_444_800  # 2100-01-01 UTC
 WINDOW_PIN_TTL = LEGACY_SEAL_TTL
+ENV_PIN_TTL = LEGACY_SEAL_TTL
 DEFAULT_TABLE = "academy-v1-video-job-lock"
 DEFAULT_REGION = "ap-northeast-2"
 
@@ -38,8 +39,8 @@ def acquire(table: str, owner: str, ttl_seconds: int) -> None:
         _aws(
             "put-item", "--table-name", table,
             "--item", json.dumps(item, separators=(",", ":")),
-            "--condition-expression", "attribute_not_exists(videoId) OR #ttl < :now",
-            "--expression-attribute-names", json.dumps({"#ttl": "ttl"}),
+            "--condition-expression", "(attribute_not_exists(videoId) OR #ttl < :now) AND attribute_not_exists(#env) AND attribute_not_exists(#envTtl)",
+            "--expression-attribute-names", json.dumps({"#ttl": "ttl", "#env": "runtimeEnvTransition", "#envTtl": "runtimeEnvTransitionTtl"}),
             "--expression-attribute-values", json.dumps({":now": {"N": str(now)}}),
         )
     except RuntimeError as exc:
@@ -66,20 +67,27 @@ def release(table: str, owner: str) -> None:
             "delete-item", "--table-name", table,
             "--key", json.dumps({"videoId": {"S": LOCK_KEY}}),
             "--condition-expression", (
-                "#owner = :owner AND attribute_not_exists(#window) AND attribute_not_exists(#windowTtl)"
+                "#owner = :owner AND attribute_not_exists(#window) AND attribute_not_exists(#windowTtl) "
+                "AND attribute_not_exists(#env) AND attribute_not_exists(#envTtl)"
             ),
             "--expression-attribute-names", json.dumps({
                 "#owner": "owner", "#window": "accountWindow", "#windowTtl": "accountWindowTtl",
+                "#env": "runtimeEnvTransition", "#envTtl": "runtimeEnvTransitionTtl",
             }),
             "--expression-attribute-values", json.dumps({":owner": {"S": owner}}),
         )
     except RuntimeError as exc:
         if "ConditionalCheckFailedException" in str(exc):
-            raise RuntimeError("refusing to release another owner's lock or an unrestored account window") from exc
+            raise RuntimeError("refusing to release another owner's lock or an unrestored account window/runtime env") from exc
         raise
 
 
 def renew(table: str, owner: str, ttl_seconds: int) -> None:
+    transition = load_env_transition(table, owner)
+    if transition is not None:
+        # The dedicated environment pin cannot expire while a write is unresolved.
+        save_env_transition(table, owner, transition, expected=transition)
+        return
     now = int(time.time())
     try:
         _aws(
@@ -88,12 +96,14 @@ def renew(table: str, owner: str, ttl_seconds: int) -> None:
             "--update-expression", "SET #ttl = if_not_exists(#windowTtl, :expires)",
             "--condition-expression", (
                 "#owner = :owner AND #ttl >= :now AND "
+                "attribute_not_exists(#env) AND attribute_not_exists(#envTtl) AND "
                 "((attribute_not_exists(#window) AND attribute_not_exists(#windowTtl)) OR "
                 "(attribute_exists(#window) AND #windowTtl = :pinned))"
             ),
             "--expression-attribute-names", json.dumps({
                 "#owner": "owner", "#ttl": "ttl", "#window": "accountWindow",
                 "#windowTtl": "accountWindowTtl",
+                "#env": "runtimeEnvTransition", "#envTtl": "runtimeEnvTransitionTtl",
             }),
             "--expression-attribute-values", json.dumps({
                 ":owner": {"S": owner}, ":now": {"N": str(now)},
@@ -111,6 +121,59 @@ def _window_json(state: dict) -> str:
     if not isinstance(state, dict) or not state:
         raise ValueError("account window state must be a nonempty object")
     return json.dumps(state, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def load_env_transition(table: str, owner: str) -> dict | None:
+    result = _aws("get-item", "--table-name", table, "--key",
+                  json.dumps({"videoId": {"S": LOCK_KEY}}), "--consistent-read")
+    item = result.get("Item", {})
+    if item.get("owner", {}).get("S") != owner or int(item.get("ttl", {}).get("N", "0")) <= int(time.time()):
+        raise RuntimeError("runtime env transition requires the current live deployment owner")
+    raw = item.get("runtimeEnvTransition", {}).get("S")
+    if raw is None:
+        if "runtimeEnvTransitionTtl" in item:
+            raise RuntimeError("orphaned runtime env pin requires recovery")
+        return None
+    if (item.get("runtimeEnvTransitionTtl") != {"N": str(ENV_PIN_TTL)}
+            or item.get("ttl") != {"N": str(ENV_PIN_TTL)}
+            or "accountWindow" in item or "accountWindowTtl" in item):
+        raise RuntimeError("runtime env transition pin is inconsistent")
+    state = json.loads(raw)
+    _window_json(state)
+    return state
+
+
+def save_env_transition(table: str, owner: str, state: dict, expected: dict | None = None) -> None:
+    """Persist nonsecret env-write intent before SSM; never borrow accountWindow."""
+    values = {":owner": {"S": owner}, ":now": {"N": str(int(time.time()))},
+              ":pinned": {"N": str(ENV_PIN_TTL)}, ":state": {"S": _window_json(state)}}
+    condition = "attribute_not_exists(#env) AND attribute_not_exists(#envTtl)"
+    if expected is not None:
+        condition = "#env = :previous AND #envTtl = :pinned"
+        values[":previous"] = {"S": _window_json(expected)}
+    _aws("update-item", "--table-name", table, "--key", json.dumps({"videoId": {"S": LOCK_KEY}}),
+         "--update-expression", "SET #env = :state, #envTtl = :pinned, #ttl = :pinned",
+         "--condition-expression", (f"#owner = :owner AND #ttl >= :now AND {condition} "
+                                    "AND attribute_not_exists(#window) AND attribute_not_exists(#windowTtl)"),
+         "--expression-attribute-names", json.dumps({
+             "#owner": "owner", "#ttl": "ttl", "#env": "runtimeEnvTransition",
+             "#envTtl": "runtimeEnvTransitionTtl", "#window": "accountWindow", "#windowTtl": "accountWindowTtl"}),
+         "--expression-attribute-values", json.dumps(values))
+
+
+def clear_env_transition(table: str, owner: str, expected: dict) -> None:
+    """Only the pair publisher calls this after exact success or exact restoration."""
+    _aws("update-item", "--table-name", table, "--key", json.dumps({"videoId": {"S": LOCK_KEY}}),
+         "--update-expression", "SET #ttl = :expires REMOVE #env, #envTtl",
+         "--condition-expression", ("#owner = :owner AND #ttl = :pinned AND #envTtl = :pinned "
+                                    "AND #env = :previous AND attribute_not_exists(#window) "
+                                    "AND attribute_not_exists(#windowTtl)"),
+         "--expression-attribute-names", json.dumps({
+             "#owner": "owner", "#ttl": "ttl", "#env": "runtimeEnvTransition",
+             "#envTtl": "runtimeEnvTransitionTtl", "#window": "accountWindow", "#windowTtl": "accountWindowTtl"}),
+         "--expression-attribute-values", json.dumps({
+             ":owner": {"S": owner}, ":pinned": {"N": str(ENV_PIN_TTL)},
+             ":previous": {"S": _window_json(expected)}, ":expires": {"N": str(int(time.time()) + 10800)}}))
 
 
 def load_window(table: str, owner: str) -> dict | None:
@@ -148,10 +211,12 @@ def save_window(table: str, owner: str, state: dict, expected: dict | None = Non
         "update-item", "--table-name", table,
         "--key", json.dumps({"videoId": {"S": LOCK_KEY}}),
         "--update-expression", "SET #window = :state, #windowTtl = :pinned, #ttl = :pinned",
-        "--condition-expression", f"#owner = :owner AND #ttl >= :now AND {condition}",
+        "--condition-expression", (f"#owner = :owner AND #ttl >= :now AND {condition} "
+                                   "AND attribute_not_exists(#env) AND attribute_not_exists(#envTtl)"),
         "--expression-attribute-names", json.dumps({
             "#owner": "owner", "#ttl": "ttl", "#window": "accountWindow",
             "#windowTtl": "accountWindowTtl",
+            "#env": "runtimeEnvTransition", "#envTtl": "runtimeEnvTransitionTtl",
         }),
         "--expression-attribute-values", json.dumps(values),
     )
@@ -166,11 +231,13 @@ def clear_window(table: str, owner: str, expected: dict) -> None:
         "--update-expression", "SET #ttl = :expires REMOVE #window, #windowTtl",
         "--condition-expression", (
             "#owner = :owner AND #ttl = :pinned AND "
-            "#windowTtl = :pinned AND #window = :previous"
+            "#windowTtl = :pinned AND #window = :previous "
+            "AND attribute_not_exists(#env) AND attribute_not_exists(#envTtl)"
         ),
         "--expression-attribute-names", json.dumps({
             "#owner": "owner", "#ttl": "ttl", "#window": "accountWindow",
             "#windowTtl": "accountWindowTtl",
+            "#env": "runtimeEnvTransition", "#envTtl": "runtimeEnvTransitionTtl",
         }),
         "--expression-attribute-values", json.dumps({
             ":owner": {"S": owner}, ":pinned": {"N": str(WINDOW_PIN_TTL)},

@@ -19,6 +19,7 @@ $source = [pscustomobject]@{
     TOSS_PAYMENTS_SECRET_KEY = "live_sk_should_be_removed"
     TOSS_AUTO_BILLING_ENABLED = "true"
     OPENAI_API_KEY = "external-ai-secret"
+    ACADEMY_OPENAI_API_KEY = "candidate-only-secret-must-be-removed"
     EMBEDDING_OPENAI_API_KEY = "legacy-openai-secret"
     ANTHROPIC_API_KEY = "external-ai-secret"
     GEMINI_API_KEY = "production-gemini-secret"
@@ -96,7 +97,8 @@ $script:ApiDevelopmentMessagingQueueName = "academy-development-messaging"
 $developmentYoutubeKey = "isolated-youtube-test-key"
 foreach ($settings in @("apps.api.config.settings.development", "apps.api.config.settings.worker")) {
     $target = [pscustomobject]@{
-        OPENAI_API_KEY = "approved-existing-provider-test-key"
+        ACADEMY_OPENAI_API_KEY = "approved-existing-provider-test-key"
+        OPENAI_API_KEY = "legacy-key-must-not-be-retained"
         GEMINI_OTHER_SECRET = "must-not-be-retained"
         YOUTUBE_DATA_API_KEY = "production-youtube-secret"
         YOUTUBE_OTHER_SECRET = "must-not-be-retained"
@@ -115,7 +117,7 @@ foreach ($settings in @("apps.api.config.settings.development", "apps.api.config
     } else { "" }
     $expectedYoutubeKey = if ($settings -eq "apps.api.config.settings.development") { $developmentYoutubeKey } else { "" }
     if (
-        [string]$target.OPENAI_API_KEY -ne $expectedKey -or
+        [string]$target.ACADEMY_OPENAI_API_KEY -ne $expectedKey -or [string]$target.OPENAI_API_KEY -or
         [string]$target.YOUTUBE_DATA_API_KEY -cne $expectedYoutubeKey -or [string]$target.YOUTUBE_OTHER_SECRET -or
         [string]$target.EMBEDDING_OPENAI_API_KEY -or [string]$target.GEMINI_OTHER_SECRET -or [string]$target.GEMINI_API_KEY -or [string]$target.OPENAI_OTHER_SECRET -or
         [string]$target.AWS_ACCESS_KEY_ID -or

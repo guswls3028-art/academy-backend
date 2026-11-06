@@ -297,7 +297,9 @@ def _openai_request(
     import time
     import requests
 
-    api_key = os.getenv("OPENAI_API_KEY")
+    from academy.adapters.ai.openai_credentials import resolve_openai_api_key
+
+    api_key = resolve_openai_api_key()
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY not set")
     payload: Dict[str, Any] = {

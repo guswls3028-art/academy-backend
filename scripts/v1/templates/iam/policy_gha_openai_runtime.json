@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DevelopmentOpenAiKeyRead",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameter",
+      "Resource": "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/academy/providers/development/openai-api-key"
+    },
+    {
+      "Sid": "OpenAiWorkersEnvPublish",
+      "Effect": "Allow",
+      "Action": "ssm:PutParameter",
+      "Resource": "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/academy/workers/env"
+    },
+    {
+      "Sid": "OpenAiEnvMetadataRead",
+      "Effect": "Allow",
+      "Action": "ssm:DescribeParameters",
+      "Resource": "*",
+      "Condition": {"StringEquals": {"aws:RequestedRegion": "__REGION__"}}
+    }
+  ]
+}

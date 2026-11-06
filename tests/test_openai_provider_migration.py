@@ -28,7 +28,9 @@ def reset_provider(monkeypatch):
     vlm.reset_doc_quota()
     vlm.reset_tenant_quota()
     vlm._reset_adapters()
-    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-openai-key")
+    monkeypatch.setenv("ACADEMY_OPENAI_API_KEY", "synthetic-openai-key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("EMBEDDING_OPENAI_API_KEY", raising=False)
     with patch("apps.domains.ai.services.quota.consume_ai_quota"):
         yield
     vlm.reset_doc_quota()
@@ -44,6 +46,7 @@ def test_request_uses_openai_image_schema_and_no_storage(monkeypatch):
              {"type": "input_image", "image_url": "data:image/png;base64,c3ludGhldGlj", "detail": "high"}]
     assert vlm._openai_request(model="gpt-6.1-terra", parts=parts, document_id=23, tenant_id=17) == {"answer": 5}
     assert post.call_args.args == ("https://api.openai.com/v1/responses",)
+    assert post.call_args.kwargs["headers"]["Authorization"] == "Bearer synthetic-openai-key"
     payload = post.call_args.kwargs["json"]
     assert payload["store"] is False
     assert payload["input"][0]["content"] == parts

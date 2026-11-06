@@ -17,6 +17,7 @@ import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from django.db import transaction
+from academy.adapters.ai.openai_credentials import resolve_openai_api_key
 
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
@@ -111,13 +112,13 @@ def _infer_source_type_from_names(source_type: str, *names: str) -> str:
 def _real_vlm_vision_configured() -> bool:
     adapter = os.environ.get("MATCHUP_VLM_VISION_ADAPTER", "mock").strip().lower()
     from academy.adapters.ai.detection.vlm_fallback import is_openai_adapter
-    return is_openai_adapter(adapter) and bool(os.environ.get("OPENAI_API_KEY"))
+    return is_openai_adapter(adapter) and bool(resolve_openai_api_key())
 
 
 def _real_vlm_text_configured() -> bool:
     adapter = os.environ.get("MATCHUP_VLM_TEXT_ADAPTER", "mock").strip().lower()
     from academy.adapters.ai.detection.vlm_fallback import is_openai_adapter
-    return is_openai_adapter(adapter) and bool(os.environ.get("OPENAI_API_KEY"))
+    return is_openai_adapter(adapter) and bool(resolve_openai_api_key())
 
 
 # ── 텍스트 정제 + format 감지 ──────────────────────────

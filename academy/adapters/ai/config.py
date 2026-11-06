@@ -6,6 +6,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Optional, Dict
 
+from academy.adapters.ai.openai_credentials import resolve_openai_api_key
+
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
     v = os.getenv(name)
@@ -104,7 +106,7 @@ class AIConfig:
                 "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
             ) or "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
             EMBEDDING_OPENAI_MODEL=_env("EMBEDDING_OPENAI_MODEL", "text-embedding-3-small") or "text-embedding-3-small",
-            OPENAI_API_KEY=_env("OPENAI_API_KEY") or _env("EMBEDDING_OPENAI_API_KEY"),
+            OPENAI_API_KEY=resolve_openai_api_key(),
 
             PROBLEM_GEN_MODEL=_env("PROBLEM_GEN_MODEL", "gpt-6.1-sol") or "gpt-6.1-sol",
             PROBLEM_GEN_BEDROCK_MODEL=(

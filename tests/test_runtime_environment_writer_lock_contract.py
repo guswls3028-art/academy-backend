@@ -88,6 +88,7 @@ def test_python_and_workflow_direct_runtime_writers_are_explicit() -> None:
         if (
             "put_parameter" in _text(path)
             or "runtime.put_environment(" in _text(path)
+            or "put_secure_parameter(" in _text(path)
         )
         and (
             "/academy/api/env" in _text(path)
@@ -97,6 +98,7 @@ def test_python_and_workflow_direct_runtime_writers_are_explicit() -> None:
     assert python_writers == {
         "scripts/v1/reconcile_common_alimtalk_owner_tenant.py",
         "scripts/v1/reconcile_common_alimtalk_sender.py",
+        "scripts/v1/publish_openai_production_env.py",
     }
 
     for pattern in ("*.yml", "*.yaml"):

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from academy.adapters.ai.openai_output import completed_chat_text, reasoning_options
+from academy.adapters.ai.openai_credentials import resolve_openai_api_key
 
 import json
 import logging
@@ -26,7 +27,7 @@ def infer_parent_phone_column(
     except ImportError:
         raise RuntimeError("openai not installed")
 
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("EMBEDDING_OPENAI_API_KEY")
+    api_key = resolve_openai_api_key()
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY not set")
 

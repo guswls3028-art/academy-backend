@@ -154,10 +154,11 @@ $attached = Invoke-AwsJson @(
     "--role-name", $roleName,
     "--output", "json"
 )
-$expectedAttached = @($policyArn, "arn:aws:iam::$($script:AccountId):policy/academy-gha-account-cutover") | Sort-Object
+$expectedAttached = @($policyArn, "arn:aws:iam::$($script:AccountId):policy/academy-gha-account-cutover",
+    "arn:aws:iam::$($script:AccountId):policy/academy-gha-openai-runtime") | Sort-Object
 $actualAttached = @($attached.AttachedPolicies | ForEach-Object { [string]$_.PolicyArn } | Sort-Object)
 if (($actualAttached -join "`n") -cne ($expectedAttached -join "`n")) {
-    throw "GitHub OIDC requires exactly the owned development and account-cutover managed policies."
+    throw "GitHub OIDC requires exactly the owned development, account-cutover and OpenAI runtime managed policies."
 }
 
 Write-Host (

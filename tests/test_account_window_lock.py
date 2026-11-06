@@ -32,8 +32,10 @@ class DynamoBoundary:
         values = json.loads(args[args.index("--expression-attribute-values") + 1])
         condition = args[args.index("--condition-expression") + 1]
         if operation == "put-item":
-            assert "attribute_not_exists(videoId) OR #ttl < :now" == condition
+            assert "(attribute_not_exists(videoId) OR #ttl < :now)" in condition
+            assert "attribute_not_exists(#env) AND attribute_not_exists(#envTtl)" in condition
             ok = not self.item or int(self.item["ttl"]["N"]) < int(values[":now"]["N"])
+            ok &= "runtimeEnvTransition" not in self.item and "runtimeEnvTransitionTtl" not in self.item
         else:
             assert "#owner = :owner" in condition
             ok = self.item.get("owner") == values[":owner"]
