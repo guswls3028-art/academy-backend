@@ -65,6 +65,16 @@ ssm:GetParameter만 허용한다. 운영 key/env를 먼저 바꾸지 않는다. 
 키 없는 경계에서 명시적 실패를 검증하고 정상 모델 호출은 개발 worker에서 검증한다.
 기존 DB/R2/SQS 격리, QA tenant/user cleanup zero, AI DLQ HOLD는 변경하지 않는다.
 
+개발 publisher와 `core/sync_env.ps1`의 SecureString 쓰기는 기존 Python/boto3를
+사용하는 `ssm_secure_put.py`로 UTF-8 stdin만 전달한다. 값은 자식 프로세스의
+명령 인자·환경변수·임시 평문 파일·출력에 넣지 않는다. 응답은 version/tier만,
+실패는 고정 오류코드만 전달한다. 정상 개발 배포 job은 기존 constraints의
+boto3/botocore pin을 설치하며 수동 실행도 해당 SDK가 있는 Python을 사용한다.
+SDK 부재는 쓰기 전에 실패한다. 불명확한 쓰기를 helper가 재시도하지 않는다.
+두 parameter는 순차 쓰기이며 기존 부분 실패·보상·exact readback 절차를 유지한다.
+`candidate_prepare_sources.py`의 프로젝트/회전 메타데이터 검증은 별도 미래
+candidate 경로의 계약이며 현재 정상 6이미지 release의 선행조건이 아니다.
+
 새 API/AI/Tools revision·일반 사용 성공·reload/후속 역할·오류 복구가 확인된 뒤
 운영 adapter 설정을 openai로 정리하고 Gemini 키를 환경에서 제거한다. 기존 키의
 제공자 계정 자체를 폐기하지 않는다. 롤백은 이전 immutable 이미지와 이전 환경

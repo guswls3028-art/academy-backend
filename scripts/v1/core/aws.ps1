@@ -127,3 +127,80 @@ function Invoke-Aws {
     }
     return $out
 }
+
+function Invoke-SsmSecureStringPut {
+    # Keep Value inside this process and the child's stdin, never CLI arguments.
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Request,
+        [string]$Region = $env:AWS_DEFAULT_REGION,
+        [ValidateRange(1, 300)][int]$TimeoutSeconds = 90
+    )
+    if ($script:PlanMode) { return $null }
+    $process = $null
+    $started = $false
+    $failureCode = 'SSM_SECURE_PUT_FAILED'
+    try {
+        $python = Get-Command python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $python) {
+            $python = Get-Command python3 -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        }
+        $info = [Diagnostics.ProcessStartInfo]::new()
+        $info.FileName = $python.Source
+        $info.UseShellExecute = $false
+        $info.CreateNoWindow = $true
+        $info.RedirectStandardInput = $true
+        $info.RedirectStandardOutput = $true
+        $info.RedirectStandardError = $true
+        $info.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+        $info.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+        $info.Environment['PYTHONUTF8'] = '1'
+        $info.Environment['PYTHONIOENCODING'] = 'utf-8'
+        $info.ArgumentList.Add('-B')
+        $info.ArgumentList.Add((Join-Path $PSScriptRoot '..\ssm_secure_put.py'))
+        $process = [Diagnostics.Process]::new()
+        $process.StartInfo = $info
+        [void]$process.Start()
+        $started = $true
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $envelope = @{
+            request = $Request
+            region = $Region
+            profile = $env:AWS_PROFILE
+        } | ConvertTo-Json -Depth 10 -Compress
+        $bytes = [Text.Encoding]::UTF8.GetBytes($envelope)
+        $process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+        $process.StandardInput.Close()
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            $failureCode = 'SSM_SECURE_PUT_TIMEOUT'
+            $process.Kill($true)
+            $process.WaitForExit()
+            throw 'child timeout'
+        }
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0) {
+            $knownCodes = @('SSM_SECURE_PUT_INVALID_REQUEST', 'SSM_SECURE_PUT_SDK_UNAVAILABLE', 'SSM_SECURE_PUT_INVALID_RESPONSE')
+            if ($stderr.Trim() -cin $knownCodes) { $failureCode = $stderr.Trim() }
+            throw 'child failed'
+        }
+        $failureCode = 'SSM_SECURE_PUT_INVALID_RESPONSE'
+        $result = $stdout | ConvertFrom-Json -ErrorAction Stop
+        $names = @($result.PSObject.Properties.Name)
+        if (@($names | Where-Object { $_ -cnotin @('Version', 'Tier') }).Count -or
+            $result.Version -isnot [long] -and $result.Version -isnot [int] -or
+            $result.Version -lt 1 -or
+            ($names -ccontains 'Tier' -and $result.Tier -cnotin @('Standard', 'Advanced', 'Intelligent-Tiering'))) {
+            throw 'invalid child metadata'
+        }
+        return $result
+    } catch {
+        # Never include child output, request JSON or the original exception.
+        throw $failureCode
+    } finally {
+        if ($process) {
+            if ($started -and -not $process.HasExited) { $process.Kill($true); $process.WaitForExit() }
+            $process.Dispose()
+        }
+    }
+}

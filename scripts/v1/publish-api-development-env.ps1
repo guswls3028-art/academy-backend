@@ -314,17 +314,13 @@ $production.HOMEWORK_PREVIEW_BATCH_JOB_DEFINITION = if ($EnableHomeworkPreview) 
 } else { "" }
 Assert-DevelopmentParameterSize -Value ($production | ConvertTo-Json -Compress -Depth 20) -Kind api
 
-$workersPut = Invoke-AwsJson @(
-    "ssm", "put-parameter",
-    "--name", $script:ApiDevelopmentWorkersEnvParameter,
-    "--description", "Versioned worker environment for isolated Academy development tools jobs",
-    "--type", "SecureString",
-    "--tier", "Advanced",
-    "--value", $workersValue,
-    "--overwrite",
-    "--region", $script:Region,
-    "--output", "json"
-)
+try {
+    $workersPut = Invoke-SsmSecureStringPut -Region $script:Region -Request @{
+        Name = $script:ApiDevelopmentWorkersEnvParameter
+        Description = "Versioned worker environment for isolated Academy development tools jobs"
+        Type = "SecureString"; Tier = "Advanced"; Value = $workersValue; Overwrite = $true
+    }
+} catch { throw "DEVELOPMENT_ENV_PUT_FAILED kind=workers" }
 $workersVersion = 0L
 if (-not $workersPut -or -not [long]::TryParse([string]$workersPut.Version, [ref]$workersVersion) -or $workersVersion -lt 1) {
     throw "DEVELOPMENT_ENV_PUT_NO_VERSION kind=workers"
@@ -336,12 +332,13 @@ $homeworkPreviewDefinition = if ($EnableHomeworkPreview) { "${homeworkPreviewPre
 $production.HOMEWORK_PREVIEW_BATCH_JOB_DEFINITION = $homeworkPreviewDefinition
 $value = $production | ConvertTo-Json -Compress -Depth 20
 Assert-DevelopmentParameterSize -Value $value -Kind api
-$put = Invoke-AwsJson @(
-    "ssm", "put-parameter", "--name", $script:ApiDevelopmentEnvParameter,
-    "--description", "Versioned environment for the isolated persistent Academy API development instance",
-    "--type", "SecureString", "--tier", "Advanced", "--value", $value, "--overwrite",
-    "--region", $script:Region, "--output", "json"
-)
+try {
+    $put = Invoke-SsmSecureStringPut -Region $script:Region -Request @{
+        Name = $script:ApiDevelopmentEnvParameter
+        Description = "Versioned environment for the isolated persistent Academy API development instance"
+        Type = "SecureString"; Tier = "Advanced"; Value = $value; Overwrite = $true
+    }
+} catch { throw "DEVELOPMENT_ENV_PUT_FAILED kind=api" }
 $version = 0L
 if (-not $put -or -not [long]::TryParse([string]$put.Version, [ref]$version) -or $version -lt 1) {
     throw "DEVELOPMENT_ENV_PUT_NO_VERSION kind=api"

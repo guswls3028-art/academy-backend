@@ -14,6 +14,8 @@ from unittest.mock import patch
 
 import yaml
 
+from scripts.v1.test_ssm_secure_put import install_fake_sdk, offline_environment
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -90,6 +92,79 @@ Write-Output '12 isolated transformation cases passed'
         self.assertIn("-GithubOutputPath $env:GITHUB_OUTPUT", command)
         self.assertIn("-Ci", command)
 
+    def test_development_publication_has_existing_constrained_sdk_before_first_put(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/v1-build-and-push-latest.yml").read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["verify-api-development"]["steps"]
+        publisher = next(i for i, step in enumerate(steps) if step.get("id") == "development-env")
+        setup = next(i for i, step in enumerate(steps) if str(step.get("uses", "")).startswith("actions/setup-python@"))
+        install = next(i for i, step in enumerate(steps) if "pip install" in step.get("run", ""))
+        self.assertLess(setup, install)
+        self.assertLess(install, publisher)
+        self.assertEqual(steps[setup]["with"]["python-version"], "3.11")
+        self.assertEqual(steps[install]["run"],
+                         "python -m pip install --constraint requirements/constraints.txt boto3 botocore")
+        pins = (ROOT / "requirements/constraints.txt").read_text(encoding="utf-8").splitlines()
+        for package in ("boto3", "botocore"):
+            self.assertEqual(len([line for line in pins if line.startswith(package + "==")]), 1)
+
+
+class RuntimeEnvironmentTransportTests(unittest.TestCase):
+    def test_pair_and_compensation_keep_order_and_stdin_transport(self):
+        for fault in ("", "workers-once", "compensation"):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temp:
+                target = Path(temp)
+                (target / "core").mkdir()
+                for name in ("aws.ps1", "sync_env.ps1", "candidate_env.ps1"):
+                    shutil.copyfile(ROOT / "scripts/v1/core" / name, target / "core" / name)
+                shutil.copyfile(ROOT / "scripts/v1/ssm_secure_put.py", target / "ssm_secure_put.py")
+                install_fake_sdk(target)
+                harness = target / "run.ps1"
+                harness.write_text('''
+$ErrorActionPreference = 'Stop'
+$script:PlanMode = $false
+$script:Region = 'test-region'
+. (Join-Path $PSScriptRoot 'core/aws.ps1')
+. (Join-Path $PSScriptRoot 'core/sync_env.ps1')
+$script:SsmApiEnv = '/test/api'
+$script:SsmWorkersEnv = '/test/workers'
+$script:ApiEnvChanged = $true
+$script:WorkersEnvChanged = $true
+$script:CandidateApiEnvValue = '{"key":"candidate-forbidden-secret-marker"}'
+$script:CandidateWorkersEnvValue = 'candidate-worker-forbidden-secret-marker'
+$script:OriginalApiEnvValue = '{"key":"original-api-forbidden-secret-marker"}'
+$script:OriginalWorkersEnvValue = 'original-worker-forbidden-secret-marker'
+$script:LockChecks = 0
+function Assert-DeployLockAcquired { param($Reg) $script:LockChecks += 1 }
+function Write-Ok { param($message) }
+function Write-Warn { param($message) }
+try { Publish-RuntimeEnvCandidates; Write-Output 'PAIR_OK' }
+catch { Write-Output $_.Exception.Message }
+Write-Output "LOCK_CHECKS=$script:LockChecks"
+''', encoding="utf-8")
+                result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-File", str(harness)],
+                    env=offline_environment(target, fault), capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 0)
+                self.assertNotIn("forbidden-secret-marker", result.stdout + result.stderr)
+                calls = json.loads((target / "sdk-calls.json").read_text(encoding="utf-8"))
+                expected = ["/test/api", "/test/workers"]
+                if fault:
+                    expected += ["/test/api"] + ([] if fault == "compensation" else ["/test/workers"])
+                self.assertEqual([call["name"] for call in calls], expected)
+                self.assertIn(f"LOCK_CHECKS={len(calls)}", result.stdout)
+                self.assertEqual("PAIR_OK" in result.stdout, not fault)
+                if fault == "compensation":
+                    self.assertIn("rollback also failed", result.stdout)
+                for call in calls:
+                    self.assertIs(call["request"]["Overwrite"], True)
+                    self.assertNotIn("Tier", call["request"])
+                    self.assertNotIn("KeyId", call["request"])
+                    self.assertNotIn(call["value"], " ".join(call["argv"]))
+                    self.assertFalse(call["secret_in_environment"])
+                if fault:
+                    self.assertIn("original-api-", calls[2]["value"])
+                if fault == "workers-once":
+                    self.assertIn("original-worker-", calls[3]["value"])
+
 
 class DevelopmentEnvironmentPublicationTests(unittest.TestCase):
     """Run the complete publisher and real AWS wrapper against a synthetic CLI.
@@ -111,23 +186,16 @@ function global:aws {
     $operation = $Arguments[1]
     $name = $Arguments[[Array]::IndexOf($Arguments, '--name') + 1]
     $fault = $global:PublicationFixture.fault
-    if ($operation -eq 'put-parameter') {
-        $value = $Arguments[[Array]::IndexOf($Arguments, '--value') + 1]
-        $kind = if ($name -eq '/test/development/workers') { 'workers' } elseif ($name -eq '/test/development/api') { 'api' } else { throw 'Unexpected mutation target' }
-        $global:PublicationCalls.Add(@{operation=$operation; name=$name; value=$value; args=$Arguments})
-        if ($fault -eq "$kind-put") {
-            $global:LASTEXITCODE = 254
-            return 'Synthetic AWS error: forbidden-secret-marker'
-        }
-        if ($fault -eq "$kind-no-version") { return '{}' }
-        $version = if ($kind -eq 'workers') { 411 } else { 412 }
-        $global:PublicationWrites[$name] = @{Value=$value; Version=$version}
-        return (@{Version=$version; Tier='Advanced'} | ConvertTo-Json -Compress)
-    }
+    if ($operation -eq 'put-parameter') { throw 'SecureString must not enter CLI argv' }
     if ($operation -ne 'get-parameter') { throw 'Unexpected synthetic operation' }
     $global:PublicationCalls.Add(@{operation=$operation; name=$name})
     if ($global:PublicationFixture.sources.ContainsKey($name)) {
         return (@{Parameter=@{Value=$global:PublicationFixture.sources[$name]; Version=410}} | ConvertTo-Json -Compress)
+    }
+    $sdkCalls = Get-Content -LiteralPath $env:SDK_CAPTURE -Raw | ConvertFrom-Json
+    foreach ($call in $sdkCalls) {
+        $sdkVersion = if ($call.name -eq '/test/development/workers') { 411 } else { 412 }
+        $global:PublicationWrites[$call.name] = @{Value=$call.value; Version=$sdkVersion}
     }
     $parts = $name.Split(':')
     if ($parts.Count -ne 2 -or -not $global:PublicationWrites.ContainsKey($parts[0])) { throw 'Readback must select a written exact version' }
@@ -197,11 +265,12 @@ function Load-SSOT {
             (target / "core").mkdir()
             shutil.copyfile(ROOT / "scripts/v1/publish-api-development-env.ps1", target / "publisher.ps1")
             shutil.copyfile(ROOT / "scripts/v1/core/aws.ps1", target / "core/aws.ps1")
+            shutil.copyfile(ROOT / "scripts/v1/ssm_secure_put.py", target / "ssm_secure_put.py")
+            install_fake_sdk(target)
             (target / "core/env.ps1").write_text(cls.CLI_STUB, encoding="utf-8")
             (target / "core/ssot.ps1").write_text(cls.SSOT_STUB, encoding="utf-8")
             (target / "fixture.json").write_text(json.dumps({"sources": sources, "fault": fault}), encoding="utf-8")
-            env = {key: value for key, value in os.environ.items()
-                   if not key.startswith(("AWS_", "ACADEMY_"))}
+            env = offline_environment(target, fault)
             env.update(PUBLICATION_FIXTURE=str(target / "fixture.json"),
                        PUBLICATION_ROOT=str(target), PUBLICATION_RELEASE=cls.RELEASE,
                        PUBLICATION_HOMEWORK=str(homework))
@@ -222,6 +291,9 @@ exit $exitCode
                                     env=env, capture_output=True, text=True, encoding="utf-8", timeout=30)
             calls_path = target / "calls.json"
             calls = json.loads(calls_path.read_text(encoding="utf-8")) if calls_path.exists() else []
+            sdk_calls = target / "sdk-calls.json"
+            if sdk_calls.exists():
+                calls = json.loads(sdk_calls.read_text(encoding="utf-8")) + calls
             outputs = target / "outputs.txt"
             return result, calls, outputs.read_text(encoding="utf-8") if outputs.exists() else ""
 
@@ -236,7 +308,10 @@ exit $exitCode
         self.assertEqual([call["name"] for call in puts], ["/test/development/workers", "/test/development/api"])
         worker, api = [json.loads(call["value"]) for call in puts]
         for call in puts:
-            self.assertEqual(call["args"][call["args"].index("--tier") + 1], "Advanced")
+            self.assertEqual(call["request"]["Tier"], "Advanced")
+            self.assertIs(call["request"]["Overwrite"], True)
+            self.assertNotIn(call["value"], " ".join(call["argv"]))
+            self.assertFalse(call["secret_in_environment"])
             self.assertLessEqual(len(call["value"].encode("utf-8")), 8192)
         for kind, value in (("workers", worker), ("api", api)):
             for key in ("PRESERVED_SENTINEL", "GOOGLE_CREDENTIALS_JSON", "TEST_PADDING"):

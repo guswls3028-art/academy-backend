@@ -292,15 +292,10 @@ function Publish-ApiEnvCandidate {
         return
     }
     Assert-DeployLockAcquired -Reg $script:Region
-    $put = Invoke-RequiredAwsJson -ErrorMessage "API env promotion failed" -ArgsArray @(
-        "ssm", "put-parameter",
-        "--name", $script:SsmApiEnv,
-        "--type", "SecureString",
-        "--value", $script:CandidateApiEnvValue,
-        "--overwrite",
-        "--region", $script:Region,
-        "--output", "json"
-    )
+    $put = Invoke-SsmSecureStringPut -Region $script:Region -Request @{
+        Name = $script:SsmApiEnv; Type = "SecureString"
+        Value = $script:CandidateApiEnvValue; Overwrite = $true
+    }
     if (-not $put -or -not $put.Version) { throw "API env promotion returned no parameter version." }
     $script:ApiEnvVersion = [int]$put.Version
     $script:ChangesMade = $true
@@ -314,15 +309,10 @@ function Publish-WorkersEnvCandidate {
         return
     }
     Assert-DeployLockAcquired -Reg $script:Region
-    $put = Invoke-RequiredAwsJson -ErrorMessage "Workers env promotion failed" -ArgsArray @(
-        "ssm", "put-parameter",
-        "--name", $script:SsmWorkersEnv,
-        "--type", "SecureString",
-        "--value", $script:CandidateWorkersEnvValue,
-        "--overwrite",
-        "--region", $script:Region,
-        "--output", "json"
-    )
+    $put = Invoke-SsmSecureStringPut -Region $script:Region -Request @{
+        Name = $script:SsmWorkersEnv; Type = "SecureString"
+        Value = $script:CandidateWorkersEnvValue; Overwrite = $true
+    }
     if (-not $put -or -not $put.Version) { throw "Workers env promotion returned no parameter version." }
     $script:ChangesMade = $true
     Write-Ok "Workers env candidate promoted to $($script:SsmWorkersEnv)"
@@ -341,28 +331,18 @@ function Publish-RuntimeEnvCandidates {
         try {
             if ($script:ApiEnvChanged -and $script:OriginalApiEnvValue) {
                 Assert-DeployLockAcquired -Reg $script:Region
-                $rollback = Invoke-RequiredAwsJson -ErrorMessage "API env rollback failed" -ArgsArray @(
-                    "ssm", "put-parameter",
-                    "--name", $script:SsmApiEnv,
-                    "--type", "SecureString",
-                    "--value", $script:OriginalApiEnvValue,
-                    "--overwrite",
-                    "--region", $script:Region,
-                    "--output", "json"
-                )
+                $rollback = Invoke-SsmSecureStringPut -Region $script:Region -Request @{
+                    Name = $script:SsmApiEnv; Type = "SecureString"
+                    Value = $script:OriginalApiEnvValue; Overwrite = $true
+                }
                 if ($rollback -and $rollback.Version) { $script:ApiEnvVersion = [int]$rollback.Version }
             }
             if ($script:WorkersEnvChanged -and $script:OriginalWorkersEnvValue) {
                 Assert-DeployLockAcquired -Reg $script:Region
-                Invoke-RequiredAwsJson -ErrorMessage "Workers env rollback failed" -ArgsArray @(
-                    "ssm", "put-parameter",
-                    "--name", $script:SsmWorkersEnv,
-                    "--type", "SecureString",
-                    "--value", $script:OriginalWorkersEnvValue,
-                    "--overwrite",
-                    "--region", $script:Region,
-                    "--output", "json"
-                ) | Out-Null
+                Invoke-SsmSecureStringPut -Region $script:Region -Request @{
+                    Name = $script:SsmWorkersEnv; Type = "SecureString"
+                    Value = $script:OriginalWorkersEnvValue; Overwrite = $true
+                } | Out-Null
             }
         } catch {
             throw "Runtime env promotion failed and rollback also failed. Promotion error: $($promotionError.Exception.Message); rollback error: $($_.Exception.Message)"
@@ -452,16 +432,10 @@ function Publish-ApiPreprodEnvCandidate {
     Assert-IsolatedPreprodApiValues -Target $obj -ReleaseId $ReleaseId
     Assert-IsolatedPreprodR2Values -Target $obj -Credential $r2CredentialObject
     $value = $obj | ConvertTo-Json -Compress -Depth 10
-    $put = Invoke-RequiredAwsJson -ErrorMessage "API preprod env candidate write failed" -ArgsArray @(
-        "ssm", "put-parameter",
-        "--name", $ParameterName,
-        "--type", "SecureString",
-        "--tier", "Advanced",
-        "--value", $value,
-        "--overwrite",
-        "--region", $script:Region,
-        "--output", "json"
-    )
+    $put = Invoke-SsmSecureStringPut -Region $script:Region -Request @{
+        Name = $ParameterName; Type = "SecureString"; Tier = "Advanced"
+        Value = $value; Overwrite = $true
+    }
     if (-not $put -or -not $put.Version) { throw "API preprod env candidate write returned no version." }
     $version = [int]$put.Version
     $readback = Invoke-RequiredAwsJson -ErrorMessage "API preprod env candidate readback failed" -ArgsArray @(
