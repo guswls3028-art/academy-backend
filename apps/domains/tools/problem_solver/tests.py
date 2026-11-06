@@ -13,8 +13,8 @@ from django.test import SimpleTestCase, TestCase
 from PIL import Image
 from rest_framework.test import APIRequestFactory, force_authenticate
 
+from academy.adapters.db.django import repositories_ai as ai_repo
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.ai.models import AIJobModel
 from apps.domains.tools.problem_solver.views import (
     TeacherProblemExplanationJobCreateView,
     TeacherProblemExplanationJobStatusView,
@@ -223,7 +223,7 @@ class TeacherProblemExplanationViewTests(TestCase):
     def test_persisted_done_failure_is_visible_without_changing_shared_state(self):
         for field in ("error_message", "last_error"):
             with self.subTest(field=field):
-                job = AIJobModel.objects.create(
+                job = ai_repo.job_create(
                     job_id=f"solver-done-failure-{field}", job_type="teacher_problem_explanation",
                     status="DONE", tier="basic", tenant_id=str(self.tenant.id),
                     source_domain="tools_problem_solver",
