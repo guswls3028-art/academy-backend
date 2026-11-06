@@ -14,6 +14,7 @@ from PIL import Image
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
+from apps.domains.ai.models import AIJobModel
 from apps.domains.tools.problem_solver.views import (
     TeacherProblemExplanationJobCreateView,
     TeacherProblemExplanationJobStatusView,
@@ -159,6 +160,8 @@ class TeacherProblemExplanationViewTests(TestCase):
                 "request_user_id": str(self.user.id),
                 "source_image_key": "must-not-leak",
             },
+            error_message="older attempt metadata must not hide a stored success",
+            last_error="older attempt metadata",
         )
         stored_result = {
             "answer": "3",
@@ -216,6 +219,41 @@ class TeacherProblemExplanationViewTests(TestCase):
                 job_id=job.job_id,
             )
         self.assertEqual(other_response.status_code, 404)
+
+    def test_persisted_done_failure_is_visible_without_changing_shared_state(self):
+        for field in ("error_message", "last_error"):
+            with self.subTest(field=field):
+                job = AIJobModel.objects.create(
+                    job_id=f"solver-done-failure-{field}", job_type="teacher_problem_explanation",
+                    status="DONE", tier="basic", tenant_id=str(self.tenant.id),
+                    source_domain="tools_problem_solver",
+                    payload={"tenant_id": str(self.tenant.id), "request_user_id": str(self.user.id)},
+                    **{field: "synthetic provider secret response must not escape"},
+                )
+                for _ in range(2):
+                    request = self.factory.get(f"/api/v1/tools/problem-solver/jobs/{job.job_id}/")
+                    response = TeacherProblemExplanationJobStatusView.as_view()(
+                        self._authenticate(request), job_id=job.job_id,
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.data["status"], "FAILED")
+                    self.assertIsNone(response.data["result"])
+                    self.assertIn("다시 시도", response.data["error"])
+                    self.assertNotIn("synthetic", str(response.data))
+                    self.assertEqual(response["Cache-Control"], "no-store")
+                job.refresh_from_db()
+                self.assertEqual(job.status, "DONE")
+                other_tenant = Tenant.objects.create(name="Other", code=f"other-{field}", is_active=True)
+                other_user = get_user_model().objects.create_user(
+                    username=f"other-{field}", password="test1234", tenant=other_tenant, is_staff=True,
+                )
+                TenantMembership.ensure_active(tenant=other_tenant, user=other_user, role="teacher")
+                request = self.factory.get(f"/api/v1/tools/problem-solver/jobs/{job.job_id}/")
+                denied = TeacherProblemExplanationJobStatusView.as_view()(
+                    self._authenticate(request, user=other_user, tenant=other_tenant), job_id=job.job_id,
+                )
+                self.assertEqual(denied.status_code, 404)
+                self.assertNotIn("synthetic", str(denied.data))
 
     def test_failed_status_does_not_expose_provider_error(self):
         job = SimpleNamespace(
