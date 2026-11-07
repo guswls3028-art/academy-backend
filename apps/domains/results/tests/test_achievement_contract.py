@@ -21,8 +21,6 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.domains.clinic.tests import ClinicTestMixin
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.attendance.models import Attendance
-from apps.domains.enrollment.models import SessionEnrollment
 from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.progress.models import ClinicLink
 from apps.domains.results.models import ExamAttempt, ExamResult, Result, ResultItem
@@ -157,6 +155,8 @@ class AchievementContractTest(TestCase, ClinicTestMixin):
         self._assert_consistent(exam, result, expected="PASS")
 
     def test_teacher_correction_preserves_first_pass_across_result_views(self):
+        SessionEnrollment = django_apps.get_model("enrollment", "SessionEnrollment")
+        Attendance = django_apps.get_model("attendance", "Attendance")
         SessionEnrollment.objects.create(
             tenant=self.tenant, session=self.lec_session, enrollment=self.enrollment,
         )
