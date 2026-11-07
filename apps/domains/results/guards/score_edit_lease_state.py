@@ -228,12 +228,14 @@ def invalidate_score_edit_leases_for_exam(
         active_cell = score_edit_payload_active_cell(draft.payload)
         active_key = score_edit_active_cell_key(active_cell)
         change_keys = score_edit_cell_keys(changes)
-        # Unknown legacy changes remain exclusive because their scope is unknown.
-        if change_keys is not None and not any(
-            key and key[0] == "exam" and key[1] in affected_enrollment_ids and key[2] == exam_id
-            for key in (*change_keys, active_key)
-        ):
-            continue
+        # An empty lease or unknown legacy changes have no result scope yet.
+        # Keep direct PATCH fenced until the client writes a fresh draft.
+        if change_keys is not None and (change_keys or active_key is not None):
+            if not any(
+                key is not None and key[0] == "exam" and key[1] in affected_enrollment_ids and key[2] == exam_id
+                for key in (*change_keys, active_key)
+            ):
+                continue
         draft.payload = score_edit_lease_payload(
             client_id=client_id,
             changes=changes,
