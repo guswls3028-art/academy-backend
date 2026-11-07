@@ -3,12 +3,15 @@ from __future__ import annotations
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.test import TestCase
+from rest_framework.test import APIRequestFactory, force_authenticate
 
-from apps.core.models import Tenant
+from apps.core.models import Tenant, TenantMembership
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.models import ExamAttempt, ExamResult, Result, ResultFact, ResultItem
+from apps.domains.results.views.admin_exam_subjective_score_view import AdminExamSubjectiveScoreView
+from apps.domains.results.views.score_draft_view import ScoreDraftView
 from apps.domains.results.services.exam_grading_service import ExamGradingService
 from apps.domains.results.services.attempt_service import ExamAttemptService
 from apps.domains.results.services.grading_service import grade_submission
@@ -994,6 +997,42 @@ class SubmissionScopeGuardTests(TestCase):
         result = Result.objects.get(target_id=self.exam.id, enrollment_id=self.enrollment.id)
         self.assertEqual(float(result.total_score), 7.0)
         self.assertFalse(ExamResult.objects.filter(submission=submission).exists())
+
+    def test_subjective_autosave_survives_another_students_automatic_grade(self):
+        exam, choice, _ = self._create_mixed_exam()
+        user = User.objects.create_user(
+            username="scope-guard-second-student", password="pw1234", tenant=self.tenant,
+        )
+        student = Student.objects.create(
+            tenant=self.tenant, user=user, name="Second Student", ps_number="SG-2", omr_code="SG000002",
+        )
+        enrollment = Enrollment.objects.create(
+            tenant=self.tenant, lecture=self.lecture, student=student, status="ACTIVE",
+        )
+        ExamEnrollment.objects.create(exam=exam, enrollment=enrollment)
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.admin, role="admin")
+        factory = APIRequestFactory()
+        headers = {"HTTP_X_SCORE_EDITOR_CLIENT": "score-tab", "HTTP_X_SCORE_SESSION_ID": str(self.session.id)}
+        change = {
+            "type": "examSubjective", "examId": exam.id, "enrollmentId": enrollment.id, "score": 12,
+        }
+        draft = factory.put("/score-draft/", {"changes": [change]}, format="json", **headers)
+        draft.tenant = self.tenant
+        force_authenticate(draft, user=self.admin)
+        self.assertEqual(ScoreDraftView.as_view()(draft, session_id=self.session.id).status_code, 200)
+
+        submission = self._submission_for_exam(exam, choice)
+        grade_submission(submission.id)
+
+        score = factory.patch("/subjective/", {"score": 12}, format="json", **headers)
+        score.tenant = self.tenant
+        force_authenticate(score, user=self.admin)
+        response = AdminExamSubjectiveScoreView.as_view()(
+            score, exam_id=exam.id, enrollment_id=enrollment.id,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(Result.objects.get(target_id=exam.id, enrollment=enrollment).total_score, 12)
+        self.assertEqual(Result.objects.get(target_id=exam.id, enrollment=self.enrollment).objective_score, 80)
 
     def test_sync_combines_omr_objective_with_existing_manual_subjective_score(self):
         exam, choice, essay = self._create_mixed_exam()
