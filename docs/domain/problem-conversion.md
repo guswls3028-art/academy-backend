@@ -51,6 +51,12 @@ exams become separate frontend-created conversions.
 
 Configured OpenAI/Bedrock routes and AI quotas remain. Existing full-book Beta
 reservations/completed/free-run accounting remains on its legacy endpoint.
+OpenAI question proposals and figure redraws explicitly request a JSON object in
+the Responses input message as well as the instructions, satisfying the
+[JSON mode contract](https://developers.openai.com/api/docs/guides/structured-outputs#json-mode).
+Teacher instructions and source content remain intact. Existing completion,
+question and geometry validation still rejects incomplete/refused/invalid output;
+provider errors retain the saved source and explicit resume flow.
 Nova 2 high reasoning (thorough review and figure redraw) omits token-limit and
 sampling options, as required by the [provider request contract](https://docs.aws.amazon.com/nova/latest/nova2-userguide/extended-thinking.html).
 Low/medium and ordinary generation retain their existing inference settings.
@@ -117,7 +123,13 @@ unchanged lower-effort requests, image forwarding and final-text extraction.
 `tests/test_problem_conversion_figures.py` verifies two/four-coordinate label
 compatibility, PNG rendering, finite bounded geometry, and a single format repair
 without retrying provider failures or accepting repeated invalid output.
+`tests/test_problem_conversion_openai.py` exercises the real proposal/redraw
+callers through a mocked Responses boundary that enforces the input-message JSON
+requirement. It covers ordinary/thorough proposals, image/text inputs, the first
+redraw, unchanged model/quota/storage settings, and failed/incomplete/refused
+responses without provider calls or automatic application of a proposal.
 These checks do not establish actual AI fidelity, licensed Hancom layout, or deployed
 runtime identity. Preserve existing production continuity and paired release gates.
-The isolated real-use gate invokes the existing Nova 2 Lite route using the development
-host's sealed transcription grant; see [development runtime](../operations/persistent-development-runtime.md).
+The isolated real-use gate follows the configured OpenAI route when its approved
+key is present. The no-key Nova 2 Lite route retains the development host's sealed
+transcription grant; see [development runtime](../operations/persistent-development-runtime.md).
