@@ -202,7 +202,7 @@ class AdminExamResultDetailView(APIView):
         }
 
         result_attempt_id = initial_score.attempt_id if initial_score else None
-        result_total_score = float(initial_score.total_score or 0.0) if initial_score else 0.0
+        result_total_score = initial_score.total_score if initial_score else None
         if result is not None and not representative_is_initial:
             edit_state.update({
                 "can_edit": False,

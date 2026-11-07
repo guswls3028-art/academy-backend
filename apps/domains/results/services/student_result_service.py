@@ -204,7 +204,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         enrollment_id=enrollment_id,
         exam_id=exam_id,
         session=session,
-        total_score=float(initial_score.total_score or 0.0),
+        total_score=initial_score.total_score,
         pass_score=pass_score,
         attempt_id=result.attempt_id,
         tenant=tenant,
@@ -253,7 +253,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     # 정답 공개 정책 적용
     # provisional/미응시/불합격 → 비공개, 합격/기준없음 → 정책 따름
     is_pass = data["is_pass"]
-    if is_provisional or is_not_submitted:
+    if is_provisional or is_not_submitted or data["total_score"] is None:
         show_answers = False
     elif is_pass is None or is_pass:
         show_answers = exam.should_show_answers()

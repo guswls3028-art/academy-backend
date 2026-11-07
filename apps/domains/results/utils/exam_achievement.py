@@ -3,8 +3,8 @@
 시험 성취(achievement) 계산 SSOT.
 
 정책 (SSOT):
-- is_pass: 1차 시험만 기준 (석차 계산용). pass_score=0이면 None.
-- remediated: 1차 불합격 후 ClinicLink(source_type=exam, resolution_type∈{EXAM_PASS, MANUAL_OVERRIDE})로 해소.
+- is_pass: 1차 시험만 기준 (석차 계산용). 미채점 또는 pass_score=0이면 None.
+- remediated: 1차 합격이 없고 ClinicLink(source_type=exam, resolution_type∈{EXAM_PASS, MANUAL_OVERRIDE})로 해소.
   (WAIVED=면제는 remediated=False; 성취로 인정하지 않음)
 - final_pass: 1차 합격 OR remediated. 미응시 + 미해소 → None.
 - achievement: "PASS" | "REMEDIATED" | "FAIL" | "NOT_SUBMITTED" | None
@@ -45,11 +45,11 @@ def compute_first_pass(
     is_not_submitted: bool,
 ) -> bool | None:
     """1차 합격 판정. 석차/성취 분리용 단일 진실."""
-    if is_not_submitted:
+    if is_not_submitted or total_score is None:
         return None
     if pass_score is None or float(pass_score) <= 0:
         return None
-    return float(total_score or 0.0) >= float(pass_score)
+    return float(total_score) >= float(pass_score)
 
 
 def compute_final_pass(
@@ -77,13 +77,12 @@ def compute_achievement(
     """
     성취 분류. 프론트 뱃지/통계 공용 라벨.
 
-    우선순위: REMEDIATED > PASS > NOT_SUBMITTED > FAIL
-    (보강합격이 1차 합격보다 우선하는 건 아니지만, 판정 흐름상 remediated=True면 1차는 false)
+    우선순위: PASS > REMEDIATED > NOT_SUBMITTED > FAIL
     """
-    if remediated:
-        return "REMEDIATED"
     if is_pass is True:
         return "PASS"
+    if remediated:
+        return "REMEDIATED"
     if is_not_submitted:
         return "NOT_SUBMITTED"
     if is_pass is False:
@@ -126,31 +125,13 @@ def compute_exam_achievement(
         "pass_score": pass_score,
         "attempt_id": attempt_id,
         "session": session,
+        "meta_status": meta_status,
     }
-    data = compute_exam_achievement_bulk(
+    return compute_exam_achievement_bulk(
         items=[item],
         use_session_filter=True,
         tenant=tenant,
     )[(int(enrollment_id), int(exam_id))]
-    if meta_status is not None and data["meta_status"] is None:
-        is_not_submitted = meta_status == "NOT_SUBMITTED"
-        data["meta_status"] = meta_status
-        data["is_pass"] = compute_first_pass(
-            total_score=total_score,
-            pass_score=pass_score,
-            is_not_submitted=is_not_submitted,
-        )
-        data["final_pass"] = compute_final_pass(
-            is_pass=data["is_pass"],
-            remediated=data["remediated"],
-            is_not_submitted=is_not_submitted,
-        )
-        data["achievement"] = compute_achievement(
-            is_pass=data["is_pass"],
-            remediated=data["remediated"],
-            is_not_submitted=is_not_submitted,
-        )
-    return data
 
 
 def _build_clinic_retake_info(link_or_dict) -> dict[str, Any]:
@@ -189,6 +170,7 @@ def compute_exam_achievement_bulk(
         "pass_score": float | None,
         "attempt_id": int | None,
         "session": Session | None,  # None 이면 클리닉 판정 스킵
+        "meta_status": str | None,  # 선택: 유효한 시도에 상태가 없을 때의 fallback
       }
 
     use_session_filter=True (기본):
@@ -350,13 +332,15 @@ def compute_exam_achievement_bulk(
         sid = int(session.id) if (use_session_filter and session is not None) else None
 
         meta_status = meta_status_by_attempt.get(a_id) if a_id else None
+        if meta_status is None:
+            meta_status = i.get("meta_status")
         initial_score = project_initial_exam_score(
             state=initial_state,
             fallback_score=i.get("total_score"),
             fallback_max_score=None,
             fallback_not_submitted=meta_status == "NOT_SUBMITTED",
         )
-        is_not_submitted = initial_score.not_submitted
+        is_not_submitted = initial_score.not_submitted or meta_status == "NOT_SUBMITTED"
         if is_not_submitted:
             meta_status = "NOT_SUBMITTED"
 
@@ -375,7 +359,8 @@ def compute_exam_achievement_bulk(
                 link_info = link_map.get((e_id, x_id, sid))
         else:
             link_info = link_map.get((e_id, x_id, None))
-        if link_info is not None:
+        # A saved clinic resolution is history when the first attempt already passed.
+        if link_info is not None and is_pass is not True:
             remediated = True
             clinic_retake = _build_clinic_retake_info(link_info)
         else:
