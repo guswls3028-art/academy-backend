@@ -1393,8 +1393,8 @@ class OMRMapperReviewPolicyTests(TestCase):
         self.assertFalse(submission.meta["manual_review"]["required"])
         self.assertEqual(submission.meta["answer_stats"]["ambiguous"], 1)
 
-    def test_clear_multi_answer_overlapping_correct_mark_requires_manual_review(self):
-        tenant, _exam, enrollment, submission = self._make_exam()
+    def test_teacher_can_confirm_multi_and_blank_without_rewriting_recognized_answers(self):
+        tenant, exam, enrollment, submission = self._make_exam()
 
         apply_omr_ai_result({
             "submission_id": submission.id,
@@ -1413,10 +1413,10 @@ class OMRMapperReviewPolicyTests(TestCase):
                 },
                 {
                     "question_id": 2,
-                    "detected": ["2"],
-                    "status": "ok",
-                    "marking": "single",
-                    "confidence": 0.99,
+                    "detected": [],
+                    "status": "blank",
+                    "marking": "blank",
+                    "confidence": 0.0,
                 },
             ],
         })
@@ -1428,7 +1428,61 @@ class OMRMapperReviewPolicyTests(TestCase):
             "ANSWER_SCORE_AMBIGUOUS",
             submission.meta["manual_review"]["reasons"],
         )
-        self.assertEqual(submission.meta["answer_stats"]["ok"], 2)
+        self.assertEqual(submission.meta["answer_stats"]["blank"], 1)
+
+        factory = APIRequestFactory()
+        path = f"/submissions/submissions/{submission.id}/manual-edit/"
+
+        def manual_edit(data=None):
+            method = "get" if data is None else "post"
+            request = factory.get(path) if data is None else factory.post(path, data, format="json")
+            request.tenant = tenant
+            force_authenticate(request, user=submission.user)
+            return SubmissionViewSet.as_view({method: "manual_edit"})(request, pk=submission.id)
+
+        detail = manual_edit()
+        self.assertEqual(detail.status_code, 200, detail.data)
+        original_answers = detail.data["answers"]
+        self.assertEqual([a["answer"] for a in original_answers], ["1,2", ""])
+        original_version = detail.data["answer_review_version"]
+        self.assertTrue(original_version)
+
+        original_review = submission.meta["manual_review"]
+        submission.meta["manual_review"] = {
+            **original_review,
+            "reasons": [*original_review["reasons"], "ALIGNMENT_FAILED"],
+        }
+        submission.save(update_fields=["meta", "updated_at"])
+        self.assertIsNone(manual_edit().data["answer_review_version"])
+        rejected = manual_edit({"answer_review_version": original_version})
+        self.assertEqual(rejected.status_code, 409, rejected.data)
+        self.assertEqual(rejected.data["code"], "OMR_ANSWER_REVIEW_CHANGED")
+        submission.refresh_from_db()
+        self.assertTrue(submission.meta["manual_review"]["required"])
+        self.assertNotIn("manual_edits", submission.meta)
+        self.assertFalse(Result.objects.filter(target_id=exam.id, enrollment=enrollment).exists())
+
+        submission.meta["manual_review"] = original_review
+        submission.save(update_fields=["meta", "updated_at"])
+        payload = {"answer_review_version": manual_edit().data["answer_review_version"]}
+        confirmed = manual_edit(payload)
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        self.assertTrue(confirmed.data["graded"])
+        self.assertEqual(float(confirmed.data["score"]), 0.0)
+        self.assertEqual(float(confirmed.data["max_score"]), 100.0)
+        reloaded = manual_edit().data
+        self.assertEqual(reloaded["answers"], original_answers)
+        self.assertEqual(reloaded["enrollment_id"], enrollment.id)
+        self.assertEqual(reloaded["submission_status"], Submission.Status.DONE)
+        self.assertFalse(reloaded["meta"]["manual_review"]["required"])
+        self.assertIsNone(reloaded["answer_review_version"])
+        self.assertEqual(manual_edit(payload).status_code, 409)
+        submission.refresh_from_db()
+        self.assertEqual(len(submission.meta["manual_edits"]), 1)
+        self.assertEqual(submission.meta["manual_edits"][0]["changed_answers_count"], 0)
+        result = Result.objects.get(target_type="exam", target_id=exam.id, enrollment=enrollment)
+        self.assertEqual(result.total_score, 0)
+        self.assertEqual(result.max_score, 100)
 
     def test_ambiguous_identifier_without_competing_candidate_is_resolved(self):
         tenant, _exam, enrollment, submission = self._make_exam()

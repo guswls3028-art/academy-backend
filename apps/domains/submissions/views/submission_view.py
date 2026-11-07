@@ -75,6 +75,33 @@ from apps.support.submissions.dependencies import (
 logger = logging.getLogger(__name__)
 
 
+def _answer_review_version(submission: Submission) -> str | None:
+    meta = submission.meta or {}
+    review = meta.get("manual_review")
+    if (
+        submission.source != Submission.Source.OMR_SCAN
+        or submission.target_type != Submission.TargetType.EXAM
+        or submission.status not in (Submission.Status.ANSWERS_READY, Submission.Status.DONE)
+        or not submission.enrollment_id
+        or str(meta.get("identifier_status", "")).lower() in {"missing", "no_match"}
+        or not isinstance(review, dict)
+        or review.get("required") is not True
+    ):
+        return None
+    reasons = review.get("reasons")
+    if not isinstance(reasons, list) or not reasons or any(
+        str(reason).strip().upper() not in {
+            "ANSWER_BLANK_OR_MULTI",
+            "ANSWER_LOW_CONFIDENCE",
+            "ANSWER_SCORE_AMBIGUOUS",
+            "ANSWER_STATUS_NOT_OK",
+        }
+        for reason in reasons
+    ):
+        return None
+    return submission.updated_at.isoformat()
+
+
 def _reject_unready_replacement(submission_id, readiness):
     # Adoption and regrading must commit together in the caller's transaction.
     transaction.set_rollback(True)
@@ -654,6 +681,9 @@ class SubmissionViewSet(ModelViewSet):
             "target_id": submission.target_id,
             "identifier": identifier,
             "answers": answers_data,
+            "answer_review_version": (
+                _answer_review_version(submission) if answers_data and not duplicate_siblings else None
+            ),
             **scan_image_payload,
             "meta": {
                 "manual_review": meta.get("manual_review"),
@@ -677,6 +707,25 @@ class SubmissionViewSet(ModelViewSet):
             answers = []
         note = str(request.data.get("note") or "manual_edit")
         tenant = submission.tenant
+        confirming_answers = "answer_review_version" in request.data
+        if confirming_answers:
+            if identifier is not None or answers != [] or allow_duplicate_requested(request):
+                return Response({"detail": "판독 확인과 답안·학생 수정은 따로 저장해 주세요."}, status=400)
+            current_version = _answer_review_version(submission)
+            if (
+                current_version is None
+                or request.data["answer_review_version"] != current_version
+                or find_conflicting_exam_submission(
+                    tenant=tenant,
+                    exam_id=submission.target_id,
+                    enrollment_id=submission.enrollment_id,
+                    exclude_submission_id=submission.id,
+                )
+            ):
+                return Response({
+                    "code": "OMR_ANSWER_REVIEW_CHANGED",
+                    "detail": "답안지 검수 상태가 바뀌었습니다. 최신 답안지를 확인해 주세요.",
+                }, status=status.HTTP_409_CONFLICT)
 
         # ✅ identifier 검증 + submission.enrollment_id 반영 (tenant 안전성)
         #    { "enrollment_id": N } 형식만 매칭. 이외 형식은 meta로 저장만 하고 enrollment 미반영.
@@ -801,8 +850,9 @@ class SubmissionViewSet(ModelViewSet):
             updated += 1
 
         meta = dict(submission.meta or {})
-        meta.setdefault("omr", {})
-        meta["omr"]["identifier_override"] = identifier
+        if not confirming_answers:
+            meta.setdefault("omr", {})
+            meta["omr"]["identifier_override"] = identifier
 
         meta.setdefault("manual_edits", [])
         meta["manual_edits"].append(
@@ -961,9 +1011,16 @@ class SubmissionViewSet(ModelViewSet):
             return _reject_unready_replacement(submission.id, decision.readiness)
         submission.refresh_from_db(fields=["status", "enrollment_id"])
         if not decision.graded:
-            configuration_required = bool(set(decision.readiness.missing) & {
-                "answer_key", "sheet", "grading_configuration",
-            })
+            missing = set(decision.readiness.missing)
+            configuration = {"answer_key", "sheet", "grading_configuration"}
+            if confirming_answers and missing - configuration:
+                transaction.set_rollback(True)
+                return Response({
+                    "code": "OMR_ANSWER_REVIEW_NOT_READY",
+                    "detail": "확정할 수 없습니다. 학생 연결과 스캔 문항 수를 확인한 뒤 다시 시도해 주세요.",
+                    "missing": decision.readiness.missing,
+                }, status=status.HTTP_409_CONFLICT)
+            configuration_required = bool(missing & configuration)
             return Response(
                 {
                     "submission_id": submission.id,
