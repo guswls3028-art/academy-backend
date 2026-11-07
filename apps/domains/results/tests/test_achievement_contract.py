@@ -21,6 +21,8 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.domains.clinic.tests import ClinicTestMixin
 from apps.core.models import Tenant, TenantMembership
+from apps.domains.attendance.models import Attendance
+from apps.domains.enrollment.models import SessionEnrollment
 from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.progress.models import ClinicLink
 from apps.domains.results.models import ExamAttempt, ExamResult, Result, ResultItem
@@ -36,6 +38,7 @@ from apps.domains.results.views.admin_exam_result_detail_view import (
     AdminExamResultDetailView,
 )
 from apps.domains.results.services.student_result_service import get_my_exam_result_data
+from apps.domains.results.views.session_scores_view import SessionScoreCorrectionView, SessionScoresView
 
 
 User = get_user_model()
@@ -153,11 +156,139 @@ class AchievementContractTest(TestCase, ClinicTestMixin):
         _, result = self._make_attempt_and_result(exam, score=80)
         self._assert_consistent(exam, result, expected="PASS")
 
+    def test_teacher_correction_preserves_first_pass_across_result_views(self):
+        SessionEnrollment.objects.create(
+            tenant=self.tenant, session=self.lec_session, enrollment=self.enrollment,
+        )
+        Attendance.objects.create(
+            tenant=self.tenant, session=self.lec_session, enrollment=self.enrollment,
+            status="PRESENT",
+        )
+        exam = self._make_exam("first_pass_with_teacher_correction", pass_score=85.0)
+        ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        _, result = self._make_attempt_and_result(exam, score=85.0)
+        factory = APIRequestFactory()
+        correction_request = factory.patch(
+            f"/results/admin/sessions/{self.lec_session.id}/score-correction/",
+            {
+                "enrollment_id": self.enrollment.id,
+                "source_type": "exam",
+                "source_id": exam.id,
+                "completed": True,
+                "note": "오답 풀이 확인",
+            },
+            format="json",
+        )
+        correction_request.tenant = self.tenant
+        force_authenticate(correction_request, user=self.admin_user)
+        completion = SessionScoreCorrectionView.as_view()(
+            correction_request, session_id=self.lec_session.id,
+        )
+        self.assertEqual(completion.status_code, 200, completion.data)
+        self.assertEqual(completion.data["correction_status"], "COMPLETED")
+
+        list_request = factory.get(f"/results/admin/exams/{exam.id}/results/")
+        list_request.tenant = self.tenant
+        force_authenticate(list_request, user=self.admin_user)
+        listing = AdminExamResultsView.as_view()(list_request, exam_id=exam.id)
+        self.assertEqual(listing.status_code, 200, listing.data)
+        row = listing.data["results"][0]
+        self.assertEqual(row["exam_score"], 85.0)
+        self.assertEqual(row["rank"], 1)
+        self.assertEqual(row["correction_status"], "COMPLETED")
+
+        detail_request = factory.get(
+            f"/results/admin/exams/{exam.id}/enrollments/{self.enrollment.id}/"
+        )
+        detail_request.tenant = self.tenant
+        force_authenticate(detail_request, user=self.admin_user)
+        detail = AdminExamResultDetailView.as_view()(
+            detail_request, exam_id=exam.id, enrollment_id=self.enrollment.id,
+        )
+        self.assertEqual(detail.status_code, 200, detail.data)
+
+        student_request = factory.get(f"/results/student/exams/{exam.id}/")
+        student_request.tenant = self.tenant
+        student_request.user = self.student.user
+        TenantMembership.ensure_active(
+            tenant=self.tenant, user=self.student.user, role="student",
+        )
+        student_data = get_my_exam_result_data(student_request, exam.id, tenant=self.tenant)
+        self.assertEqual(student_data["correction_status"], "COMPLETED")
+
+        scores_request = factory.get(f"/results/admin/sessions/{self.lec_session.id}/scores/")
+        scores_request.tenant = self.tenant
+        force_authenticate(scores_request, user=self.admin_user)
+        scores = SessionScoresView.as_view()(scores_request, session_id=self.lec_session.id)
+        self.assertEqual(scores.status_code, 200, scores.data)
+        score_block = scores.data["rows"][0]["exams"][0]["block"]
+        self.assertEqual(score_block["correction_status"], "COMPLETED")
+
+        for view, payload, pass_field in (
+            ("list", row, "passed"),
+            ("scores", score_block, "passed"),
+            ("detail", detail.data, "passed"),
+            ("student", student_data, "is_pass"),
+        ):
+            with self.subTest(view=view):
+                self.assertIs(payload[pass_field], True)
+                self.assertIs(payload["final_pass"], True)
+                self.assertEqual(payload["achievement"], "PASS")
+                self.assertIs(payload["remediated"], False)
+                self.assertIsNone(payload["clinic_retake"])
+        self._assert_consistent(exam, result, expected="PASS")
+
+        link = ClinicLink.objects.get(
+            tenant=self.tenant, enrollment=self.enrollment, session=self.lec_session,
+            source_type="exam", source_id=exam.id,
+        )
+        self.assertEqual(link.resolution_type, ClinicLink.ResolutionType.MANUAL_OVERRIDE)
+        self.assertIsNotNone(link.resolved_at)
+        result.refresh_from_db()
+        self.assertEqual(result.total_score, 85.0)
+
+    def test_exam_detail_distinguishes_ungraded_from_zero(self):
+        exam = self._make_exam("ungraded_then_zero")
+        ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        factory = APIRequestFactory()
+
+        def detail():
+            request = factory.get(
+                f"/results/admin/exams/{exam.id}/enrollments/{self.enrollment.id}/"
+            )
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin_user)
+            response = AdminExamResultDetailView.as_view()(
+                request, exam_id=exam.id, enrollment_id=self.enrollment.id,
+            )
+            self.assertEqual(response.status_code, 200, response.data)
+            return response.data
+
+        ungraded = detail()
+        self.assertIsNone(ungraded["total_score"])
+        self.assertIsNone(ungraded["passed"])
+        self.assertIsNone(ungraded["final_pass"])
+        self.assertIsNone(ungraded["achievement"])
+
+        self._make_attempt_and_result(exam, score=0.0)
+        graded = detail()
+        self.assertEqual(graded["total_score"], 0.0)
+        self.assertIs(graded["passed"], False)
+        self.assertIs(graded["final_pass"], False)
+        self.assertEqual(graded["achievement"], "FAIL")
+
     def test_remediated_via_exam_pass(self):
-        exam = self._make_exam("rem_exam", pass_score=60.0)
-        _, result = self._make_attempt_and_result(exam, score=40)
-        self._resolve_link(exam, resolution_type=ClinicLink.ResolutionType.EXAM_PASS)
+        exam = self._make_exam("rem_exam", pass_score=90.0)
+        _, result = self._make_attempt_and_result(exam, score=85.0)
+        link = self._resolve_link(exam, resolution_type=ClinicLink.ResolutionType.EXAM_PASS)
         self._assert_consistent(exam, result, expected="REMEDIATED")
+
+        exam.pass_score = 85.0
+        exam.save(update_fields=["pass_score"])
+        self._assert_consistent(exam, result, expected="PASS")
+        link.refresh_from_db()
+        self.assertEqual(link.resolution_type, ClinicLink.ResolutionType.EXAM_PASS)
+        self.assertIsNotNone(link.resolved_at)
 
     def test_remediated_via_manual_override(self):
         exam = self._make_exam("rem_manual", pass_score=60.0)
