@@ -20,7 +20,8 @@ def _ask(system, prompt, image, mime, *, thorough=False):
     consume_tools_ai_quota(kind="problem_studio_transcription")
     if cfg.OPENAI_API_KEY:
         from openai import OpenAI
-        content = [{"type": "input_text", "text": prompt}]
+        # Responses JSON mode also requires JSON to be named in input messages.
+        content = [{"type": "input_text", "text": f"지정한 형식의 JSON 객체만 반환하세요.\n\n{prompt}"}]
         if image:
             encoded = base64.b64encode(image).decode("ascii")
             content.append({"type": "input_image", "image_url": f"data:{mime};base64,{encoded}", "detail": "high"})
