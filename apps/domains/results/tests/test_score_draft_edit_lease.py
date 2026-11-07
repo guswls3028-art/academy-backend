@@ -799,7 +799,7 @@ class ScoreDraftEditLeaseTests(TestCase):
         self.assertEqual(conflict.status_code, 409)
         self.assertEqual(conflict.data["code"], "SCORE_EDIT_LOCKED")
 
-    def test_authoritative_update_preserves_and_stales_manual_draft(self):
+    def test_authoritative_update_only_stales_affected_exam_enrollments(self):
         exam = Exam.objects.create(
             tenant=self.tenant,
             title="Automatically Graded Exam",
@@ -813,16 +813,29 @@ class ScoreDraftEditLeaseTests(TestCase):
             "score": 74.5,
         }
         self.assertEqual(self._put(self.admin_a, "tab-a", [change]).status_code, 200)
+        disjoint_changes = [
+            {"type": "examSubjective", "examId": exam.id, "enrollmentId": 23, "score": 4},
+            {"type": "examSubjective", "examId": exam.id + 1, "enrollmentId": 22, "score": 5},
+            {"type": "homework", "homeworkId": 31, "enrollmentId": 22, "score": 8},
+        ]
+        self.assertEqual(self._put(self.admin_b, "tab-b", disjoint_changes).status_code, 200)
 
         with transaction.atomic():
             self.assertEqual(
                 invalidate_score_edit_leases_for_exam(
                     exam=exam,
                     tenant=self.tenant,
+                    affected_enrollment_ids={22},
                     reason="AUTOMATIC_GRADING_COMPLETED",
                 ),
                 1,
             )
+
+        available = self._get(self.admin_b, "tab-b")
+        self.assertFalse(available.data["stale"])
+        self.assertEqual(available.data["changes"], disjoint_changes)
+        self.assertEqual(self._put(self.admin_b, "tab-b", disjoint_changes).status_code, 200)
+        self.assertEqual(self._commit(self.admin_b, "tab-b", release_lease=False).status_code, 204)
 
         recovery = self._get(self.admin_a, "tab-a")
         self.assertEqual(recovery.status_code, 200)

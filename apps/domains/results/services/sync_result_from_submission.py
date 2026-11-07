@@ -190,11 +190,6 @@ def sync_result_from_exam_submission(
         )
     except Exception:
         return None
-    invalidate_score_edit_leases_for_exam(
-        exam=exam,
-        tenant=exam.tenant,
-        reason="AUTOMATIC_GRADING_COMPLETED",
-    )
     score_shape = get_exam_score_shape(exam)
 
     key_map = {
@@ -235,7 +230,7 @@ def sync_result_from_exam_submission(
         target_id=int(exam.id),
         enrollment_id=int(enrollment_id),
     ).first()
-    if (
+    keeps_existing_omr_grade = (
         preserve_current_omr_grade
         and is_omr_scan_submission(submission)
         and existing_result_prev
@@ -243,7 +238,18 @@ def sync_result_from_exam_submission(
         and existing_result_prev.attempt.submission_id == submission.id
         and existing_result_prev.attempt.enrollment_id == enrollment_id
         and existing_result_prev.attempt.exam_id == exam.id
-    ):
+    )
+    if former_enrollment is not None or not keeps_existing_omr_grade:
+        affected_enrollment_ids = {enrollment_id}
+        if former_enrollment is not None:
+            affected_enrollment_ids.add(int(former_enrollment.id))
+        invalidate_score_edit_leases_for_exam(
+            exam=exam,
+            tenant=exam.tenant,
+            affected_enrollment_ids=affected_enrollment_ids,
+            reason="AUTOMATIC_GRADING_COMPLETED",
+        )
+    if keeps_existing_omr_grade:
         if former_enrollment is not None:
             refresh_former_omr_student(exam=exam, enrollment=former_enrollment)
         return existing_result_prev

@@ -206,11 +206,13 @@ def invalidate_score_edit_leases_for_exam(
     *,
     exam,
     tenant,
+    affected_enrollment_ids: set[int],
     reason: str = "SCORE_UPDATED_EXTERNALLY",
 ) -> int:
-    """Let authoritative grading proceed while fencing stale manual writes."""
+    """Fence manual edits to the exam results being updated."""
+    exam_id = int(exam.id)
     scope_ids = lock_score_edit_scope_for_exam(
-        exam_id=int(exam.id),
+        exam_id=exam_id,
         tenant=tenant,
     )
     drafts = list(
@@ -223,10 +225,21 @@ def invalidate_score_edit_leases_for_exam(
         if score_edit_payload_is_invalidated(draft.payload):
             continue
         client_id, changes = score_edit_payload_parts(draft.payload)
+        active_cell = score_edit_payload_active_cell(draft.payload)
+        active_key = score_edit_active_cell_key(active_cell)
+        change_keys = score_edit_cell_keys(changes)
+        # An empty lease or unknown legacy changes have no result scope yet.
+        # Keep direct PATCH fenced until the client writes a fresh draft.
+        if change_keys is not None and (change_keys or active_key is not None):
+            if not any(
+                key is not None and key[0] == "exam" and key[1] in affected_enrollment_ids and key[2] == exam_id
+                for key in (*change_keys, active_key)
+            ):
+                continue
         draft.payload = score_edit_lease_payload(
             client_id=client_id,
             changes=changes,
-            active_cell=score_edit_payload_active_cell(draft.payload),
+            active_cell=active_cell,
             invalidated=True,
             invalidated_reason=reason,
         )
