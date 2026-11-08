@@ -149,6 +149,59 @@ class HomeworkQuickPatchScopeTests(TestCase):
             ).exists()
         )
 
+    def test_video_makeup_is_pending_and_transitions_to_a_saved_verdict(self):
+        self.homework.grading_mode = Homework.GradingMode.COMPLETION
+        self.homework.save(update_fields=["grading_mode"])
+        target = {
+            "session_id": self.session.id,
+            "homework_id": self.homework.id,
+            "enrollment_id": self.assigned_enrollment.id,
+        }
+        hold = dict(target, score=None, meta_status="VIDEO_MAKEUP", expected_updated_at=None)
+        clinic_link = apps.get_model("progress", "ClinicLink")
+
+        with patch(
+            "apps.domains.homework_results.views.homework_score_viewset.homework_submission_revisions"
+        ) as read_submission:
+            saved = self._quick_patch(hold).data
+            self.assertEqual(saved["meta"]["status"], "VIDEO_MAKEUP")
+            self.assertIsNone(saved["score"])
+            self.assertFalse(saved["passed"])
+            self.assertFalse(saved["clinic_required"])
+            self.assertFalse(clinic_link.objects.exists())
+            self._quick_patch(dict(target, score=1, expected_updated_at=None), expected_status=409)
+            cleared = self._quick_patch(dict(target, score=None, expected_updated_at=saved["updated_at"])).data
+            self.assertIsNone(cleared["meta"])
+            self.assertFalse(clinic_link.objects.exists())
+            read_submission.assert_not_called()
+
+        held_again = self._quick_patch(dict(hold, expected_updated_at=cleared["updated_at"])).data
+        verdict = self._quick_patch(dict(target, score=1, expected_updated_at=held_again["updated_at"])).data
+        self.assertIsNone(verdict["meta"])
+        self.assertEqual(verdict["score"], 1)
+        self.assertTrue(verdict["passed"])
+
+        self._quick_patch(dict(hold, expected_updated_at=verdict["updated_at"]), expected_status=400)
+        score = HomeworkScore.objects.get(homework=self.homework, enrollment=self.assigned_enrollment)
+        self.assertEqual(score.score, 1)
+        self.assertIsNone(score.meta)
+
+    def test_video_makeup_requires_a_current_assignment_and_null_score(self):
+        target = {
+            "session_id": self.session.id,
+            "homework_id": self.homework.id,
+            "enrollment_id": self.assigned_enrollment.id,
+            "score": None,
+            "meta_status": "VIDEO_MAKEUP",
+            "expected_updated_at": None,
+        }
+        self._quick_patch(target, expected_status=400)
+        self.homework.grading_mode = Homework.GradingMode.COMPLETION
+        self.homework.save(update_fields=["grading_mode"])
+        self._quick_patch(dict(target, enrollment_id=self.unassigned_enrollment.id), expected_status=400)
+        self._quick_patch(dict(target, score=0), expected_status=400)
+        self.assertFalse(HomeworkScore.objects.filter(homework=self.homework).exists())
+
     def test_router_disallows_generic_score_writes_and_preserves_completion_history(self):
         self.homework.grading_mode = "COMPLETION"
         self.homework.save(update_fields=["grading_mode"])

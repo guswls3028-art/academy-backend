@@ -867,6 +867,30 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertEqual(row["lecture_title"], "수학")
         self.assertEqual(row["recorded_at"], assignment.created_at.isoformat())
 
+    def test_video_makeup_is_visible_as_inspection_pending_with_actual_submission_state(self):
+        homework = Homework.objects.create(
+            tenant=self.tenant, session=self.session, title="영상 보강 과제",
+            grading_mode=Homework.GradingMode.COMPLETION,
+        )
+        HomeworkAssignment.objects.create(
+            tenant=self.tenant, homework=homework, session=self.session, enrollment=self.enrollment,
+        )
+        HomeworkScore.objects.create(
+            homework=homework, session=self.session, enrollment=self.enrollment,
+            meta={"status": "VIDEO_MAKEUP"},
+        )
+
+        response = self._call()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["homeworks"]), 1)
+        row = response.data["homeworks"][0]
+        self.assertEqual(row["homework_id"], homework.id)
+        self.assertEqual(row["inspection_status"], "VIDEO_MAKEUP")
+        self.assertEqual(row["submission_state"], "needs_submission")
+        self.assertIsNone(row["score"])
+        self.assertIsNone(row["achievement"])
+        self.assertFalse(row["submission_media_locked"])
+
     def test_teacher_completed_unscored_homework_preserves_submission_state_for_student_and_parent(self):
         homework = Homework.objects.create(
             tenant=self.tenant,

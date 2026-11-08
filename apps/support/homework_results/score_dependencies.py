@@ -97,6 +97,18 @@ def homework_assignment_exists(
     ).exists()
 
 
+def has_completed_homework_correction(
+    *, tenant, session_id: int, enrollment_id: int, homework_id: int,
+) -> bool:
+    from apps.domains.progress.models import AssessmentCorrection
+
+    return AssessmentCorrection.objects.filter(
+        tenant=tenant, session_id=session_id, enrollment_id=enrollment_id,
+        source_type=AssessmentCorrection.SourceType.HOMEWORK,
+        source_id=homework_id, completed=True,
+    ).exists()
+
+
 def sync_homework_clinic_link(
     *,
     enrollment_id: int,

@@ -15,11 +15,12 @@ class HomeworkScore(TimestampModel):
     ✅ 상태(운영 기준) — DB 표현 (고정)
     - 미입력     : score=None & meta.status=None
     - 미제출     : meta.status="NOT_SUBMITTED"   (0점과 다름 / 클리닉 대상)
+    - 영상 보강  : score=None & meta.status="VIDEO_MAKEUP" (검사 보류)
     - 0점        : score=0
     - 정상 점수  : score>=0
 
     ❗RULE 3: meta(JSONField)는 확장 정보만 담는다.
-    단, 본 모델은 "미제출" 상태를 meta.status로만 표현한다(마이그레이션 없이 확장).
+    점수와 별개인 미제출·검사 보류 상태는 meta.status에 저장한다.
     """
 
     class LockReason(models.TextChoices):
@@ -29,11 +30,8 @@ class HomeworkScore(TimestampModel):
         OTHER = "OTHER", "기타"
 
     class MetaStatus:
-        """
-        ✅ meta.status enum (고정)
-        - NOT_SUBMITTED: 숙제 미제출(클리닉 대상)
-        """
         NOT_SUBMITTED = "NOT_SUBMITTED"
+        VIDEO_MAKEUP = "VIDEO_MAKEUP"
 
     enrollment = models.ForeignKey(
         "enrollment.Enrollment",
