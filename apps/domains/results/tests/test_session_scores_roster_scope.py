@@ -1043,9 +1043,21 @@ class SessionScoresRosterScopeTests(TestCase):
             enrollment=self.active_enrollment,
             session=self.session,
             homework=self.homework,
-            score=70,
+            score=90,
             max_score=100,
+            passed=True,
         )
+
+        initial_request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+        )
+        initial_request.tenant = self.tenant
+        force_authenticate(initial_request, user=self.admin)
+        initial = SessionScoresView.as_view()(initial_request, session_id=self.session.id)
+        self.assertEqual(initial.status_code, 200, initial.data)
+        initial_block = initial.data["rows"][0]["homeworks"][0]["block"]
+        self.assertEqual(initial_block["correction_status"], "NOT_REQUIRED")
+        self.assertFalse(initial_block["teacher_resolved"])
 
         for completed, expected_status in (
             (True, "COMPLETED"),

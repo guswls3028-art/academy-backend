@@ -25,15 +25,19 @@ def assessment_correction_payload(
     max_score: Optional[float],
     source_fingerprint: Optional[str],
     correction: Optional[Any],
+    homework_passed: Optional[bool] = None,
 ) -> dict[str, Any]:
     note = correction.note if correction else ""
-    if source_type == "homework" and correction:
+    if source_type == "homework":
+        status = "NOT_REQUIRED" if score is not None and homework_passed else None
+        if correction is not None:
+            status = "COMPLETED" if correction.completed else "PENDING"
         return {
-            "correction_status": "COMPLETED" if correction.completed else "PENDING",
-            "correction_completed_at": correction.completed_at if correction.completed else None,
+            "correction_status": status,
+            "correction_completed_at": correction.completed_at if status == "COMPLETED" else None,
             "correction_note": note,
-            "correction_updated_at": correction.updated_at,
-            "teacher_resolved": bool(correction.completed),
+            "correction_updated_at": correction.updated_at if correction is not None else None,
+            "teacher_resolved": status == "COMPLETED",
         }
     if score is None or max_score is None or max_score <= 0:
         return {
