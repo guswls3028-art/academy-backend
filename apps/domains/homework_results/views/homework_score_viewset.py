@@ -56,6 +56,7 @@ from apps.support.homework.review_lock import lock_homework_review_target
 from apps.support.submissions.dependencies import homework_submission_revisions
 from apps.support.homework_results.score_dependencies import (
     calc_homework_passed_and_clinic,
+    has_completed_homework_correction,
     dispatch_progress_pipeline,
     latest_homework_submission,
     schedule_homework_score_progress,
@@ -298,6 +299,19 @@ class HomeworkScoreViewSet(ModelViewSet):
             next_score = None
             next_max = None
         teacher_approved = vd.get("teacher_approved")
+        if isinstance(obj.meta, dict) and obj.meta.get("status") == HomeworkScore.MetaStatus.VIDEO_MAKEUP:
+            if next_score is None and meta_status != HomeworkScore.MetaStatus.NOT_SUBMITTED:
+                meta = dict(obj.meta)
+                if "score" in vd or meta_status is None or teacher_approved is True:
+                    meta.pop("status")
+                serializer.save(meta=meta or None, updated_by_user_id=_safe_user_id(request))
+                if teacher_approved is not None:
+                    schedule_homework_score_progress(
+                        session_id=obj.session_id, enrollment_ids=[obj.enrollment_id],
+                    )
+                return Response(self.get_serializer(obj).data)
+            if meta_status is status_marker:
+                meta_status = None
 
         progress_info = {"dispatched": False, "reason": None}
 
@@ -401,6 +415,7 @@ class HomeworkScoreViewSet(ModelViewSet):
             score = serializer.validated_data.get("score")
             max_score = serializer.validated_data.get("max_score")
             meta_status = serializer.validated_data.get("meta_status")
+            video_makeup = meta_status == HomeworkScore.MetaStatus.VIDEO_MAKEUP
             expected_version_provided = "expected_updated_at" in serializer.validated_data
             expected_updated_at = serializer.validated_data.get("expected_updated_at")
 
@@ -440,6 +455,16 @@ class HomeworkScoreViewSet(ModelViewSet):
                 enrollment_id=enrollment_id,
                 homework_id=homework_id,
             )
+            if video_makeup:
+                if assignment is None or homework.grading_mode != Homework.GradingMode.COMPLETION:
+                    raise ValidationError(
+                        {"meta_status": "배정된 통과형 과제만 영상 보강으로 기록할 수 있습니다."}
+                    )
+                if not expected_version_provided:
+                    raise ValidationError(
+                        {"expected_updated_at": "최신 과제 상태를 다시 불러온 뒤 저장해 주세요."}
+                    )
+
             legacy_score = None
             if assignment is None:
                 # HomeworkAssignment 도입 전 생성된 점수행은 학생 상세 이력에
@@ -515,6 +540,31 @@ class HomeworkScoreViewSet(ModelViewSet):
                         if expected_version_provided:
                             return _cell_conflict_response(obj, expected_updated_at)
 
+                existing_meta = dict(obj.meta) if isinstance(obj.meta, dict) else {}
+                existing_status = existing_meta.get("status")
+                was_video_makeup = existing_status == HomeworkScore.MetaStatus.VIDEO_MAKEUP
+                if video_makeup or (was_video_makeup and score is None and meta_status is None):
+                    if video_makeup:
+                        if (
+                            obj.score is not None
+                            or existing_status not in (None, HomeworkScore.MetaStatus.VIDEO_MAKEUP)
+                            or obj.teacher_approved
+                            or has_completed_homework_correction(
+                                tenant=request.tenant, session_id=session.id,
+                                enrollment_id=enrollment_id, homework_id=homework_id,
+                            )
+                        ):
+                            raise ValidationError(
+                                {"meta_status": "검사 전 과제만 영상 보강으로 기록할 수 있습니다."}
+                            )
+                        existing_meta["status"] = HomeworkScore.MetaStatus.VIDEO_MAKEUP
+                    else:
+                        existing_meta.pop("status")
+                    obj.meta = existing_meta or None
+                    obj.updated_by_user_id = _safe_user_id(request)
+                    obj.save(update_fields=["meta", "updated_by_user_id", "updated_at"])
+                    return Response(HomeworkScoreSerializer(obj).data)
+
                 if meta_status == HomeworkScore.MetaStatus.NOT_SUBMITTED:
                     obj.meta = {"status": HomeworkScore.MetaStatus.NOT_SUBMITTED}
                     obj.score = None
@@ -548,10 +598,12 @@ class HomeworkScoreViewSet(ModelViewSet):
                             "updated_by_user_id",
                         ],
                     )
-                    if obj.meta and isinstance(obj.meta, dict) and obj.meta.get("status") == HomeworkScore.MetaStatus.NOT_SUBMITTED:
-                        obj.meta = {k: v for k, v in obj.meta.items() if k != "status"}
-                        if not obj.meta:
-                            obj.meta = None
+                    if existing_status in (
+                        HomeworkScore.MetaStatus.NOT_SUBMITTED,
+                        HomeworkScore.MetaStatus.VIDEO_MAKEUP,
+                    ):
+                        existing_meta.pop("status")
+                        obj.meta = existing_meta or None
                         obj.save(update_fields=["meta", "updated_at"])
 
                 try:

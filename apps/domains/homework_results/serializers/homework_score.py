@@ -98,6 +98,7 @@ class HomeworkQuickPatchSerializer(serializers.Serializer):
     - percent: score=85, max_score 생략 (None)
     - raw/max: score=18, max_score=20
     - 미제출: meta_status="NOT_SUBMITTED", score=null
+    - 영상 보강: meta_status="VIDEO_MAKEUP", score=null, max_score=null
     """
 
     homework_id = serializers.IntegerField()
@@ -108,7 +109,7 @@ class HomeworkQuickPatchSerializer(serializers.Serializer):
     max_score = _ScoreNumberField(required=False, allow_null=True, min_value=0)
 
     meta_status = serializers.ChoiceField(
-        choices=[HomeworkScore.MetaStatus.NOT_SUBMITTED],
+        choices=[HomeworkScore.MetaStatus.NOT_SUBMITTED, HomeworkScore.MetaStatus.VIDEO_MAKEUP],
         allow_null=True,
         required=False,
     )
@@ -120,6 +121,12 @@ class HomeworkQuickPatchSerializer(serializers.Serializer):
     def validate(self, attrs):
         score = attrs.get("score")
         max_score = attrs.get("max_score")
+        if attrs.get("meta_status") == HomeworkScore.MetaStatus.VIDEO_MAKEUP and (
+            score is not None or max_score is not None
+        ):
+            raise serializers.ValidationError(
+                {"score": "영상 보강은 점수 없이 검사 보류로 기록해 주세요."}
+            )
         if score is not None and max_score is not None and max_score > 0:
             if score > max_score:
                 raise serializers.ValidationError(
