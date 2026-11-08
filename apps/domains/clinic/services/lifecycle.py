@@ -704,6 +704,7 @@ def change_participant_status(
     request_student=None,
     staff_memo=None,
     is_late: bool = False,
+    expected_checked_in_at: datetime.datetime | None = None,
 ) -> ParticipantTransitionResult:
     allowed_statuses = {choice[0] for choice in SessionParticipant.Status.choices}
     if next_status not in allowed_statuses:
@@ -727,6 +728,13 @@ def change_participant_status(
             participant=participant,
             notification_result=_already_cancelled_notification_result(),
         )
+    if expected_checked_in_at is not None and (
+        next_status != SessionParticipant.Status.BOOKED
+        or participant.status != SessionParticipant.Status.ATTENDED
+        or participant.checked_in_at != expected_checked_in_at
+        or participant.checked_out_at is not None
+    ):
+        raise Conflict("등원 상태가 바뀌었습니다. 최신 명단을 확인해 주세요.")
     if participant.checked_out_at is not None:
         raise ValidationError({"detail": "하원 처리된 참가자의 등원 상태는 변경할 수 없습니다."})
     transitions = STUDENT_STATUS_TRANSITIONS if request_student else STAFF_STATUS_TRANSITIONS

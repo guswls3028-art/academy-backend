@@ -1344,6 +1344,11 @@
             "format": "date-time",
             "type": "string"
           },
+          "request_id": {
+            "description": "한 번 보내기 재시도 시 유지할 요청 키.",
+            "format": "uuid",
+            "type": "string"
+          },
           "send_to": {
             "$ref": "#/components/schemas/SendToEnum"
           }
@@ -1359,6 +1364,9 @@
             "type": "string"
           },
           "ok": {
+            "type": "boolean"
+          },
+          "retryable": {
             "type": "boolean"
           },
           "scheduled": {

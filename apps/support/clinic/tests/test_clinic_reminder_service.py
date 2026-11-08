@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 from unittest.mock import patch
+from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -461,6 +462,45 @@ class ClinicReminderServiceTest(TestCase):
         self.assertEqual(outbox.origin_id, f"clinic_booking:{participant.id}:{self.session.id}:20260515:2000")
         self.assertEqual(outbox.payload["target_type"], "student")
         self.assertIn("20:00", outbox.payload["text"])
+
+    @patch("apps.domains.messaging.policy.get_owner_tenant_id")
+    @patch("apps.domains.messaging.policy.is_messaging_disabled", return_value=False)
+    def test_manual_retry_only_creates_missing_recipient_and_uses_reserved_time(self, _disabled, owner):
+        owner.return_value = self.tenant.id
+        participant = self._range_booking()
+        participant.student.parent_phone = ""
+        participant.student.save(update_fields=["parent_phone"])
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant, category="clinic", name="재촉 알림",
+            body="#{시간} 클리닉을 확인해 주세요.",
+        )
+        AutoSendConfig.objects.filter(tenant=self.tenant, trigger="clinic_reminder").update(template=template)
+        args = {
+            "tenant_id": self.tenant.id,
+            "participant_id": participant.id,
+            "send_to": "both",
+            "request_id": uuid4(),
+        }
+        first = send_clinic_reminder_for_participant(**args)
+        self.assertEqual(first, {"status": "ok", "sent": 1, "skipped": 1, "retryable": True})
+        participant.student.parent_phone = "01033334444"
+        participant.student.save(update_fields=["parent_phone"])
+        second = send_clinic_reminder_for_participant(**args)
+        third = send_clinic_reminder_for_participant(**args)
+        self.assertEqual(second, third)
+        self.assertEqual(second, {"status": "ok", "sent": 2, "skipped": 0, "retryable": False})
+        outboxes = ScheduledNotification.objects.filter(
+            tenant=self.tenant, trigger="clinic_reminder",
+        ).order_by("id")
+        self.assertEqual([row.payload["target_type"] for row in outboxes], ["student", "parent"])
+        self.assertTrue(all("20:00" in row.payload["text"] for row in outboxes))
+
+        # No-arrival checkout keeps status=booked, but it must close manual reminder eligibility.
+        participant.checked_out_at = timezone.now()
+        participant.save(update_fields=["checked_out_at"])
+        result = send_clinic_reminder_for_participant(**{**args, "request_id": uuid4()})
+        self.assertEqual(result["status"], "invalid_status")
+        self.assertEqual(outboxes.count(), 2)
 
     def test_range_pending_dispatch_rechecks_cancellation_time_and_tenant(self):
         from apps.domains.messaging.scheduled import _clinic_participant_reminder_is_stale

@@ -1576,6 +1576,75 @@ class ParticipantStatusTransitionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(after.data["lecture_title"], enrollment.lecture.title)
         self.assertEqual(after.data["id"], participant.id)
 
+    def test_guarded_undo_keeps_booking_and_study_records_without_notification(self):
+        participant = self.make_participant(
+            self.tenant, self.data["clinic_session"], self.student,
+            status="attended",
+        )
+        checked_in_at = timezone.now()
+        participant.checked_in_at = checked_in_at
+        participant.is_late = True
+        participant.staff_memo = "교직원 메모"
+        participant.completed_at = checked_in_at
+        participant.completed_by = self.admin
+        participant.save()
+        self.client.force_authenticate(user=self.admin)
+        url = f"/api/v1/clinic/participants/{participant.id}/set_status/"
+        with patch("apps.domains.clinic.views.participant_views._send_clinic_notification") as send:
+            response = self.client.patch(
+                url, {"status": "booked", "expected_checked_in_at": checked_in_at.isoformat()},
+                format="json", **self._headers(self.tenant),
+            )
+        self.assertEqual(response.status_code, 200, response.data)
+        send.assert_not_called()
+        participant.refresh_from_db()
+        self.assertEqual(participant.status, "booked")
+        self.assertIsNone(participant.checked_in_at)
+        self.assertIsNone(participant.checked_out_at)
+        self.assertFalse(participant.is_late)
+        self.assertEqual(participant.session_id, self.data["clinic_session"].id)
+        self.assertEqual(participant.student_id, self.student.id)
+        self.assertEqual(participant.completed_at, checked_in_at)
+        self.assertEqual(participant.completed_by_id, self.admin.id)
+        self.assertEqual(participant.staff_memo, "교직원 메모")
+        self.assertEqual(participant.status_changed_by_id, self.admin.id)
+
+        self.client.force_authenticate(user=self.student.user)
+        result = self.client.get(
+            f"/api/v1/clinic/participants/{participant.id}/", **self._headers(self.tenant),
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.data["status"], "booked")
+        self.assertIsNone(result.data["checked_in_at"])
+
+    def test_guarded_undo_conflicts_with_newer_arrival_or_checkout(self):
+        participant = self.make_participant(
+            self.tenant, self.data["clinic_session"], self.student,
+            status="attended",
+        )
+        older = timezone.now()
+        participant.checked_in_at = older + datetime.timedelta(minutes=1)
+        participant.save(update_fields=["checked_in_at"])
+        url = f"/api/v1/clinic/participants/{participant.id}/set_status/"
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.patch(
+            url, {"status": "booked", "expected_checked_in_at": older.isoformat()},
+            format="json", **self._headers(self.tenant),
+        )
+        self.assertEqual(response.status_code, 409, response.data)
+        participant.checked_out_at = participant.checked_in_at + datetime.timedelta(minutes=1)
+        participant.save(update_fields=["checked_out_at"])
+        payload = {"status": "booked", "expected_checked_in_at": participant.checked_in_at.isoformat()}
+        response = self.client.patch(url, payload, format="json", **self._headers(self.tenant))
+        self.assertEqual(response.status_code, 409, response.data)
+
+        self.client.force_authenticate(user=self.student.user)
+        response = self.client.patch(url, payload, format="json", **self._headers(self.tenant))
+        self.assertEqual(response.status_code, 403, response.data)
+        participant.refresh_from_db()
+        self.assertEqual(participant.status, "attended")
+        self.assertIsNotNone(participant.checked_out_at)
+
     def test_staff_can_mark_booked_as_no_show(self):
         self.client.force_authenticate(user=self.admin)
         participant = self.make_participant(

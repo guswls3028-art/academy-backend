@@ -66,6 +66,7 @@ class ClinicCheckoutRequestSerializer(serializers.Serializer):
 
 class ClinicReminderRequestSerializer(ClinicRecipientActionSerializer):
     mode = serializers.ChoiceField(choices=("once", "repeat"), default="once")
+    request_id = serializers.UUIDField(required=False, help_text="한 번 보내기 재시도 시 유지할 요청 키.")
     interval_minutes = serializers.IntegerField(min_value=10, required=False)
     repeat_until = serializers.DateTimeField(required=False)
 
@@ -76,6 +77,7 @@ class ClinicReminderResponseSerializer(serializers.Serializer):
     sent = serializers.IntegerField(required=False)
     scheduled = serializers.IntegerField(required=False)
     skipped = serializers.IntegerField(required=False)
+    retryable = serializers.BooleanField(required=False)
     detail = serializers.CharField(required=False)
 
 
@@ -413,6 +415,18 @@ class ParticipantViewSet(
         staff_memo = None
         if request_student is None:
             staff_memo = request.data.get("staff_memo", request.data.get("memo"))
+        expected_checked_in_at = None
+        if "expected_checked_in_at" in request.data:
+            if request_student is not None:
+                raise PermissionDenied("등원 취소는 스태프만 가능합니다.")
+            if next_status != SessionParticipant.Status.BOOKED:
+                raise serializers.ValidationError({"detail": "등원 취소는 미등원으로만 변경할 수 있습니다."})
+            try:
+                expected_checked_in_at = serializers.DateTimeField().run_validation(
+                    request.data["expected_checked_in_at"]
+                )
+            except serializers.ValidationError as exc:
+                raise serializers.ValidationError({"expected_checked_in_at": exc.detail}) from exc
 
         result = change_participant_status(
             tenant=getattr(request, "tenant", None),
@@ -422,6 +436,7 @@ class ParticipantViewSet(
             request_student=request_student,
             staff_memo=staff_memo,
             is_late=is_late,
+            expected_checked_in_at=expected_checked_in_at,
         )
         obj = result.participant
         notification_result = result.notification_result
@@ -571,9 +586,13 @@ class ParticipantViewSet(
         승인된 단일 예약 학생에게 클리닉 재촉 알림톡을 발송한다.
         """
         participant = self.get_object()
-        if participant.status != SessionParticipant.Status.BOOKED:
+        if (
+            participant.status != SessionParticipant.Status.BOOKED
+            or participant.checked_in_at is not None
+            or participant.checked_out_at is not None
+        ):
             return Response(
-                {"detail": "참석 전인 승인 예약만 재촉할 수 있습니다."},
+                {"detail": "아직 등원하거나 하원하지 않은 승인 예약만 재촉할 수 있습니다."},
                 status=status.HTTP_409_CONFLICT,
             )
 
@@ -598,6 +617,15 @@ class ParticipantViewSet(
         }
         if send_to != "student":
             reminder_kwargs["send_to"] = send_to
+        if "request_id" in request.data:
+            if mode != "once":
+                raise serializers.ValidationError({"detail": "요청 키는 한 번 보내기에만 사용할 수 있습니다."})
+            try:
+                reminder_kwargs["request_id"] = serializers.UUIDField().run_validation(
+                    request.data["request_id"]
+                )
+            except serializers.ValidationError as exc:
+                raise serializers.ValidationError({"request_id": exc.detail}) from exc
         if mode == "repeat":
             reminder_kwargs.update(
                 repeat_interval_minutes=interval_minutes,
@@ -612,7 +640,11 @@ class ParticipantViewSet(
             return Response(
                 {
                     **result,
-                    "detail": "재촉 알림톡을 보내지 못했습니다. 알림 설정과 학생 전화번호를 확인해 주세요.",
+                    "detail": (
+                        "이전 요청의 결과를 알림 이력에서 확인해 주세요."
+                        if result.get("retryable") is False
+                        else "재촉 알림톡을 접수하지 못했습니다. 알림 설정과 수신자 전화번호를 확인해 주세요."
+                    ),
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
