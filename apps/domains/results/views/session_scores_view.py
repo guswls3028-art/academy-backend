@@ -1046,6 +1046,7 @@ class SessionScoresView(APIView):
                         max_score=block.get("max_score"),
                         source_fingerprint=None,
                         correction=correction_map.get((eid, "homework", int(hw.id))),
+                        homework_passed=block.get("passed"),
                     )
                 )
 

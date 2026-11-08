@@ -457,6 +457,15 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
     homework_ids = list(
         {score.homework_id for score in homework_scores} | assigned_homework_ids
     )
+    teacher_completed_homework_keys = set(
+        AssessmentCorrection.objects.filter(
+            tenant=tenant,
+            enrollment_id__in=enrollment_ids,
+            source_type=AssessmentCorrection.SourceType.HOMEWORK,
+            source_id__in=homework_ids,
+            completed=True,
+        ).values_list("source_id", "session_id", "enrollment_id")
+    )
     submitted_revisions = homework_submission_revisions(
         tenant=tenant,
         enrollment_ids=enrollment_ids,
@@ -523,11 +532,13 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
 
         is_pass_1st = bool(score.passed)
         resolution = resolved_homework_links.get((score.enrollment_id, score.homework_id))
+        teacher_resolved = key in teacher_completed_homework_keys or resolution == "MANUAL_OVERRIDE"
+        remediation_passed = resolution in ("EXAM_PASS", "HOMEWORK_PASS")
         max_attempt = homework_retake_counts.get((score.enrollment_id, score.homework_id), 1)
 
         if is_pass_1st:
             achievement = "PASS"
-        elif resolution in ("EXAM_PASS", "HOMEWORK_PASS", "MANUAL_OVERRIDE"):
+        elif teacher_resolved or remediation_passed:
             achievement = "REMEDIATED"
         else:
             achievement = "FAIL"
@@ -535,7 +546,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         submitted_revision = submitted_revisions.get((score.enrollment_id, score.homework_id))
         submission_state = (
             "reviewed"
-            if resolution in ("EXAM_PASS", "HOMEWORK_PASS", "MANUAL_OVERRIDE")
+            if teacher_resolved or remediation_passed
             or (score.enrollment_id, score.homework_id) in submission_media_lock_keys
             else "awaiting_review"
             if submitted_revision and submitted_revision != score.reviewed_submission_revision
@@ -556,7 +567,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "passed": is_pass_1st,
             "achievement": achievement,
             "submission_state": submission_state,
-            "teacher_resolved": resolution == "MANUAL_OVERRIDE",
+            "teacher_resolved": teacher_resolved,
             "submission_media_locked": (
                 score.enrollment_id,
                 score.homework_id,
@@ -593,7 +604,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             assignment.enrollment_id,
             assignment.homework_id,
         ))
-        teacher_resolved = resolution == "MANUAL_OVERRIDE"
+        teacher_resolved = key in teacher_completed_homework_keys or resolution == "MANUAL_OVERRIDE"
         if (
             (int(assignment.enrollment_id), int(assignment.session_id)) in absent_learning_pairs
             and (assignment.enrollment_id, assignment.homework_id) not in submitted_revisions

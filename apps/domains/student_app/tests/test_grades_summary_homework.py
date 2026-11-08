@@ -423,17 +423,33 @@ class MyGradesSummaryHomeworkTests(TestCase):
                 self.assertEqual(response.data["lecture_options"][0]["is_active"], ongoing)
 
     def test_current_learning_todos_keep_passed_homework_reviewed(self):
-        homework = Homework.objects.create(
-            tenant=self.tenant, session=self.session, title="이미 통과한 과제",
-        )
-        HomeworkScore.objects.create(
-            homework=homework, session=self.session, enrollment=self.enrollment,
-            score=100, max_score=100, passed=True,
-        )
+        for title, score, passed in (
+            ("교재 과제", 0, False),
+            ("메인자료 과제", 100, True),
+            ("복습 과제", 90, True),
+        ):
+            homework = Homework.objects.create(
+                tenant=self.tenant, session=self.session, title=title,
+            )
+            HomeworkAssignment.objects.create(
+                tenant=self.tenant, session=self.session, homework=homework,
+                enrollment=self.enrollment,
+            )
+            HomeworkScore.objects.create(
+                homework=homework, session=self.session, enrollment=self.enrollment,
+                score=score, max_score=100, passed=passed,
+            )
         response = self._call()
-        row = response.data["homeworks"][0]
-        self.assertTrue(row["passed"])
-        self.assertEqual(row["submission_state"], "reviewed")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            {row["title"]: (row["score"], row["achievement"], row["submission_state"])
+             for row in response.data["homeworks"]},
+            {
+                "교재 과제": (0, "FAIL", "needs_submission"),
+                "메인자료 과제": (100, "PASS", "reviewed"),
+                "복습 과제": (90, "PASS", "reviewed"),
+            },
+        )
 
     def test_current_learning_todos_exclude_absence_but_keep_scored_history(self):
         result = self._score_exam(title="결석 차시 시험", order=1, score=20, max_score=100)
@@ -864,7 +880,7 @@ class MyGradesSummaryHomeworkTests(TestCase):
             session=self.session,
             enrollment=self.enrollment,
         )
-        correction = self.AssessmentCorrection.objects.create(
+        self.AssessmentCorrection.objects.create(
             tenant=self.tenant,
             enrollment=self.enrollment,
             session=self.session,
@@ -887,12 +903,7 @@ class MyGradesSummaryHomeworkTests(TestCase):
             approved=True,
             cycle_no=1,
             resolved_at=timezone.now(),
-            resolution_type="MANUAL_OVERRIDE",
-            resolution_evidence={
-                "assessment_correction_id": correction.id,
-                "memo": correction.note,
-            },
-            memo=correction.note,
+            resolution_type="WAIVED",
         )
 
         student_response = self._call()
@@ -903,6 +914,7 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertFalse(student_row["passed"])
         self.assertEqual(student_row["achievement"], "REMEDIATED")
         self.assertTrue(student_row["teacher_resolved"])
+        self.assertEqual(student_row["submission_state"], "reviewed")
         self.assertTrue(student_row["submission_media_locked"])
         self.assertNotIn("correction_note", student_row)
 
