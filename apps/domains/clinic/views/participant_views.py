@@ -637,13 +637,14 @@ class ParticipantViewSet(
         if result.get("status") == "invalid_status":
             return Response(result, status=status.HTTP_409_CONFLICT)
         if not result.get("sent") and not result.get("scheduled"):
+            recipient = {"student": "학생", "parent": "학부모", "both": "수신자"}[send_to]
             return Response(
                 {
                     **result,
                     "detail": (
                         "이전 요청의 결과를 알림 이력에서 확인해 주세요."
                         if result.get("retryable") is False
-                        else "재촉 알림톡을 접수하지 못했습니다. 알림 설정과 수신자 전화번호를 확인해 주세요."
+                        else f"재촉 알림톡을 접수하지 못했습니다. 알림 설정과 {recipient} 전화번호를 확인해 주세요."
                     ),
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
