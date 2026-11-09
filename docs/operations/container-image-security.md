@@ -5,6 +5,24 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-11-09 ECR High 허용 목록 축소
+
+운영 성공 manifest `bc176407086733bffcbdb8ecae5cca37dd40e192`의 이미지 여섯 개와
+실패한 후보의 서비스 이미지 다섯 개를 ECR digest로 재스캔했다. 후보가 재사용한
+공통 base는 운영 manifest와 동일한 digest다. 20:34:57~20:35:28 KST에 전부
+`COMPLETE`를 확인했다. 각 digest의 Critical은 0건이고 High는 이전에 승인된
+`CVE-2026-19499`와 `CVE-2026-5435` 두 건이다. [실패한 후보 실행](https://github.com/guswls3028-art/academy-backend/actions/runs/42458212082)
+
+운영 스캔에서 사라진 항목의 검토 절차에 따라 만료된
+`CVE-2026-84243 / glibc / 2.41-12+deb13u4`를 허용 목록에서 삭제하고 여섯
+저장소의 High 상한을 3에서 2로 낮춘다. 이 항목이 High 또는 Critical로 다시
+검출되면 후보는 격리 개발 진입 전에 실패한다. 새 후보는 여섯 digest의
+신선한 완료 스캔과 이후 릴리스 검증을 거친다.
+
+Debian trixie는 해당 glibc 버전을 여전히 취약한 상태로 기록한다. 공격 전제와
+잔여 위험은 아래 최초 승인 기록에 있으며, glibc 교체와 취약 입력 재현은 기존
+HOLD 범위에 속한다. [Debian 보안 추적기](https://security-tracker.debian.org/tracker/CVE-2026-84243)
+
 ## 2026-11-05 APT stable 보안 수정
 
 영상 이어보기 PR736의 배포41983409246은 후보 scan에서 신규 High
