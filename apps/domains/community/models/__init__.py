@@ -11,6 +11,7 @@ from .post import (
 from .post_mapping import PostMapping
 from .post_template import PostTemplate
 from .reply import PostReply
+from .reply_attachment import PostReplyAttachment
 from .attachment import PostAttachment
 from .like import PostLike, PostReplyLike
 from .report import CommunityReport
@@ -23,6 +24,7 @@ __all__ = [
     "PostMapping",
     "PostTemplate",
     "PostReply",
+    "PostReplyAttachment",
     "PostAttachment",
     "PostLike",
     "PostReplyLike",
