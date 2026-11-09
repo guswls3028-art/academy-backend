@@ -15,8 +15,11 @@ def is_clinic_participant_reminder_active(*, participant_id: int, tenant_id: int
         id=participant_id,
         tenant_id=tenant_id,
         status=SessionParticipant.Status.BOOKED,
-        session__isnull=False,
+        session__tenant_id=tenant_id,
+        student__tenant_id=tenant_id,
         student__deleted_at__isnull=True,
+        checked_in_at__isnull=True,
+        checked_out_at__isnull=True,
     ).exists()
 
 

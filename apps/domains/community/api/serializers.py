@@ -1,3 +1,4 @@
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from apps.domains.community.models import PostEntity, PostMapping, ScopeNode, PostTemplate, PostReply, PostAttachment
 
@@ -26,15 +27,48 @@ class PostMappingSerializer(serializers.ModelSerializer):
         fields = ["id", "post", "node", "node_detail", "created_at"]
 
 
+class PostAttachmentSerializer(serializers.ModelSerializer):
+    # 첨부 이미지를 글 본문에 즉시 표시할 수 있도록 presigned URL 노출.
+    # 2026-05-30: tchul 박철과학 학원장 신고 — 학생이 이미지로 질문하면
+    # AI 매치업 분석 PENDING 동안 이미지 자체도 화면에 안 떴음. 매치업과
+    # 무관하게 이미지 먼저 보여줘야 학원장이 바로 답변할 수 있다.
+    download_url = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = PostAttachment
+        fields = [
+            "id",
+            "original_name",
+            "size_bytes",
+            "content_type",
+            "created_at",
+            "download_url",
+        ]
+        read_only_fields = fields
+
+    def get_download_url(self, obj) -> str | None:
+        if not obj.r2_key:
+            return None
+        try:
+            from apps.domains.community.services.attachment_urls import build_attachment_download_url
+
+            return build_attachment_download_url(obj, expires_in=3600, force_download=False)
+        except Exception:
+            return None
+
+
 class PostReplySerializer(serializers.ModelSerializer):
     """QnA 답변 조회/생성. question 필드는 프론트 Answer 타입 호환용(post_id)."""
     question = serializers.IntegerField(source="post_id", read_only=True)
     created_by_display = serializers.SerializerMethodField(read_only=True)
     like_count = serializers.SerializerMethodField(read_only=True)
     is_liked = serializers.SerializerMethodField(read_only=True)
+    attachments = serializers.SerializerMethodField()
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        if self.context.get("allow_blank_content"):
+            self.fields["content"].allow_blank = True
         # 2026-05-11 보안 리뷰 M2: parent_reply queryset을 tenant + post로 scope.
         # DRF 기본은 PrimaryKeyRelatedField가 global queryset 사용 → cross-tenant ID 존재 여부 timing 누출.
         # context에서 tenant + post 받으면 그에 맞춰 제한. view에서 직접 추가 검증도 유지(defense in depth).
@@ -72,9 +106,17 @@ class PostReplySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"parent_reply": "답글에는 다시 답글을 등록할 수 없습니다."})
         return attrs
 
+    @extend_schema_field(PostAttachmentSerializer(many=True))
+    def get_attachments(self, obj):
+        from apps.domains.community.services.attachment_urls import reply_image_namespace
+
+        prefix = reply_image_namespace(obj.tenant_id, obj.post_id)
+        images = [image for image in obj.attachments.all() if image.r2_key.startswith(prefix)]
+        return PostAttachmentSerializer(images, many=True).data
+
     class Meta:
         model = PostReply
-        fields = ["id", "post", "question", "content", "created_by", "created_by_display", "author_role", "created_at", "like_count", "is_liked", "parent_reply"]
+        fields = ["id", "post", "question", "content", "created_by", "created_by_display", "author_role", "created_at", "like_count", "is_liked", "parent_reply", "attachments"]
         read_only_fields = ["post", "created_by", "author_role", "created_at"]
 
     def get_like_count(self, obj):
@@ -140,36 +182,6 @@ class PostReplySerializer(serializers.ModelSerializer):
             author_role=author_role,
             parent_reply=parent_reply,
         )
-
-
-class PostAttachmentSerializer(serializers.ModelSerializer):
-    # 첨부 이미지를 글 본문에 즉시 표시할 수 있도록 presigned URL 노출.
-    # 2026-05-30: tchul 박철과학 학원장 신고 — 학생이 이미지로 질문하면
-    # AI 매치업 분석 PENDING 동안 이미지 자체도 화면에 안 떴음. 매치업과
-    # 무관하게 이미지 먼저 보여줘야 학원장이 바로 답변할 수 있다.
-    download_url = serializers.SerializerMethodField(read_only=True)
-
-    class Meta:
-        model = PostAttachment
-        fields = [
-            "id",
-            "original_name",
-            "size_bytes",
-            "content_type",
-            "created_at",
-            "download_url",
-        ]
-        read_only_fields = fields
-
-    def get_download_url(self, obj) -> str | None:
-        if not obj.r2_key:
-            return None
-        try:
-            from apps.domains.community.services.attachment_urls import build_attachment_download_url
-
-            return build_attachment_download_url(obj, expires_in=3600, force_download=False)
-        except Exception:
-            return None
 
 
 class PostEntitySerializer(serializers.ModelSerializer):

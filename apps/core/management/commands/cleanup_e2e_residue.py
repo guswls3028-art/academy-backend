@@ -763,7 +763,7 @@ class Command(BaseCommand):
 
     @staticmethod
     def _delete_external_storage(*, tenant_id: int, posts, matchups, submissions) -> int:
-        from apps.domains.community.models import PostAttachment
+        from apps.domains.community.models import PostAttachment, PostReplyAttachment
         from apps.domains.matchup.models import ProblemSegmentationProposal
         from apps.domains.submissions.models import Submission
         from apps.infrastructure.storage.r2 import (
@@ -799,6 +799,10 @@ class Command(BaseCommand):
         keys: list[str] = list(
             PostAttachment.objects.filter(post__in=posts)
             .exclude(r2_key="")
+            .values_list("r2_key", flat=True)
+        )
+        keys.extend(
+            PostReplyAttachment.objects.filter(reply__post__in=posts, reply__tenant_id=tenant_id)
             .values_list("r2_key", flat=True)
         )
         for document in matchups:

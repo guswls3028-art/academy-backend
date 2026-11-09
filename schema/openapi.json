@@ -1344,6 +1344,11 @@
             "format": "date-time",
             "type": "string"
           },
+          "request_id": {
+            "description": "한 번 보내기 재시도 시 유지할 요청 키.",
+            "format": "uuid",
+            "type": "string"
+          },
           "send_to": {
             "$ref": "#/components/schemas/SendToEnum"
           }
@@ -1359,6 +1364,9 @@
             "type": "string"
           },
           "ok": {
+            "type": "boolean"
+          },
+          "retryable": {
             "type": "boolean"
           },
           "scheduled": {
@@ -8190,6 +8198,37 @@
         ],
         "type": "object"
       },
+      "PaginatedPostReplyList": {
+        "properties": {
+          "count": {
+            "example": 123,
+            "type": "integer"
+          },
+          "next": {
+            "example": "http://api.example.org/accounts/?page=4",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "previous": {
+            "example": "http://api.example.org/accounts/?page=2",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/PostReply"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "results"
+        ],
+        "type": "object"
+      },
       "PaginatedPostTemplateList": {
         "properties": {
           "count": {
@@ -12024,6 +12063,97 @@
         ],
         "type": "object"
       },
+      "PostReply": {
+        "description": "QnA 답변 조회/생성. question 필드는 프론트 Answer 타입 호환용(post_id).",
+        "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/PostAttachment"
+            },
+            "readOnly": true,
+            "type": "array"
+          },
+          "author_role": {
+            "description": "작성자 역할 (staff/student)",
+            "readOnly": true,
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "created_by": {
+            "nullable": true,
+            "readOnly": true,
+            "type": "integer"
+          },
+          "created_by_display": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "is_liked": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "like_count": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "parent_reply": {
+            "description": "답글 — null이면 최상위 댓글, 값 있으면 해당 댓글의 답글 (2026-05-11 도입).",
+            "nullable": true,
+            "type": "integer"
+          },
+          "post": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "question": {
+            "readOnly": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "attachments",
+          "author_role",
+          "content",
+          "created_at",
+          "created_by",
+          "created_by_display",
+          "id",
+          "is_liked",
+          "like_count",
+          "post",
+          "question"
+        ],
+        "type": "object"
+      },
+      "PostReplyRequest": {
+        "description": "QnA 답변 조회/생성. question 필드는 프론트 Answer 타입 호환용(post_id).",
+        "properties": {
+          "content": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "parent_reply": {
+            "description": "답글 — null이면 최상위 댓글, 값 있으면 해당 댓글의 답글 (2026-05-11 도입).",
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "type": "object"
+      },
       "PostTemplate": {
         "properties": {
           "content": {
@@ -13501,6 +13631,32 @@
         },
         "required": [
           "view_count"
+        ],
+        "type": "object"
+      },
+      "QnaPhotoReplyRequest": {
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "format": "binary",
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "type": "array"
+          },
+          "idempotency_key": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{16,80}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "files",
+          "idempotency_key"
         ],
         "type": "object"
       },
@@ -26618,13 +26774,31 @@
     "/api/v1/community/posts/{id}/replies/": {
       "get": {
         "description": "GET/POST /posts/:id/replies/ — 답변 목록 조회, 답변 등록(선생/관리자).",
-        "operationId": "community_posts_replies_retrieve",
+        "operationId": "community_posts_replies_list",
         "parameters": [
           {
             "description": "Post을 식별하는 고유한 정수 값.",
             "in": "path",
             "name": "id",
             "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
             "schema": {
               "type": "integer"
             }
@@ -26635,7 +26809,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PostEntity"
+                  "$ref": "#/components/schemas/PaginatedPostReplyList"
                 }
               }
             },
@@ -26672,17 +26846,67 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PostEntityRequest"
+                "$ref": "#/components/schemas/PostReplyRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/PostEntityRequest"
+                "$ref": "#/components/schemas/PostReplyRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/PostEntityRequest"
+                "$ref": "#/components/schemas/PostReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostReply"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "community"
+        ]
+      }
+    },
+    "/api/v1/community/posts/{id}/replies/with-images/": {
+      "post": {
+        "description": "Post CRUD. tenant from request. list: ?node_id= or admin list.",
+        "operationId": "community_posts_replies_with_images_create",
+        "parameters": [
+          {
+            "description": "Post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/QnaPhotoReplyRequest"
               }
             }
           },
@@ -26693,7 +26917,17 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PostEntity"
+                  "$ref": "#/components/schemas/PostReply"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostReply"
                 }
               }
             },

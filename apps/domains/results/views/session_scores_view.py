@@ -1366,6 +1366,16 @@ class SessionScoreCorrectionView(APIView):
                 and existing_correction.completed_at
                 else timezone.now()
             )
+        if (
+            completed and source_type == AssessmentCorrection.SourceType.HOMEWORK
+            and homework_score is not None
+            and isinstance(homework_score.meta, dict)
+            and homework_score.meta.get("status") == HomeworkScore.MetaStatus.VIDEO_MAKEUP
+        ):
+            homework_score.meta = {key: value for key, value in homework_score.meta.items() if key != "status"} or None
+            homework_score.save(update_fields=["meta", "updated_at"])
+            source_updated_at = homework_score.updated_at
+
         correction_defaults = {
             "completed": completed,
             "completed_at": completed_at,

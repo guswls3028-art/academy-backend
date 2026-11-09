@@ -515,14 +515,16 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
     homework_list = []
     seen_homework_key = set()
     unscored_reviewed_revisions = {}
+    video_makeup_keys = set()
     for score in homework_scores:
         safe_score = _safe_homework_number(score.score)
         if safe_score is None:
             meta = score.meta if isinstance(score.meta, dict) else {}
+            key = (score.homework_id, score.session_id, score.enrollment_id)
             if meta.get("status") == HomeworkScore.MetaStatus.NOT_SUBMITTED:
-                unscored_reviewed_revisions[
-                    (score.homework_id, score.session_id, score.enrollment_id)
-                ] = score.reviewed_submission_revision
+                unscored_reviewed_revisions[key] = score.reviewed_submission_revision
+            elif meta.get("status") == HomeworkScore.MetaStatus.VIDEO_MAKEUP:
+                video_makeup_keys.add(key)
             continue
         key = (score.homework_id, score.session_id, score.enrollment_id)
         if key in seen_homework_key:
@@ -605,12 +607,14 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             assignment.homework_id,
         ))
         teacher_resolved = key in teacher_completed_homework_keys or resolution == "MANUAL_OVERRIDE"
+        video_makeup = key in video_makeup_keys and not teacher_resolved
         if (
             (int(assignment.enrollment_id), int(assignment.session_id)) in absent_learning_pairs
             and (assignment.enrollment_id, assignment.homework_id) not in submitted_revisions
             and (assignment.enrollment_id, assignment.homework_id) not in submission_media_lock_keys
             and (assignment.enrollment_id, assignment.homework_id) not in homework_retake_counts
             and key not in unscored_reviewed_revisions
+            and not video_makeup
             and not teacher_resolved
         ):
             continue
@@ -622,12 +626,13 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "title": homework.title if homework else f"과제 #{assignment.homework_id}",
             "score": None,
             "max_score": effective_max,
-            "passed": None if awaiting_review else False,
+            "passed": None if awaiting_review or video_makeup else False,
             "achievement": (
                 "REMEDIATED"
                 if teacher_resolved
-                else None if awaiting_review else "NOT_SUBMITTED"
+                else None if awaiting_review or video_makeup else "NOT_SUBMITTED"
             ),
+            "inspection_status": HomeworkScore.MetaStatus.VIDEO_MAKEUP if video_makeup else None,
             "submission_state": (
                 "reviewed" if teacher_resolved else
                 "awaiting_review" if awaiting_review else "needs_submission"

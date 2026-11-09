@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Iterable
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+from django.db import transaction
 
 
 def empty_lecture_queryset():
@@ -346,6 +348,7 @@ def _clinic_recipient_targets(send_to: str) -> tuple[str, ...]:
     raise ValueError(f"unsupported clinic recipient target: {send_to!r}")
 
 
+@transaction.atomic
 def send_clinic_reminder_for_participant(
     *,
     tenant_id: int,
@@ -354,6 +357,7 @@ def send_clinic_reminder_for_participant(
     send_to: str = "student",
     repeat_interval_minutes: int | None = None,
     repeat_until=None,
+    request_id: UUID | None = None,
     now=None,
 ):
     """Send one reminder now and optionally persist bounded same-day repeats."""
@@ -361,29 +365,40 @@ def send_clinic_reminder_for_participant(
 
     from apps.domains.clinic.services.lifecycle import build_clinic_reminder_send_times
     from apps.domains.clinic.models import SessionParticipant
+    from apps.domains.clinic.time_ranges import booking_window
+    from apps.domains.messaging.models import ScheduledNotification
     from apps.domains.messaging.services.notification_service import send_event_notification
 
-    participant = (
+    participants = (
         SessionParticipant.objects
         .select_related("student", "session", "tenant")
         .filter(
             id=int(participant_id),
             tenant_id=int(tenant_id),
+            session__tenant_id=int(tenant_id),
+            student__tenant_id=int(tenant_id),
             student__deleted_at__isnull=True,
         )
-        .first()
     )
-    if not participant or not participant.session:
+    if request_id:
+        # Serialize acceptance of this booking's exact occurrence, including simultaneous retries.
+        participants = participants.select_for_update(of=("self",))
+    participant = participants.first()
+    if not participant:
         return {"status": "not_found", "sent": 0, "skipped": 1}
-    if participant.status != SessionParticipant.Status.BOOKED:
+    if (
+        participant.status != SessionParticipant.Status.BOOKED
+        or participant.checked_in_at is not None
+        or participant.checked_out_at is not None
+    ):
         return {"status": "invalid_status", "sent": 0, "skipped": 1}
 
     current = timezone.localtime(now or timezone.now())
     targets = _clinic_recipient_targets(send_to)
-    plan_key = f"{current.strftime('%Y%m%d%H%M%S%f')}:{uuid4().hex}"
+    plan_key = request_id.hex if request_id else f"{current.strftime('%Y%m%d%H%M%S%f')}:{uuid4().hex}"
     repeat_times = []
     if repeat_interval_minutes is not None or repeat_until is not None:
-        if repeat_interval_minutes is None or repeat_until is None:
+        if request_id or repeat_interval_minutes is None or repeat_until is None:
             return {"status": "invalid_schedule", "sent": 0, "scheduled": 0, "skipped": len(targets)}
         repeat_times = build_clinic_reminder_send_times(
             now=current,
@@ -391,18 +406,41 @@ def send_clinic_reminder_for_participant(
             repeat_until=repeat_until,
         )
 
+    booking_start = None
+    if participant.booking_start_time and participant.booking_end_time:
+        booking_start, _ = booking_window(
+            session=participant.session,
+            start_time=participant.booking_start_time,
+            end_time=participant.booking_end_time,
+        )
+
+    def reminder_context(*, origin: str, use_case: str) -> dict:
+        context = _clinic_reminder_context(
+            session=participant.session, domain_object_id=origin,
+            source_use_case=use_case, actor_id=actor_id,
+        )
+        if booking_start is not None:
+            context["날짜"] = booking_start.date().isoformat()
+            context["시간"] = booking_start.strftime("%H:%M")
+        return context
+
     sent = 0
     skipped = 0
+    retryable = False
     for target in targets:
-        immediate_context = _clinic_reminder_context(
-            session=participant.session,
-            domain_object_id=(
-                f"clinic_participant:{participant.id}:manual_reminder:"
-                f"{plan_key}:now:{target}"
-            ),
-            source_use_case="clinic.manual_reminder",
-            actor_id=actor_id,
-        )
+        origin = f"clinic_participant:{participant.id}:manual_reminder:{plan_key}:now:{target}"
+        if request_id:
+            prior = ScheduledNotification.objects.filter(
+                tenant_id=tenant_id, trigger="clinic_reminder", origin_id=origin,
+            ).values_list("status", flat=True).first()
+            if prior is not None:
+                if prior in (ScheduledNotification.Status.PENDING, ScheduledNotification.Status.SENT):
+                    sent += 1
+                else:
+                    # A durable terminal attempt is handled in notification history.
+                    skipped += 1
+                continue
+        immediate_context = reminder_context(origin=origin, use_case="clinic.manual_reminder")
         if send_event_notification(
             tenant=participant.tenant,
             trigger="clinic_reminder",
@@ -413,18 +451,17 @@ def send_clinic_reminder_for_participant(
             sent += 1
         else:
             skipped += 1
+            retryable = True
 
     scheduled = 0
     for send_at in repeat_times:
         for target in targets:
-            scheduled_context = _clinic_reminder_context(
-                session=participant.session,
-                domain_object_id=(
+            scheduled_context = reminder_context(
+                origin=(
                     f"clinic_participant:{participant.id}:manual_reminder:"
                     f"{plan_key}:{send_at.strftime('%Y%m%d%H%M')}:{target}"
                 ),
-                source_use_case="clinic.manual_reminder_repeat",
-                actor_id=actor_id,
+                use_case="clinic.manual_reminder_repeat",
             )
             if send_event_notification(
                 tenant=participant.tenant,
@@ -442,6 +479,8 @@ def send_clinic_reminder_for_participant(
         "sent": sent,
         "skipped": skipped,
     }
+    if request_id:
+        result["retryable"] = retryable
     if repeat_times:
         result["scheduled"] = scheduled
     return result

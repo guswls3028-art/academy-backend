@@ -4,17 +4,20 @@ import uuid
 
 from django.db import transaction
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema, inline_serializer
 from apps.domains.community.services.html_sanitizer import sanitize_html
 from apps.domains.community.services.deletion import (
     CommunityDeleteScopeError,
     delete_post_content,
+    delete_reply_content,
     deletion_result,
 )
 from django.db.models import Exists, OuterRef, Q
-from rest_framework import viewsets, status
+from rest_framework import serializers, viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.parsers import MultiPartParser
 
 from apps.api.common.query_params import parse_query_int
 
@@ -54,6 +57,8 @@ from ._common import (
     normalize_idempotency_key,
     sanitize_filename,
 )
+
+from ._reply_images import create_reply_with_images, plan_reply_images, reply_image_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -679,8 +684,25 @@ class PostViewSet(viewsets.ModelViewSet):
             return Response(status=status.HTTP_404_NOT_FOUND)
         return Response(self.get_serializer(post).data)
 
+    @extend_schema(
+        request=inline_serializer(
+            name="QnaPhotoReply",
+            fields={
+                "content": serializers.CharField(required=False, allow_blank=True),
+                "idempotency_key": serializers.RegexField(regex=r"^[A-Za-z0-9_-]{16,80}$"),
+                "files": serializers.ListField(child=serializers.FileField(), min_length=1, max_length=10),
+            },
+        ),
+        responses={200: PostReplySerializer, 201: PostReplySerializer},
+    )
+    @action(detail=True, methods=["post"], url_path="replies/with-images", parser_classes=[MultiPartParser])
+    def photo_reply(self, request, pk=None):
+        return self.replies(request, pk, with_images=True)
+
+    @extend_schema(methods=["GET"], responses=PostReplySerializer(many=True))
+    @extend_schema(methods=["POST"], request=PostReplySerializer, responses={201: PostReplySerializer})
     @action(detail=True, methods=["get", "post"], url_path="replies")
-    def replies(self, request, pk=None):
+    def replies(self, request, pk=None, *, with_images=False):
         """GET/POST /posts/:id/replies/ — 답변 목록 조회, 답변 등록(선생/관리자)."""
         tenant = getattr(request, "tenant", None)
         if not tenant:
@@ -696,6 +718,7 @@ class PostViewSet(viewsets.ModelViewSet):
             qs = (
                 PostReply.objects.filter(post=post, tenant=tenant)
                 .select_related("created_by")
+                .prefetch_related("attachments")
                 .annotate(
                     like_count_anno=Count("likes", distinct=True),
                     is_liked_anno=Exists(
@@ -737,10 +760,27 @@ class PostViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
+        if with_images:
+            if post_type != "qna" or not self._is_staff_request(request):
+                return Response(
+                    {"detail": "QnA 답변에만 교직원이 사진을 첨부할 수 있습니다."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if request.data.get("parent_reply"):
+                raise ValidationError({"detail": "QnA 질문에 직접 답변해 주세요."})
+            try:
+                request_key = normalize_idempotency_key(request.data.get("idempotency_key"))
+            except ValueError:
+                request_key = None
+            if not request_key:
+                raise ValidationError({"detail": "답변 등록 요청 키가 올바르지 않습니다."})
+            prefix = reply_image_prefix(post, request.user.pk, request_key)
+            uploads = plan_reply_images(files=request.FILES.getlist("files"), prefix=prefix)
+
         serializer = PostReplySerializer(
-            data=request.data,
+            data={"content": request.data.get("content", "")} if with_images else request.data,
             partial=False,
-            context={"request": request, "view": self, "post": post},
+            context={"request": request, "view": self, "post": post, "allow_blank_content": with_images},
         )
         serializer.is_valid(raise_exception=True)
 
@@ -773,11 +813,22 @@ class PostViewSet(viewsets.ModelViewSet):
         # frontend는 plain text textarea를 보내고 HTML 렌더이므로 빈 문자열도 sanitize 통과 — defense in depth.
         serializer.validated_data["content"] = sanitize_html(serializer.validated_data.get("content") or "")
 
-        reply = serializer.save(
-            post=post, tenant=tenant, created_by=created_by,
-            author_display_name=author_display_name, author_role=author_role,
-            parent_reply=parent_reply,
-        )
+        def save_reply():
+            return serializer.save(
+                post=post, tenant=tenant, created_by=created_by,
+                author_display_name=author_display_name, author_role=author_role,
+                parent_reply=parent_reply,
+            )
+
+        if with_images:
+            reply, created = create_reply_with_images(
+                post=post, content=serializer.validated_data["content"],
+                prefix=prefix, uploads=uploads, save_reply=save_reply,
+            )
+            if not created:
+                return Response(PostReplySerializer(reply).data)
+        else:
+            reply = save_reply()
 
         # 알림톡: staff가 학생/학부모 글(QnA/상담)에 답변 등록 시 발송.
         # 발송 대상은 글 작성자(author_role)에 따라 분기:
@@ -1123,37 +1174,45 @@ class PostViewSet(viewsets.ModelViewSet):
         if not post or not self._post_visible_to_request(request, post):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         try:
-            reply = PostReply.objects.get(post=post, id=int(reply_id), tenant=tenant)
-        except (PostReply.DoesNotExist, ValueError, TypeError):
+            reply_id = int(reply_id)
+        except (TypeError, ValueError):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
         from apps.domains.community.models import support_kind_for_post
-        if support_kind_for_post(post):
-            return Response(
-                {"detail": "지원 문의의 대화 기록은 제출 후 수정하거나 삭제할 수 없습니다."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
 
-        # 학생은 본인 답변만 수정/삭제 가능
         request_student = get_request_student(request)
-        if request_student is not None and reply.created_by_id != request_student.id:
-            return Response({"detail": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            with transaction.atomic():
+                locked_post = get_object_or_404(PostEntity.objects.select_for_update(), pk=post.pk, tenant=tenant)
+                reply = get_object_or_404(PostReply, pk=reply_id, post=locked_post, tenant=tenant)
+                if support_kind_for_post(locked_post):
+                    return Response(
+                        {"detail": "지원 문의의 대화 기록은 제출 후 수정하거나 삭제할 수 없습니다."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+                if request_student is not None and reply.created_by_id != request_student.id:
+                    return Response({"detail": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
 
-        if request.method == "DELETE":
-            reply.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        # PATCH
-        serializer = PostReplySerializer(
-            reply,
-            data=request.data,
-            partial=True,
-            context={"request": request, "view": self, "post": post},
-        )
-        serializer.is_valid(raise_exception=True)
-        # 🔐 XSS 방지: 댓글 수정 시에도 content sanitize (2026-05-11 보안 리뷰 H2: 무조건 적용)
-        if "content" in serializer.validated_data:
-            serializer.validated_data["content"] = sanitize_html(serializer.validated_data.get("content") or "")
-        serializer.save()
-        return Response(serializer.data)
+                if request.method == "DELETE":
+                    deleted, intent_ids = delete_reply_content(post=locked_post, reply=reply)
+                else:
+                    serializer = PostReplySerializer(
+                        reply,
+                        data=request.data,
+                        partial=True,
+                        context={
+                            "request": request, "view": self, "post": locked_post,
+                            "allow_blank_content": locked_post.post_type == "qna" and reply.attachments.exists(),
+                        },
+                    )
+                    serializer.is_valid(raise_exception=True)
+                    if "content" in serializer.validated_data:
+                        serializer.validated_data["content"] = sanitize_html(serializer.validated_data["content"])
+                    serializer.save()
+                    return Response(serializer.data)
+        except CommunityDeleteScopeError:
+            return self._delete_scope_mismatch_response()
+        return self._content_deleted_response(tenant.id, deleted, intent_ids)
 
     @action(detail=True, methods=["post", "delete"], url_path="like")
     def like(self, request, pk=None):

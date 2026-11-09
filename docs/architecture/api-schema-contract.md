@@ -37,7 +37,7 @@ not inherit test, development, worker, or production settings. Check mode fails 
 
 The current reviewed baseline covers 653 paths and 574 schema components.
 Legacy APIView and serializer inference gaps are recorded as 1,343 generator
-errors (269 unique) and 301 warnings (134 unique). They are an explicit
+errors (269 unique) and 299 warnings (134 unique). They are an explicit
 no-regression ceiling, not a claim of complete endpoint typing. When an
 endpoint is touched, add its serializer/schema metadata and lower the baseline
 after regenerating; never raise the baseline merely to make CI pass.

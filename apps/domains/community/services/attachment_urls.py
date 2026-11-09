@@ -3,6 +3,10 @@ from __future__ import annotations
 from apps.infrastructure.storage import r2
 
 
+def reply_image_namespace(tenant_id: int, post_id: int) -> str:
+    return f"tenants/{tenant_id}/community/posts/{post_id}/reply-uploads/"
+
+
 def build_attachment_download_url(
     attachment,
     *,
