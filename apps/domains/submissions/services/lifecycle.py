@@ -85,6 +85,7 @@ STORAGE_OBJECT_REFERENCE_FIELDS = frozenset({
     ("ai", "submissions", "HomeworkMediaPreview", "source_key"),
     ("ai", "submissions", "HomeworkMediaPreview", "object_key"),
     ("storage", "community", "PostAttachment", "r2_key"),
+    ("storage", "community", "PostReplyAttachment", "r2_key"),
     ("storage", "exams", "ExamAsset", "file_key"),
     ("storage", "exams", "ExamQuestion", "image_key"),
     ("storage", "exams", "ExamQuestionProposal", "explanation_image_key"),
