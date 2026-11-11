@@ -344,6 +344,17 @@
             "nullable": true,
             "type": "number"
           },
+          "grading_pending_reason": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GradingPendingReasonEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
           "grading_status": {
             "nullable": true,
             "oneOf": [
@@ -4174,6 +4185,15 @@
           "skipped"
         ],
         "type": "object"
+      },
+      "GradingPendingReasonEnum": {
+        "description": "* `subjective_pending` - subjective_pending\n* `objective_pending` - objective_pending\n* `manual_review_required` - manual_review_required",
+        "enum": [
+          "subjective_pending",
+          "objective_pending",
+          "manual_review_required"
+        ],
+        "type": "string"
       },
       "GradingStatusEnum": {
         "description": "* `subjective_pending` - subjective_pending",
