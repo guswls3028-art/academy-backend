@@ -21,7 +21,7 @@ from apps.domains.results.services.assessment_correction_status import (
     exam_correction_fingerprint,
 )
 from apps.domains.results.services.omr_subjective_completion import (
-    pending_omr_result_ids,
+    pending_omr_result_reasons,
 )
 
 from apps.support.results.admin_exam_dependencies import (
@@ -177,7 +177,8 @@ class AdminExamResultsView(ListAPIView):
         )
         queryset = self.get_queryset()
         results = list(queryset)
-        pending_result_ids = pending_omr_result_ids(results)
+        pending_result_reasons = pending_omr_result_reasons(results)
+        pending_result_ids = set(pending_result_reasons)
         pending_enrollment_ids = {
             int(result.enrollment_id)
             for result in results
@@ -550,6 +551,9 @@ class AdminExamResultsView(ListAPIView):
                 ),
                 "grading_status": (
                     "subjective_pending" if subjective_pending else None
+                ),
+                "grading_pending_reason": (
+                    pending_result_reasons.get(int(r.id)) if subjective_pending else None
                 ),
                 "meta_status": achievement_data["meta_status"],
 

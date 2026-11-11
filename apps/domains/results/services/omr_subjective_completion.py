@@ -13,6 +13,9 @@ from apps.domains.results.models import (
     Result,
     ResultItem,
 )
+from apps.domains.results.services.attempt_placeholders import (
+    is_awaiting_omr_objective,
+)
 from apps.domains.results.services.manual_subjective_score import (
     is_consumed_manual_total_placeholder,
     latest_subjective_grading_facts,
@@ -39,6 +42,8 @@ class OmrSubjectiveCompletionState:
     completed_question_ids: frozenset[int]
     aggregate_score_recorded: bool
     is_online: bool = False
+    # Grid essay scores saved before the scan matched; held until it attaches.
+    objective_pending: bool = False
 
     @property
     def subjective_complete(self) -> bool:
@@ -51,7 +56,8 @@ class OmrSubjectiveCompletionState:
     @property
     def projection_ready(self) -> bool:
         return bool(
-            (self.is_omr or self.is_online)
+            not self.objective_pending
+            and (self.is_omr or self.is_online)
             and self.scope_valid
             and not self.manual_review_required
             and self.subjective_complete
@@ -62,10 +68,23 @@ class OmrSubjectiveCompletionState:
         # A corrupt ONLINE reference to another tenant/student must not change
         # the status of this canonical result. The existing paper safety policy
         # remains fail-closed, and finalization still rejects invalid scopes.
+        if self.objective_pending:
+            return True
         return bool(
             (self.is_omr or (self.is_online and self.scope_valid))
             and not self.projection_ready
         )
+
+    @property
+    def pending_reason(self) -> str | None:
+        """Admin-facing reason; ``grading_status`` stays ``subjective_pending``."""
+        if not self.pending:
+            return None
+        if self.objective_pending:
+            return "objective_pending"
+        if self.manual_review_required:
+            return "manual_review_required"
+        return "subjective_pending"
 
 
 @dataclass(frozen=True)
@@ -242,8 +261,23 @@ def omr_subjective_completion_states(
                 completed_by_result.get(int(result.id), set())
             ),
             aggregate_score_recorded=aggregate_recorded,
+            objective_pending=bool(
+                result.target_type == "exam"
+                and is_awaiting_omr_objective(attempt)
+                and int(attempt.exam_id) == int(result.target_id)
+                and int(attempt.enrollment_id) == int(result.enrollment_id or 0)
+            ),
         )
     return states
+
+
+def pending_omr_result_reasons(results: Iterable[Result]) -> dict[int, str]:
+    """Pending result ids with the admin-facing reason they are held."""
+    return {
+        result_id: str(state.pending_reason)
+        for result_id, state in omr_subjective_completion_states(results).items()
+        if state.pending
+    }
 
 
 def pending_omr_result_ids(results: Iterable[Result]) -> set[int]:
@@ -310,6 +344,13 @@ def finalize_omr_result_if_ready(
     if result.attempt_id:
         ExamAttempt.objects.select_for_update().get(id=int(result.attempt_id))
     state = omr_subjective_completion_states([result])[int(result.id)]
+    if state.objective_pending:
+        # No scan is attached yet, so there is no legacy snapshot to finalize.
+        return OmrFinalizationDecision(
+            projection_ready=False,
+            transitioned=False,
+            pending_reason="objective_pending",
+        )
     if not state.is_omr and not state.is_online:
         return OmrFinalizationDecision(projection_ready=True, transitioned=False)
     if not state.scope_valid:

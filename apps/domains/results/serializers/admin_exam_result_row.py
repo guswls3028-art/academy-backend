@@ -33,6 +33,14 @@ class AdminExamResultRowSerializer(serializers.Serializer):
         required=False,
         default=None,
     )
+    # Admin display only: why a pending result is held. "objective_pending"
+    # means essay scores are saved and the student's OMR scan is not matched yet.
+    grading_pending_reason = serializers.ChoiceField(
+        choices=["subjective_pending", "objective_pending", "manual_review_required"],
+        allow_null=True,
+        required=False,
+        default=None,
+    )
 
     submitted_at = serializers.DateTimeField(allow_null=True)
 

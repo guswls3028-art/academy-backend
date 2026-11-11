@@ -690,8 +690,23 @@ Ymath의 `Program.feature_flags.assessment_status_display=wrong_completion`은
   보정한 뒤 기존 재채점 경로로 정오·점수·통계를 다시 계산한다.
 - `written` 시험은 모든 문항을 수정할 수 있다.
 - `mixed` 시험은 `question_kind=essay` 문항만 수정할 수 있다. 선택형
-  `ResultItem`은 OMR 값으로 잠기며, 선택형 OMR 결과가 완전하지 않으면
-  답변형 성적 확정을 거부한다.
+  `ResultItem`은 OMR 값으로 잠긴다. 서술형 채점은 답안지 매칭 순서를 기다리지
+  않는다. 선택형 OMR 결과가 없는 행은 채점 표 조회의 `objective_status`와
+  미리보기 행이 아래 중 하나로 처리한다.
+
+  | `objective_status` | 조건 | 저장 동작 |
+  |---|---|---|
+  | `omr_pending` | 연결된 답안지가 없고 1차 대표 attempt가 비었거나 `submission_id=0` placeholder다. 선택형 문항·점수가 없다. | 서술형 문항만 `manual_grid`로 저장하고 attempt `meta.awaiting_omr_objective`를 남긴다. 이 결과는 `subjective_pending`(관리자 사유 `grading_pending_reason=objective_pending`)으로 보류되어 학생·학부모 공개, 석차·평균, 합불·진도, 클리닉, 성적 알림에 쓰이지 않는다. 초기 1차 snapshot도 만들지 않는다. |
+  | `omr_restore` | 대표 attempt가 완료된 OMR 답안지(`DONE`, 검토 불필요)에 연결돼 있지만 결시 처리로 문항 결과가 지워졌다. | 교사가 `응시`로 저장하면 명시적 재개로 보고 attempt의 `NOT_SUBMITTED`를 지우고 `absence_resumptions`에 기록한 뒤 같은 transaction에서 답안지를 다시 채점한다. 잠금은 Submission → Enrollment → Result → Attempt 순서다. |
+  | `omr_review_required` / `omr_processing` | 연결된 답안지가 검토 대기이거나 처리 중이다. | 행을 저장하지 않고 OMR 검토 또는 처리 완료 뒤 다시 저장하라는 오류를 반환한다. |
+
+  재응시 attempt, 일부 선택형 수기 답안, 0이 아닌 선택형 점수가 있는 행은 기존과
+  같이 `선택형 OMR 채점을 먼저 완료해 주세요` 오류를 유지한다. `omr_pending`
+  placeholder는 이후 OMR 동기화가 `attach_manual_score_placeholder_for_submission`
+  으로 같은 1차 attempt에 연결하며 marker를 `manual_score_placeholder` 감사 기록으로
+  옮긴다. 결과는 선택형 OMR 점수와 저장된 서술형 점수를 합산하고 모든 서술형이
+  채점됐으면 같은 transaction에서 `FINAL`로 확정한다. 합산 총점·선택형 점수 직접
+  입력, 객관식 수기 답안, 엑셀 성적 반영, 결시 확정은 marker를 지운다.
 - 학생을 `absent`로 확정하면 `NOT_SUBMITTED` attempt로 저장하고 점수,
   평균, 석차, 합불, 문항 통계와 시험 요약의 응시자 수에서 0점 응시자로 계산하지 않는다.
 - 이 전환은 같은 transaction에서 대표 결과의 `total_score`와 `objective_score`를
@@ -1066,8 +1081,8 @@ API는 호환 별칭으로 유지한다.
 | POST | `/exams/pdf-extract/` | 필수 문제지 `file`, 선택 정답지 `answer_file`, 선택 해설지 `explanation_file` 원본 보관 및 번호 맞춤 요청 |
 | GET | `/exams/{id}/segmentation-review/` | 문항·인식 정답·원본 해설, partial/누락/불일치, 만료형 원본 URL 조회 |
 | POST | `/exams/{id}/segmentation-review/approve/` | 번호·정답·제외·해설 variant를 반영해 빈 시험 문항·AnswerKey·원본 해설 확정 |
-| GET | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 표와 버전 조회 |
-| POST | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 미리보기 또는 원자적 확정 |
+| GET | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 표와 버전 조회. 혼합형 행의 `objective_status`(`omr_pending`·`omr_restore`·`omr_review_required`·`omr_processing`) 포함 |
+| POST | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 미리보기 또는 원자적 확정. 응답에 `objective_pending_count`·`objective_restore_count`와 행별 `objective_status` 포함 |
 | GET | `/results/wrong-notes/sources/?student_id=` | 학생의 모든 강의에서 선택 가능한 시험·워크북과 수록 문항 수 조회 |
 | POST | `/results/wrong-notes/preview/` | 선택 원본의 통합 문항과 fingerprint 미리보기 |
 | POST | `/results/wrong-notes/documents/` | 기존 enrollment 범위 또는 학생 `source_selection` 통합 문서 job 생성 |
@@ -1101,7 +1116,16 @@ python manage.py test `
 python -m pytest `
   apps/domains/results/tests/test_mixed_omr_subjective_projection_pg.py `
   --nomigrations -q
+
+python -m pytest apps/domains/results/tests/test_mixed_grid_omr_order.py -q
 ```
+
+`test_mixed_grid_omr_order.py`는 현장 신고 순서(서술형 먼저 입력 → 결시 우회 →
+OMR 매칭 실패)를 재현한다. 답안지 매칭 전 서술형 저장과 보류·세션 표시, 이후
+스캔 연결 뒤 단일 1차 attempt의 합산·`FINAL`, 결시 뒤 `응시` 저장의 객관식 복원,
+스캔 이후 결시 상태에서 OMR 검토 매칭의 `409` 재개 제안과 명시적 재개,
+같은 답안지 재확정의 `absence_preserved` 응답과 재개, 검토 대기 스캔의 서술형 선저장
+뒤 검토 확정 합산을 검증한다.
 
 검증은 PDF/HWP/HWPX 처리 상태, 검수 전 proposal, 승인·번호 변경·제외·tenant 차단,
 압축 HWP 이미지, HWPX 미주 원본과 일부 미주 그림 누락의 실패 폐쇄, Ymath
