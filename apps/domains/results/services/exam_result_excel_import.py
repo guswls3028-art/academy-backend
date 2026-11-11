@@ -25,6 +25,9 @@ from apps.domains.results.guards.score_edit_lease_guard import (
     require_score_edit_scope_available_for_exam,
 )
 from apps.domains.results.services.attempt_service import ExamAttemptService
+from apps.domains.results.services.attempt_placeholders import (
+    AWAITING_OMR_OBJECTIVE_META_KEY,
+)
 from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
 from apps.domains.results.services.initial_attempt_snapshot import sync_confirmed_initial_snapshot_meta
 from apps.domains.results.utils.exam_absence import current_exam_absence_counts
@@ -995,6 +998,7 @@ def apply_exam_result_import(*, plan: ImportPlan) -> dict[str, Any]:
 
         meta = dict(attempt.meta or {}) if isinstance(attempt.meta, dict) else {}
         meta.pop("status", None)
+        meta.pop(AWAITING_OMR_OBJECTIVE_META_KEY, None)
         meta["total_score"] = total_score
         meta["max_score"] = float(planned_row.max_score)
         meta["synced_from_result"] = True

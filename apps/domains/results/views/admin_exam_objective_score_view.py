@@ -32,6 +32,9 @@ from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enro
 from apps.domains.results.guards.score_edit_lease_guard import (
     require_score_edit_lease_from_headers,
 )
+from apps.domains.results.services.attempt_placeholders import (
+    AWAITING_OMR_OBJECTIVE_META_KEY,
+)
 from apps.domains.results.services.omr_subjective_completion import (
     finalize_omr_result_if_ready,
 )
@@ -211,6 +214,7 @@ class AdminExamObjectiveScoreView(APIView):
             attempt.meta["total_score"] = float(new_total)
             attempt.meta["synced_from_result"] = True
             attempt.meta.pop("status", None)
+            attempt.meta.pop(AWAITING_OMR_OBJECTIVE_META_KEY, None)
             attempt.meta = sync_confirmed_initial_snapshot_meta(
                 attempt=attempt, meta=attempt.meta, total_score=float(new_total),
                 max_score=float(max_score), confirmed_at=timezone.now(),

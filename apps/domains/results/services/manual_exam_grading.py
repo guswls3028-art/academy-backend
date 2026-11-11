@@ -15,12 +15,18 @@ from apps.domains.results.guards.score_edit_lease_guard import (
     require_score_edit_scope_available_for_exam,
 )
 from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
+from apps.domains.results.services.attempt_placeholders import (
+    AWAITING_OMR_OBJECTIVE_META_KEY,
+)
 from apps.domains.results.services.initial_attempt_snapshot import sync_confirmed_initial_snapshot_meta
 from apps.domains.results.services.manual_subjective_score import (
     latest_subjective_grading_facts,
 )
 from apps.domains.results.services.omr_subjective_completion import (
     finalize_omr_result_if_ready,
+)
+from apps.domains.results.services.sync_result_from_submission import (
+    sync_result_from_exam_submission,
 )
 from apps.domains.results.services.exam_result_excel_import import (
     Candidate,
@@ -47,11 +53,17 @@ from apps.support.results.exam_result_excel_import_dependencies import (
 )
 from apps.support.results.manual_exam_grading_dependencies import (
     get_locked_exam_questions_for_manual_grading,
+    lock_omr_submission_for_manual_grading,
+    omr_objective_sources_for_manual_grading,
 )
 
 
 logger = logging.getLogger(__name__)
 MAX_MANUAL_ROWS = 2_000
+OBJECTIVE_OMR_PENDING = "omr_pending"
+OBJECTIVE_OMR_RESTORE = "omr_restore"
+OBJECTIVE_OMR_REVIEW = "omr_review_required"
+OBJECTIVE_OMR_PROCESSING = "omr_processing"
 
 
 class ManualExamGradingError(ValueError):
@@ -70,6 +82,10 @@ class ManualPlannedRow:
     wrong_question_numbers: tuple[int, ...]
     review_question_numbers: tuple[int, ...]
     will_overwrite: bool
+    # Mixed exams only: "omr_pending" saves essay scores before the scan is
+    # matched; "omr_restore" re-reads the student's attached scan.
+    objective_status: str | None = None
+    restore_submission_id: int | None = None
 
 
 @dataclass
@@ -99,6 +115,12 @@ class ManualGradePlan:
             "not_submitted_count": sum(
                 1 for row in self.rows if row.is_not_submitted
             ),
+            "objective_pending_count": sum(
+                1 for row in self.rows if row.objective_status == OBJECTIVE_OMR_PENDING
+            ),
+            "objective_restore_count": sum(
+                1 for row in self.rows if row.objective_status == OBJECTIVE_OMR_RESTORE
+            ),
             "errors": self.errors,
             "rows": [
                 {
@@ -117,6 +139,7 @@ class ManualGradePlan:
                     "exam_not_submitted_count": (
                         row.candidate.exam_not_submitted_count
                     ),
+                    "objective_status": row.objective_status,
                 }
                 for row in self.rows
             ],
@@ -153,6 +176,15 @@ def build_manual_grading_sheet(*, exam: Any, tenant: Any) -> dict[str, Any]:
         .select_related("attempt")
         .prefetch_related("items")
     }
+    locked_ids = {question.question_id for question in questions} - editable_ids
+    question_numbers = {
+        question.question_id: question.number for question in questions
+    }
+    omr_sources = omr_objective_sources_for_manual_grading(
+        tenant=tenant,
+        exam_id=int(exam.id),
+        submission_ids=_attached_submission_ids(results.values()),
+    )
 
     rows = []
     for candidate in candidates:
@@ -182,6 +214,17 @@ def build_manual_grading_sheet(*, exam: Any, tenant: Any) -> dict[str, Any]:
                 ),
                 "exam_not_submitted_count": (
                     candidate.exam_not_submitted_count
+                ),
+                "objective_status": (
+                    None
+                    if attempt_meta.get("status") == "NOT_SUBMITTED"
+                    else _objective_recovery(
+                        result=result,
+                        items=items,
+                        locked_ids=locked_ids,
+                        question_numbers=question_numbers,
+                        omr_sources=omr_sources,
+                    ).status
                 ),
                 "cells": {
                     str(question.question_id): _item_cell_payload(
@@ -313,7 +356,15 @@ def plan_manual_grading(
             target_type="exam",
             target_id=int(exam.id),
             enrollment_id__in=list(candidates_by_id),
-        ).prefetch_related("items")
+        ).select_related("attempt").prefetch_related("items")
+    }
+    omr_sources = omr_objective_sources_for_manual_grading(
+        tenant=tenant,
+        exam_id=int(exam.id),
+        submission_ids=_attached_submission_ids(results.values()),
+    )
+    question_numbers = {
+        question.question_id: question.number for question in questions
     }
     seen: set[int] = set()
 
@@ -366,6 +417,7 @@ def plan_manual_grading(
 
         marks: dict[int, CorrectnessMark] = {}
         row_has_error = False
+        recovery = _ObjectiveRecovery()
         if not is_not_submitted:
             raw_cells = raw_row.get("cells")
             if not isinstance(raw_cells, dict):
@@ -394,24 +446,15 @@ def plan_manual_grading(
                 elif mark is not None:
                     marks[question_id] = mark
 
-            locked_ids = set(question_by_id) - editable_ids
-            missing_omr = [
-                question_by_id[question_id].number
-                for question_id in locked_ids
-                if question_id not in current_items
-            ]
-            if missing_omr:
-                plan.errors.append(
-                    _error(
-                        row_index,
-                        "omr",
-                        (
-                            "선택형 OMR 채점을 먼저 완료해 주세요: "
-                            + ", ".join(map(str, sorted(missing_omr)))
-                            + "번"
-                        ),
-                    )
-                )
+            recovery = _objective_recovery(
+                result=result,
+                items=current_items,
+                locked_ids=set(question_by_id) - editable_ids,
+                question_numbers=question_numbers,
+                omr_sources=omr_sources,
+            )
+            if recovery.blocker:
+                plan.errors.append(_error(row_index, "omr", recovery.blocker))
                 row_has_error = True
         if row_has_error:
             continue
@@ -442,6 +485,10 @@ def plan_manual_grading(
         total_score = (
             0.0
             if is_not_submitted
+            # Before the objective scan is available only essay points exist;
+            # exam-level adjustments are applied when the scan is graded.
+            else round(sum(all_scores.values()), 2)
+            if recovery.status in {OBJECTIVE_OMR_PENDING, OBJECTIVE_OMR_RESTORE}
             else round(sum(all_scores.values()) + total_adjustment, 2)
         )
         plan.rows.append(
@@ -472,10 +519,88 @@ def plan_manual_grading(
                     )
                 ),
                 will_overwrite=result is not None,
+                objective_status=recovery.status,
+                restore_submission_id=recovery.restore_submission_id,
             )
         )
 
     return plan
+
+
+@dataclass(frozen=True)
+class _ObjectiveRecovery:
+    status: str | None = None
+    restore_submission_id: int | None = None
+    blocker: str | None = None
+
+
+def _attached_submission_ids(results) -> set[int]:
+    return {
+        int(result.attempt.submission_id)
+        for result in results
+        if result.attempt is not None and int(result.attempt.submission_id or 0) > 0
+    }
+
+
+def _objective_recovery(
+    *,
+    result: Result | None,
+    items: dict[int, Any],
+    locked_ids: set[int],
+    question_numbers: dict[int, int],
+    omr_sources: dict[int, dict[str, Any]],
+) -> _ObjectiveRecovery:
+    """Decide how a mixed-exam row without its objective OMR items is saved.
+
+    Essay grading must not wait on the scan order. A row with no scan yet is
+    saved as pending and completed when the scan attaches; a row whose
+    attached scan lost its items to an absence is re-read from that scan.
+    """
+    missing = sorted(
+        question_numbers[question_id]
+        for question_id in locked_ids
+        if question_id not in items
+    )
+    if not missing:
+        return _ObjectiveRecovery()
+    fallback = (
+        "선택형 OMR 채점을 먼저 완료해 주세요: "
+        + ", ".join(map(str, missing))
+        + "번"
+    )
+    attempt = result.attempt if result is not None else None
+    submission_id = int(attempt.submission_id or 0) if attempt is not None else 0
+    if submission_id > 0:
+        source = omr_sources.get(submission_id)
+        if source is None:
+            return _ObjectiveRecovery(blocker=fallback)
+        if source["manual_review_required"]:
+            return _ObjectiveRecovery(
+                status=OBJECTIVE_OMR_REVIEW,
+                blocker=(
+                    "OMR 검토에서 이 학생의 답안지를 먼저 확인해 주세요. "
+                    "확인하면 객관식 점수가 서술형 점수와 합산됩니다."
+                ),
+            )
+        if not source["gradable"]:
+            return _ObjectiveRecovery(
+                status=OBJECTIVE_OMR_PROCESSING,
+                blocker="OMR 답안지를 처리하는 중입니다. 잠시 후 다시 저장해 주세요.",
+            )
+        return _ObjectiveRecovery(
+            status=OBJECTIVE_OMR_RESTORE,
+            restore_submission_id=submission_id,
+        )
+    if attempt is not None and (
+        int(attempt.attempt_index or 0) != 1 or not attempt.is_representative
+    ):
+        return _ObjectiveRecovery(blocker=fallback)
+    if any(question_id in items for question_id in locked_ids):
+        # Partial manual objective answers are owned by the answer-entry flow.
+        return _ObjectiveRecovery(blocker=fallback)
+    if result is not None and float(result.objective_score or 0.0) != 0.0:
+        return _ObjectiveRecovery(blocker=fallback)
+    return _ObjectiveRecovery(status=OBJECTIVE_OMR_PENDING)
 
 
 @transaction.atomic
@@ -504,6 +629,19 @@ def apply_manual_grading(
     for planned_row in plan.rows:
         enrollment_id = planned_row.candidate.enrollment_id
         validate_exam_enrollment_assigned(exam, enrollment_id)
+        if planned_row.restore_submission_id:
+            # Grading locks Submission -> Enrollment -> Result -> Attempt.
+            # Take the scan first so restoring it cannot invert that order.
+            if not lock_omr_submission_for_manual_grading(
+                tenant=exam.tenant,
+                exam_id=int(exam.id),
+                enrollment_id=enrollment_id,
+                submission_id=int(planned_row.restore_submission_id),
+            ):
+                raise ManualExamGradingError(
+                    f"{planned_row.candidate.student_name} 학생의 OMR 답안지가 바뀌었습니다. "
+                    "채점표를 새로 불러와 주세요."
+                )
         enrollment = get_locked_enrollment_for_tenant(
             enrollment_id=enrollment_id,
             tenant=exam.tenant,
@@ -535,17 +673,35 @@ def apply_manual_grading(
                 )
             )
 
-        result, attempt = _locked_result_and_attempt(
-            exam=exam,
-            enrollment=enrollment,
-            initial_total=planned_row.total_score,
-            initial_max=planned_row.max_score,
-            is_not_submitted=planned_row.is_not_submitted,
-            now=now,
-        )
+        awaiting_objective = planned_row.objective_status == OBJECTIVE_OMR_PENDING
+        if awaiting_objective:
+            result, attempt = _locked_awaiting_objective_placeholder(
+                exam=exam,
+                enrollment=enrollment,
+                current_result=current_result,
+                max_score=planned_row.max_score,
+                student_name=planned_row.candidate.student_name,
+            )
+        else:
+            result, attempt = _locked_result_and_attempt(
+                exam=exam,
+                enrollment=enrollment,
+                initial_total=planned_row.total_score,
+                initial_max=planned_row.max_score,
+                is_not_submitted=planned_row.is_not_submitted,
+                now=now,
+            )
         if attempt.status == "grading":
             raise ManualExamGradingError(
                 f"{planned_row.candidate.student_name} 학생은 현재 채점 중입니다."
+            )
+        if planned_row.restore_submission_id:
+            result, attempt = _restore_attached_omr_objective(
+                planned_row=planned_row,
+                result=result,
+                attempt=attempt,
+                user_id=user_id,
+                now=now,
             )
 
         if planned_row.is_not_submitted:
@@ -668,6 +824,37 @@ def apply_manual_grading(
                 question_id__in=question_ids,
             )
         )
+        if awaiting_objective:
+            if any(
+                questions_by_id[int(item.question_id)].kind == "choice"
+                for item in items
+            ):
+                raise ManualExamGradingError(
+                    f"{planned_row.candidate.student_name} 학생의 결과가 다른 화면에서 "
+                    "변경됐습니다. 채점표를 새로 불러와 주세요."
+                )
+            # Only essay points exist until the scan attaches; the scan sync
+            # adds the objective score and exam adjustments.
+            _save_result_and_attempt(
+                result=result,
+                attempt=attempt,
+                total_score=round(
+                    sum(float(item.score or 0.0) for item in items), 2,
+                ),
+                objective_score=0.0,
+                max_score=planned_row.max_score,
+                now=now,
+                is_not_submitted=False,
+                awaiting_objective=True,
+                user_id=user_id,
+            )
+            finalization = finalize_omr_result_if_ready(result_id=int(result.id))
+            if finalization.pending_reason != "objective_pending":
+                raise ManualExamGradingError(
+                    f"{planned_row.candidate.student_name} 학생의 서술형 점수를 "
+                    "OMR 대기 상태로 저장하지 못했습니다. 채점표를 새로 불러와 주세요."
+                )
+            continue
         if {int(item.question_id) for item in items} != question_ids:
             raise ManualExamGradingError(
                 (
@@ -978,6 +1165,132 @@ def _parse_manual_cell(
     ), None
 
 
+def _locked_awaiting_objective_placeholder(
+    *,
+    exam: Any,
+    enrollment: Any,
+    current_result: Result | None,
+    max_score: float,
+    student_name: str,
+) -> tuple[Result, ExamAttempt]:
+    """Lock or create the first-attempt placeholder a later scan attaches to."""
+    attempt = None
+    if current_result is not None and current_result.attempt_id:
+        attempt = (
+            ExamAttempt.objects.select_for_update()
+            .filter(id=int(current_result.attempt_id))
+            .first()
+        )
+    attempts = ExamAttempt.objects.select_for_update().filter(
+        exam_id=int(exam.id),
+        enrollment_id=int(enrollment.id),
+    )
+    regular = attempts.regular()
+    if attempt is None:
+        attempt = regular.filter(is_representative=True).first()
+    if attempt is None:
+        if regular.exists() or attempts.filter(attempt_index=1).exists():
+            raise ManualExamGradingError(
+                f"{student_name} 학생의 응시 이력을 확인해 주세요. "
+                "채점표를 새로 불러와 다시 시도해 주세요."
+            )
+        attempts.filter(is_representative=True).update(is_representative=False)
+        attempt = ExamAttempt.objects.create(
+            exam_id=int(exam.id),
+            enrollment_id=int(enrollment.id),
+            submission_id=0,
+            attempt_index=1,
+            is_retake=False,
+            is_representative=True,
+            status="done",
+            meta={"source": "manual_entry"},
+        )
+    elif (
+        int(attempt.submission_id or 0) != 0
+        or int(attempt.attempt_index or 0) != 1
+        or regular.exclude(pk=attempt.pk).exists()
+    ):
+        raise ManualExamGradingError(
+            f"{student_name} 학생의 결과가 다른 화면에서 변경됐습니다. "
+            "채점표를 새로 불러와 주세요."
+        )
+    elif not attempt.is_representative:
+        attempt.is_representative = True
+        attempt.save(update_fields=["is_representative", "updated_at"])
+
+    if current_result is None:
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=int(exam.id),
+            enrollment=enrollment,
+            attempt=attempt,
+            total_score=0.0,
+            max_score=float(max_score),
+            objective_score=0.0,
+        )
+    else:
+        result = current_result
+        if result.attempt_id != attempt.id:
+            result.attempt = attempt
+            result.save(update_fields=["attempt", "updated_at"])
+    return result, attempt
+
+
+def _restore_attached_omr_objective(
+    *,
+    planned_row: ManualPlannedRow,
+    result: Result,
+    attempt: ExamAttempt,
+    user_id: int | None,
+    now: Any,
+) -> tuple[Result, ExamAttempt]:
+    """Re-read the attached scan after a teacher returns the student to 응시.
+
+    An absence removes the result items, and automatic regrades preserve that
+    absence. Choosing 응시 again in the grid is the explicit resume decision,
+    so the scan's objective answers are graded again in this transaction.
+    """
+    submission_id = int(planned_row.restore_submission_id or 0)
+    name = planned_row.candidate.student_name
+    if int(attempt.submission_id or 0) != submission_id:
+        raise ManualExamGradingError(
+            f"{name} 학생의 결과가 다른 화면에서 변경됐습니다. 채점표를 새로 불러와 주세요."
+        )
+    meta = dict(attempt.meta or {}) if isinstance(attempt.meta, dict) else {}
+    if meta.get("status") == "NOT_SUBMITTED":
+        meta.pop("status")
+        resumptions = list(meta.get("absence_resumptions") or [])
+        resumptions.append({
+            "at": now.isoformat(),
+            "by_user_id": user_id,
+            "submission_id": submission_id,
+            "via": "manual_grid",
+        })
+        meta["absence_resumptions"] = resumptions
+        attempt.meta = meta
+        attempt.save(update_fields=["meta", "updated_at"])
+    try:
+        restored = sync_result_from_exam_submission(submission_id)
+    except Exception as exc:
+        logger.exception(
+            "manual grading OMR restore failed (exam=%s submission=%s)",
+            attempt.exam_id,
+            submission_id,
+        )
+        raise ManualExamGradingError(
+            f"{name} 학생의 OMR 객관식 답안을 다시 불러오지 못했습니다. "
+            "OMR 검토에서 답안지를 확인해 주세요."
+        ) from exc
+    if restored is None or int(restored.id) != int(result.id):
+        raise ManualExamGradingError(
+            f"{name} 학생의 OMR 객관식 답안을 다시 불러오지 못했습니다. "
+            "OMR 검토에서 답안지를 확인해 주세요."
+        )
+    result = Result.objects.select_for_update().get(id=int(result.id))
+    attempt = ExamAttempt.objects.select_for_update().get(id=int(attempt.id))
+    return result, attempt
+
+
 def _save_result_and_attempt(
     *,
     result: Result,
@@ -987,6 +1300,8 @@ def _save_result_and_attempt(
     max_score: float,
     now: Any,
     is_not_submitted: bool,
+    awaiting_objective: bool = False,
+    user_id: int | None = None,
 ) -> None:
     result.attempt = attempt
     result.objective_score = float(objective_score)
@@ -1013,7 +1328,17 @@ def _save_result_and_attempt(
     meta["max_score"] = float(max_score)
     meta["synced_from_result"] = True
     meta["last_manual_grid_publish"] = {"published_at": now.isoformat()}
-    if not is_not_submitted:
+    if awaiting_objective:
+        waiting = meta.get(AWAITING_OMR_OBJECTIVE_META_KEY)
+        meta[AWAITING_OMR_OBJECTIVE_META_KEY] = (
+            waiting
+            if isinstance(waiting, dict)
+            else {"since": now.isoformat(), "by_user_id": user_id, "via": "manual_grid"}
+        )
+        meta.setdefault("source", "manual_entry")
+    else:
+        meta.pop(AWAITING_OMR_OBJECTIVE_META_KEY, None)
+    if not is_not_submitted and not awaiting_objective:
         meta = sync_confirmed_initial_snapshot_meta(
             attempt=attempt, meta=meta, total_score=total_score,
             max_score=max_score, confirmed_at=now, fallback_source="manual_grading_grid",

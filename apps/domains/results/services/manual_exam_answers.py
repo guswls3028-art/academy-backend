@@ -15,6 +15,9 @@ from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enro
 from apps.domains.results.guards.score_edit_lease_guard import (
     require_score_edit_scope_available_for_exam,
 )
+from apps.domains.results.services.attempt_placeholders import (
+    AWAITING_OMR_OBJECTIVE_META_KEY,
+)
 from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
 from apps.domains.results.services.answer_matching import (
     answer_matches,
@@ -260,6 +263,8 @@ def apply_manual_answers(
         }
     meta["source"] = "manual_entry"
     meta.pop("status", None)
+    # Teacher-entered objective answers complete what the grid was waiting for.
+    meta.pop(AWAITING_OMR_OBJECTIVE_META_KEY, None)
     if was_absent:
         meta["initial_snapshot"] = {
             "total_score": preview["total_score"], "max_score": preview["max_score"],

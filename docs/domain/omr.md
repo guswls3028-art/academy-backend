@@ -216,6 +216,24 @@ PostgreSQL/SQLite JSON 객체 판정은 저장소 adapter가 소유한다.
 - 등록 전 파일 목록은 썸네일, 위·아래 순서 이동, 개별 삭제, 이미지 좌·우 90도 회전을 제공한다. 재접수 batch는 기존 ordinal을 학생 답안 순서로 보존하므로 순서 이동만 잠그고, 이미지 회전과 삭제는 명시적으로 허용한다.
 - 학생 상세 드로어와 선택형 시험명은 OMR 스캔 썸네일/정렬된 미리보기와 수동 답안 보정 진입점을 제공해야 한다. 자동 인식이 틀릴 수 있음을 전제로, 보정은 OMR 검토에서 선택적으로 수행하고 직접 정오 입력 표가 자동채점 결과를 덮어쓰지 않는다.
 - 자동 식별 후보와 답안이 이미 채워졌고 검토 사유가 `IDENTIFIER_*`뿐인 행은 비활성 `변경 사항 없음`으로 막지 않는다. 화면은 원본과 현재 학생을 확인하라는 설명과 **현재 학생으로 확정하고 점수 표시** 동작을 제공한다. 학생 연결이 없을 때는 검색·선택을 요구하고, 답안·정렬·문항 검토 사유가 하나라도 섞이면 학생 확인 동작으로 우회하지 않는다.
+- 결시로 저장된 학생에게 답안지를 연결할 때 학생 식별만으로는 결시를 해제하지 않는다.
+  - 스캔보다 먼저 저장된 순수 결시 placeholder(`submission_id=0`, 1차, 점수·문항 없음,
+    결시 fact만 존재)는 확정된 OMR 매칭이 기존처럼 자동으로 대체한다. 순수 결시 fact는
+    빠른 총점의 `manual_not_submitted`, 채점 표의 `manual_grid`, 엑셀의 `excel_import`
+    중 `question_id=0`, 0점, `meta.status=NOT_SUBMITTED`인 기록이다.
+  - 스캔 이후 저장된 결시는 교사의 후속 결정으로 보존한다. `manual-edit`는
+    `409 OMR_ATTEMPT_CONFLICT`와 함께 `can_resume_absence=true`(순수 결시일 때만)를
+    반환하고 아무것도 저장하지 않는다. 화면은 "결시 해제 후 채점" 확인을 받은 경우에만
+    같은 요청에 `resume_absence: true`를 보낸다. 서버는 placeholder에 이 답안지 ID로
+    `absence_resume`를 기록하고, 대체 시 `absence_placeholder.explicit_resume` 감사로 옮긴다.
+  - 이미 이 답안지에 연결된 attempt가 결시라면 `manual-edit`는 성공하되 채점을 반영하지
+    않고 `absence_preserved=true`, `can_resume_absence=true`를 반환한다.
+    `resume_absence: true` 요청은 attempt의 결시를 지우고 `absence_resumptions`에
+    `via=omr_review`로 기록한 뒤 저장된 답안으로 다시 채점한다.
+  - 재개 뒤에도 다른 성적 이력이 있는 placeholder, 재응시 허용 횟수 초과는 기존
+    `OMR_ATTEMPT_CONFLICT` 복구 안내를 유지한다. 기존 결시 fact와 답안은 수정하지 않는다.
+  - 회귀 검증: `apps/domains/results/tests/test_mixed_grid_omr_order.py`,
+    `apps/domains/results/tests/test_submission_scope_guard.py`.
 - 검토 화면의 회전은 원본 기준 미리보기다. 운영자가 `이 방향으로 다시 읽기`를 확정하면 원본 object를 복사하지 않고 같은 key를 참조하는 새 immutable Submission을 만들고, `client_request_id`로 멱등 dispatch한다. 기존 제출은 새 판독을 비교·채택하기 전까지 보존한다.
 - 성적표의 `OMR_REVIEW_REQUIRED`는 최신 유효 OMR만 사용한다. `FAILED`/`SUPERSEDED` 과거 제출의 검토 플래그는 최신 정상 제출을 덮지 않는다. 커트라인 통과와 오답 보완 상태도 분리해, 통과 학생은 행 판정이 `통과`이고 시험 상세에만 `보완 필요`가 남는다.
 

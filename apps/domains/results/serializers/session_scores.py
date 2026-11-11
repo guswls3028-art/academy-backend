@@ -51,6 +51,14 @@ class ScoreBlockSerializer(serializers.Serializer):
         required=False,
         default=None,
     )
+    # Admin display only: why a pending result is held. "objective_pending"
+    # means essay scores are saved and the student's OMR scan is not matched yet.
+    grading_pending_reason = serializers.ChoiceField(
+        choices=["subjective_pending", "objective_pending", "manual_review_required"],
+        allow_null=True,
+        required=False,
+        default=None,
+    )
     clinic_retake = serializers.DictField(allow_null=True, required=False, default=None)
     correction_status = serializers.ChoiceField(
         choices=["PENDING", "COMPLETED", "NOT_REQUIRED"],

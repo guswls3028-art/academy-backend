@@ -25,6 +25,9 @@ from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enro
 from apps.domains.results.guards.score_edit_lease_guard import (
     require_score_edit_lease_from_headers,
 )
+from apps.domains.results.services.attempt_placeholders import (
+    AWAITING_OMR_OBJECTIVE_META_KEY,
+)
 from apps.domains.results.services.omr_subjective_completion import (
     finalize_omr_result_if_ready,
 )
@@ -280,6 +283,8 @@ class AdminExamTotalScoreView(APIView):
             if sync_result:
                 attempt_meta["synced_from_result"] = True
             attempt_meta.pop("status", None)  # 정상 점수 입력 시 NOT_SUBMITTED 해제
+            # An explicit total replaces grid essay scores waiting for the scan.
+            attempt_meta.pop(AWAITING_OMR_OBJECTIVE_META_KEY, None)
             if attempt.is_initial_grade:
                 initial_snapshot = dict(
                     attempt_meta.get("initial_snapshot")
@@ -433,7 +438,10 @@ class AdminExamTotalScoreView(APIView):
             if attempt:
                 meta = dict(attempt.meta or {})
                 normalized_meta = {
-                    **meta,
+                    **{
+                        key: value for key, value in meta.items()
+                        if key != AWAITING_OMR_OBJECTIVE_META_KEY
+                    },
                     "status": "NOT_SUBMITTED",
                     "total_score": 0.0,
                     "max_score": max_score,

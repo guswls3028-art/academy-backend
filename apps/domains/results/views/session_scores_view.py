@@ -53,6 +53,7 @@ from apps.domains.results.utils.result_queries import (
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 from apps.domains.results.services.omr_subjective_completion import (
     pending_omr_result_ids,
+    pending_omr_result_reasons,
 )
 from apps.domains.results.utils.exam_absence import current_exam_absence_counts
 from apps.domains.results.utils.clinic import filter_live_source_links
@@ -543,7 +544,8 @@ class SessionScoresView(APIView):
             .filter(enrollment_id__in=enrollment_ids)
             .prefetch_related("items")
         )
-        pending_result_ids = pending_omr_result_ids(latest_results)
+        pending_result_reasons = pending_omr_result_reasons(latest_results)
+        pending_result_ids = set(pending_result_reasons)
         pending_exam_pairs = {
             (int(result.enrollment_id), int(result.target_id))
             for result in latest_results
@@ -918,6 +920,11 @@ class SessionScoresView(APIView):
                         "meta": {"status": "NOT_SUBMITTED"} if is_not_submitted else None,
                         "grading_status": (
                             "subjective_pending" if subjective_pending else None
+                        ),
+                        "grading_pending_reason": (
+                            pending_result_reasons.get(int(r.id))
+                            if subjective_pending
+                            else None
                         ),
                     }
                     updated_at = r.updated_at

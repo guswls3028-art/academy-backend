@@ -11,6 +11,11 @@ from django.db.models import Max
 from django.utils import timezone
 
 from apps.domains.results.models import ExamAttempt
+from apps.domains.results.services.attempt_placeholders import (
+    AWAITING_OMR_OBJECTIVE_META_KEY,
+    absence_fact_q,
+    is_absence_resume_confirmed_for_submission,
+)
 from apps.support.results.attempt_dependencies import exam_for_attempt_policy
 from apps.support.results.grading_dependencies import has_confirmed_current_omr_identity
 
@@ -154,7 +159,15 @@ class ExamAttemptService:
         meta = dict(placeholder.meta or {})
         if meta.get("status") != "NOT_SUBMITTED":
             return None
-        if submission_created_at is None or placeholder.updated_at > submission_created_at:
+        # An absence decided after the scan is protected from automatic
+        # matching. A teacher who then explicitly confirms this exact scan for
+        # the student (OMR review "결시 해제 후 채점") records that intent here.
+        explicitly_resumed = is_absence_resume_confirmed_for_submission(
+            meta=meta, submission_id=int(submission_id),
+        )
+        if not explicitly_resumed and (
+            submission_created_at is None or placeholder.updated_at > submission_created_at
+        ):
             return None
         tenant_id = int(placeholder.enrollment.tenant_id)
         if int(placeholder.exam.tenant_id) != tenant_id:
@@ -171,23 +184,34 @@ class ExamAttemptService:
             target_type="exam", target_id=int(exam_id),
             enrollment_id=int(enrollment_id), attempt_id=placeholder.id,
         ).first()
-        if result is None or result.submitted_at is not None:
+        if result is None:
             return None
         if result.total_score != 0 or result.objective_score != 0:
             return None
         if ResultItem.objects.filter(result=result).exists():
             return None
+        # Every absence writer (quick total, grading grid, Excel import) leaves
+        # only zero-score absence facts. Any other fact is real work history.
         if ResultFact.objects.filter(attempt=placeholder).exclude(
-            source="manual_not_submitted", question_id=0, answer="", score=0,
+            absence_fact_q()
+        ).exists():
+            return None
+        # Grid/Excel absences stamp submitted_at; it is not answer evidence
+        # once the fact history above contains only absence decisions.
+        if result.submitted_at is not None and not ResultFact.objects.filter(
+            attempt=placeholder,
         ).exists():
             return None
 
+        previous_meta = dict(meta)
         meta["absence_placeholder"] = {
-            "previous_meta": dict(meta),
+            "previous_meta": previous_meta,
             "attached_submission_id": int(submission_id),
             "attached_at": timezone.now().isoformat(),
+            **({"explicit_resume": previous_meta.get("absence_resume")} if explicitly_resumed else {}),
         }
         meta.pop("status")
+        meta.pop("absence_resume", None)
         # The actual first answer establishes the initial score, not absence.
         meta.pop("initial_snapshot", None)
         placeholder.submission_id = int(submission_id)
@@ -353,11 +377,20 @@ class ExamAttemptService:
             return None
 
         meta = dict(placeholder.meta or {}) if isinstance(placeholder.meta, dict) else {}
+        if meta.get("status") == "NOT_SUBMITTED":
+            # Absences attach only through attach_absence_placeholder_for_submission,
+            # which proves the placeholder holds no answer history.
+            return None
         initial = meta.get("initial_snapshot") if isinstance(meta.get("initial_snapshot"), dict) else {}
         source = str(initial.get("source") or "")
         meta_source = str(meta.get("source") or "")
         initial_total = _safe_float(initial.get("total_score"))
-        if source in _ATTACHABLE_MANUAL_SOURCES:
+        awaiting_objective = meta.get(AWAITING_OMR_OBJECTIVE_META_KEY)
+        if isinstance(awaiting_objective, dict):
+            # Essay scores saved in the grading grid before the scan matched.
+            attach_mode = "manual_entry"
+            meta_source = "manual_entry"
+        elif source in _ATTACHABLE_MANUAL_SOURCES:
             attach_mode = source
         elif meta_source == "manual_entry":
             attach_mode = "manual_entry"
@@ -399,6 +432,10 @@ class ExamAttemptService:
             "previous_submission_id": 0,
             "previous_initial_snapshot": initial,
             "previous_meta_source": meta_source,
+            **(
+                {"awaiting_omr_objective": meta.pop(AWAITING_OMR_OBJECTIVE_META_KEY)}
+                if isinstance(awaiting_objective, dict) else {}
+            ),
         }
         placeholder.submission_id = int(submission_id)
         placeholder.status = "pending"
@@ -421,7 +458,8 @@ def _is_attachable_manual_essay_result(*, exam: Any, result) -> bool:
     score_shape = get_exam_score_shape(exam)
     essay_score = 0.0
     for item in items:
-        if str(item.source or "") != "manual":
+        # Drawer item edits write "manual"; the grading grid writes "manual_grid".
+        if str(item.source or "") not in {"manual", "manual_grid"}:
             return False
         if score_shape.question_kind(int(item.question_id)) != "essay":
             return False

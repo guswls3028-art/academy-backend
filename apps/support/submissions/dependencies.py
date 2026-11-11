@@ -1014,6 +1014,26 @@ def get_synced_exam_score(
     return None, None, None
 
 
+def absence_blocks_confirmed_scan(*, submission) -> bool:
+    """Whether a teacher-confirmed scan is held back only by an absence."""
+
+    from apps.domains.results.services.attempt_placeholders import (
+        absence_blocks_confirmed_scan as _blocks,
+    )
+
+    return _blocks(submission=submission)
+
+
+def record_absence_resume_for_confirmed_scan(*, submission, user_id):
+    """Record the explicit OMR-review decision to grade a scan despite absence."""
+
+    from apps.domains.results.services.attempt_placeholders import (
+        record_absence_resume_for_confirmed_scan as _record,
+    )
+
+    return _record(submission=submission, user_id=user_id)
+
+
 def finalize_omr_result_projection(*, result_id: int):
     """Finalize an OMR result through the results-domain service boundary."""
 

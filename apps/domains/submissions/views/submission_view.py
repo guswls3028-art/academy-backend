@@ -55,6 +55,7 @@ from apps.support.student_app.exam_dependencies import (
     submit_online_exam_for_enrollment,
 )
 from apps.support.submissions.dependencies import (
+    absence_blocks_confirmed_scan,
     allowed_manual_exam_question_ids,
     create_exam_enrollment_assignment,
     enrollment_belongs_to_tenant,
@@ -64,6 +65,7 @@ from apps.support.submissions.dependencies import (
     homework_submission_is_teacher_reviewed,
     lock_submission_score_edit_scope_before_write,
     rebind_representative_omr_submission,
+    record_absence_resume_for_confirmed_scan,
     request_is_parent,
     student_owns_enrollment,
     target_belongs_to_tenant,
@@ -708,6 +710,9 @@ class SubmissionViewSet(ModelViewSet):
         note = str(request.data.get("note") or "manual_edit")
         tenant = submission.tenant
         confirming_answers = "answer_review_version" in request.data
+        # Explicit teacher decision from the absence prompt; identification
+        # alone never cancels an absence.
+        resume_absence = request.data.get("resume_absence") is True
         if confirming_answers:
             if identifier is not None or answers != [] or allow_duplicate_requested(request):
                 return Response({"detail": "판독 확인과 답안·학생 수정은 따로 저장해 주세요."}, status=400)
@@ -897,6 +902,19 @@ class SubmissionViewSet(ModelViewSet):
                 identifier_payload=identifier,
             )
 
+        absence_resumed = None
+        if resume_absence:
+            if submission.target_type != Submission.TargetType.EXAM or not submission.enrollment_id:
+                transaction.set_rollback(True)
+                return Response(
+                    {"detail": "학생을 먼저 확정한 뒤 결시를 해제할 수 있습니다."},
+                    status=400,
+                )
+            absence_resumed = record_absence_resume_for_confirmed_scan(
+                submission=submission,
+                user_id=getattr(request.user, "id", None),
+            )
+
         representative_scan_replaced = False
         if allow_duplicate and resolved_enrollment_id is not None:
             actor = f"admin.manual_edit.user_{getattr(request.user, 'id', '?')}"
@@ -953,7 +971,11 @@ class SubmissionViewSet(ModelViewSet):
                 int(submission.id),
                 actor=f"admin.manual_edit.user_{getattr(request.user, 'id', '?')}",
                 allow_done_regrade=True,
-                preserve_current_omr_grade=(answers_changed == 0 and not representative_scan_replaced),
+                preserve_current_omr_grade=(
+                    answers_changed == 0
+                    and not representative_scan_replaced
+                    and absence_resumed != "own_attempt"
+                ),
             )
         except Exception as exc:
             if isinstance(exc, DjangoValidationError) and getattr(exc, "code", None) == "omr_grading_configuration_conflict":
@@ -971,12 +993,18 @@ class SubmissionViewSet(ModelViewSet):
             if isinstance(exc, DjangoValidationError) and getattr(exc, "code", None) in {
                 "retake_not_allowed", "max_attempts_exceeded",
             }:
+                # The grading savepoint rolled back; this read sees the
+                # pre-request state and decides whether a resume can succeed.
+                can_resume_absence = bool(
+                    not resume_absence and absence_blocks_confirmed_scan(submission=submission)
+                )
                 transaction.set_rollback(True)
                 return Response(
                     {
                         "submission_id": submission.id,
                         "code": "OMR_ATTEMPT_CONFLICT",
                         "reason": exc.code,
+                        "can_resume_absence": can_resume_absence,
                         "detail": (
                             "기존 미응시 판정이나 성적, 허용 응시 횟수를 확인해 주세요. "
                             "기존 결과를 확인·정정한 뒤 다시 배정할 수 있습니다. "
@@ -1066,12 +1094,20 @@ class SubmissionViewSet(ModelViewSet):
                 projection_ready = finalization.projection_ready
                 grading_status = finalization.pending_reason
 
+        absence_preserved = bool(
+            submission.target_type == Submission.TargetType.EXAM
+            and submission.enrollment_id
+            and absence_blocks_confirmed_scan(submission=submission)
+        )
         return Response(
             {
                 "submission_id": submission.id,
                 "status": submission.status,
                 "updated": updated,
                 "graded": True,
+                "absence_preserved": absence_preserved,
+                "can_resume_absence": absence_preserved,
+                "absence_resumed": bool(absence_resumed),
                 "result_id": decision.result_id,
                 "resolved_enrollment_id": resolved_enrollment_id,
                 "enrollment_id": submission.enrollment_id,
