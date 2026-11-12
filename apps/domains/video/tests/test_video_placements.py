@@ -73,6 +73,8 @@ class VideoPlacementsTests(APITestCase):
         return Video.objects.get(reused_from=self.original, session=session)
 
     def test_bulk_attach_is_idempotent_and_uses_existing_media_without_raw(self):
+        self.assertEqual(self.client.head(self._path(), **self._headers()).status_code, 200)
+        self.assertFalse(Video.objects.filter(reused_from=self.original).exists())
         response = self._attach(self.first, self.second, self.original_session)
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual({row["session_id"] for row in response.data["placements"]}, {

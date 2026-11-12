@@ -236,7 +236,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     @action(detail=True, methods=["get", "patch"], url_path="placements")
     def placements(self, request, *args, **kwargs):
         video = self.get_object()
-        if request.method == "GET":
+        if request.method in ("GET", "HEAD"):
             return Response(list_video_placements(video))
         changes = VideoPlacementChangeSerializer(data=request.data)
         changes.is_valid(raise_exception=True)
