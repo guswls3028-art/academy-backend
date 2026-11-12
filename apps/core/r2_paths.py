@@ -11,6 +11,10 @@ R2 객체 키 SSOT — 멀티테넌트 + Aurora 확장 대비
 from __future__ import annotations
 
 
+def video_raw_prefix(tenant_id: int) -> str:
+    return f"tenants/{tenant_id}/video/raw/"
+
+
 def video_raw_key(
     *,
     tenant_id: int,
@@ -19,7 +23,7 @@ def video_raw_key(
     ext: str,
 ) -> str:
     """원본 영상 업로드 키 (presigned PUT 대상)."""
-    return f"tenants/{tenant_id}/video/raw/{session_id}/{unique_id}.{ext}"
+    return f"{video_raw_prefix(tenant_id)}{session_id}/{unique_id}.{ext}"
 
 
 def video_hls_prefix(tenant_id: int, video_id: int) -> str:
