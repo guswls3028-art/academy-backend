@@ -1478,6 +1478,9 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         if video.reused_from_id:
             raise ValidationError("연결된 영상은 별도로 인코딩할 수 없습니다.")
+        # Placement changes lock the same root. Never overwrite HLS used by another lesson.
+        if video.has_active_reused_placements():
+            raise ValidationError("다른 차시에서 사용 중인 영상입니다. 사용 차시 관리에서 연결을 해제한 뒤 다시 시도해 주세요.")
 
         if not getattr(video, "session", None) or not getattr(video.session, "lecture", None):
             raise ValidationError("영상이 차시/강의에 연결되어 있지 않아 재처리할 수 없습니다.")

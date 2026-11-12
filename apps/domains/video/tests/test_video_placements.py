@@ -12,6 +12,7 @@ from rest_framework.test import APITestCase
 from apps.core.models import OpsAuditLog, Tenant, TenantMembership, User
 from apps.core.r2_paths import video_hls_master_path
 from apps.domains.video.models import Video, VideoProgress
+from apps.domains.video.serializers import VideoDetailSerializer
 
 
 class VideoPlacementsTests(APITestCase):
@@ -131,6 +132,26 @@ class VideoPlacementsTests(APITestCase):
         self.assertFalse(Video.objects.filter(pk=link.pk).exists())
         self.assertTrue(VideoProgress.objects.filter(pk=history.pk).exists())
         self.assertEqual(Video.objects.filter(pk__in=[self.original.pk, other.pk]).count(), 2)
+
+    @patch("apps.domains.video.views.video_views.create_job_and_submit_batch")
+    @patch("apps.domains.video.views.video_views.head_object")
+    def test_reencoding_is_blocked_while_other_lessons_share_the_recording(self, head, submit):
+        self.assertTrue(VideoDetailSerializer(self.original).data["can_retry"])
+        self.assertEqual(self._attach(self.first).status_code, 200)
+        link = self._link(self.first)
+        for video in (self.original, link):
+            response = self.client.post(f"/api/v1/media/videos/{video.pk}/retry/", **self._headers())
+            self.assertEqual(response.status_code, 400, response.data)
+            self.assertFalse(VideoDetailSerializer(video).data["can_retry"])
+            video.refresh_from_db()
+            self.assertEqual(video.status, Video.Status.READY)
+        self.assertIn("다른 차시에서 사용 중", str(
+            self.client.post(f"/api/v1/media/videos/{self.original.pk}/retry/", **self._headers()).data,
+        ))
+        head.assert_not_called()
+        submit.assert_not_called()
+        link.delete()
+        self.assertTrue(VideoDetailSerializer(self.original).data["can_retry"])
 
     @patch("apps.infrastructure.storage.r2.delete_prefix_r2_video", return_value=2)
     def test_purge_defers_root_storage_until_last_use_expires(self, delete_prefix):

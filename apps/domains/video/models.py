@@ -289,6 +289,9 @@ class Video(TimestampModel):
     def is_youtube_source(self) -> bool:
         return self.source_type == self.SourceType.YOUTUBE
 
+    def has_active_reused_placements(self) -> bool:
+        return Video.objects.filter(tenant_id=self.tenant_id, reused_from_id=self.pk).exists()
+
 
 class VideoPlaybackExport(TimestampModel):
     """Temporary, on-demand MP4 made from the stored lesson playback rendition."""

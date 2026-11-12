@@ -136,7 +136,7 @@ def video_playback_export(request, video):
     now = timezone.now()
     export = VideoPlaybackExport.objects.filter(video_id=source.pk).first()
     state = _state(export, now)
-    if request.method == "GET":
+    if request.method in ("GET", "HEAD"):
         return _response(state)
     if not _canonical(source):
         raise ValidationError("학원에서 재생할 수 있는 영상만 MP4로 내려받을 수 있습니다.")

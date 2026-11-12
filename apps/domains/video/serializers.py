@@ -333,7 +333,7 @@ class VideoDetailSerializer(VideoSerializer):
         - PROCESSING/READY + current_job RUNNING(not cancel_requested) → False
         - PROCESSING/READY + no active job or stale job → True
         """
-        if obj.reused_from_id or obj.source_type == Video.SourceType.YOUTUBE:
+        if obj.reused_from_id or obj.is_youtube_source or obj.has_active_reused_placements():
             return False
 
         RETRY_ALLOWED = {

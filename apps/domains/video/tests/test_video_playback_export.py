@@ -50,7 +50,19 @@ class VideoPlaybackExportTests(TestCase):
         request = getattr(factory, method)("/api/v1/media/videos/playback-export/")
         request.tenant = tenant or self.tenant
         force_authenticate(request, user=user or self.teacher)
-        return VideoViewSet.as_view({method: "playback_export"})(request, pk=(video or self.video).pk)
+        return VideoViewSet.as_view({"get": "playback_export", "post": "playback_export"})(
+            request, pk=(video or self.video).pk,
+        )
+
+    @patch(SERVICE + "_batch_target")
+    @patch(SERVICE + "submit_video_playback_export")
+    def test_head_reports_status_without_starting_an_export(self, submit, target):
+        response = self._request("head")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Cache-Control"], "private, no-store")
+        self.assertFalse(VideoPlaybackExport.objects.exists())
+        target.assert_not_called()
+        submit.assert_not_called()
 
     @patch(SERVICE + "_batch_target", return_value=("video-queue", "video-worker", "ap-northeast-2"))
     @patch(SERVICE + "submit_video_playback_export", return_value="batch-job")
