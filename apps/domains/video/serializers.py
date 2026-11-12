@@ -109,6 +109,7 @@ class VideoSerializer(serializers.ModelSerializer):
             "id",
             "session_id",
             "source_type",
+            "file_key",
             "youtube_video_id",
             "youtube_url",
             "created_at",
