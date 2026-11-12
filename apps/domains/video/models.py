@@ -127,6 +127,15 @@ class Video(TimestampModel):
         help_text="S3 object key (presigned upload)",
     )
 
+    reused_from = models.ForeignKey(
+        "self",
+        on_delete=models.RESTRICT,
+        null=True,
+        blank=True,
+        related_name="reused_in",
+        help_text="Root upload for a linked lesson. The linked lesson owns its access and progress.",
+    )
+
     youtube_video_id = models.CharField(
         max_length=32,
         blank=True,
@@ -279,6 +288,24 @@ class Video(TimestampModel):
     @property
     def is_youtube_source(self) -> bool:
         return self.source_type == self.SourceType.YOUTUBE
+
+    def has_active_reused_placements(self) -> bool:
+        return Video.objects.filter(tenant_id=self.tenant_id, reused_from_id=self.pk).exists()
+
+
+class VideoPlaybackExport(TimestampModel):
+    """Temporary, on-demand MP4 made from the stored lesson playback rendition."""
+
+    class Status(models.TextChoices):
+        QUEUED = "queued"
+        PROCESSING = "processing"
+        READY = "ready"
+        FAILED = "failed"
+
+    video = models.OneToOneField(Video, on_delete=models.CASCADE, related_name="playback_export")
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.QUEUED)
+    attempt = models.UUIDField(default=uuid.uuid4)
+    expires_at = models.DateTimeField(null=True, blank=True)
 
 
 # ========================================================

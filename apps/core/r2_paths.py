@@ -41,6 +41,10 @@ def video_hls_master_path(tenant_id: int, video_id: int) -> str:
     return f"tenants/{tenant_id}/video/hls/{video_id}/master.m3u8"
 
 
+def video_playback_export_key(tenant_id: int, video_id: int, attempt) -> str:
+    return f"tenants/{tenant_id}/video/export/{video_id}/{attempt.hex}.mp4"
+
+
 def ai_submission_key(
     *,
     tenant_id: int,

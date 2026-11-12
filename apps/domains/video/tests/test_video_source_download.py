@@ -37,11 +37,11 @@ class VideoSourceDownloadTests(TestCase):
             source_type=Video.SourceType.UPLOADED, status=Video.Status.READY, file_key=cls.key,
         )
 
-    def _request(self, *, user=None, tenant=None, data=None):
+    def _request(self, *, user=None, tenant=None, data=None, video=None):
         request = APIRequestFactory().post("/api/v1/media/videos/source-download/", data or {}, format="json")
         request.tenant = tenant or self.tenant
         force_authenticate(request, user=user or self.teacher)
-        return VideoViewSet.as_view({"post": "source_download"})(request, pk=self.video.pk)
+        return VideoViewSet.as_view({"post": "source_download"})(request, pk=(video or self.video).pk)
 
     @patch("apps.domains.video.services.source_download.create_video_source_download_url",
            return_value="https://download.example.test/file?signature=private")
@@ -108,3 +108,27 @@ class VideoSourceDownloadTests(TestCase):
         head.side_effect = delete_during_check
         self.assertEqual(self._request().status_code, 404)
         sign.assert_not_called()
+
+    @patch("apps.domains.video.services.source_download.create_video_source_download_url",
+           return_value="https://download.example.test/file")
+    @patch("apps.domains.video.services.source_download.head_video_source_download", return_value=True)
+    def test_active_placement_downloads_original_after_origin_unlink(self, head, sign):
+        destination = apps.get_model("lectures", "Session").objects.create(
+            lecture=self.session.lecture, title="2차시", order=2,
+        )
+        alias = Video.objects.create(
+            tenant=self.tenant, session=destination, title="복습", status=Video.Status.READY,
+            source_type=Video.SourceType.UPLOADED, reused_from=self.video,
+        )
+        self.video.delete()
+        self.assertEqual(self._request().status_code, 404)
+        self.assertEqual(self._request(video=alias).status_code, 200)
+        head.assert_called_once_with(key=self.key)
+        sign.assert_called_once_with(key=self.key, filename="복습.mov", expires_in=300)
+        self.assertEqual(
+            OpsAuditLog.objects.get(action="video.source_download").payload,
+            {"video_id": alias.pk, "source_video_id": self.video.pk},
+        )
+        Video.all_with_deleted.filter(pk=self.video.pk).update(tenant=self.other)
+        self.assertEqual(self._request(video=alias).status_code, 404)
+        self.assertEqual(head.call_count, 1)

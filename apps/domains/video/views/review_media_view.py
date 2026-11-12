@@ -92,7 +92,7 @@ class ReviewMediaView(View):
             return HttpResponse(status=403)
         if not stream_access_is_current(stream, request.tenant):
             return HttpResponse(status=403)
-        canonical = video_hls_master_path(video.tenant_id, video.pk)
+        canonical = video_hls_master_path(video.tenant_id, video.reused_from_id or video.pk)
         master = str(video.hls_path or canonical).removeprefix("storage/").lstrip("/")
         if posixpath.dirname(master) != posixpath.dirname(canonical):
             return HttpResponse(status=403)

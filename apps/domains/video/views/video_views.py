@@ -61,8 +61,15 @@ from ..serializers import (
 )
 from ..policy import is_video_progress_complete, normalize_video_max_speed
 from ..services.access_resolver import resolve_access_modes_prefetched
+from ..services.playback_export import VideoPlaybackExportSerializer, video_playback_export
 from ..services.source_download import create_source_download
 from ..services.video_encoding import REASON_SUBMIT_FAILED, create_job_and_submit_batch
+from ..services.video_placements import (
+    VideoPlacementChangeSerializer,
+    VideoPlacementsSerializer,
+    change_video_placements,
+    list_video_placements,
+)
 from ..youtube import extract_youtube_video_id, youtube_watch_url
 from .playback_mixin import VideoPlaybackMixin
 
@@ -200,7 +207,9 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         "partial_update",
         "reorder",
         "bulk_policy",
+        "placements",
         "source_download",
+        "playback_export",
         "destroy",
         "public_session",
         "delete_folder",
@@ -222,6 +231,17 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     filterset_fields = ["session", "status", "folder"]
     search_fields = ["title"]
 
+    @extend_schema(methods=["GET"], responses=VideoPlacementsSerializer)
+    @extend_schema(methods=["PATCH"], request=VideoPlacementChangeSerializer, responses=VideoPlacementsSerializer)
+    @action(detail=True, methods=["get", "patch"], url_path="placements")
+    def placements(self, request, *args, **kwargs):
+        video = self.get_object()
+        if request.method in ("GET", "HEAD"):
+            return Response(list_video_placements(video))
+        changes = VideoPlacementChangeSerializer(data=request.data)
+        changes.is_valid(raise_exception=True)
+        return Response(change_video_placements(request, video, changes.validated_data))
+
     @extend_schema(
         request=None,
         responses={200: inline_serializer(name="VideoSourceDownload", fields={
@@ -233,6 +253,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     @action(detail=True, methods=["post"], url_path="source-download")
     def source_download(self, request, *args, **kwargs):
         return create_source_download(request, self.get_object())
+
+    @extend_schema(methods=["GET"], responses=VideoPlaybackExportSerializer)
+    @extend_schema(methods=["POST"], request=None, responses={200: VideoPlaybackExportSerializer, 202: VideoPlaybackExportSerializer})
+    @action(detail=True, methods=["get", "post"], url_path="playback-export")
+    def playback_export(self, request, *args, **kwargs):
+        return video_playback_export(request, self.get_object())
 
     @transaction.atomic
     def update(self, request, *args, **kwargs):
@@ -1449,6 +1475,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             )
         except Video.DoesNotExist:
             raise ValidationError("해당 영상을 찾을 수 없습니다.")
+
+        if video.reused_from_id:
+            raise ValidationError("연결된 영상은 별도로 인코딩할 수 없습니다.")
+        # Placement changes lock the same root. Never overwrite HLS used by another lesson.
+        if video.has_active_reused_placements():
+            raise ValidationError("다른 차시에서 사용 중인 영상입니다. 사용 차시 관리에서 연결을 해제한 뒤 다시 시도해 주세요.")
 
         if not getattr(video, "session", None) or not getattr(video.session, "lecture", None):
             raise ValidationError("영상이 차시/강의에 연결되어 있지 않아 재처리할 수 없습니다.")

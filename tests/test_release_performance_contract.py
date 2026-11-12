@@ -231,7 +231,7 @@ def test_production_source_copies_have_final_ownership() -> None:
 
 
 
-def test_api_waits_for_tools_consumers_before_producing_new_job_types() -> None:
+def test_api_waits_for_tools_and_video_consumers_before_producing_new_job_types() -> None:
     workflow = _read(WORKFLOW)
     api = workflow.split("\n  deploy-api:\n", maxsplit=1)[1].split(
         "\n  deploy-messaging:\n", maxsplit=1
@@ -240,10 +240,10 @@ def test_api_waits_for_tools_consumers_before_producing_new_job_types() -> None:
         "\n  deploy-video:\n", maxsplit=1
     )[0]
 
-    # A selected Tools refresh must fully finish and verify the immutable runtime
-    # before API producers can enqueue newly introduced deterministic job types.
-    assert re.search(r"needs: \[[^\n]*\bdeploy-tools\b[^\n]*\]", api)
-    assert "(needs.deploy-tools.result == 'success' || needs.deploy-tools.result == 'skipped')" in api
+    # Wait for the selected worker rollout and exact runtime readback before the API can enqueue new jobs.
+    for job in ("deploy-tools", "deploy-video"):
+        assert re.search(rf"needs: \[[^\n]*\b{job}\b[^\n]*\]", api)
+        assert f"(needs.{job}.result == 'success' || needs.{job}.result == 'skipped')" in api
     assert "needs: [detect-changes, build-and-push, verify-api-preprod, run-migrations]" in tools
     assert "Wait for Tools refresh to complete" in tools
     assert "Verify Tools warm runtime digest" in tools

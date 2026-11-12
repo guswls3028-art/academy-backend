@@ -64,10 +64,12 @@ class HomeworkRuntimeTests(unittest.TestCase):
                 self.runtime().aws("ssm", "send-command")
         self.assertEqual(str(error.exception), "ssm:send-command:AccessDenied")
 
-    def test_cleanup_is_limited_to_two_objects_of_exact_batch_job(self):
+    def test_cleanup_is_limited_to_synthetic_objects_of_exact_batch_job(self):
         command = module.Runtime.cleanup_command("12345678-1234-1234-1234-123456789abc")
         self.assertIn("qa-homework-preview/12345678-1234-1234-1234-123456789abc/", command)
         self.assertIn("('source.mp4', 'preview.mp4')", command)
+        self.assertIn("('playback.mp4', 'hls/master.m3u8', 'hls/v0/index.m3u8')", command)
+        self.assertIn("range(8)", command)
         self.assertNotIn("delete_objects", command)
         with self.assertRaises(ValueError): module.Runtime.cleanup_command("../../production")
 
@@ -234,6 +236,7 @@ class HomeworkCanaryBoundaryTests(unittest.TestCase):
         from unittest.mock import MagicMock
         from botocore.exceptions import ClientError
         settings = SimpleNamespace(R2_AI_BUCKET="academy-development-artifacts",
+                                   R2_VIDEO_BUCKET="academy-development-artifacts",
                                    VIDEO_BATCH_JOB_QUEUE="", VIDEO_BATCH_JOB_DEFINITION="")
         storage, ssm = MagicMock(), MagicMock()
         ssm.get_parameter.side_effect = ClientError({"Error": {"Code": "AccessDenied"}}, "GetParameter")

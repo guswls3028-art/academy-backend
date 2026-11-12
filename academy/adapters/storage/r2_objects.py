@@ -34,6 +34,24 @@ def head_object(key: str) -> tuple[bool, int]:
     return _head_object(key)
 
 
+def video_bucket_client():
+    """Create a bounded connection for the Video worker's private bucket."""
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client(
+        "s3",
+        region_name=getattr(settings, "R2_REGION", "auto"),
+        endpoint_url=settings.R2_ENDPOINT,
+        aws_access_key_id=settings.R2_ACCESS_KEY,
+        aws_secret_access_key=settings.R2_SECRET_KEY,
+        config=Config(
+            signature_version="s3v4", s3={"addressing_style": "path"},
+            connect_timeout=5, read_timeout=20, retries={"total_max_attempts": 2, "mode": "standard"},
+        ),
+    )
+
+
 def head_storage_object_integrity(*, key: str) -> tuple[int, str] | None:
     """Return an immutable Storage object size/SHA metadata, or None when absent."""
     from botocore.exceptions import ClientError

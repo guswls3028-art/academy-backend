@@ -313,7 +313,10 @@ assert settings.DATABASES['default']['NAME'] == 'academy_api_development'
 assert settings.R2_AI_BUCKET == 'academy-development-artifacts'
 storage = _get_s3_client(timeout_seconds=15)
 prefix = 'qa-homework-preview/JOB_ID/'
-for name in ('source.mp4', 'preview.mp4'):
+base = ('source.mp4', 'preview.mp4')
+playback = ('playback.mp4', 'hls/master.m3u8', 'hls/v0/index.m3u8')
+segments = tuple(f'hls/v0/index{index}.ts' for index in range(8))
+for name in base + playback + segments:
     storage.delete_object(Bucket=settings.R2_AI_BUCKET, Key=prefix + name)
 remaining = storage.list_objects_v2(Bucket=settings.R2_AI_BUCKET, Prefix=prefix).get('KeyCount', 0)
 assert remaining == 0
@@ -388,6 +391,8 @@ print(json.dumps({'remaining_objects': 0, 'tenant_rows_created': 0, 'user_rows_c
         if (any(proof.get(k) is not True for k in required) or proof.get("release_id") != self.release
                 or proof.get("source_codec") != "hevc" or proof.get("preview_codec") != "h264" or proof.get("remaining_objects") != 0):
             raise RuntimeError("real_codec_canary_incomplete")
+        if proof.get("playback_export_codec_verified") is not True:
+            raise RuntimeError("real_playback_export_canary_incomplete")
         return {**runtime, "job_id": job_id, "status": job["status"], "proof": proof}
 
 

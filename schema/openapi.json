@@ -11470,6 +11470,29 @@
         },
         "type": "object"
       },
+      "PatchedVideoPlacementChangeRequest": {
+        "properties": {
+          "add_session_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "type": "array"
+          },
+          "remove_video_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "PatchedVideoShowcaseRequest": {
         "properties": {
           "description": {
@@ -17750,6 +17773,16 @@
         ],
         "type": "string"
       },
+      "StateEnum": {
+        "description": "* `not_requested` - not_requested\n* `preparing` - preparing\n* `ready` - ready\n* `failed` - failed",
+        "enum": [
+          "not_requested",
+          "preparing",
+          "ready",
+          "failed"
+        ],
+        "type": "string"
+      },
       "Status2d4Enum": {
         "description": "* `ACTIVE` - 활성\n* `INACTIVE` - 비활성\n* `PENDING` - 대기",
         "enum": [
@@ -21757,6 +21790,80 @@
           "draft_content",
           "request_id",
           "url"
+        ],
+        "type": "object"
+      },
+      "VideoPlacementItem": {
+        "properties": {
+          "is_original": {
+            "type": "boolean"
+          },
+          "lecture_id": {
+            "type": "integer"
+          },
+          "lecture_title": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "integer"
+          },
+          "session_title": {
+            "type": "string"
+          },
+          "video_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "is_original",
+          "lecture_id",
+          "lecture_title",
+          "session_id",
+          "session_title",
+          "video_id"
+        ],
+        "type": "object"
+      },
+      "VideoPlacements": {
+        "properties": {
+          "can_attach": {
+            "type": "boolean"
+          },
+          "placements": {
+            "items": {
+              "$ref": "#/components/schemas/VideoPlacementItem"
+            },
+            "type": "array"
+          },
+          "source_video_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "can_attach",
+          "placements",
+          "source_video_id"
+        ],
+        "type": "object"
+      },
+      "VideoPlaybackExport": {
+        "properties": {
+          "download_url": {
+            "format": "uri",
+            "type": "string"
+          },
+          "expires_in": {
+            "type": "integer"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/StateEnum"
+          }
+        },
+        "required": [
+          "state"
         ],
         "type": "object"
       },
@@ -42528,6 +42635,181 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SealedVideo"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/api/v1/media/videos/{id}/placements/": {
+      "get": {
+        "description": "Video 관리 + 통계 + 학생 목록",
+        "operationId": "media_videos_placements_retrieve",
+        "parameters": [
+          {
+            "description": "video을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoPlacements"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      },
+      "patch": {
+        "description": "Video 관리 + 통계 + 학생 목록",
+        "operationId": "media_videos_placements_partial_update",
+        "parameters": [
+          {
+            "description": "video을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedVideoPlacementChangeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoPlacements"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/api/v1/media/videos/{id}/playback-export/": {
+      "get": {
+        "description": "Video 관리 + 통계 + 학생 목록",
+        "operationId": "media_videos_playback_export_retrieve",
+        "parameters": [
+          {
+            "description": "video을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoPlaybackExport"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      },
+      "post": {
+        "description": "Video 관리 + 통계 + 학생 목록",
+        "operationId": "media_videos_playback_export_create",
+        "parameters": [
+          {
+            "description": "video을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoPlaybackExport"
+                }
+              }
+            },
+            "description": ""
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoPlaybackExport"
                 }
               }
             },
