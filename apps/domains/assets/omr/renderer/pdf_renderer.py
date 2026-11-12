@@ -322,6 +322,7 @@ class OMRPdfRenderer:
         self._corners(cv)
         self._left(cv, doc)
         self._answer_area(cv, doc)
+        self._essay_score_marks(cv, doc)
         cv.save()
         return buf.getvalue()
 
@@ -587,7 +588,7 @@ class OMRPdfRenderer:
             instruction_number += 1
 
         if doc.render_essay_count > 0:
-            instruction = "서술형 답안은 해당 번호의 작성칸에 깔끔하게 적어주세요."
+            instruction = doc.essay_instruction
             c.drawString(ix, _line_y(line), f"{instruction_number}. {instruction}")
             line += 1
             instruction_number += 1
@@ -817,3 +818,53 @@ class OMRPdfRenderer:
             # bottom anchor (프레임 아래)
             c.rect(_mm(ax_cx - half), _y(ax_bot_cy + half),
                    _mm(COL_ANCHOR_SZ), _mm(COL_ANCHOR_SZ), fill=1, stroke=0)
+
+    # ══════════════════════════════════════════
+    # 서술형 교사 채점란 — meta_generator.build_essay_score_marks 좌표 그대로
+    # ══════════════════════════════════════════
+    def _essay_score_marks(self, c, doc: OMRDocument):
+        for mark in doc.essay_score_marks:
+            strip = mark["strip"]
+            sx, sy, sw, sh = (float(strip[k]) for k in ("x", "y", "w", "h"))
+            c.setFillColor(HexColor("#f5f6f8"))
+            c.setStrokeColor(C3)
+            c.setLineWidth(S4)
+            c.roundRect(_mm(sx), _y(sy + sh), _mm(sw), _mm(sh), _mm(0.8), stroke=1, fill=1)
+
+            cy = float(mark["anchors"]["left"]["center"]["y"])
+            title_x = float(mark["title_x"])
+            c.setFont(_FB, 6)
+            c.setFillColor(CT2)
+            c.drawString(_mm(title_x), _y(cy - 0.2), "교사")
+            c.drawString(_mm(title_x), _y(cy + 2.4), "채점")
+
+            for group in mark["groups"]:
+                if group.get("label"):
+                    c.setFont(_FB, 6 if len(group["label"]) == 1 else 5)
+                    c.setFillColor(CT2)
+                    c.drawCentredString(
+                        _mm(float(group["label_x"]) + float(group["label_w"]) / 2),
+                        _y(float(group["cy"]) + 1.0),
+                        group["label"],
+                    )
+                for bubble in group["bubbles"]:
+                    bx = _mm(float(bubble["center"]["x"]))
+                    by = _y(float(bubble["center"]["y"]))
+                    rx = _mm(float(bubble["radius_x"]))
+                    ry = _mm(float(bubble["radius_y"]))
+                    c.setStrokeColor(C5)
+                    c.setLineWidth(S5)
+                    c.setFillColor(C_BUB_FILL)
+                    c.ellipse(bx - rx, by - ry, bx + rx, by + ry, stroke=1, fill=1)
+                    text = f".{bubble['value']}" if group["place"] == "tenths" else str(bubble["value"])
+                    c.setFont(_FB, 5.5)
+                    c.setFillColor(CT4)
+                    c.drawCentredString(bx, by - _mm(0.8), text)
+
+            c.setFillColor(black)
+            for side in ("left", "right"):
+                anchor = mark["anchors"][side]
+                half = float(anchor["size"]) / 2
+                ax = float(anchor["center"]["x"])
+                ay = float(anchor["center"]["y"])
+                c.rect(_mm(ax - half), _y(ay + half), _mm(2 * half), _mm(2 * half), fill=1, stroke=0)

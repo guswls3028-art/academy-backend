@@ -49,13 +49,13 @@ flowchart LR
 - `choice_count`는 객관식 문항 수다.
 - `essay_count`는 서술형 문항 수다. 필드명은 기존 API/데이터 계약 호환을 위해 유지한다.
 - `ExamQuestion.question_kind`가 모든 문항에 있으면 문항 번호별 `choice`/`essay` 값이 경계보다 우선한다. 따라서 `1 객관식 / 2 서술형 / 3 객관식`처럼 섞인 순서를 그대로 보존한다.
-- 인쇄 영역은 객관식 버블과 서술형 빈 작성칸을 물리적으로 나누고 각 행에 시험의 실제 문항 번호를 표시한다. AI 좌표와 자동판정은 객관식에만 존재한다.
+- 인쇄 영역은 객관식 버블과 서술형 빈 작성칸을 물리적으로 나누고 각 행에 시험의 실제 문항 번호를 표시한다. AI 좌표와 자동판정은 객관식에만 존재한다. 예외로 [서술형 교사 채점란 (Beta)](#서술형-교사-채점란-beta)은 교사가 칠한 점수를 채점표 제안으로만 읽는다.
 - 수학 `0~999` 정답키도 종이 OMR에서는 숫자 버블을 만들거나 인식하지 않는다. 기존 답안키와 결과 데이터는 보존하고 온라인 응시 자동채점은 유지하되, 종이 OMR 서답형은 교사가 수동 채점한다.
 - 이 구분은 검토 저장·재채점과 학생 결과 동기화에도 동일하게 적용한다. `OMR_SCAN`의 자동채점/답안 완결성 검사는 객관식만 대상으로 하며, 숫자 정답키가 있는 서술형 때문에 `OMR_ANSWERS_INCOMPLETE`를 발생시키거나 기존 수동 서술형 점수를 덮어쓰지 않는다. 실제 객관식 답안이 누락되면 기존 오류와 rollback을 유지한다.
 - 수학 30객관식+2서술형(정답키 `0`)의 검토 저장, 수동 점수 8/9, 정답·문항 배점 변경 후 재채점 보존을 `test_mixed_omr_subjective_projection_pg.py`에서 검증한다. 온라인 숫자 단답 자동채점과 tenant/source 경계는 기존 회귀를 유지하며, 이 수정은 기존 답안/성적을 일괄 변경하거나 자동으로 재채점하지 않는다.
 - `essay_count=0`인 객관식 전용 시험은 객관식 40문항 이하에서 사용자가 기본 5줄짜리 `서술형 작성 공간`을 표시하거나 숨길 수 있다. 41문항부터는 3열 객관식 레이아웃을 우선해 자동으로 숨긴다.
 - 표시 선택은 요청의 `include_optional_essay_area`에만 존재하는 렌더링 옵션이다. `OMRSheetContract`, 워커 payload, 정답키, 좌표 메타, 답안 저장, 채점에는 포함하지 않는다.
-- 독립 `/tools/omr`와 시험 연결 OMR은 모두 `essay_count` 호환 필드를 서술형 기입란 수로만 사용한다. 해당 영역에는 숫자 버블이나 인식 좌표를 만들지 않으며 AI 자동판정 대상에 포함하지 않는다.
+- 독립 `/tools/omr`와 시험 연결 OMR은 모두 `essay_count` 호환 필드를 서술형 기입란 수로만 사용한다. 해당 영역에는 학생 답안용 숫자 버블이나 인식 좌표를 만들지 않으며 AI 자동판정 대상에 포함하지 않는다. 교사 채점란 Beta는 별도 좌표로 점수 제안만 만든다.
 - OMR 자동인식 답안 저장은 계약에 등록된 객관식 번호만 허용한다.
 - 워커가 일반 서술형 번호를 보내면 그 값은 fact로는 남기되 `SubmissionAnswer`로 저장하지 않는다.
 - 워커 원본 답안 수와 계약상 `auto_detect_count`가 다르면 `ANSWER_COUNT_MISMATCH`로 수동 검토가 필요하다.
@@ -259,6 +259,53 @@ OMR 사용이 어려운 혼합형 시험은 같은 성적 저장 경로에 엑�
 - 객관식/서술형 순서와 관계없이 문항 번호로 `ResultItem`을 갱신하며, 변경된 문항은 append-only `ResultFact(source=excel_import)`로 남긴다.
 - 업로드 전체를 한 transaction으로 처리하므로 한 행이라도 저장 단계에서 실패하면 일부 학생만 반영하지 않는다.
 - 학생 마스터와 수강 정보는 조회·매칭만 하며 수정하지 않는다. 차시 roster fallback 학생은 기존 수동 채점/OMR 정책과 동일하게 `ExamEnrollment`만 materialize한다.
+
+## 서술형 교사 채점란 (Beta)
+
+학생 50명 이상의 서술형 점수를 손으로 옮겨 적는 부담을 줄이기 위해, 교사가 답안지에
+직접 점수를 칠하고 스캔으로 채점표에 채운다. 서술형 작성칸과 같은 행에 인쇄하며,
+자동 판독이 틀릴 수 있으므로 읽은 점수는 **채점표 제안**일 뿐 정본 점수가 아니다.
+
+- **설정:** `GET/PATCH /api/v1/exams/{exam_id}/omr/essay-score-marks/`의
+  `{"enabled": bool}`. 값은 구조 소유 `Sheet.essay_score_marks`에 저장한다. 문항 편집과
+  같이 `ensure_regular_exam_owns_structure` → `resolve_structure_exam` →
+  `assert_template_editable` 순서를 따르며 교사/관리자만 바꿀 수 있다. 다른 학원 시험은
+  404다. 시험 복사·템플릿 저장은 값을 이어받는다. 응답의 `available/reason`은 현재 문항
+  구성으로 인쇄할 수 있는지, `printed`는 다음 인쇄물에 채점란이 들어가는지를 뜻한다.
+- **배치:** 십(0~4)·일(0~9)·소수 첫째 자리(.0~.9) 버블과 양 끝 2mm 앵커. 최대
+  49.9점이며 버블 구성은 배점과 무관하게 고정이다. 따라서 인쇄 후 배점을 바꿔도 좌표가
+  움직이지 않는다. 객관식 20문항 이하는 한 줄(서술형 최대 10문항), 21~40문항은 두 줄
+  (최대 8문항)이다. 배점 없음, 49.9점 초과, 공간 부족이면 켤 수 없고 400과 사유를
+  반환한다. 이미 켠 시험이 나중에 조건을 벗어나면 채점란 없이 인쇄된다(`printed=false`).
+- **계약:** 켜져 있고 배치 가능하면 `build_omr_meta(essay_score_mark_numbers=...)`가
+  `template_meta.essay_score_marks` 좌표를 만든다(`meta_generator.build_essay_score_marks`
+  SSOT). PDF·HTML 미리보기는 이 좌표를 그대로 그리고, 워커 payload도 같은 meta를 받는다.
+  꺼져 있으면 meta와 계약 fingerprint는 이전과 동일하다. 시험 연결 문서에서 문항 수를
+  요청으로 바꾼 경우에는 채점란을 그리지 않는다.
+- **판독:** `academy/adapters/ai/omr/essay_scores.py`. 양 끝 앵커가 모두 예상 위치
+  3.5mm 안에 있어야 읽고, 없으면 `no_score_area`로 무시한다. 채점란 없이 인쇄된
+  답안지의 손글씨를 점수로 읽지 않기 위한 조건이다. 한 채점란 25개 버블이 같은
+  noise floor를 공유한다. 자리마다 0개면 blank, 1개면 값, 2개 이상이나 근접하면
+  `ambiguous`이다. 일의 자리는 필수이며(0.7점 = 일 0 + 소수 7), 십·소수 빈칸은 0이다.
+  결과는 워커 응답 `essay_scores`(`status`, `score`, `groups`, `raw`)로 오고 저장 위치는
+  `Submission.meta.ai_result.result`와 `OMRRecognitionRun.raw_result`다. 판독 예외는
+  객관식 채점을 막지 않는다. 구 워커는 이 키를 보내지 않고, 구 API는 meta 키를 넣지 않으므로
+  배포 순서와 무관하게 호환된다.
+- **제안:** 수동 채점표 GET의 각 행 `omr_essay_scores`는 그 학생 결과에 **연결된**
+  OMR 제출(`attempt.submission_id`, 같은 학원·시험·OMR 출처)의 판독만 사용한다.
+  `{question_id: {status, score, submission_id}}`이며 status는 `ok`, 배점 초과
+  `out_of_range`, 판독 불가 `needs_check`이다. blank/no_score_area와 결시 행은 제안하지
+  않는다. 상단 `omr_essay_score_marks`는 `enabled`, `proposal_count`, `needs_check_count`를
+  준다. 교사가 채점표에서 확인하고 저장해야 기존 `apply_manual_grading` 경로(버전 확인,
+  잠금, 확정, 진행도)로 점수가 반영된다. 이미 저장된 서술형 점수는 덮어쓰지 않는다.
+  화면 계약은 [채점·오답노트 프런트 계약](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/GRADING-WRONG-NOTE-WORKFLOW.md)이 소유한다.
+- **복구:** 판독이 틀리거나 비어 있으면 채점표에서 직접 입력한다. 설정을 끄면 다음
+  인쇄물부터 채점란이 빠지고, 이미 받은 판독 제안은 연결된 제출이 바뀔 때까지 남는다.
+- **검증:** `tests/omr/test_essay_score_marks.py`는 실제 PDF(150/300dpi, 채움·사선)에서
+  1.2/2.9/10.0/0.7/49.9점, 빈칸, 이중 마킹, 일의 자리 누락, 채점란 없는 답안지의
+  손글씨, 객관식 무영향을 검사한다. `apps/domains/results/tests/test_omr_essay_score_proposals.py`는
+  설정 API·계약·워커 payload, 배치 불가 400, 다른 학원 404, 채점표 제안 상태와
+  저장 후 확정, 결시·빈칸 미제안을 검사한다. 합성 회귀이며 실제 스캔 정확도 수치가 아니다.
 
 ## 보기 대부분이 칠해진 답안
 

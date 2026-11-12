@@ -54,8 +54,10 @@ from apps.support.results.exam_result_excel_import_dependencies import (
 from apps.support.results.manual_exam_grading_dependencies import (
     get_locked_exam_questions_for_manual_grading,
     lock_omr_submission_for_manual_grading,
+    omr_essay_score_reads_for_manual_grading,
     omr_objective_sources_for_manual_grading,
 )
+from apps.support.omr.essay_score_marks import essay_score_marks_enabled_for_exam
 
 
 logger = logging.getLogger(__name__)
@@ -64,6 +66,9 @@ OBJECTIVE_OMR_PENDING = "omr_pending"
 OBJECTIVE_OMR_RESTORE = "omr_restore"
 OBJECTIVE_OMR_REVIEW = "omr_review_required"
 OBJECTIVE_OMR_PROCESSING = "omr_processing"
+OMR_ESSAY_SCORE_OK = "ok"
+OMR_ESSAY_SCORE_OUT_OF_RANGE = "out_of_range"
+OMR_ESSAY_SCORE_NEEDS_CHECK = "needs_check"
 
 
 class ManualExamGradingError(ValueError):
@@ -180,11 +185,24 @@ def build_manual_grading_sheet(*, exam: Any, tenant: Any) -> dict[str, Any]:
     question_numbers = {
         question.question_id: question.number for question in questions
     }
+    attached_submission_ids = _attached_submission_ids(results.values())
     omr_sources = omr_objective_sources_for_manual_grading(
         tenant=tenant,
         exam_id=int(exam.id),
-        submission_ids=_attached_submission_ids(results.values()),
+        submission_ids=attached_submission_ids,
     )
+    essay_reads = omr_essay_score_reads_for_manual_grading(
+        tenant=tenant,
+        exam_id=int(exam.id),
+        submission_ids=attached_submission_ids,
+    )
+    proposal_questions = {
+        question.number: question
+        for question in questions
+        if question.kind == "essay" and question.question_id in editable_ids
+    }
+    proposal_count = 0
+    needs_check_count = 0
 
     rows = []
     for candidate in candidates:
@@ -200,6 +218,20 @@ def build_manual_grading_sheet(*, exam: Any, tenant: Any) -> dict[str, Any]:
             and isinstance(result.attempt.meta, dict)
             else {}
         )
+        omr_essay_scores = (
+            {}
+            if attempt_meta.get("status") == "NOT_SUBMITTED"
+            else _omr_essay_score_proposals(
+                result=result,
+                essay_reads=essay_reads,
+                proposal_questions=proposal_questions,
+            )
+        )
+        for proposal in omr_essay_scores.values():
+            if proposal["status"] == OMR_ESSAY_SCORE_OK:
+                proposal_count += 1
+            else:
+                needs_check_count += 1
         rows.append(
             {
                 "enrollment_id": candidate.enrollment_id,
@@ -234,6 +266,9 @@ def build_manual_grading_sheet(*, exam: Any, tenant: Any) -> dict[str, Any]:
                     )
                     for question in questions
                 },
+                # Beta: scores the teacher marked on the OMR strip. Proposals
+                # only; the grid saves them through the normal apply path.
+                "omr_essay_scores": omr_essay_scores,
             }
         )
 
@@ -266,7 +301,48 @@ def build_manual_grading_sheet(*, exam: Any, tenant: Any) -> dict[str, Any]:
             for question in questions
         ],
         "rows": rows,
+        "omr_essay_score_marks": {
+            "enabled": essay_score_marks_enabled_for_exam(exam=exam, tenant=tenant),
+            "beta": True,
+            "proposal_count": proposal_count,
+            "needs_check_count": needs_check_count,
+        },
     }
+
+
+def _omr_essay_score_proposals(
+    *,
+    result: Result | None,
+    essay_reads: dict[int, dict[int, dict[str, Any]]],
+    proposal_questions: dict[int, QuestionSpec],
+) -> dict[str, dict[str, Any]]:
+    """Map the attached scan's strip reads onto this row's essay cells."""
+    attempt = result.attempt if result is not None else None
+    submission_id = int(attempt.submission_id or 0) if attempt is not None else 0
+    reads = essay_reads.get(submission_id) if submission_id > 0 else None
+    if not reads:
+        return {}
+    proposals: dict[str, dict[str, Any]] = {}
+    for number, read in reads.items():
+        question = proposal_questions.get(int(number))
+        if question is None:
+            continue
+        status = read.get("status")
+        score = read.get("score")
+        if status == "ok" and isinstance(score, float) and score >= 0:
+            if abs(score * 10 - round(score * 10)) > 1e-6:
+                proposal = {"status": OMR_ESSAY_SCORE_NEEDS_CHECK, "score": None}
+            elif score > float(question.max_score) + 1e-6:
+                proposal = {"status": OMR_ESSAY_SCORE_OUT_OF_RANGE, "score": round(score, 1)}
+            else:
+                proposal = {"status": OMR_ESSAY_SCORE_OK, "score": round(score, 1)}
+        elif status in {"ambiguous", "error"}:
+            proposal = {"status": OMR_ESSAY_SCORE_NEEDS_CHECK, "score": None}
+        else:
+            # blank / no_score_area: nothing was marked on paper.
+            continue
+        proposals[str(question.question_id)] = {**proposal, "submission_id": submission_id}
+    return proposals
 
 
 def _question_answer_types(

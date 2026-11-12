@@ -80,6 +80,12 @@ class OMRSheetContract:
     def essay_question_numbers(self) -> tuple[int, ...]:
         return tuple(question.number for question in self.questions if question.kind == "essay")
 
+    @property
+    def essay_score_marks(self) -> list[dict[str, Any]]:
+        """Teacher score strips printed on this sheet (empty when not enabled)."""
+        marks = self.template_meta.get("essay_score_marks") if isinstance(self.template_meta, dict) else None
+        return list(marks) if isinstance(marks, list) else []
+
     def worker_shape(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,

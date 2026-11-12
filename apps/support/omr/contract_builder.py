@@ -4,7 +4,10 @@ from decimal import Decimal
 from typing import Any
 
 from academy.domain.omr import OMRQuestionContract, OMRSheetContract
-from apps.domains.assets.omr.services.meta_generator import build_objective_template_meta
+from apps.domains.assets.omr.services.meta_generator import (
+    build_objective_template_meta,
+    essay_score_mark_availability,
+)
 
 
 _CHOICE_LABELS = {"1", "2", "3", "4", "5"}
@@ -45,6 +48,11 @@ def _build_contract(sheet, template_exam, questions, counts, n_choices):
         question_count=choice_count,
         n_choices=n_choices,
         choice_question_numbers=choice_numbers,
+        essay_score_mark_numbers=_essay_score_mark_numbers(
+            sheet=sheet,
+            question_contracts=question_contracts,
+            choice_count=choice_count,
+        ),
     )
     return OMRSheetContract(
         sheet_id=getattr(sheet, "id", None),
@@ -58,6 +66,25 @@ def _build_contract(sheet, template_exam, questions, counts, n_choices):
         questions=tuple(question_contracts),
         template_meta=template_meta,
     )
+
+
+def _essay_score_mark_numbers(*, sheet, question_contracts, choice_count) -> list[int] | None:
+    """Essay rows that carry a teacher score strip, or None when not printed.
+
+    The strip is printed only when the sheet opted in and every essay row fits;
+    otherwise the meta and fingerprint stay exactly as before.
+    """
+    if not getattr(sheet, "essay_score_marks", False):
+        return None
+    essays = [q for q in question_contracts if q.kind == "essay"]
+    availability = essay_score_mark_availability(
+        question_count=choice_count,
+        essay_count=len(essays),
+        essay_max_scores=[q.score for q in essays],
+    )
+    if not availability["available"]:
+        return None
+    return [q.number for q in essays]
 
 
 def _resolve_template_exam(exam):

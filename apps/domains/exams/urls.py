@@ -11,6 +11,7 @@ from apps.domains.exams.views.exam_asset_view import ExamAssetView
 from apps.domains.exams.views.omr_generate_view import GenerateOMRSheetAssetView
 from apps.support.omr.route_dependencies import (
     ExamOMRDefaultsView,
+    ExamOMREssayScoreMarksView,
     ExamOMRPreviewView,
     ExamOMRPdfView,
 )
@@ -115,6 +116,7 @@ urlpatterns = [
     path("<int:exam_id>/omr/defaults/", ExamOMRDefaultsView.as_view()),
     path("<int:exam_id>/omr/preview/", ExamOMRPreviewView.as_view()),
     path("<int:exam_id>/omr/pdf/", ExamOMRPdfView.as_view()),
+    path("<int:exam_id>/omr/essay-score-marks/", ExamOMREssayScoreMarksView.as_view()),
 
     # =========================
     # Questions

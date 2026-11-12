@@ -39,7 +39,7 @@ class OMRHtmlRenderer:
                 "객관식은 컴퓨터용 사인펜으로 버블을 빈틈없이 칠해주세요."
             )
         if render_essay_count > 0:
-            instructions.append("서술형 답안은 해당 번호의 작성칸에 깔끔하게 적어주세요.")
+            instructions.append(doc.essay_instruction)
         instructions.append("수정테이프를 사용해주세요. (수정액 사용 금지)")
 
         sub_parts = []
@@ -73,6 +73,7 @@ class OMRHtmlRenderer:
             "title_font_pt": title_font_pt,
             "mc_columns": mc_columns,
             "essay_rows": essay_rows,
+            "essay_score_marks": self._build_essay_score_marks(doc),
             "instructions": instructions,
             "marking_instruction_number": len(instructions) + 1,
             "choices_labels": [str(i + 1) for i in range(doc.n_choices)],
@@ -138,3 +139,52 @@ class OMRHtmlRenderer:
                 "is_zebra": (group_idx % 2 == 1),
             })
         return rows
+
+    def _build_essay_score_marks(self, doc: OMRDocument) -> list[dict]:
+        """Absolute mm boxes for the teacher score strips (same SSOT as the PDF)."""
+        marks = []
+        for mark in doc.essay_score_marks:
+            strip = mark["strip"]
+            cy = float(mark["anchors"]["left"]["center"]["y"])
+            bubbles = []
+            labels = []
+            for group in mark["groups"]:
+                if group.get("label"):
+                    labels.append({
+                        "text": group["label"],
+                        "left": round(float(group["label_x"]), 2),
+                        "top": round(float(group["cy"]) - 1.8, 2),
+                        "w": float(group["label_w"]),
+                    })
+                for bubble in group["bubbles"]:
+                    rx = float(bubble["radius_x"])
+                    ry = float(bubble["radius_y"])
+                    bubbles.append({
+                        "text": (
+                            f".{bubble['value']}"
+                            if group["place"] == "tenths"
+                            else str(bubble["value"])
+                        ),
+                        "left": round(float(bubble["center"]["x"]) - rx, 2),
+                        "top": round(float(bubble["center"]["y"]) - ry, 2),
+                        "w": round(2 * rx, 2),
+                        "h": round(2 * ry, 2),
+                    })
+            anchors = []
+            for side in ("left", "right"):
+                anchor = mark["anchors"][side]
+                half = float(anchor["size"]) / 2
+                anchors.append({
+                    "left": round(float(anchor["center"]["x"]) - half, 2),
+                    "top": round(float(anchor["center"]["y"]) - half, 2),
+                    "size": round(2 * half, 2),
+                })
+            marks.append({
+                "strip": {key: float(strip[key]) for key in ("x", "y", "w", "h")},
+                "title_left": float(mark["title_x"]),
+                "title_top": round(cy - 2.6, 2),
+                "labels": labels,
+                "bubbles": bubbles,
+                "anchors": anchors,
+            })
+        return marks

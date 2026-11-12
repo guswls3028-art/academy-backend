@@ -492,6 +492,20 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 config=AnswerDetectConfig(),
             )
             answers = [a.to_dict() for a in answer_results]
+            # Teacher score strips (Beta) are read only when the contract printed them.
+            essay_scores: list = []
+            if meta.get("essay_score_marks"):
+                from academy.adapters.ai.omr.essay_scores import detect_essay_score_marks
+
+                try:
+                    essay_scores = detect_essay_score_marks(
+                        image_bgr=aligned,
+                        meta=meta,
+                        config=AnswerDetectConfig(),
+                    )
+                except Exception:  # noqa: BLE001 — never block objective grading
+                    logger.exception("OMR essay score read failed job=%s", job.id)
+                    essay_scores = []
             _record_progress(job.id, "detecting_answers", 95, step_index=5, step_total=6, step_name_display="답안감지", step_percent=100, tenant_id=tenant_id)
 
             _record_progress(job.id, "done", 100, step_index=6, step_total=6, step_name_display="완료", step_percent=100, tenant_id=tenant_id)
@@ -516,6 +530,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
                     "omr_contract_fingerprint": str(omr_contract.get("fingerprint") or omr_payload_meta.get("contract_fingerprint") or ""),
                     "identifier": ident,
                     "answers": answers,
+                    **({"essay_scores": essay_scores} if essay_scores else {}),
                     **aligned_preview,
                 },
             )
