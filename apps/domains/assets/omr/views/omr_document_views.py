@@ -16,6 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.assets.omr.dto.omr_document import MAX_ESSAY_QUESTIONS, OMRDocument
@@ -23,7 +24,11 @@ from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS
 from apps.domains.assets.omr.services.omr_document_service import OMRDocumentService
 from apps.domains.assets.omr.renderer.html_renderer import OMRHtmlRenderer
 from apps.domains.assets.omr.renderer.pdf_renderer import OMRPdfRenderer
-from apps.support.omr.view_dependencies import get_exam_for_omr_document
+from apps.support.omr.essay_score_marks import (
+    essay_score_marks_state,
+    set_essay_score_marks,
+)
+from apps.support.omr.view_dependencies import IsTeacherOrAdmin, get_exam_for_omr_document
 
 
 def _get_exam(tenant, exam_id: int):
@@ -176,6 +181,53 @@ class ExamOMRPdfView(APIView):
         if err:
             return err
         return _render_pdf_response(doc, tenant=request.tenant)
+
+
+class EssayScoreMarksStateSerializer(serializers.Serializer):
+    enabled = serializers.BooleanField()
+    available = serializers.BooleanField()
+    printed = serializers.BooleanField()
+    reason = serializers.CharField(allow_blank=True)
+    essay_count = serializers.IntegerField()
+    max_score = serializers.FloatField()
+    beta = serializers.BooleanField()
+
+
+class EssayScoreMarksUpdateSerializer(serializers.Serializer):
+    enabled = serializers.BooleanField()
+
+
+class ExamOMREssayScoreMarksView(APIView):
+    """
+    GET/PATCH /api/v1/exams/{exam_id}/omr/essay-score-marks/
+
+    Beta 서술형 교사 채점란 설정. PATCH {"enabled": bool}는 문항 편집과 같은
+    구조 소유권·템플릿 봉인 규칙을 따른다. 배치할 수 없으면 400과 사유를 반환한다.
+    """
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def get_permissions(self):
+        permissions = super().get_permissions()
+        if self.request.method == "PATCH":
+            permissions.append(IsTeacherOrAdmin())
+        return permissions
+
+    @extend_schema(request=None, responses=EssayScoreMarksStateSerializer)
+    def get(self, request, exam_id: int):
+        exam = _get_exam(request.tenant, exam_id)
+        return Response(essay_score_marks_state(exam=exam, tenant=request.tenant))
+
+    @extend_schema(request=EssayScoreMarksUpdateSerializer, responses=EssayScoreMarksStateSerializer)
+    def patch(self, request, exam_id: int):
+        exam = _get_exam(request.tenant, exam_id)
+        if "enabled" not in request.data:
+            return Response(
+                {"enabled": ["켜기 또는 끄기를 선택해 주세요."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        enabled = serializers.BooleanField().run_validation(request.data.get("enabled"))
+        state = set_essay_score_marks(exam=exam, tenant=request.tenant, enabled=enabled)
+        return Response(state, status=status.HTTP_200_OK)
 
 
 # ──────────────────────────────────────────────

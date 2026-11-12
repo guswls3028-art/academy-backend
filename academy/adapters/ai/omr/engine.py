@@ -78,48 +78,9 @@ def detect_omr_answers_v7(
     if config is None:
         config = AnswerDetectConfig()
 
-    scale = build_page_scale_from_meta(
-        meta=meta,
-        image_size_px=(image_bgr.shape[1], image_bgr.shape[0]),
+    scale, gray_raw, gray, binary = prepare_omr_images(
+        image_bgr=image_bgr, meta=meta, config=config,
     )
-
-    gray_raw = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-    gray = gray_raw.copy()
-
-    # --- v10: CLAHE 전처리 (그림자/조명 불균일 보정) ---
-    if config.use_clahe:
-        clahe = cv2.createCLAHE(
-            clipLimit=config.clahe_clip_limit,
-            tileGridSize=(config.clahe_grid_size, config.clahe_grid_size),
-        )
-        gray = clahe.apply(gray)
-
-    # --- v10: 이미지 품질 기반 파라미터 자동 조정 ---
-    block_size = config.adaptive_block_size
-    adaptive_c = config.adaptive_c
-    if config.use_quality_adaptive:
-        blur_metric = cv2.Laplacian(gray, cv2.CV_64F).var()
-        if blur_metric < 100:
-            # 흐릿한 이미지: 블록 크기 키우고 C 낮춤
-            block_size = max(block_size, 21)
-            adaptive_c = max(2, adaptive_c - 2)
-            logger.info("OMR quality: blurry (laplacian_var=%.1f), block=%d C=%d", blur_metric, block_size, adaptive_c)
-        elif blur_metric > 2000:
-            # 매우 선명: 기본값 유지
-            pass
-
-    # --- Binarization ---
-    if config.use_adaptive_threshold:
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        binary = cv2.adaptiveThreshold(
-            blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV,
-            blockSize=block_size,
-            C=adaptive_c,
-        )
-    else:
-        # Legacy fixed threshold fallback
-        _, binary = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY_INV)
 
     # --- Column-local alignment (v9~v14, displacement-gated) ---
     # v15: 컬럼 앵커 원 제거됨 — 코너 마커 homography만으로 정렬. col_transforms는 빈 dict.
@@ -203,6 +164,59 @@ def detect_omr_answers_v7(
             ))
 
     return results
+
+
+def prepare_omr_images(
+    *,
+    image_bgr: np.ndarray,
+    meta: Dict[str, Any],
+    config: AnswerDetectConfig,
+) -> Tuple[PageScale, np.ndarray, np.ndarray, np.ndarray]:
+    """Page scale + raw gray, CLAHE gray and binarized image shared by readers."""
+    scale = build_page_scale_from_meta(
+        meta=meta,
+        image_size_px=(image_bgr.shape[1], image_bgr.shape[0]),
+    )
+
+    gray_raw = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    gray = gray_raw.copy()
+
+    # --- v10: CLAHE 전처리 (그림자/조명 불균일 보정) ---
+    if config.use_clahe:
+        clahe = cv2.createCLAHE(
+            clipLimit=config.clahe_clip_limit,
+            tileGridSize=(config.clahe_grid_size, config.clahe_grid_size),
+        )
+        gray = clahe.apply(gray)
+
+    # --- v10: 이미지 품질 기반 파라미터 자동 조정 ---
+    block_size = config.adaptive_block_size
+    adaptive_c = config.adaptive_c
+    if config.use_quality_adaptive:
+        blur_metric = cv2.Laplacian(gray, cv2.CV_64F).var()
+        if blur_metric < 100:
+            # 흐릿한 이미지: 블록 크기 키우고 C 낮춤
+            block_size = max(block_size, 21)
+            adaptive_c = max(2, adaptive_c - 2)
+            logger.info("OMR quality: blurry (laplacian_var=%.1f), block=%d C=%d", blur_metric, block_size, adaptive_c)
+        elif blur_metric > 2000:
+            # 매우 선명: 기본값 유지
+            pass
+
+    # --- Binarization ---
+    if config.use_adaptive_threshold:
+        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        binary = cv2.adaptiveThreshold(
+            blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV,
+            blockSize=block_size,
+            C=adaptive_c,
+        )
+    else:
+        # Legacy fixed threshold fallback
+        _, binary = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY_INV)
+
+    return scale, gray_raw, gray, binary
 
 
 def _detect_numeric_short_question(

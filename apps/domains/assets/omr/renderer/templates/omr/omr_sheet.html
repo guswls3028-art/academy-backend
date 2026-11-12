@@ -163,6 +163,12 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
   border-right:0.15mm solid #ccc;
 }
 .dr-bx{flex:1}
+/* 서술형 교사 채점란 — meta_generator 좌표를 절대 위치로 그대로 사용 */
+.es{position:absolute;z-index:15;background:#f5f6f8;border:0.25pt solid #aaa;border-radius:0.8mm}
+.es-t{position:absolute;z-index:16;font-size:5.5pt;font-weight:700;line-height:1.15;color:#222}
+.es-l{position:absolute;z-index:16;width:3.6mm;text-align:center;font-size:5.5pt;font-weight:700;color:#222;line-height:3.6mm}
+.es-b{position:absolute;z-index:16;border:0.18mm solid #444;border-radius:40%;display:flex;align-items:center;justify-content:center;font-size:5pt;color:#999;background:#f8f8f8}
+.es-a{position:absolute;z-index:16;background:#000}
 /* QR reservation */
 .qr-area{width:8mm;height:8mm;border:0.3px dashed #ccc;position:absolute;bottom:1mm;right:1mm}
 </style>
@@ -175,6 +181,14 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
   <div class="cm cm-tr"><b class="h"></b><b class="v"></b></div>
   <div class="cm cm-bl"></div>
   <div class="cm cm-br"><b class="h"></b><b class="v"></b></div>
+
+  {% for mark in essay_score_marks %}
+  <div class="es" style="left:{{ mark.strip.x }}mm;top:{{ mark.strip.y }}mm;width:{{ mark.strip.w }}mm;height:{{ mark.strip.h }}mm"></div>
+  <div class="es-t" style="left:{{ mark.title_left }}mm;top:{{ mark.title_top }}mm">교사<br>채점</div>
+  {% for label in mark.labels %}<div class="es-l" style="left:{{ label.left }}mm;top:{{ label.top }}mm;width:{{ label.w }}mm">{{ label.text }}</div>{% endfor %}
+  {% for bubble in mark.bubbles %}<div class="es-b" style="left:{{ bubble.left }}mm;top:{{ bubble.top }}mm;width:{{ bubble.w }}mm;height:{{ bubble.h }}mm">{{ bubble.text }}</div>{% endfor %}
+  {% for anchor in mark.anchors %}<div class="es-a" style="left:{{ anchor.left }}mm;top:{{ anchor.top }}mm;width:{{ anchor.size }}mm;height:{{ anchor.size }}mm"></div>{% endfor %}
+  {% endfor %}
 
   <div class="omr-c">
     <!-- 왼쪽 패널 -->

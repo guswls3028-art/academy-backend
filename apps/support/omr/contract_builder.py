@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from hashlib import sha256
 from typing import Any
 
 from academy.domain.omr import OMRQuestionContract, OMRSheetContract
-from apps.domains.assets.omr.services.meta_generator import build_objective_template_meta
+from apps.domains.assets.omr.services.meta_generator import (
+    build_objective_template_meta,
+    essay_score_mark_availability,
+)
 
 
 _CHOICE_LABELS = {"1", "2", "3", "4", "5"}
@@ -12,27 +16,28 @@ _NOT_LOADED = object()
 
 
 def build_omr_sheet_contract(*, sheet, exam=None, n_choices: int = 5) -> OMRSheetContract:
-    template_exam = _resolve_template_exam(exam or getattr(sheet, "exam", None))
+    requested_exam = exam or getattr(sheet, "exam", None)
+    template_exam = _resolve_template_exam(requested_exam)
     questions = _load_sheet_questions(sheet)
     counts = _resolve_counts(
         sheet=sheet,
         template_exam=template_exam,
         questions=questions,
     )
-    return _build_contract(sheet, template_exam, questions, counts, n_choices)
+    return _build_contract(sheet, template_exam, questions, counts, n_choices, requested_exam)
 
 
 def build_omr_sheet_contract_from_data(
-    *, sheet, template_exam, questions: list, answers, n_choices: int = 5,
+    *, sheet, template_exam, questions: list, answers, n_choices: int = 5, exam=None,
 ) -> OMRSheetContract:
     """Use the same shape rules with explicitly loaded, request-local inputs."""
     counts = _resolve_counts(
         sheet=sheet, template_exam=template_exam, questions=questions, answers=answers,
     )
-    return _build_contract(sheet, template_exam, questions, counts, n_choices)
+    return _build_contract(sheet, template_exam, questions, counts, n_choices, exam or template_exam)
 
 
-def _build_contract(sheet, template_exam, questions, counts, n_choices):
+def _build_contract(sheet, template_exam, questions, counts, n_choices, requested_exam):
     total, choice_count, essay_count, source = counts
     question_contracts = _build_question_contracts(
         questions=questions,
@@ -45,6 +50,12 @@ def _build_contract(sheet, template_exam, questions, counts, n_choices):
         question_count=choice_count,
         n_choices=n_choices,
         choice_question_numbers=choice_numbers,
+        essay_score_mark_numbers=_essay_score_mark_numbers(
+            sheet=sheet,
+            exam=requested_exam,
+            question_contracts=question_contracts,
+            choice_count=choice_count,
+        ),
     )
     return OMRSheetContract(
         sheet_id=getattr(sheet, "id", None),
@@ -58,6 +69,42 @@ def _build_contract(sheet, template_exam, questions, counts, n_choices):
         questions=tuple(question_contracts),
         template_meta=template_meta,
     )
+
+
+def supports_essay_score_marks(exam) -> bool:
+    return (
+        getattr(exam, "manual_grading_method", None) == "score"
+        and getattr(exam, "grading_mode", None) in {"mixed", "written"}
+    )
+
+
+def essay_score_marks_scan_shape(contract: OMRSheetContract) -> str:
+    """Identify print geometry independently of scores and the print setting."""
+    return sha256(repr((
+        contract.layout_version,
+        contract.choice_count,
+        contract.objective_question_numbers,
+        contract.essay_question_numbers,
+    )).encode("ascii")).hexdigest()
+
+
+def _essay_score_mark_numbers(*, sheet, exam, question_contracts, choice_count) -> list[int] | None:
+    """Essay rows that carry a teacher score strip, or None when not printed.
+
+    The strip is printed only when the sheet opted in and every essay row fits;
+    otherwise the meta and fingerprint stay exactly as before.
+    """
+    if not getattr(sheet, "essay_score_marks", False) or not supports_essay_score_marks(exam):
+        return None
+    essays = [q for q in question_contracts if q.kind == "essay"]
+    availability = essay_score_mark_availability(
+        question_count=choice_count,
+        essay_count=len(essays),
+        essay_max_scores=[q.score for q in essays],
+    )
+    if not availability["available"]:
+        return None
+    return [q.number for q in essays]
 
 
 def _resolve_template_exam(exam):

@@ -16,10 +16,18 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Optional
 
-from apps.domains.exams.models import ExamQuestion, Sheet
+from apps.domains.assets.omr.services.meta_generator import (
+    build_essay_score_marks,
+    essay_score_mark_availability,
+)
+from apps.domains.exams.models import ExamQuestion
 from apps.domains.submissions.models import Submission
-from apps.support.omr.contract_builder import build_omr_sheet_contract
-from apps.support.omr.sheet_resolver import resolve_omr_sheet_for_submission
+from apps.support.omr.contract_builder import (
+    build_omr_sheet_contract,
+    essay_score_marks_scan_shape,
+    supports_essay_score_marks,
+)
+from apps.support.omr.sheet_resolver import resolve_omr_exam_and_sheet_for_submission
 from apps.infrastructure.storage.r2 import generate_presigned_get_url
 
 
@@ -51,9 +59,9 @@ def build_omr_payload(submission: Submission) -> dict[str, Any]:
     if raw_sheet_id not in (None, "") and sheet_id is None:
         raise ValueError("sheet_id must be integer")
 
-    sheet: Sheet = resolve_omr_sheet_for_submission(submission, sheet_id)
+    exam, sheet = resolve_omr_exam_and_sheet_for_submission(submission, sheet_id)
     sheet_id = int(sheet.id)
-    contract = build_omr_sheet_contract(sheet=sheet)
+    contract = build_omr_sheet_contract(sheet=sheet, exam=exam)
     objective_numbers = set(contract.objective_question_numbers)
     auto_detect_numbers = objective_numbers
     contract_snapshot = contract.to_dict(include_template_meta=False)
@@ -109,6 +117,23 @@ def build_omr_payload(submission: Submission) -> dict[str, Any]:
         ]
         template_meta["numeric_short_answers"] = []
         template_meta["numeric_short_answer_count"] = 0
+        if (
+            not contract.essay_score_marks
+            and sheet.essay_score_marks_scan_shape
+            and supports_essay_score_marks(exam)
+            and sheet.essay_score_marks_scan_shape == essay_score_marks_scan_shape(contract)
+        ):
+            # Earlier prints use the same coordinates as long as the question
+            # layout matches. The worker still requires both physical anchors.
+            availability = essay_score_mark_availability(
+                question_count=contract.choice_count,
+                essay_count=contract.essay_count,
+            )
+            if availability["available"]:
+                template_meta["essay_score_marks"] = build_essay_score_marks(
+                    question_count=contract.choice_count,
+                    essay_question_numbers=list(contract.essay_question_numbers),
+                )
         payload["template_meta"] = template_meta
 
     return payload

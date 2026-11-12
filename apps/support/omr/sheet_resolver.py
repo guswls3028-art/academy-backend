@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from apps.domains.exams.models import Sheet
+from apps.domains.exams.models import Exam, Sheet
 from apps.domains.submissions.models import Submission
 
 
@@ -23,6 +23,14 @@ def resolve_omr_sheet_for_exam(
     exam_id: int,
     requested_sheet_id: Optional[int],
 ) -> Sheet:
+    return _resolve_omr_exam_and_sheet(
+        tenant=tenant, exam_id=exam_id, requested_sheet_id=requested_sheet_id,
+    )[1]
+
+
+def _resolve_omr_exam_and_sheet(
+    *, tenant, exam_id: int, requested_sheet_id: Optional[int],
+) -> tuple[Exam, Sheet]:
     """
     Resolve the OMR sheet for an exam with tenant/exam scoping.
 
@@ -31,8 +39,6 @@ def resolve_omr_sheet_for_exam(
     - requested_sheet_id 가 이 exam 의 sheet 가 아님.
     - 어느 Sheet 도 매칭되지 않음.
     """
-    from apps.domains.exams.models import Exam
-
     exam = Exam.objects.filter(id=int(exam_id), tenant=tenant).first()
     if not exam:
         raise ValueError("OMR target exam not found for tenant")
@@ -47,23 +53,30 @@ def resolve_omr_sheet_for_exam(
         sheet = qs.filter(id=int(requested_sheet_id)).first()
         if not sheet:
             raise ValueError("sheet_id does not belong to this exam")
-        return sheet
+        return exam, sheet
 
     preferred = qs.filter(exam_id=int(exam.effective_template_exam_id)).first()
     sheet = preferred or qs.first()
     if not sheet:
         raise ValueError("OMR sheet not found for this exam")
-    return sheet
+    return exam, sheet
+
+
+def resolve_omr_exam_and_sheet_for_submission(
+    submission: Submission,
+    requested_sheet_id: Optional[int],
+) -> tuple[Exam, Sheet]:
+    if submission.target_type != Submission.TargetType.EXAM:
+        raise ValueError("OMR submission target_type must be exam")
+    return _resolve_omr_exam_and_sheet(
+        tenant=submission.tenant,
+        exam_id=int(submission.target_id),
+        requested_sheet_id=requested_sheet_id,
+    )
 
 
 def resolve_omr_sheet_for_submission(
     submission: Submission,
     requested_sheet_id: Optional[int],
 ) -> Sheet:
-    if submission.target_type != Submission.TargetType.EXAM:
-        raise ValueError("OMR submission target_type must be exam")
-    return resolve_omr_sheet_for_exam(
-        tenant=submission.tenant,
-        exam_id=int(submission.target_id),
-        requested_sheet_id=requested_sheet_id,
-    )
+    return resolve_omr_exam_and_sheet_for_submission(submission, requested_sheet_id)[1]

@@ -68,7 +68,7 @@ def load_exam_scoring_details(exams) -> dict[int, ExamScoringDetails]:
         sheet_questions = questions.get(sheet.id, []) if sheet else []
         answer_map = answers.get(owner.id)
         contract = build_omr_sheet_contract_from_data(
-            sheet=sheet, template_exam=owner, questions=sheet_questions, answers=answer_map,
+            sheet=sheet, template_exam=owner, questions=sheet_questions, answers=answer_map, exam=exam,
         ) if sheet else None
         inputs[exam_id] = dict(
             exam=exam, template_exam_id=owner.id, sheet=sheet, contract=contract,
