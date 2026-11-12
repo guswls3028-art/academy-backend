@@ -152,6 +152,7 @@ class SessionScoreRowSerializer(serializers.Serializer):
     video_progress_rate = serializers.IntegerField(min_value=0, max_value=100, allow_null=True, default=None)
     video_completed = serializers.BooleanField(allow_null=True, default=None)
     progress_completed = serializers.BooleanField(default=False)
+    assessment_progress_completed = serializers.BooleanField()
     progress_status = serializers.ChoiceField(
         choices=["completed", "in_progress"],
         default="in_progress",
