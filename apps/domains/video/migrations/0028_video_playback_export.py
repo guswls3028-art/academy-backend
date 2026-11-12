@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('video', '0026_review_playback_position'),
+        ('video', '0027_video_reused_from'),
     ]
 
     operations = [

@@ -18,7 +18,7 @@ FAILURE_CODES = frozenset({
     "production_bucket_denial_unproven", "production_bucket_access_not_denied",
     "invalid_batch_identity", "synthetic_source_roundtrip_mismatch",
     "compatible_frame_decode_failed", "compatible_upload_size_mismatch",
-    "synthetic_objects_remain",
+    "synthetic_objects_remain", "playback_export_codec_mismatch",
 })
 
 
@@ -46,12 +46,55 @@ def failure_record(error: Exception) -> dict:
             "failure_code": code if isinstance(code, str) and code in FAILURE_CODES else "unexpected_error"}
 
 
+def verify_playback_export(*, storage, bucket: str, prefix: str, directory: Path) -> None:
+    from academy.adapters.video.playback_export import _remux_stored_rendition
+
+    source = directory / "hls"
+    variant = source / "v0"
+    variant.mkdir(parents=True)
+    subprocess.run([
+        "ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=15",
+        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "3",
+        "-c:v", "libx264", "-threads", "2", "-g", "15", "-c:a", "aac",
+        "-f", "hls", "-hls_time", "1", "-hls_playlist_type", "vod",
+        "-hls_segment_filename", str(variant / "index%d.ts"), str(variant / "index.m3u8"),
+    ], check=True, capture_output=True, timeout=30)
+    master = source / "master.m3u8"
+    master.write_text("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=400000\nv0/index.m3u8\n", encoding="utf-8")
+    output = directory / "playback.mp4"
+    keys = []
+    files = sorted(variant.iterdir())
+    if any(not re.fullmatch(r"index(?:\.m3u8|[0-7]\.ts)", file.name) for file in files):
+        raise RuntimeError("playback_export_codec_mismatch")
+    try:
+        for file in [master, *files]:
+            key = prefix + "hls/" + file.relative_to(source).as_posix()
+            keys.append(key)
+            storage.put_object(Bucket=bucket, Key=key, Body=file.read_bytes())
+        _remux_stored_rendition(client=storage, bucket=bucket, master_key=keys[0], output=output)
+        measured = subprocess.run([
+            "ffprobe", "-v", "error", "-show_entries", "stream=codec_name", "-of", "json", str(output),
+        ], check=True, capture_output=True, timeout=15)
+        if {stream["codec_name"] for stream in json.loads(measured.stdout)["streams"]} != {"h264", "aac"}:
+            raise RuntimeError("playback_export_codec_mismatch")
+        keys.append(prefix + "playback.mp4")
+        storage.put_object(Bucket=bucket, Key=keys[-1], Body=output.read_bytes(), ContentType="video/mp4",
+                           CacheControl="private, no-store")
+        stored = storage.head_object(Bucket=bucket, Key=keys[-1])
+        if stored["ContentLength"] != output.stat().st_size or stored["ContentType"] != "video/mp4":
+            raise RuntimeError("compatible_upload_size_mismatch")
+    finally:
+        for key in keys:
+            storage.delete_object(Bucket=bucket, Key=key)
+
+
 def run(*, release_id: str, production_database: str) -> dict:
     from django.conf import settings
     from django.db import connections
     from botocore.exceptions import ClientError
     import boto3
 
+    from academy.adapters.storage.r2_objects import video_bucket_client
     from apps.infrastructure.storage.r2 import _get_s3_client
     from apps.worker.video_worker.homework_preview_main import convert_video, probe_video
 
@@ -59,7 +102,7 @@ def run(*, release_id: str, production_database: str) -> dict:
         raise RuntimeError("development_batch_required")
     if os.environ.get("ACADEMY_DEVELOPMENT_RELEASE_ID") != release_id:
         raise RuntimeError("candidate_environment_mismatch")
-    if settings.R2_AI_BUCKET != "academy-development-artifacts":
+    if settings.R2_AI_BUCKET != "academy-development-artifacts" or settings.R2_VIDEO_BUCKET != settings.R2_AI_BUCKET:
         raise RuntimeError("development_bucket_required")
     if settings.VIDEO_BATCH_JOB_QUEUE or settings.VIDEO_BATCH_JOB_DEFINITION:
         raise RuntimeError("general_video_must_remain_disabled")
@@ -121,6 +164,9 @@ def run(*, release_id: str, production_database: str) -> dict:
                 raise RuntimeError("compatible_upload_size_mismatch")
             result.update(source_codec=probe_video(downloaded)["codec_name"], preview_codec=probe["codec_name"],
                           decoded_frame_sha256=hashlib.sha256(frame).hexdigest())
+            verify_playback_export(storage=video_bucket_client(), bucket=settings.R2_VIDEO_BUCKET,
+                                   prefix=prefix, directory=Path(directory))
+            result["playback_export_codec_verified"] = True
     finally:
         for key in keys:
             storage.delete_object(Bucket=settings.R2_AI_BUCKET, Key=key)

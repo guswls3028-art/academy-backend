@@ -36,7 +36,7 @@ def _unavailable() -> Response:
                   status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
-def _filename(video: Video, extension: str) -> str:
+def video_download_filename(video: Video, extension: str) -> str:
     title = _UNSAFE_FILENAME.sub(" ", video.title).strip(" .")
     suffix = f".{extension}"
     if title.lower().endswith(suffix):
@@ -58,7 +58,7 @@ def create_source_download(request, video: Video) -> Response:
     if match is None:
         return _missing()
 
-    filename = _filename(video, match.group(1))
+    filename = video_download_filename(video, match.group(1))
     try:
         if not head_video_source_download(key=key):
             return _missing()

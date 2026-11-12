@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -77,7 +78,10 @@ def _segments(lines: list[str]) -> list[tuple[str, float]]:
 def build_playback_mp4(*, bucket: str, master_key: str, output: Path) -> None:
     if not MASTER.fullmatch(master_key):
         raise ValueError("noncanonical_master")
-    client = video_bucket_client()
+    _remux_stored_rendition(client=video_bucket_client(), bucket=bucket, master_key=master_key, output=output)
+
+
+def _remux_stored_rendition(*, client, bucket: str, master_key: str, output: Path) -> None:
     root = master_key.rpartition("/")[0]
     variant = root + "/" + _best_variant(_playlist(client, bucket, master_key))
     segments = _segments(_playlist(client, bucket, variant))
@@ -85,13 +89,15 @@ def build_playback_mp4(*, bucket: str, master_key: str, output: Path) -> None:
     prefix = variant.rpartition("/")[0]
     source = output.with_name("source.m3u8")
     local_playlist = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:60"]
+    # Store both the input segments and the final MP4 while leaving space for the worker.
+    byte_limit = min(MAX_MEDIA_BYTES, shutil.disk_usage(output.parent).free * 2 // 5)
     total = 0
     for part, seconds in segments:
         obj = client.get_object(Bucket=bucket, Key=f"{prefix}/{part}")
         body = obj["Body"]
         try:
             length = int(obj.get("ContentLength") or 0)
-            if not 0 < length <= MAX_MEDIA_BYTES - total:
+            if not 0 < length <= byte_limit - total:
                 raise ValueError("media_too_large_or_empty")
             copied = 0
             with source.with_name(part).open("wb") as target:

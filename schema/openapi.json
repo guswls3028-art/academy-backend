@@ -17750,6 +17750,16 @@
         ],
         "type": "string"
       },
+      "StateEnum": {
+        "description": "* `not_requested` - not_requested\n* `preparing` - preparing\n* `ready` - ready\n* `failed` - failed",
+        "enum": [
+          "not_requested",
+          "preparing",
+          "ready",
+          "failed"
+        ],
+        "type": "string"
+      },
       "Status2d4Enum": {
         "description": "* `ACTIVE` - 활성\n* `INACTIVE` - 비활성\n* `PENDING` - 대기",
         "enum": [
@@ -21757,6 +21767,27 @@
           "draft_content",
           "request_id",
           "url"
+        ],
+        "type": "object"
+      },
+      "VideoPlaybackExport": {
+        "properties": {
+          "download_url": {
+            "format": "uri",
+            "type": "string"
+          },
+          "expires_in": {
+            "type": "integer"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/StateEnum"
+          }
+        },
+        "required": [
+          "state"
         ],
         "type": "object"
       },
@@ -42528,6 +42559,94 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SealedVideo"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/api/v1/media/videos/{id}/playback-export/": {
+      "get": {
+        "description": "Video 관리 + 통계 + 학생 목록",
+        "operationId": "media_videos_playback_export_retrieve",
+        "parameters": [
+          {
+            "description": "video을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoPlaybackExport"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      },
+      "post": {
+        "description": "Video 관리 + 통계 + 학생 목록",
+        "operationId": "media_videos_playback_export_create",
+        "parameters": [
+          {
+            "description": "video을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoPlaybackExport"
+                }
+              }
+            },
+            "description": ""
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoPlaybackExport"
                 }
               }
             },

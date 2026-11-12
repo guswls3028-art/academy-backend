@@ -61,6 +61,7 @@ from ..serializers import (
 )
 from ..policy import is_video_progress_complete, normalize_video_max_speed
 from ..services.access_resolver import resolve_access_modes_prefetched
+from ..services.playback_export import VideoPlaybackExportSerializer, video_playback_export
 from ..services.source_download import create_source_download
 from ..services.video_encoding import REASON_SUBMIT_FAILED, create_job_and_submit_batch
 from ..youtube import extract_youtube_video_id, youtube_watch_url
@@ -201,6 +202,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         "reorder",
         "bulk_policy",
         "source_download",
+        "playback_export",
         "destroy",
         "public_session",
         "delete_folder",
@@ -233,6 +235,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     @action(detail=True, methods=["post"], url_path="source-download")
     def source_download(self, request, *args, **kwargs):
         return create_source_download(request, self.get_object())
+
+    @extend_schema(methods=["GET"], responses=VideoPlaybackExportSerializer)
+    @extend_schema(methods=["POST"], request=None, responses={200: VideoPlaybackExportSerializer, 202: VideoPlaybackExportSerializer})
+    @action(detail=True, methods=["get", "post"], url_path="playback-export")
+    def playback_export(self, request, *args, **kwargs):
+        return video_playback_export(request, self.get_object())
 
     @transaction.atomic
     def update(self, request, *args, **kwargs):
