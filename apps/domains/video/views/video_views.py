@@ -61,6 +61,7 @@ from ..serializers import (
 )
 from ..policy import is_video_progress_complete, normalize_video_max_speed
 from ..services.access_resolver import resolve_access_modes_prefetched
+from ..services.source_download import create_source_download
 from ..services.video_encoding import REASON_SUBMIT_FAILED, create_job_and_submit_batch
 from ..youtube import extract_youtube_video_id, youtube_watch_url
 from .playback_mixin import VideoPlaybackMixin
@@ -199,6 +200,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         "partial_update",
         "reorder",
         "bulk_policy",
+        "source_download",
         "destroy",
         "public_session",
         "delete_folder",
@@ -219,6 +221,18 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ["session", "status", "folder"]
     search_fields = ["title"]
+
+    @extend_schema(
+        request=None,
+        responses={200: inline_serializer(name="VideoSourceDownload", fields={
+            "download_url": serializers.URLField(),
+            "filename": serializers.CharField(),
+            "expires_in": serializers.IntegerField(),
+        })},
+    )
+    @action(detail=True, methods=["post"], url_path="source-download")
+    def source_download(self, request, *args, **kwargs):
+        return create_source_download(request, self.get_object())
 
     @transaction.atomic
     def update(self, request, *args, **kwargs):
