@@ -18,6 +18,7 @@ def process_export(export_id: int, attempt: UUID) -> bool:
     if not os.environ.get("AWS_BATCH_JOB_ID"):
         raise RuntimeError("Playback export requires AWS Batch")
     from django.conf import settings
+    from django.db.models import Q
     from django.utils import timezone
 
     from academy.adapters.storage.r2_objects import video_bucket_client
@@ -39,6 +40,10 @@ def process_export(export_id: int, attempt: UUID) -> bool:
         master = video_hls_master_path(video.tenant_id, video.pk)
         if video.source_type != Video.SourceType.UPLOADED or video.status != Video.Status.READY or video.hls_path != master:
             raise ValueError("source_unavailable")
+        if not Video.objects.filter(tenant_id=video.tenant_id, hls_path=master).filter(
+            Q(pk=video.pk) | Q(reused_from_id=video.pk),
+        ).exists():
+            raise ValueError("source_no_active_placement")
         bucket = settings.R2_VIDEO_BUCKET
         key = video_playback_export_key(video.tenant_id, video.pk, attempt)
         with tempfile.TemporaryDirectory(prefix="video-playback-export-") as temp:

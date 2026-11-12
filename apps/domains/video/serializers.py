@@ -288,7 +288,7 @@ class VideoSerializer(serializers.ModelSerializer):
                 return None
             from apps.core.r2_paths import video_hls_prefix
             rel = self._normalize_media_path(
-                f"{video_hls_prefix(tenant_id=tenant_id, video_id=obj.id)}/thumbnail.jpg"
+                f"{video_hls_prefix(tenant_id=tenant_id, video_id=obj.reused_from_id or obj.id)}/thumbnail.jpg"
             )
             return self._build_cdn_url(cdn, rel, version=version)
 
@@ -300,6 +300,12 @@ class VideoSerializer(serializers.ModelSerializer):
 
         if not obj.hls_path:
             return None
+
+        if obj.reused_from_id:
+            from apps.core.r2_paths import video_hls_master_path
+
+            if obj.hls_path != video_hls_master_path(obj.tenant_id, obj.reused_from_id):
+                return None
 
         cdn = self._cdn_base()
         if not cdn:
@@ -327,7 +333,7 @@ class VideoDetailSerializer(VideoSerializer):
         - PROCESSING/READY + current_job RUNNING(not cancel_requested) → False
         - PROCESSING/READY + no active job or stale job → True
         """
-        if getattr(obj, "source_type", None) == Video.SourceType.YOUTUBE:
+        if obj.reused_from_id or obj.source_type == Video.SourceType.YOUTUBE:
             return False
 
         RETRY_ALLOWED = {

@@ -104,7 +104,7 @@ class VideoPlaybackMixin:
             return p[len("storage/") :]
         return p
 
-    def _public_play_url(self, *, video: Video, expires_at: int, user_id: int) -> str:
+    def _public_play_url(self, *, video: Video, expires_at: int, user_id: int) -> str | None:
         """
         ✅ 원본 계약 유지 + 최소 보강
         - video.hls_path가 있으면 그것이 single source of truth
@@ -112,6 +112,13 @@ class VideoPlaybackMixin:
         - 설정값이 있으면 Cloudflare signed query를 붙여서 반환
         """
         cdn_base = settings.CDN_HLS_BASE_URL.rstrip("/")
+
+        if getattr(video, "reused_from_id", None):
+            from apps.core.r2_paths import video_hls_master_path
+
+            canonical = video_hls_master_path(video.tenant_id, video.reused_from_id)
+            if video.hls_path != canonical:
+                return None
 
         # 1) worker 결과가 있으면 그걸 사용
         if getattr(video, "hls_path", ""):

@@ -25,6 +25,7 @@ from apps.core.r2_paths import video_hls_master_path, video_playback_export_key
 from apps.core.services.ops_audit import record_audit
 from apps.domains.video.models import Video, VideoPlaybackExport
 from apps.domains.video.services.source_download import video_download_filename
+from apps.domains.video.services.video_placements import resolve_media_source
 
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,22 @@ def _canonical(source):
     )
 
 
+def _active_placement(video, source):
+    active = Video.objects.filter(
+        pk=video.pk, tenant_id=source.tenant_id, status=Video.Status.READY,
+        source_type=Video.SourceType.UPLOADED, hls_path=source.hls_path,
+    )
+    if video.pk != source.pk:
+        active = active.filter(
+            reused_from_id=source.pk, reused_from__tenant_id=source.tenant_id,
+            reused_from__reused_from__isnull=True, reused_from__status=Video.Status.READY,
+            reused_from__source_type=Video.SourceType.UPLOADED, reused_from__hls_path=source.hls_path,
+        )
+    else:
+        active = active.filter(reused_from__isnull=True)
+    return active.exists()
+
+
 def _batch_target():
     # The ordinary Video Batch in production owns this worker. Isolated APIs must not submit to it.
     runtime = os.environ.get("ACADEMY_RUNTIME_ENV", "").strip().lower()
@@ -93,7 +110,7 @@ def _issue(request, video, source, export):
         key = video_playback_export_key(source.tenant_id, source.pk, export.attempt)
         if not head_video_source_download(key=key):
             return None
-        if not Video.objects.filter(pk=video.pk, tenant=request.tenant).exists():
+        if not _active_placement(video, source):
             raise NotFound("해당 영상을 찾을 수 없습니다.")
         remaining = int((export.expires_at - timezone.now()).total_seconds())
         if remaining < 10:
@@ -115,7 +132,7 @@ def _issue(request, video, source, export):
 
 
 def video_playback_export(request, video):
-    source = video
+    source = resolve_media_source(video)
     now = timezone.now()
     export = VideoPlaybackExport.objects.filter(video_id=source.pk).first()
     state = _state(export, now)
@@ -133,8 +150,8 @@ def video_playback_export(request, video):
     with transaction.atomic():
         # Serialize export admission for this academy; workers remain independent of request/DB locks.
         Tenant.objects.select_for_update().get(pk=request.tenant.pk)
-        current_source = Video.objects.select_for_update().filter(pk=source.pk, tenant=request.tenant).first()
-        if current_source is None or not _canonical(current_source):
+        current_source = resolve_media_source(video, lock=True)
+        if not _canonical(current_source) or not _active_placement(video, current_source):
             raise NotFound("재생본을 준비할 수 있는 영상이 없습니다.")
         current = VideoPlaybackExport.objects.select_for_update().filter(video=current_source).first()
         if _state(current, now) == "preparing":

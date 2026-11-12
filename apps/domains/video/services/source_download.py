@@ -4,6 +4,7 @@ import logging
 import re
 
 from rest_framework import status
+from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 
 from academy.adapters.storage.r2_objects import (
@@ -14,6 +15,7 @@ from academy.adapters.storage.r2_objects import (
 from apps.core.r2_paths import video_raw_prefix
 from apps.core.services.ops_audit import record_audit
 from apps.domains.video.models import Video
+from apps.domains.video.services.video_placements import resolve_media_source
 
 logger = logging.getLogger(__name__)
 DOWNLOAD_TTL_SECONDS = 300
@@ -53,7 +55,11 @@ def create_source_download(request, video: Video) -> Response:
                       status.HTTP_409_CONFLICT)
 
     prefix = video_raw_prefix(request.tenant.pk)
-    key = video.file_key
+    try:
+        source = resolve_media_source(video) if video.reused_from_id else video
+    except NotFound:
+        return _missing()
+    key = source.file_key
     match = _RAW_OBJECT.fullmatch(key[len(prefix):]) if key.startswith(prefix) else None
     if match is None:
         return _missing()
@@ -62,9 +68,19 @@ def create_source_download(request, video: Video) -> Response:
     try:
         if not head_video_source_download(key=key):
             return _missing()
-        if not Video.objects.filter(
-            pk=video.pk, tenant=request.tenant, file_key=key, source_type=Video.SourceType.UPLOADED,
-        ).exclude(status=Video.Status.PENDING).exists():
+        active = Video.objects.filter(
+            pk=video.pk, tenant=request.tenant, source_type=Video.SourceType.UPLOADED,
+        ).exclude(status=Video.Status.PENDING)
+        if video.reused_from_id:
+            active = active.filter(
+                reused_from_id=source.pk, reused_from__tenant_id=request.tenant.pk,
+                reused_from__reused_from__isnull=True, reused_from__file_key=key,
+                reused_from__source_type=Video.SourceType.UPLOADED,
+                reused_from__status=Video.Status.READY,
+            )
+        else:
+            active = active.filter(reused_from__isnull=True, file_key=key)
+        if not active.exists():
             return _missing()
         url = create_video_source_download_url(key=key, filename=filename, expires_in=DOWNLOAD_TTL_SECONDS)
     except VideoSourceStorageError:
@@ -76,7 +92,7 @@ def create_source_download(request, video: Video) -> Response:
         action="video.source_download",
         summary="영상 원본 다운로드 주소 발급",
         target_tenant=request.tenant,
-        payload={"video_id": video.pk},
+        payload={"video_id": video.pk, **({"source_video_id": source.pk} if video.reused_from_id else {})},
     ) is None:
         return _unavailable()
 

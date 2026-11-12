@@ -14,6 +14,7 @@ import logging
 from datetime import timedelta
 
 from django.core.management.base import BaseCommand
+from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -55,50 +56,45 @@ class Command(BaseCommand):
         from apps.core.r2_paths import video_hls_prefix
 
         # Use all_with_deleted to find soft-deleted videos past retention
+        all_expired = Video.all_with_deleted.filter(deleted_at__isnull=False, deleted_at__lt=cutoff)
         expired_qs = (
-            Video.all_with_deleted
-            .filter(deleted_at__isnull=False, deleted_at__lt=cutoff)
+            all_expired
+            .filter(~Exists(Video.all_with_deleted.filter(reused_from_id=OuterRef("pk"))))
             .select_related("session__lecture")
             .order_by("deleted_at")
         )
 
-        total = expired_qs.count()
+        total = all_expired.count()
         if total == 0:
             self.stdout.write(self.style.SUCCESS("No expired soft-deleted videos to purge."))
             return
 
         if dry_run:
-            self.stdout.write(self.style.WARNING(f"[DRY RUN] Would purge {total} video(s):"))
+            eligible = expired_qs.count()
+            self.stdout.write(self.style.WARNING(f"[DRY RUN] {eligible}/{total} expired video(s) currently eligible:"))
             for v in expired_qs[:50]:
                 tenant_id = self._get_tenant_id(v)
                 self.stdout.write(f"  id={v.id} tenant={tenant_id} title={v.title!r} deleted_at={v.deleted_at}")
-            if total > 50:
-                self.stdout.write(f"  ... and {total - 50} more")
+            if eligible > 50:
+                self.stdout.write(f"  ... and {eligible - 50} more")
             return
 
         purged = 0
         r2_errors = 0
-        offset = 0
-
         while True:
             # Re-query each batch (rows are deleted between iterations)
-            batch = list(
-                Video.all_with_deleted
-                .filter(deleted_at__isnull=False, deleted_at__lt=cutoff)
-                .select_related("session__lecture")
-                .order_by("deleted_at")[:batch_size]
-            )
+            batch = list(expired_qs[:batch_size])
             if not batch:
                 break
 
             for video in batch:
                 video_id = video.id
                 tenant_id = self._get_tenant_id(video)
-                file_key = (video.file_key or "").strip()
+                file_key = (video.file_key or "").strip() if video.reused_from_id is None else ""
                 hls_prefix = ""
 
-                if tenant_id:
-                    hls_prefix = video_hls_prefix(tenant_id=tenant_id, video_id=video_id)
+                if tenant_id and video.reused_from_id is None:
+                    hls_prefix = video_hls_prefix(tenant_id=tenant_id, video_id=video_id) + "/"
 
                 # Delete R2 storage files
                 if file_key or hls_prefix:

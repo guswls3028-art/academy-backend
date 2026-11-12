@@ -105,3 +105,21 @@ class VideoPlaybackExportTests(TestCase):
         self.assertEqual(self._request("get").data, {"state": "failed"})
         self.assertEqual(self._request().data, {"state": "failed"})
         self.assertEqual(submit.call_count, 1)
+
+    @patch(SERVICE + "_batch_target", return_value=("video-queue", "video-worker", "ap-northeast-2"))
+    @patch(SERVICE + "submit_video_playback_export", return_value="batch-job")
+    def test_reused_lesson_uses_the_same_export_even_after_origin_unlink(self, submit, _target):
+        destination = apps.get_model("lectures", "Session").objects.create(
+            lecture=self.video.session.lecture, title="2차시", order=2,
+        )
+        alias = Video.objects.create(
+            tenant=self.tenant, session=destination, title="복습", status=Video.Status.READY,
+            source_type=Video.SourceType.UPLOADED, reused_from=self.video, hls_path=self.video.hls_path,
+        )
+        self.assertEqual(self._request().status_code, 202)
+        self.video.delete()
+        self.assertEqual(self._request("get").status_code, 404)
+        self.assertEqual(self._request("get", video=alias).data, {"state": "preparing"})
+        self.assertEqual(self._request(video=alias).status_code, 202)
+        self.assertEqual(VideoPlaybackExport.objects.get().video_id, self.video.pk)
+        self.assertEqual(submit.call_count, 1)
