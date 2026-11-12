@@ -1563,6 +1563,34 @@ class SessionScoresRosterScopeTests(TestCase):
         )
         self.assertEqual(correction_response.status_code, 400)
 
+    def test_supplement_progress_does_not_override_failed_assessment(self):
+        self.session.session_type = Session.SessionType.SUPPLEMENT
+        self.session.save()
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.active_enrollment,
+            total_score=30,
+            max_score=100,
+        )
+        SessionProgress.objects.update_or_create(
+            enrollment=self.active_enrollment,
+            session=self.session,
+            defaults=dict(exam_passed=True, homework_passed=True, video_completed=True, completed=True),
+        )
+        request = self.factory.get(f"/api/v1/results/admin/sessions/{self.session.id}/scores/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        row = next(row for row in response.data["rows"] if row["enrollment_id"] == self.active_enrollment.id)
+        self.assertTrue(row["progress_completed"])
+        self.assertFalse(row["assessment_progress_completed"])
+        self.assertEqual(row["exams"][0]["block"]["score"], 30)
+        self.assertFalse(row["exams"][0]["block"]["passed"])
+
     def test_completed_progress_overrides_unresolved_clinic_link(self):
         link = ClinicLink.objects.create(
             tenant=self.tenant,
@@ -1593,6 +1621,7 @@ class SessionScoresRosterScopeTests(TestCase):
         row = next(row for row in response.data["rows"] if row["enrollment_id"] == self.active_enrollment.id)
         self.assertTrue(row["progress_completed"])
         self.assertEqual(row["progress_status"], "completed")
+        self.assertTrue(row["assessment_progress_completed"])
         self.assertFalse(row["clinic_required"])
         self.assertFalse(row["exams"][0]["block"]["clinic_required"])
         self.assertIsNone(row["exams"][0]["clinic_link_id"])

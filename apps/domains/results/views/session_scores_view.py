@@ -1149,6 +1149,9 @@ class SessionScoresView(APIView):
                     "video_completed": progress_state_map.get(eid, {}).get("video_completed"),
                     "progress_completed": progress_completed,
                     "progress_status": progress_status,
+                    "assessment_progress_completed": (
+                        progress_completed and session.session_type != Session.SessionType.SUPPLEMENT
+                    ),
                     "name_highlight_clinic_target": name_highlight_clinic_target,
                     "exam_not_submitted_count": exam_absence_count_map.get(eid, 0),
                     "correction_pending_count": correction_pending_count,
