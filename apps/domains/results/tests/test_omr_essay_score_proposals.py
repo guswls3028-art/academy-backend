@@ -87,9 +87,9 @@ class OmrEssayScoreProposalTests(TestCase):
         ExamEnrollment.objects.create(exam=self.exam, enrollment=enrollment)
         return enrollment
 
-    def _api(self, method: str, path: str, data=None):
+    def _api(self, method: str, path: str, data=None, *, exam=None):
         return getattr(self.client, method)(
-            f"/api/v1/exams/{self.exam.id}/omr/{path}",
+            f"/api/v1/exams/{(exam or self.exam).id}/omr/{path}",
             data, format="json", HTTP_HOST="api.hakwonplus.com",
             HTTP_X_TENANT_CODE=self.tenant.code,
         )
@@ -125,6 +125,12 @@ class OmrEssayScoreProposalTests(TestCase):
             {"enabled": False, "available": True, "printed": False, "beta": True},
         )
         before = build_omr_sheet_contract(sheet=self.sheet).fingerprint()
+        scan = Submission.objects.create(
+            tenant=self.tenant, user=self.staff, target_type=Submission.TargetType.EXAM,
+            target_id=self.exam.id, source=Submission.Source.OMR_SCAN,
+            payload={"sheet_id": self.sheet.id},
+        )
+        self.assertNotIn("essay_score_marks", build_omr_payload(scan)["template_meta"])
 
         response = self._api("patch", "essay-score-marks/", {"enabled": True})
         self.assertEqual(response.status_code, 200, response.content)
@@ -151,21 +157,88 @@ class OmrEssayScoreProposalTests(TestCase):
         self.assertEqual(pdf.status_code, 200)
         self.assertTrue(pdf.content.startswith(b"%PDF"))
 
-        scan = Submission.objects.create(
-            tenant=self.tenant, user=self.staff, target_type=Submission.TargetType.EXAM,
-            target_id=self.exam.id, source=Submission.Source.OMR_SCAN,
-            payload={"sheet_id": self.sheet.id},
-        )
         payload = build_omr_payload(scan)
-        self.assertEqual(
-            [mark["question_number"] for mark in payload["template_meta"]["essay_score_marks"]], [2],
-        )
+        printed_marks = payload["template_meta"]["essay_score_marks"]
+        self.assertEqual([mark["question_number"] for mark in printed_marks], [2])
 
         response = self._api("patch", "essay-score-marks/", {"enabled": False})
         self.assertEqual(response.status_code, 200, response.content)
         self.assertFalse(response.data["printed"])
         self.sheet.refresh_from_db()
         self.assertEqual(build_omr_sheet_contract(sheet=self.sheet).fingerprint(), before)
+        preview = self._api("post", "preview/", {"mc_count": 1, "essay_count": 1})
+        self.assertEqual(preview.status_code, 200, preview.content)
+        self.assertNotIn('class="es-a"', preview.content.decode("utf-8"))
+
+        off_payload = build_omr_payload(scan)
+        self.assertEqual(off_payload["omr"]["contract_fingerprint"], before)
+        self.assertEqual(off_payload["template_meta"]["essay_score_marks"], printed_marks)
+
+        self.essay.score = 8
+        self.essay.save(update_fields=["score"])
+        self.assertEqual(build_omr_payload(scan)["template_meta"]["essay_score_marks"], printed_marks)
+
+        self.exam.manual_grading_method = Exam.ManualGradingMethod.CORRECTNESS
+        self.exam.save(update_fields=["manual_grading_method"])
+        self.assertNotIn("essay_score_marks", build_omr_payload(scan)["template_meta"])
+        self.exam.manual_grading_method = Exam.ManualGradingMethod.SCORE
+        self.exam.save(update_fields=["manual_grading_method"])
+        self.assertEqual(build_omr_payload(scan)["template_meta"]["essay_score_marks"], printed_marks)
+
+        # Changed row geometry cannot reuse coordinates of earlier prints.
+        self.sheet.total_questions = 3
+        self.sheet.essay_count = 2
+        self.sheet.save(update_fields=["total_questions", "essay_count"])
+        ExamQuestion.objects.create(
+            sheet=self.sheet, number=3, score=8, question_kind=ExamQuestion.QuestionKind.ESSAY,
+        )
+        self.assertNotIn("essay_score_marks", build_omr_payload(scan)["template_meta"])
+
+    def test_linked_exam_uses_its_own_grading_method_for_printing_and_enable(self):
+        self.exam.exam_type = Exam.ExamType.TEMPLATE
+        self.exam.save(update_fields=["exam_type"])
+        self.sheet.essay_score_marks = True
+        self.sheet.save(update_fields=["essay_score_marks"])
+        linked = Exam.objects.create(
+            tenant=self.tenant, title="연결 시험", exam_type=Exam.ExamType.REGULAR,
+            template_exam=self.exam, grading_mode=Exam.GradingMode.MIXED,
+            manual_grading_method=Exam.ManualGradingMethod.CORRECTNESS,
+        )
+        linked.sessions.add(self.session)
+        state = self._api("get", "essay-score-marks/", exam=linked)
+        self.assertEqual(state.status_code, 200, state.content)
+        self.assertTrue(state.data["enabled"])
+        self.assertFalse(state.data["available"])
+        self.assertFalse(state.data["printed"])
+        self.assertIn("문항별 점수 입력", state.data["reason"])
+        preview = self._api("post", "preview/", {"mc_count": 1, "essay_count": 1}, exam=linked)
+        self.assertEqual(preview.status_code, 200, preview.content)
+        self.assertNotIn('class="es-a"', preview.content.decode("utf-8"))
+        scan = Submission.objects.create(
+            tenant=self.tenant, user=self.staff, target_type=Submission.TargetType.EXAM,
+            target_id=linked.id, source=Submission.Source.OMR_SCAN,
+            payload={"sheet_id": self.sheet.id},
+        )
+        self.assertNotIn("essay_score_marks", build_omr_payload(scan)["template_meta"])
+        rejected = self._api("patch", "essay-score-marks/", {"enabled": True}, exam=linked)
+        self.assertEqual(rejected.status_code, 400, rejected.content)
+        self.assertIn("문항별 점수 입력", str(rejected.data["enabled"]))
+        self.assertFalse(Sheet.objects.filter(exam=linked).exists())
+
+        # A score-based regular exam can use the strip even when its template
+        # uses correctness: the requesting exam controls the grading journey.
+        self.exam.manual_grading_method = Exam.ManualGradingMethod.CORRECTNESS
+        self.exam.save(update_fields=["manual_grading_method"])
+        linked.manual_grading_method = Exam.ManualGradingMethod.SCORE
+        linked.save(update_fields=["manual_grading_method"])
+        state = self._api("get", "essay-score-marks/", exam=linked)
+        self.assertEqual(state.status_code, 200, state.content)
+        self.assertTrue(state.data["available"])
+        self.assertTrue(state.data["printed"])
+        preview = self._api("post", "preview/", {"mc_count": 1, "essay_count": 1}, exam=linked)
+        self.assertEqual(preview.status_code, 200, preview.content)
+        self.assertIn('class="es-a"', preview.content.decode("utf-8"))
+        self.assertIn("essay_score_marks", build_omr_payload(scan)["template_meta"])
 
     def test_enabling_an_unfit_sheet_is_rejected_with_reason(self):
         self.essay.score = 60
@@ -239,6 +312,15 @@ class OmrEssayScoreProposalTests(TestCase):
         self.assertTrue(plan.can_apply, plan.errors)
         apply_manual_grading(plan=plan, user_id=self.staff.id)
         result = Result.objects.get(target_type="exam", target_id=self.exam.id, enrollment=self.enrollment)
+        self.assertAlmostEqual(float(result.total_score), 92.3)
+        self.exam.manual_grading_method = Exam.ManualGradingMethod.CORRECTNESS
+        self.exam.save(update_fields=["manual_grading_method"])
+        sheet = build_manual_grading_sheet(exam=self.exam, tenant=self.tenant)
+        self.assertEqual(self._row(self.enrollment, sheet)["omr_essay_scores"], {})
+        self.assertEqual(sheet["omr_essay_score_marks"], {
+            "enabled": False, "beta": True, "proposal_count": 0, "needs_check_count": 0,
+        })
+        result.refresh_from_db()
         self.assertAlmostEqual(float(result.total_score), 92.3)
 
     def test_blank_or_unprinted_strip_and_absent_rows_propose_nothing(self):

@@ -71,6 +71,9 @@ def copy_exam_structure(
         choice_count=source_sheet.choice_count,
         essay_count=source_sheet.essay_count,
         essay_score_marks=source_sheet.essay_score_marks,
+        essay_score_marks_scan_shape=(
+            source_sheet.essay_score_marks_scan_shape if remap_existing_references else ""
+        ),
         file=source_sheet.file,
     )
 

@@ -86,7 +86,7 @@ class OMRDocumentService:
             if sheet:
                 from apps.support.omr.contract_builder import build_omr_sheet_contract
 
-                contract = build_omr_sheet_contract(sheet=sheet, exam=sheet_exam)
+                contract = build_omr_sheet_contract(sheet=sheet, exam=exam)
                 _mc_count = contract.choice_count if contract.total_questions > 0 else 20
                 if essay_count is None:
                     essay_count = contract.essay_count
@@ -154,7 +154,7 @@ class OMRDocumentService:
             return None
         from apps.support.omr.contract_builder import build_omr_sheet_contract
 
-        return build_omr_sheet_contract(sheet=sheet, exam=sheet_exam)
+        return build_omr_sheet_contract(sheet=sheet, exam=exam)
 
     @staticmethod
     def from_params(

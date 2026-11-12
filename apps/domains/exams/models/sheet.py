@@ -30,12 +30,17 @@ class Sheet(BaseModel):
 
     essay_count = models.PositiveIntegerField(default=0)
 
-    # Beta: print a teacher score strip (tens/ones/tenths) in each essay row and let
-    # the OMR worker read it as a grading-grid proposal. Owner: docs/domain/omr.md.
+    # Beta teacher score strips. Owner: docs/domain/omr.md.
     essay_score_marks = models.BooleanField(
         default=False,
         db_default=False,
         help_text="서술형 칸마다 교사 점수 마킹칸을 인쇄하고 스캔에서 읽는다(Beta).",
+    )
+    essay_score_marks_scan_shape = models.CharField(
+        max_length=64,
+        default="",
+        db_default="",
+        help_text="인쇄를 꺼도 기존 서술형 교사 채점란을 판독한다(Beta).",
     )
 
     file = models.FileField(

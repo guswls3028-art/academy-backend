@@ -49,7 +49,7 @@ def load_submission_exam_structure(submission) -> OmrExamStructure:
         contract_snapshot: dict[str, Any] = {}
         sheet = Sheet.objects.filter(exam=template_exam).order_by("id").first()
         if sheet:
-            contract = build_omr_sheet_contract(sheet=sheet, exam=template_exam)
+            contract = build_omr_sheet_contract(sheet=sheet, exam=exam)
             contract_snapshot = contract.to_dict(include_template_meta=False)
             qnum_map_built = True
 

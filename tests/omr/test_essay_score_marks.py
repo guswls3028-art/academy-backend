@@ -137,17 +137,18 @@ def test_teacher_marks_read_from_real_pdf(dpi, pattern):
 
 
 def test_zero_decimal_max_and_missing_ones_rules():
-    meta, _ = _meta(20, 5)
-    image = _render(meta, mc=20, essays=5)
+    meta, _ = _meta(20, 6)
+    image = _render(meta, mc=20, essays=6)
     marks = meta["essay_score_marks"]
     _mark_score(image, meta, marks[0], ones=0)                     # 0점
     _mark_score(image, meta, marks[1], ones=0, tenths=7)           # 0.7점
     _mark_score(image, meta, marks[2], tens=4, ones=9, tenths=9)   # 49.9점
     _mark_score(image, meta, marks[3], tens=1)                     # 일의 자리 없음
     _mark_score(image, meta, marks[4], tenths=5)                   # 소수만
+    _mark_score(image, meta, marks[5], ones=8)                     # 8점
     reads = detect_essay_score_marks(image_bgr=image, meta=meta)
     assert [(r["status"], r["score"]) for r in reads] == [
-        ("ok", 0.0), ("ok", 0.7), ("ok", 49.9), ("ambiguous", None), ("ambiguous", None),
+        ("ok", 0.0), ("ok", 0.7), ("ok", 49.9), ("ambiguous", None), ("ambiguous", None), ("ok", 8.0),
     ]
 
 

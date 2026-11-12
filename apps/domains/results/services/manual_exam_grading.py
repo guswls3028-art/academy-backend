@@ -42,6 +42,8 @@ from apps.domains.results.services.exam_result_excel_import import (
 from apps.support.exams.numeric_short_answer import (
     math_numeric_short_answer_question_ids,
 )
+from apps.support.omr.contract_builder import supports_essay_score_marks
+from apps.support.omr.essay_score_marks import essay_score_marks_enabled_for_exam
 from apps.support.omr.score_shape import get_exam_score_shape
 from apps.support.results.admin_exam_dependencies import (
     dispatch_progress_pipeline,
@@ -57,7 +59,6 @@ from apps.support.results.manual_exam_grading_dependencies import (
     omr_essay_score_reads_for_manual_grading,
     omr_objective_sources_for_manual_grading,
 )
-from apps.support.omr.essay_score_marks import essay_score_marks_enabled_for_exam
 
 
 logger = logging.getLogger(__name__)
@@ -191,16 +192,16 @@ def build_manual_grading_sheet(*, exam: Any, tenant: Any) -> dict[str, Any]:
         exam_id=int(exam.id),
         submission_ids=attached_submission_ids,
     )
-    essay_reads = omr_essay_score_reads_for_manual_grading(
-        tenant=tenant,
-        exam_id=int(exam.id),
-        submission_ids=attached_submission_ids,
-    )
     proposal_questions = {
         question.number: question
         for question in questions
         if question.kind == "essay" and question.question_id in editable_ids
-    }
+    } if supports_essay_score_marks(exam) else {}
+    essay_reads = omr_essay_score_reads_for_manual_grading(
+        tenant=tenant,
+        exam_id=int(exam.id),
+        submission_ids=attached_submission_ids,
+    ) if proposal_questions else {}
     proposal_count = 0
     needs_check_count = 0
 

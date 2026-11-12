@@ -15,10 +15,17 @@ from apps.domains.assets.omr.services.meta_generator import (
     ESSAY_SCORE_MAX,
     essay_score_mark_availability,
 )
-from apps.support.omr.contract_builder import build_omr_sheet_contract
+from apps.support.omr.contract_builder import (
+    build_omr_sheet_contract,
+    essay_score_marks_scan_shape,
+    supports_essay_score_marks,
+)
 
 
-def _state(*, sheet, sheet_exam) -> dict[str, Any]:
+SCORE_METHOD_REQUIRED = "서술형에 문항별 점수 입력을 사용하는 시험에서만 교사 채점란을 사용할 수 있습니다."
+
+
+def _state(*, sheet, exam, contract=None) -> dict[str, Any]:
     if sheet is None:
         return {
             "enabled": False,
@@ -29,13 +36,13 @@ def _state(*, sheet, sheet_exam) -> dict[str, Any]:
             "max_score": ESSAY_SCORE_MAX,
             "beta": True,
         }
-    contract = build_omr_sheet_contract(sheet=sheet, exam=sheet_exam)
+    contract = contract or build_omr_sheet_contract(sheet=sheet, exam=exam)
     essays = [question for question in contract.questions if question.kind == "essay"]
     availability = essay_score_mark_availability(
         question_count=contract.choice_count,
         essay_count=len(essays),
         essay_max_scores=[question.score for question in essays],
-    )
+    ) if supports_essay_score_marks(exam) else {"available": False, "reason": SCORE_METHOD_REQUIRED}
     return {
         "enabled": bool(sheet.essay_score_marks),
         "available": bool(availability["available"]),
@@ -52,7 +59,7 @@ def essay_score_marks_state(*, exam, tenant) -> dict[str, Any]:
     from apps.support.omr.document_dependencies import resolve_template_exam_for_tenant
 
     sheet_exam = resolve_template_exam_for_tenant(exam, tenant)
-    return _state(sheet=getattr(sheet_exam, "sheet", None), sheet_exam=sheet_exam)
+    return _state(sheet=getattr(sheet_exam, "sheet", None), exam=exam)
 
 
 @transaction.atomic
@@ -66,6 +73,9 @@ def set_essay_score_marks(*, exam, tenant, enabled: bool) -> dict[str, Any]:
         resolve_structure_exam,
     )
 
+    if enabled and not supports_essay_score_marks(exam):
+        raise ValidationError({"enabled": SCORE_METHOD_REQUIRED})
+
     # Same ownership rule as question edits: a linked regular exam gets its own
     # structure first, and a sealed template is not changed.
     ensure_regular_exam_owns_structure(exam)
@@ -76,20 +86,28 @@ def set_essay_score_marks(*, exam, tenant, enabled: bool) -> dict[str, Any]:
     sheet = Sheet.objects.select_for_update().filter(exam=owner).first()
     if sheet is None:
         raise ValidationError({"enabled": "시험 문항을 먼저 등록해 주세요."})
+    contract = build_omr_sheet_contract(sheet=sheet, exam=exam)
     if enabled:
-        state = _state(sheet=sheet, sheet_exam=owner)
+        state = _state(sheet=sheet, exam=exam, contract=contract)
         if not state["available"]:
             raise ValidationError({"enabled": state["reason"]})
-    if bool(sheet.essay_score_marks) != bool(enabled):
-        sheet.essay_score_marks = bool(enabled)
-        sheet.save(update_fields=["essay_score_marks", "updated_at"])
-    return _state(sheet=sheet, sheet_exam=owner)
+    # Leave recognition available when the teacher stops printing new strips.
+    scan_shape = sheet.essay_score_marks_scan_shape
+    if enabled or contract.essay_score_marks:
+        scan_shape = essay_score_marks_scan_shape(contract)
+    if sheet.essay_score_marks != enabled or sheet.essay_score_marks_scan_shape != scan_shape:
+        sheet.essay_score_marks = enabled
+        sheet.essay_score_marks_scan_shape = scan_shape
+        sheet.save(update_fields=["essay_score_marks", "essay_score_marks_scan_shape", "updated_at"])
+    return _state(sheet=sheet, exam=exam)
 
 
 def essay_score_marks_enabled_for_exam(*, exam, tenant) -> bool:
     """Cheap flag read for screens that only need to know the setting."""
     from apps.support.omr.document_dependencies import resolve_template_exam_for_tenant
 
+    if not supports_essay_score_marks(exam):
+        return False
     try:
         sheet_exam = resolve_template_exam_for_tenant(exam, tenant)
     except ValueError:
