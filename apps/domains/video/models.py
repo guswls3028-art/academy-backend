@@ -281,6 +281,21 @@ class Video(TimestampModel):
         return self.source_type == self.SourceType.YOUTUBE
 
 
+class VideoPlaybackExport(TimestampModel):
+    """Temporary, on-demand MP4 made from the stored lesson playback rendition."""
+
+    class Status(models.TextChoices):
+        QUEUED = "queued"
+        PROCESSING = "processing"
+        READY = "ready"
+        FAILED = "failed"
+
+    video = models.OneToOneField(Video, on_delete=models.CASCADE, related_name="playback_export")
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.QUEUED)
+    attempt = models.UUIDField(default=uuid.uuid4)
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+
 # ========================================================
 # VideoTranscodeJob (Job 기반 실행)
 # ========================================================

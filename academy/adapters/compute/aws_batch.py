@@ -48,6 +48,25 @@ def describe_batch_jobs(*, aws_batch_job_ids: list[str], region: str) -> list[di
     return list(resp.get("jobs") or [])
 
 
+def submit_video_playback_export(*, export_id: int, attempt: str, queue_name: str,
+                                 job_definition: str, region: str) -> str | None:
+    import uuid
+
+    attempt = str(uuid.UUID(attempt))
+    response = _batch_client(region).submit_job(
+        jobName=f"video-playback-export-{export_id}-{attempt[:8]}",
+        jobQueue=queue_name,
+        jobDefinition=job_definition,
+        containerOverrides={
+            "command": ["python", "-m", "apps.worker.video_worker.playback_export_main", str(export_id), attempt],
+            "resourceRequirements": [{"type": "VCPU", "value": "1"}, {"type": "MEMORY", "value": "2048"}],
+        },
+        timeout={"attemptDurationSeconds": 1800},
+        retryStrategy={"attempts": 1},
+    )
+    return response.get("jobId")
+
+
 def submit_homework_preview_batch_job(*, preview_id: str, attempt_token: str,
                                     queue_name: str, job_definition: str, region: str) -> str | None:
     """Fixed Video-worker command; callers cannot submit arbitrary commands/URLs."""

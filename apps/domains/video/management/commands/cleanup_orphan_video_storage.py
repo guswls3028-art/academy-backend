@@ -8,6 +8,7 @@ R2 video 버킷에서 DB와 매칭되지 않는 orphan 파일 정리.
                      존재하더라도 hls_path 가 비어 있는(=인코딩 실패) 경우.
   3. _tmp orphan    — hls/<vid>/_tmp/<job_id>/ 아래 파일. 규약상 임시 → 일정 시간 경과 시 전부 orphan.
   4. STALE PENDING  — Video.status=PENDING 이면서 R2 raw 가 존재하지 않고, created_at 이 cutoff 이전.
+  5. EXPIRED EXPORT — 주간 정리에서 25시간 이상 된 재생본 MP4만 삭제.
 
 안전장치:
   - 기본 dry-run. --apply 필요.
@@ -39,6 +40,7 @@ from academy.adapters.storage.r2_objects import (
 logger = logging.getLogger(__name__)
 
 HLS_KEY_PAT = re.compile(r"^(tenants/[^/]+/video/hls/[^/]+/)")
+EXPORT_KEY_PAT = re.compile(r"tenants/[1-9][0-9]*/video/export/[1-9][0-9]*/[0-9a-f]{32}\.mp4")
 
 
 class Command(BaseCommand):
@@ -59,6 +61,7 @@ class Command(BaseCommand):
         parser.add_argument("--skip-hls", action="store_true")
         parser.add_argument("--skip-tmp", action="store_true")
         parser.add_argument("--skip-pending", action="store_true")
+        parser.add_argument("--skip-exports", action="store_true")
 
     def handle(self, *args, **opts):
         apply = opts["apply"]
@@ -91,6 +94,7 @@ class Command(BaseCommand):
         raw_orphans: list[tuple[str, int]] = []
         hls_orphans_by_root: dict[str, list[tuple[str, int]]] = {}
         tmp_orphans: list[tuple[str, int]] = []
+        expired_exports: list[tuple[str, int]] = []
         too_young = 0
 
         for obj in iter_r2_objects(bucket=bucket, prefix="tenants/"):
@@ -99,6 +103,12 @@ class Command(BaseCommand):
             lm = obj.get("LastModified")
             if lm is not None and (now - lm) < min_age:
                 too_young += 1
+                continue
+
+            if "/video/export/" in k:
+                if not opts["skip_exports"] and lm is not None and now - lm >= timedelta(hours=25):
+                    if EXPORT_KEY_PAT.fullmatch(k):
+                        expired_exports.append((k, sz))
                 continue
 
             if "/video/raw/" in k:
@@ -152,6 +162,7 @@ class Command(BaseCommand):
         self.stdout.write(f"hls orphan roots: {len(hls_orphans_by_root)} total files "
                           f"{sum(len(v) for v in hls_orphans_by_root.values())} ({gb(hls_bytes)})")
         self.stdout.write(f"tmp orphans: {len(tmp_orphans)} ({gb(tmp_bytes)})")
+        self.stdout.write(f"expired exports: {len(expired_exports)} ({gb(sum(s for _, s in expired_exports))})")
         self.stdout.write(f"stale PENDING rows (no R2): {len(pending_rows)}")
 
         for root, files in sorted(hls_orphans_by_root.items()):
@@ -163,6 +174,10 @@ class Command(BaseCommand):
             return
 
         deleted_objects = 0
+
+        for i in range(0, len(expired_exports), 1000):
+            batch = expired_exports[i:i + 1000]
+            deleted_objects += delete_r2_objects(bucket=bucket, keys=(k for k, _ in batch))
         # --- delete raw ---
         for i in range(0, len(raw_orphans), 1000):
             batch = raw_orphans[i:i + 1000]
