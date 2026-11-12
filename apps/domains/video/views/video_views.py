@@ -62,6 +62,12 @@ from ..serializers import (
 from ..policy import is_video_progress_complete, normalize_video_max_speed
 from ..services.access_resolver import resolve_access_modes_prefetched
 from ..services.video_encoding import REASON_SUBMIT_FAILED, create_job_and_submit_batch
+from ..services.video_placements import (
+    VideoPlacementChangeSerializer,
+    VideoPlacementsSerializer,
+    change_video_placements,
+    list_video_placements,
+)
 from ..youtube import extract_youtube_video_id, youtube_watch_url
 from .playback_mixin import VideoPlaybackMixin
 
@@ -199,6 +205,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         "partial_update",
         "reorder",
         "bulk_policy",
+        "placements",
         "destroy",
         "public_session",
         "delete_folder",
@@ -219,6 +226,17 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ["session", "status", "folder"]
     search_fields = ["title"]
+
+    @extend_schema(methods=["GET"], responses=VideoPlacementsSerializer)
+    @extend_schema(methods=["PATCH"], request=VideoPlacementChangeSerializer, responses=VideoPlacementsSerializer)
+    @action(detail=True, methods=["get", "patch"], url_path="placements")
+    def placements(self, request, *args, **kwargs):
+        video = self.get_object()
+        if request.method == "GET":
+            return Response(list_video_placements(video))
+        changes = VideoPlacementChangeSerializer(data=request.data)
+        changes.is_valid(raise_exception=True)
+        return Response(change_video_placements(request, video, changes.validated_data))
 
     @transaction.atomic
     def update(self, request, *args, **kwargs):
@@ -1435,6 +1453,9 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             )
         except Video.DoesNotExist:
             raise ValidationError("해당 영상을 찾을 수 없습니다.")
+
+        if video.reused_from_id:
+            raise ValidationError("연결된 영상은 별도로 인코딩할 수 없습니다.")
 
         if not getattr(video, "session", None) or not getattr(video.session, "lecture", None):
             raise ValidationError("영상이 차시/강의에 연결되어 있지 않아 재처리할 수 없습니다.")

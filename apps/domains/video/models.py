@@ -127,6 +127,15 @@ class Video(TimestampModel):
         help_text="S3 object key (presigned upload)",
     )
 
+    reused_from = models.ForeignKey(
+        "self",
+        on_delete=models.RESTRICT,
+        null=True,
+        blank=True,
+        related_name="reused_in",
+        help_text="Root upload for a linked lesson. The linked lesson owns its access and progress.",
+    )
+
     youtube_video_id = models.CharField(
         max_length=32,
         blank=True,

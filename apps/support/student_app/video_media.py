@@ -140,9 +140,8 @@ def build_thumbnail_url(video, *, expires_at: int | None = None) -> str | None:
             tenant_id = getattr(tenant, "id", None) or getattr(tenant, "pk", None)
             from apps.core.r2_paths import video_hls_prefix
 
-            return build(
-                norm(f"{video_hls_prefix(tenant_id=tenant_id, video_id=video.id)}/thumbnail.jpg")
-            )
+            asset_id = getattr(video, "reused_from_id", None) or video.id
+            return build(norm(f"{video_hls_prefix(tenant_id=tenant_id, video_id=asset_id)}/thumbnail.jpg"))
         except Exception:
             return None
 
