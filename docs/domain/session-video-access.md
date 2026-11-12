@@ -142,3 +142,9 @@ CSV는 UTF-8 BOM을 포함해 Excel에서 직접 열어도 한글 이름과 활�
 
 검증: `tests/test_video_watch_log_filters.py`의 학생 필터/list·risk·CSV 일치,
 비정상 tenant 연결 차단, 잘못된 ID, 학생 권한 거부, OFF/직접 부여 누적 보존.
+
+### 교직원 원본 다운로드
+
+`POST /api/v1/media/videos/{id}/source-download/`는 같은 학원의 교직원에게만
+보관 중인 업로드 원본을 확인한 뒤 5분 유효한 첨부 파일 주소를 발급한다.
+외부 영상·업로드 대기 영상·사라진 원본은 발급하지 않는다. 주소는 감사 로그에 남기지 않는다.

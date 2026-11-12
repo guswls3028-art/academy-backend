@@ -70,6 +70,46 @@ def create_storage_download_url(
     )
 
 
+class VideoSourceStorageError(Exception):
+    """The video bucket could not confirm or sign the source object."""
+
+
+def head_video_source_download(*, key: str) -> bool:
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    try:
+        exists, size = head_object(key)
+        return exists and size > 0
+    except (BotoCoreError, ClientError) as exc:
+        raise VideoSourceStorageError from exc
+
+
+def create_video_source_download_url(*, key: str, filename: str, expires_in: int) -> str:
+    import re
+
+    from botocore.exceptions import BotoCoreError, ClientError
+    from django.utils.http import content_disposition_header
+
+    disposition = content_disposition_header(True, filename)
+    if not filename.isascii():
+        suffix = filename.rpartition(".")[2]
+        fallback = f"video.{suffix}" if re.fullmatch(r"[a-z0-9]{1,12}", suffix) else "video"
+        disposition = disposition.replace("attachment;", f'attachment; filename="{fallback}";', 1)
+    try:
+        return _r2_client(retry_max_attempts=1).generate_presigned_url(
+            ClientMethod="get_object",
+            Params={
+                "Bucket": settings.R2_VIDEO_BUCKET,
+                "Key": key,
+                "ResponseContentDisposition": disposition,
+                "ResponseCacheControl": "private, no-store",
+            },
+            ExpiresIn=expires_in,
+        )
+    except (BotoCoreError, ClientError) as exc:
+        raise VideoSourceStorageError from exc
+
+
 def upload_fileobj(
     fileobj: Any,
     key: str,

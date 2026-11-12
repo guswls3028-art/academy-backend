@@ -10683,11 +10683,6 @@
             "nullable": true,
             "type": "integer"
           },
-          "file_key": {
-            "description": "S3 object key (presigned upload)",
-            "maxLength": 500,
-            "type": "string"
-          },
           "max_speed": {
             "format": "double",
             "type": "number"
@@ -15335,7 +15330,7 @@
           },
           "file_key": {
             "description": "S3 object key (presigned upload)",
-            "maxLength": 500,
+            "readOnly": true,
             "type": "string"
           },
           "folder": {
@@ -15440,6 +15435,7 @@
           "encoding_step_percent",
           "encoding_step_total",
           "error_reason",
+          "file_key",
           "folder",
           "hls_path",
           "hls_url",
@@ -15792,11 +15788,6 @@
             "minimum": 0,
             "nullable": true,
             "type": "integer"
-          },
-          "file_key": {
-            "description": "S3 object key (presigned upload)",
-            "maxLength": 500,
-            "type": "string"
           },
           "max_speed": {
             "format": "double",
@@ -21924,6 +21915,26 @@
           "source_title",
           "thumbnail_url",
           "youtube_video_id"
+        ],
+        "type": "object"
+      },
+      "VideoSourceDownload": {
+        "properties": {
+          "download_url": {
+            "format": "uri",
+            "type": "string"
+          },
+          "expires_in": {
+            "type": "integer"
+          },
+          "filename": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "download_url",
+          "expires_in",
+          "filename"
         ],
         "type": "object"
       },
@@ -42762,6 +42773,46 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SealedVideo"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/api/v1/media/videos/{id}/source-download/": {
+      "post": {
+        "description": "Video 관리 + 통계 + 학생 목록",
+        "operationId": "media_videos_source_download_create",
+        "parameters": [
+          {
+            "description": "video을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoSourceDownload"
                 }
               }
             },

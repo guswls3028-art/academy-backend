@@ -49,7 +49,7 @@ class PlacementAuditUnavailable(APIException):
     default_detail = "변경을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."
 
 
-def _source_for(video, *, lock=False):
+def resolve_media_source(video, *, lock=False):
     roots = Video.all_with_deleted.filter(
         tenant_id=video.tenant_id, pk=video.reused_from_id or video.pk, reused_from_id__isnull=True,
     )
@@ -101,7 +101,7 @@ def _placement_data(source):
 
 
 def list_video_placements(video):
-    return _placement_data(_source_for(video))
+    return _placement_data(resolve_media_source(video))
 
 
 @transaction.atomic
@@ -116,7 +116,7 @@ def change_video_placements(request, video, changes):
     ) if add_ids else []
     if len(sessions) != len(add_ids):
         raise NotFound("선택한 차시 중 연결할 수 없는 차시가 있습니다.")
-    source = _source_for(video, lock=True)
+    source = resolve_media_source(video, lock=True)
     if not Video.objects.filter(pk=video.pk, tenant=request.tenant).exists():
         raise NotFound("이 영상의 연결을 찾을 수 없습니다.")
 
