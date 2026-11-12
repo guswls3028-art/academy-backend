@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from apps.domains.assets.omr.views.omr_document_views import (
     ExamOMRDefaultsView,
+    ExamOMREssayScoreMarksView,
     ExamOMRPreviewView,
     ExamOMRPdfView,
     ToolsOMRPreviewView,
@@ -13,6 +14,7 @@ from apps.domains.assets.omr.views.omr_document_views import (
 
 __all__ = [
     "ExamOMRDefaultsView",
+    "ExamOMREssayScoreMarksView",
     "ExamOMRPreviewView",
     "ExamOMRPdfView",
     "ToolsOMRPreviewView",
