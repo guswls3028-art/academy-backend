@@ -3,6 +3,7 @@ from io import StringIO
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
+from django.apps import apps
 from django.core.management import call_command
 from django.test import override_settings
 from django.utils import timezone
@@ -10,9 +11,6 @@ from rest_framework.test import APITestCase
 
 from apps.core.models import OpsAuditLog, Tenant, TenantMembership, User
 from apps.core.r2_paths import video_hls_master_path
-from apps.domains.enrollment.test_support import create_enrollment_fixture, create_session_enrollment_fixture
-from apps.domains.lectures.test_support import create_lecture_fixture, create_session_fixture
-from apps.domains.students.test_support import create_student_fixture
 from apps.domains.video.models import Video, VideoProgress
 
 
@@ -27,29 +25,33 @@ class VideoPlacementsTests(APITestCase):
         TenantMembership.ensure_active(tenant=cls.tenant, user=cls.teacher, role="teacher")
         TenantMembership.ensure_active(tenant=cls.tenant, user=cls.student_user, role="student")
         TenantMembership.ensure_active(tenant=cls.other_tenant, user=cls.other_teacher, role="teacher")
-        old_lecture = create_lecture_fixture(tenant=cls.tenant, title="지난 강의", name="지난 강의", subject="MATH")
-        cls.target = create_lecture_fixture(tenant=cls.tenant, title="새 강의", name="새 강의", subject="MATH")
-        other_lecture = create_lecture_fixture(
+        lecture = apps.get_model("lectures", "Lecture").objects
+        session = apps.get_model("lectures", "Session").objects
+        old_lecture = lecture.create(tenant=cls.tenant, title="지난 강의", name="지난 강의", subject="MATH")
+        cls.target = lecture.create(tenant=cls.tenant, title="새 강의", name="새 강의", subject="MATH")
+        other_lecture = lecture.create(
             tenant=cls.other_tenant, title="다른 학원", name="다른 학원", subject="MATH",
         )
-        cls.original_session = create_session_fixture(lecture=old_lecture, title="복습 원본", order=1)
-        cls.first = create_session_fixture(lecture=cls.target, title="새 강의 1", order=1)
-        cls.second = create_session_fixture(lecture=cls.target, title="새 강의 2", order=2)
-        cls.foreign = create_session_fixture(lecture=other_lecture, title="다른 학원 1", order=1)
+        cls.original_session = session.create(lecture=old_lecture, title="복습 원본", order=1)
+        cls.first = session.create(lecture=cls.target, title="새 강의 1", order=1)
+        cls.second = session.create(lecture=cls.target, title="새 강의 2", order=2)
+        cls.foreign = session.create(lecture=other_lecture, title="다른 학원 1", order=1)
         cls.original = Video.objects.create(
             tenant=cls.tenant, session=cls.original_session, title="기존 강의 영상",
             status=Video.Status.READY, duration=600, file_key="",
         )
         cls.original.hls_path = video_hls_master_path(cls.tenant.pk, cls.original.pk)
         cls.original.save(update_fields=["hls_path"])
-        cls.student = create_student_fixture(
+        cls.student = apps.get_model("students", "Student").objects.create(
             tenant=cls.tenant, user=cls.student_user, name="테스트 학생", ps_number="PLACEMENT-1",
             omr_code="12345678", parent_phone="01000000000",
         )
-        cls.enrollment = create_enrollment_fixture(
+        cls.enrollment = apps.get_model("enrollment", "Enrollment").objects.create(
             tenant=cls.tenant, student=cls.student, lecture=cls.target, status="ACTIVE",
         )
-        create_session_enrollment_fixture(tenant=cls.tenant, session=cls.first, enrollment=cls.enrollment)
+        apps.get_model("enrollment", "SessionEnrollment").objects.create(
+            tenant=cls.tenant, session=cls.first, enrollment=cls.enrollment,
+        )
 
     def setUp(self):
         self.client.force_authenticate(self.teacher)
