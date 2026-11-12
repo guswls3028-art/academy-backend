@@ -79,6 +79,7 @@ class OMRDocumentService:
         _mc_count = mc_count
         resolved_choice_numbers = choice_question_numbers
         resolved_essay_numbers = essay_question_numbers
+        contract = None
         if _mc_count is None:
             sheet_exam = resolve_template_exam_for_tenant(exam, tenant)
             sheet = getattr(sheet_exam, "sheet", None)
@@ -97,6 +98,24 @@ class OMRDocumentService:
                 _mc_count = 20
 
         _essay_count = essay_count if essay_count is not None else 0
+        # Teacher score strips follow the exam contract geometry. The exam print
+        # screen always echoes its counts, so compare the effective shape; a
+        # request that changes the shape prints without strips.
+        if contract is None:
+            contract = OMRDocumentService._exam_contract_or_none(exam=exam, tenant=tenant)
+        essay_score_marks: tuple = ()
+        if contract is not None and contract.essay_score_marks:
+            effective_choice = list(resolved_choice_numbers or range(1, _mc_count + 1))
+            effective_essay = list(
+                resolved_essay_numbers or range(_mc_count + 1, _mc_count + _essay_count + 1)
+            )
+            if (
+                _mc_count == contract.choice_count
+                and _essay_count == contract.essay_count
+                and effective_choice == list(contract.objective_question_numbers)
+                and effective_essay == list(contract.essay_question_numbers)
+            ):
+                essay_score_marks = tuple(contract.essay_score_marks)
 
         # 로고 & 브랜드 컬러 resolve
         logo_url = OMRDocumentService._resolve_logo_url(tenant)
@@ -117,11 +136,25 @@ class OMRDocumentService:
             include_optional_essay_area=include_optional_essay_area,
             choice_question_numbers=tuple(resolved_choice_numbers or ()),
             essay_question_numbers=tuple(resolved_essay_numbers or ()),
+            essay_score_marks=essay_score_marks,
             logo_url=logo_url,
             logo_key=logo_key,
             logo_variant=logo_variant,
             brand_color=brand_color,
         )
+
+    @staticmethod
+    def _exam_contract_or_none(*, exam, tenant):
+        try:
+            sheet_exam = resolve_template_exam_for_tenant(exam, tenant)
+        except ValueError:
+            return None
+        sheet = getattr(sheet_exam, "sheet", None)
+        if sheet is None:
+            return None
+        from apps.support.omr.contract_builder import build_omr_sheet_contract
+
+        return build_omr_sheet_contract(sheet=sheet, exam=sheet_exam)
 
     @staticmethod
     def from_params(

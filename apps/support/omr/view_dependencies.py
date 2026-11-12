@@ -5,6 +5,8 @@ from __future__ import annotations
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
+from apps.support.exams.view_dependencies import IsTeacherOrAdmin  # noqa: F401 — re-export
+
 
 def get_exam_for_omr_document(*, tenant, exam_id: int):
     from apps.domains.exams.models import Exam

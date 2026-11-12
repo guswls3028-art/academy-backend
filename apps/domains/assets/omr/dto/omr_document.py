@@ -8,7 +8,7 @@ preview(HTML)와 PDF가 동일한 이 모델을 입력으로 사용한다.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Optional
+from typing import Any, Optional
 
 from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS, validate_layout
 
@@ -36,6 +36,9 @@ class OMRDocument:
     choice_question_numbers: tuple[int, ...] = ()
     essay_question_numbers: tuple[int, ...] = ()
     essay_numbering: str = "continuous"
+    # Teacher score strips from the exam's OMR contract (meta_generator SSOT).
+    # Only exam-bound documents whose shape equals the contract carry them.
+    essay_score_marks: tuple[dict[str, Any], ...] = ()
 
     # -- 테넌트 브랜딩 --
     logo_url: Optional[str] = None  # presigned URL (HTML preview용)
@@ -94,6 +97,12 @@ class OMRDocument:
         )
 
     @property
+    def essay_instruction(self) -> str:
+        if self.essay_score_marks:
+            return "서술형은 작성칸에 적고, 아래 교사 채점란은 비워 두세요."
+        return "서술형 답안은 해당 번호의 작성칸에 깔끔하게 적어주세요."
+
+    @property
     def render_essay_label(self) -> str:
         if self.has_decorative_essay_area:
             return "서술형 작성 공간"
@@ -145,6 +154,7 @@ class OMRDocument:
             "mc_count": self.mc_count,
             "essay_count": self.essay_count,
             "essay_numbering": self.essay_numbering,
+            "essay_score_marks": bool(self.essay_score_marks),
             "include_optional_essay_area": self.include_optional_essay_area,
             "can_include_optional_essay_area": self.can_include_optional_essay_area,
             "render_essay_count": self.render_essay_count,

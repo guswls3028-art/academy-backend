@@ -246,6 +246,190 @@ def _build_numeric_short_answer_meta(
 
 
 # ══════════════════════════════════════════
+# 서술형 채점란 (교사가 소수 첫째 자리까지 점수를 칠하는 영역)
+# ══════════════════════════════════════════
+# 버블 구성은 배점과 무관하게 고정한다(십 0~4, 일 0~9, 소수 첫째 자리 0~9).
+# 인쇄 후 배점을 바꿔도 버블 좌표가 움직이지 않아 이미 인쇄한 답안지를 읽을 수 있다.
+# 객관식 열 수에 따라 폭이 충분하면 한 줄, 아니면 두 줄(십·일 / 소수)로 배치한다.
+# 양 끝의 2mm 앵커는 채점란이 인쇄된 답안지인지 판별하고 행 단위 위치를 보정한다.
+ESSAY_SCORE_MAX = 49.9
+ESSAY_SCORE_GROUPS = (
+    # place, label, values, label width (mm)
+    ("tens", "십", tuple(str(v) for v in range(5)), 3.6),
+    ("ones", "일", tuple(str(v) for v in range(10)), 3.6),
+    ("tenths", "소수", tuple(str(v) for v in range(10)), 5.0),
+)
+ESSAY_SCORE_LINE_PITCH = 6.0
+ESSAY_SCORE_STRIP_PAD_Y = 1.1
+ESSAY_SCORE_STRIP_BOTTOM_PAD = 1.2
+ESSAY_SCORE_STRIP_RIGHT_PAD = 1.5
+ESSAY_SCORE_MIN_WRITING_H = 9.0
+ESSAY_SCORE_BUB_W = 3.4
+ESSAY_SCORE_BUB_H = 4.8
+ESSAY_SCORE_SLOT_W = 5.0
+ESSAY_SCORE_TITLE_W = 9.0
+ESSAY_SCORE_GROUP_GAP = 1.5
+ESSAY_SCORE_ANCHOR_SZ = 2.0
+ESSAY_SCORE_ANCHOR_GAP = 1.0
+
+
+def _essay_score_group_w(group) -> float:
+    return group[3] + len(group[2]) * ESSAY_SCORE_SLOT_W
+
+
+def _essay_score_strip_shape(question_count: int) -> Dict[str, Any] | None:
+    """One or two bubble lines, whichever fits the essay column; None if neither."""
+    layout = compute_safe_layout(question_count)
+    essay_x = ANS_X + int(layout["n_cols"]) * (MC_COL_W + MC_COL_GAP)
+    available_w = PAGE_W - MARGIN_R - essay_x - MC_NUM_W - ESSAY_SCORE_STRIP_RIGHT_PAD
+    frame = 2 * (ESSAY_SCORE_ANCHOR_SZ + ESSAY_SCORE_ANCHOR_GAP) + ESSAY_SCORE_TITLE_W
+    tens, ones, tenths = ESSAY_SCORE_GROUPS
+    single_w = frame + sum(_essay_score_group_w(g) for g in ESSAY_SCORE_GROUPS) + 2 * ESSAY_SCORE_GROUP_GAP
+    double_w = frame + max(
+        _essay_score_group_w(tens) + ESSAY_SCORE_GROUP_GAP + _essay_score_group_w(ones),
+        _essay_score_group_w(tenths),
+    )
+    for lines, width, rows in (
+        (1, single_w, ((tens, ones, tenths),)),
+        (2, double_w, ((tens, ones), (tenths,))),
+    ):
+        if width <= available_w:
+            height = (
+                2 * ESSAY_SCORE_STRIP_PAD_Y
+                + ESSAY_SCORE_BUB_H
+                + (lines - 1) * ESSAY_SCORE_LINE_PITCH
+            )
+            return {
+                "lines": lines,
+                "w": round(width, 2),
+                "h": round(height, 2),
+                "rows": rows,
+                "essay_x": essay_x,
+            }
+    return None
+
+
+def essay_score_mark_availability(
+    *,
+    question_count: int,
+    essay_count: int,
+    essay_max_scores: List[float | None] | None = None,
+) -> Dict[str, Any]:
+    """Whether every essay row can hold a teacher score strip on this sheet."""
+    if essay_count <= 0:
+        return {"available": False, "reason": "서술형 문항이 없습니다."}
+    layout = compute_safe_layout(question_count)
+    if not layout["safe"] or validate_layout(question_count, essay_count):
+        return {"available": False, "reason": "답안지 레이아웃을 먼저 확인해 주세요."}
+    shape = _essay_score_strip_shape(question_count)
+    if shape is None:
+        return {"available": False, "reason": "객관식 열이 많아 점수칸을 넣을 공간이 부족합니다."}
+    body_h = CONTENT_H - MC_HEADER_H
+    needed_h = shape["h"] + ESSAY_SCORE_STRIP_BOTTOM_PAD + ESSAY_SCORE_MIN_WRITING_H
+    if body_h / essay_count < needed_h:
+        return {
+            "available": False,
+            "reason": (
+                f"서술형이 {essay_count}문항이라 점수칸을 넣을 공간이 부족합니다. "
+                f"(이 답안지는 최대 {int(body_h // needed_h)}문항)"
+            ),
+        }
+    for max_score in essay_max_scores or []:
+        if max_score is None or float(max_score) <= 0:
+            return {"available": False, "reason": "배점이 없는 서술형 문항이 있습니다."}
+        if float(max_score) > ESSAY_SCORE_MAX:
+            return {
+                "available": False,
+                "reason": f"서술형 배점은 {ESSAY_SCORE_MAX:g}점까지 점수칸으로 읽을 수 있습니다.",
+            }
+    return {"available": True, "reason": "", "lines": shape["lines"]}
+
+
+def build_essay_score_marks(
+    *,
+    question_count: int,
+    essay_question_numbers: List[int],
+) -> List[Dict[str, Any]]:
+    """Coordinates of the teacher score strip in each essay row (mm, SSOT).
+
+    The PDF renderer draws exactly these coordinates and the AI worker reads
+    them, so both sides stay in lockstep.
+    """
+    shape = _essay_score_strip_shape(question_count)
+    if not essay_question_numbers or shape is None:
+        return []
+    essay_count = len(essay_question_numbers)
+    body_y = CONTENT_Y + MC_HEADER_H
+    row_h = (CONTENT_H - MC_HEADER_H) / essay_count
+    strip_right = PAGE_W - MARGIN_R - ESSAY_SCORE_STRIP_RIGHT_PAD
+    strip_left = strip_right - shape["w"]
+    groups_x = strip_left + ESSAY_SCORE_ANCHOR_SZ + ESSAY_SCORE_ANCHOR_GAP + ESSAY_SCORE_TITLE_W
+
+    marks: List[Dict[str, Any]] = []
+    for index, question_number in enumerate(essay_question_numbers):
+        row_bottom = body_y + (index + 1) * row_h
+        strip_top = row_bottom - ESSAY_SCORE_STRIP_BOTTOM_PAD - shape["h"]
+        mid_y = round(strip_top + shape["h"] / 2, 2)
+        groups = []
+        for line_index, line_groups in enumerate(shape["rows"]):
+            cy = round(
+                strip_top + ESSAY_SCORE_STRIP_PAD_Y + ESSAY_SCORE_BUB_H / 2
+                + line_index * ESSAY_SCORE_LINE_PITCH,
+                2,
+            )
+            cursor = groups_x
+            for place, label, values, label_w in line_groups:
+                label_x = cursor
+                cursor += label_w
+                bubbles = []
+                for value in values:
+                    bubbles.append({
+                        "value": value,
+                        "center": {"x": round(cursor + ESSAY_SCORE_SLOT_W / 2, 2), "y": cy},
+                        "radius_x": round(ESSAY_SCORE_BUB_W / 2, 2),
+                        "radius_y": round(ESSAY_SCORE_BUB_H / 2, 2),
+                    })
+                    cursor += ESSAY_SCORE_SLOT_W
+                cursor += ESSAY_SCORE_GROUP_GAP
+                groups.append({
+                    "place": place,
+                    "label": label,
+                    "label_x": round(label_x, 2),
+                    "label_w": label_w,
+                    "cy": cy,
+                    "bubbles": bubbles,
+                })
+        marks.append({
+            "question_number": int(question_number),
+            "lines": shape["lines"],
+            "strip": {
+                "x": round(strip_left, 2),
+                "y": round(strip_top, 2),
+                "w": shape["w"],
+                "h": shape["h"],
+            },
+            "title_x": round(strip_left + ESSAY_SCORE_ANCHOR_SZ + ESSAY_SCORE_ANCHOR_GAP, 2),
+            "anchors": {
+                "left": {
+                    "center": {"x": round(strip_left + ESSAY_SCORE_ANCHOR_SZ / 2, 2), "y": mid_y},
+                    "size": ESSAY_SCORE_ANCHOR_SZ,
+                },
+                "right": {
+                    "center": {"x": round(strip_right - ESSAY_SCORE_ANCHOR_SZ / 2, 2), "y": mid_y},
+                    "size": ESSAY_SCORE_ANCHOR_SZ,
+                },
+            },
+            "groups": groups,
+            "row": {
+                "x": round(shape["essay_x"], 2),
+                "y": round(row_bottom - row_h, 2),
+                "h": round(row_h, 2),
+            },
+        })
+    return marks
+
+
+# ══════════════════════════════════════════
 # 코너 마커 상수 v15.2 — min.t 참고 얇은 브래킷 스타일
 # ══════════════════════════════════════════
 MARKER_OFF = 3.0   # 페이지 가장자리 오프셋 (ADF 여유)
@@ -351,8 +535,13 @@ def build_omr_meta(
     essay_count: int = 0,
     choice_question_numbers: List[int] | None = None,
     essay_question_numbers: List[int] | None = None,
+    essay_score_mark_numbers: List[int] | None = None,
 ) -> Dict[str, Any]:
-    """OMR 메타 생성 (좌표 SSOT). v14: 5mm 비대칭 마커 + 버블 정렬 인식마크."""
+    """OMR 메타 생성 (좌표 SSOT). v14: 5mm 비대칭 마커 + 버블 정렬 인식마크.
+
+    ``essay_score_mark_numbers`` adds the teacher score strips for those essay
+    rows. Omitted, the meta (and the contract fingerprint) is unchanged.
+    """
     if choice_question_numbers is not None and len(choice_question_numbers) != question_count:
         raise ValueError("choice_question_numbers length must equal question_count")
     if essay_question_numbers is not None and len(essay_question_numbers) != essay_count:
@@ -442,7 +631,7 @@ def build_omr_meta(
     )
     questions.extend(numeric_short_answers)
 
-    return {
+    meta: Dict[str, Any] = {
         "version": "v15",
         "units": "mm",
         "page": {"width": PAGE_W, "height": PAGE_H},
@@ -464,6 +653,12 @@ def build_omr_meta(
         "columns": columns,               # grouped by column (v15: 앵커 제거, col_x만)
         "identifier": _build_identifier_meta(),
     }
+    if essay_score_mark_numbers:
+        meta["essay_score_marks"] = build_essay_score_marks(
+            question_count=question_count,
+            essay_question_numbers=list(essay_score_mark_numbers),
+        )
+    return meta
 
 
 def _build_identifier_meta() -> Dict[str, Any]:

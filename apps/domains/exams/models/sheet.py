@@ -30,6 +30,14 @@ class Sheet(BaseModel):
 
     essay_count = models.PositiveIntegerField(default=0)
 
+    # Beta: print a teacher score strip (tens/ones/tenths) in each essay row and let
+    # the OMR worker read it as a grading-grid proposal. Owner: docs/domain/omr.md.
+    essay_score_marks = models.BooleanField(
+        default=False,
+        db_default=False,
+        help_text="서술형 칸마다 교사 점수 마킹칸을 인쇄하고 스캔에서 읽는다(Beta).",
+    )
+
     file = models.FileField(
         upload_to="exams/sheets/",
         null=True,
