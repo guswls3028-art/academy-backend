@@ -1,5 +1,6 @@
 from datetime import timedelta
 from unittest.mock import patch
+from uuid import uuid4
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
@@ -11,6 +12,7 @@ from apps.core.models import OpsAuditLog, Tenant, TenantMembership
 from apps.core.r2_paths import video_hls_master_path, video_playback_export_key
 from apps.domains.video.models import Video, VideoPlaybackExport
 from apps.domains.video.views.video_views import VideoViewSet
+from apps.worker.video_worker.playback_export_main import process_export
 
 
 SERVICE = "apps.domains.video.services.playback_export."
@@ -123,3 +125,37 @@ class VideoPlaybackExportTests(TestCase):
         self.assertEqual(self._request(video=alias).status_code, 202)
         self.assertEqual(VideoPlaybackExport.objects.get().video_id, self.video.pk)
         self.assertEqual(submit.call_count, 1)
+
+    @patch.dict("os.environ", {"AWS_BATCH_JOB_ID": "synthetic-worker-id"})
+    @patch("academy.adapters.video.playback_export.build_playback_mp4")
+    @patch("academy.adapters.storage.r2_objects.video_bucket_client")
+    def test_worker_claims_only_current_attempt_and_makes_the_mp4_ready_once(self, storage, render):
+        destination = apps.get_model("lectures", "Session").objects.create(
+            lecture=self.video.session.lecture, title="2차시", order=2,
+        )
+        alias = Video.objects.create(
+            tenant=self.tenant, session=destination, title="복습", status=Video.Status.READY,
+            source_type=Video.SourceType.UPLOADED, reused_from=self.video, hls_path=self.video.hls_path,
+        )
+        export = VideoPlaybackExport.objects.create(video=self.video)
+        self.video.delete()
+        uploaded = {}
+
+        def prepare(*, bucket, master_key, output):
+            self.assertEqual(master_key, self.video.hls_path)
+            output.write_bytes(b"synthetic-mp4")
+
+        def upload(file, bucket, key, *, ExtraArgs):
+            uploaded[key] = file.read()
+            self.assertEqual(ExtraArgs, {"ContentType": "video/mp4", "CacheControl": "private, no-store"})
+
+        render.side_effect = prepare
+        storage.return_value.upload_fileobj.side_effect = upload
+        self.assertFalse(process_export(export.pk, uuid4()))
+        self.assertTrue(process_export(export.pk, export.attempt))
+        self.assertFalse(process_export(export.pk, export.attempt))
+        self.assertEqual(self._request("get", video=alias).data, {"state": "ready"})
+        self.assertEqual(uploaded, {
+            video_playback_export_key(self.tenant.pk, self.video.pk, export.attempt): b"synthetic-mp4",
+        })
+        self.assertEqual(render.call_count, 1)
