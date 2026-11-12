@@ -16,6 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.assets.omr.dto.omr_document import MAX_ESSAY_QUESTIONS, OMRDocument
@@ -182,6 +183,20 @@ class ExamOMRPdfView(APIView):
         return _render_pdf_response(doc, tenant=request.tenant)
 
 
+class EssayScoreMarksStateSerializer(serializers.Serializer):
+    enabled = serializers.BooleanField()
+    available = serializers.BooleanField()
+    printed = serializers.BooleanField()
+    reason = serializers.CharField(allow_blank=True)
+    essay_count = serializers.IntegerField()
+    max_score = serializers.FloatField()
+    beta = serializers.BooleanField()
+
+
+class EssayScoreMarksUpdateSerializer(serializers.Serializer):
+    enabled = serializers.BooleanField()
+
+
 class ExamOMREssayScoreMarksView(APIView):
     """
     GET/PATCH /api/v1/exams/{exam_id}/omr/essay-score-marks/
@@ -197,10 +212,12 @@ class ExamOMREssayScoreMarksView(APIView):
             permissions.append(IsTeacherOrAdmin())
         return permissions
 
+    @extend_schema(request=None, responses=EssayScoreMarksStateSerializer)
     def get(self, request, exam_id: int):
         exam = _get_exam(request.tenant, exam_id)
         return Response(essay_score_marks_state(exam=exam, tenant=request.tenant))
 
+    @extend_schema(request=EssayScoreMarksUpdateSerializer, responses=EssayScoreMarksStateSerializer)
     def patch(self, request, exam_id: int):
         exam = _get_exam(request.tenant, exam_id)
         if "enabled" not in request.data:

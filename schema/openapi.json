@@ -3059,6 +3059,42 @@
         ],
         "type": "string"
       },
+      "EssayScoreMarksState": {
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "beta": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "essay_count": {
+            "type": "integer"
+          },
+          "max_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "printed": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "available",
+          "beta",
+          "enabled",
+          "essay_count",
+          "max_score",
+          "printed",
+          "reason"
+        ],
+        "type": "object"
+      },
       "EventProtocolVersionEnum": {
         "description": "* `1` - 1\n* `2` - 2",
         "enum": [
@@ -9731,6 +9767,14 @@
           },
           "status": {
             "$ref": "#/components/schemas/Status2d4Enum"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedEssayScoreMarksUpdateRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
           }
         },
         "type": "object"
@@ -32117,6 +32161,101 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "exams"
+        ]
+      }
+    },
+    "/api/v1/exams/{exam_id}/omr/essay-score-marks/": {
+      "get": {
+        "description": "GET/PATCH /api/v1/exams/{exam_id}/omr/essay-score-marks/\n\nBeta 서술형 교사 채점란 설정. PATCH {\"enabled\": bool}는 문항 편집과 같은\n구조 소유권·템플릿 봉인 규칙을 따른다. 배치할 수 없으면 400과 사유를 반환한다.",
+        "operationId": "exams_omr_essay_score_marks_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exam_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EssayScoreMarksState"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "exams"
+        ]
+      },
+      "patch": {
+        "description": "GET/PATCH /api/v1/exams/{exam_id}/omr/essay-score-marks/\n\nBeta 서술형 교사 채점란 설정. PATCH {\"enabled\": bool}는 문항 편집과 같은\n구조 소유권·템플릿 봉인 규칙을 따른다. 배치할 수 없으면 400과 사유를 반환한다.",
+        "operationId": "exams_omr_essay_score_marks_partial_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exam_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedEssayScoreMarksUpdateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedEssayScoreMarksUpdateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedEssayScoreMarksUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EssayScoreMarksState"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
