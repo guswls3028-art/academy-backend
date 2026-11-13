@@ -36,3 +36,4 @@ python /usr/local/bin/verify-tiff.py
 python /usr/local/bin/verify-sasl.py
 
 python /usr/local/bin/verify-krb5.py --package
+python /usr/local/bin/verify-libpq.py

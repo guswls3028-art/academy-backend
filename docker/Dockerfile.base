@@ -57,6 +57,7 @@ WORKDIR /build
 
 COPY docker/native-security/build-fixed-libs.sh docker/native-security/build-krb5.sh /usr/local/bin/
 COPY docker/native-security/fetch-fixed-sasl.sh /usr/local/bin/
+COPY docker/native-security/fetch-fixed-libpq.sh /usr/local/bin/
 COPY docker/native-security/verify-krb5.py /usr/local/bin/
 COPY docker/native-security/patches/ /usr/local/share/academy-native-security/
 COPY docker/native-security/build-python-xml.py docker/native-security/verify-expat.py /usr/local/bin/
@@ -66,10 +67,15 @@ RUN sh /usr/local/bin/build-fixed-libs.sh /build/native-security/out \
     && sh /usr/local/bin/fetch-fixed-sasl.sh /build/native-security/out \
     && sh /usr/local/bin/build-sqlite.sh /build/native-security/out
 
+RUN sh /usr/local/bin/fetch-fixed-libpq.sh /build/libpq \
+    && dpkg -i /build/libpq/libpq5.deb /build/libpq/libpq-dev.deb \
+    && apt-get check
+
 # 의존성 파일 복사 및 설치 (pip 업그레이드와 단일 RUN으로 레이어 최소화)
 COPY requirements/constraints.txt ./requirements/constraints.txt
 COPY requirements/common.txt ./requirements/common.txt
-RUN pip install --upgrade pip && pip install --user --no-cache-dir -r requirements/common.txt
+RUN pip install --upgrade pip \
+    && pip install --user --no-cache-dir --no-binary=psycopg2-binary -r requirements/common.txt
 
 # ==============================================================================
 # Stage 2: Runtime (최종 이미지 - 빌드 도구 제거, non-root)
@@ -83,13 +89,16 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app
 
 COPY --from=builder /build/native-security/out /tmp/academy-native-security
+COPY --from=builder /build/libpq/libpq5.deb /tmp/academy-native-security/libpq5.deb
 
 # 런타임 의존성만 설치 (빌드 도구 제외)
 COPY docker/native-security/upgrade-apt.sh /usr/local/bin/upgrade-apt.sh
 RUN test -n "${APT_REFRESH_TOKEN}" \
     && sh /usr/local/bin/upgrade-apt.sh \
     && apt-get install -y --no-install-recommends \
-    libpq5 \
+    libgssapi-krb5-2 \
+    libldap2 \
+    libssl3t64 \
     libc6 \
     libc-bin \
     libsqlite3-0 \
@@ -107,6 +116,7 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
     util-linux \
     && dpkg -i /tmp/academy-native-security/*.deb \
     && ldconfig \
+    && test "$(dpkg-query -W -f='${Version}' libpq5)" = '18.7-1' \
     && test "$(dpkg-query -W -f='${Version}' libexpat1)" = '2.9.0+academy1-1' \
     && test "$(dpkg-query -W -f='${Source}' libexpat1)" = 'expat' \
     && test "$(find /tmp/academy-native-security/python-xml -maxdepth 1 -type f -name '*.so' | wc -l)" -eq 2 \
@@ -144,6 +154,7 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
 COPY docker/native-security/tiff-fixtures/ /usr/local/share/academy/native-security/tiff-fixtures/
 COPY docker/native-security/verify-expat.py docker/native-security/verify-aligned-new.py docker/native-security/verify-tiff.py docker/native-security/verify-sasl.py docker/native-security/verify-krb5.py /usr/local/bin/
 COPY docker/native-security/verify-sqlite.py /usr/local/bin/
+COPY docker/native-security/verify-libpq.py /usr/local/bin/
 RUN python /usr/local/bin/verify-expat.py --library libexpat.so.1 --python --package \
     && python /usr/local/bin/verify-aligned-new.py \
     && python /usr/local/bin/verify-tiff.py \
@@ -167,6 +178,7 @@ ENV PATH=/home/appuser/.local/bin:$PATH
 # → 코드 변경 시 base 재빌드 불필요, 워커별 필요 코드만 포함 가능.
 
 USER appuser
+RUN python /usr/local/bin/verify-libpq.py
 
 # 기본 명령어는 서비스별로 오버라이드
 CMD ["python", "--version"]

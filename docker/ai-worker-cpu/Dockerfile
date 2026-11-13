@@ -82,7 +82,8 @@ COPY requirements/constraints.txt requirements/common.txt requirements/worker-ai
 RUN pip install --user --no-cache-dir \
     -r requirements/worker-ai-cpu.txt \
     -r requirements/worker-ai-excel.txt \
-    -r requirements/worker-ai-tools.txt
+    -r requirements/worker-ai-tools.txt \
+    && python /usr/local/bin/verify-libpq.py
 
 # Frame extraction uses the OpenCV wheel's embedded FFmpeg support. Fail the image
 # build if a future wheel loses that capability; no system FFmpeg package is needed.

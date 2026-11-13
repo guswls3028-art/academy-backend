@@ -67,7 +67,8 @@ FROM curl-fixed-system AS base
 COPY --chown=appuser:appuser requirements/constraints.txt requirements/requirements.txt requirements/api.txt requirements/common.txt ./requirements/
 RUN pip install --user --no-cache-dir \
     -r requirements/requirements.txt \
-    -r requirements/api.txt
+    -r requirements/api.txt \
+    && python /usr/local/bin/verify-libpq.py
 
 # Note: Phase 2 cross-encoder ML deps (torch + sentence-transformers + 모델)는
 # 직접 평가에서 한국어 시험 문제에 부적합 확인 → 컨테이너에서 제거.
