@@ -3,6 +3,7 @@
 from decimal import Decimal
 
 from rest_framework import serializers
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -95,6 +96,8 @@ class MySchoolReportView(APIView):
         return Response(term_detail(request.tenant, student, term))
 
     def put(self, request):
+        if getattr(request, "student_support_session", None) is not None:
+            raise PermissionDenied("학생 본인만 학교 성적을 입력할 수 있습니다.")
         student = own_student(request.tenant, request.user)
         term = _validated_term(request.query_params).term()
         body = SchoolReportEntrySerializer(data=request.data)

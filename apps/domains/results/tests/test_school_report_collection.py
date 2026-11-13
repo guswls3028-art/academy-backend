@@ -47,11 +47,13 @@ class SchoolReportCollectionTests(TestCase):
         )
         return student
 
-    def call(self, route, user, *, method="get", query=None, body=None, kwargs=None, tenant=None):
+    def call(self, route, user, *, method="get", query=None, body=None, kwargs=None, tenant=None, support=False):
         path = reverse(route, kwargs=kwargs)
         path_with_query = f"{path}?{urlencode(query)}" if query else path
         request = getattr(self.factory, method)(path_with_query, body, format="json")
         request.tenant = tenant or self.tenant
+        if support:
+            request.student_support_session = object()
         force_authenticate(request, user=user)
         matched = resolve(path)
         return matched.func(request, **matched.kwargs)
@@ -130,6 +132,11 @@ class SchoolReportCollectionTests(TestCase):
             with self.subTest(invalid=invalid):
                 self.assertEqual(self.put(invalid).status_code, 400)
         self.assertEqual(self.get_own().data["scores"][0]["score"], 89.25)
+        self.assertEqual(self.call(
+            "school-report-me", self.student.user, method="put", query=TERM, body={"subjects": [KOREAN]},
+            support=True,
+        ).status_code, 403)
+        self.assertEqual(self.get_own().data["scores"][0]["subject"], "수학")
         self.assertEqual(self.put([MATH], query={**TERM, "exam_round": "performance"}).status_code, 400)
         self.assertEqual(self.get_own(self.outside).status_code, 403)
         self.assertEqual(self.staff_detail(self.outside).status_code, 404)
@@ -271,7 +278,7 @@ class SchoolReportCollectionTests(TestCase):
             config.refresh_from_db()
             self.assertFalse(config.enabled)
             from apps.domains.messaging.policy import send_alimtalk_via_owner
-            from apps.domains.messaging.services.notification_service import send_event_notification
+            from apps.domains.messaging.services import send_event_notification
 
             self.assertFalse(send_alimtalk_via_owner("school_report_request", self.student.phone, {}))
             self.assertFalse(send_event_notification(self.tenant, "school_report_request", self.student))
