@@ -3,7 +3,6 @@ import logging
 from uuid import uuid4
 from datetime import timedelta
 
-from botocore.exceptions import ClientError
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import models, transaction
@@ -31,6 +30,7 @@ from apps.core.parsing import parse_bool
 from apps.api.common.query_params import parse_query_int
 
 from academy.adapters.storage.r2_presign import (
+    MultipartCompletionMismatch,
     create_presigned_put_url,
     create_presigned_get_url,
     create_multipart_upload,
@@ -38,7 +38,7 @@ from academy.adapters.storage.r2_presign import (
     complete_multipart_upload,
     abort_multipart_upload,
 )
-from academy.adapters.storage.r2_objects import completed_multipart_object_size, head_object
+from academy.adapters.storage.r2_objects import head_object
 
 
 from apps.core.r2_paths import video_raw_key
@@ -1219,35 +1219,25 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         if video.status != Video.Status.PENDING or video.is_youtube_source or video.reused_from_id:
             return self._completed_upload_response(video)
 
-        stored_size = None
         try:
-            complete_multipart_upload(
+            stored_size = complete_multipart_upload(
                 key=video.file_key,
                 upload_id=upload_id,
                 parts=normalized_parts,
             )
-        except Exception as exc:
-            code = (exc.response.get("Error") or {}).get("Code") if isinstance(exc, ClientError) else None
-            if code not in {"NoSuchUpload", "PreconditionFailed", "412"}:
-                return self._multipart_completion_unavailable(video)
-            try:
-                stored_size = completed_multipart_object_size(key=video.file_key, parts=normalized_parts)
-            except Exception:
-                return self._multipart_completion_unavailable(video)
-            if not stored_size:
-                return Response(
-                    {"detail": "저장된 영상 파일이 일치하지 않습니다. 원본 파일을 확인해 주세요."},
-                    status=status.HTTP_409_CONFLICT,
-                )
+        except MultipartCompletionMismatch:
+            return Response(
+                {"detail": "저장된 영상 파일이 일치하지 않습니다. 원본 파일을 확인해 주세요."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except Exception:
+            logger.exception("MULTIPART_COMPLETE_ERROR | video_id=%s", video.id)
+            return Response(
+                {"detail": "저장소에서 영상 업로드를 마치지 못했습니다. 잠시 후 다시 시도하세요."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
         return self._trigger_upload_complete_pipeline(video, stored_size=stored_size)
-
-    def _multipart_completion_unavailable(self, video):
-        logger.exception("MULTIPART_COMPLETE_ERROR | video_id=%s", video.id)
-        return Response(
-            {"detail": "저장소에서 영상 업로드를 마치지 못했습니다. 잠시 후 다시 시도하세요."},
-            status=status.HTTP_502_BAD_GATEWAY,
-        )
 
     # ==================================================
     # upload/multipart/abort — R2 multipart upload 중단
