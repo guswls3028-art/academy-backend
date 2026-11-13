@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 from typing import Any
+
+
+SOURCE_PROBE_TIMEOUT_SECONDS = 15
 
 
 def validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict[str, Any], str]:
@@ -11,15 +16,24 @@ def validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict[str, Any], s
         return False, {}, "source_url_missing"
 
     try:
-        import ffmpeg  # type: ignore
-    except Exception:
-        return False, {}, "ffmpeg_module_missing"
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type", "-of", "json", url],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=SOURCE_PROBE_TIMEOUT_SECONDS,
+            check=True,
+        )
+        probe = json.loads(result.stdout)
+    except subprocess.TimeoutExpired:
+        return False, {}, "ffprobe_timeout"
+    except FileNotFoundError:
+        return False, {}, "ffprobe_missing"
+    except (subprocess.CalledProcessError, OSError, ValueError):
+        return False, {}, "ffprobe_failed"
 
-    try:
-        probe = ffmpeg.probe(url)
-    except Exception as e:
-        return False, {}, f"ffprobe_failed:{str(e)[:200]}"
-
+    if not isinstance(probe, dict):
+        return False, {}, "ffprobe_failed"
     fmt = probe.get("format") or {}
     streams = probe.get("streams") or []
 
