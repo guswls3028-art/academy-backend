@@ -38,6 +38,8 @@ class ResultDisplayStatusTests(SimpleTestCase):
             ({"meta_status": None, "submission_status": "done", "visible_total_score": None, "is_provisional": False}, "DONE"),
             ({"meta_status": None, "submission_status": None, "visible_total_score": 0, "is_provisional": False}, "DONE"),
             ({"meta_status": None, "submission_status": None, "visible_total_score": 10, "is_provisional": True}, "PARTIAL"),
+            ({"meta_status": None, "submission_status": None, "visible_total_score": 10, "is_provisional": True, "attempt_status": "failed"}, "FAILED"),
+            ({"meta_status": None, "submission_status": None, "visible_total_score": 10, "is_provisional": True, "attempt_status": "grading", "subjective_pending": True}, "PARTIAL"),
             ({"meta_status": None, "submission_status": None, "visible_total_score": None, "is_provisional": False}, "NOT_SUBMITTED"),
         ]
         for kwargs, expected in cases:
@@ -377,6 +379,67 @@ class AdminExamResultsScopeTest(TestCase):
         )
         self.assertEqual([row["cohort_size"] for row in rows], [4, 4, 4, 4])
         self.assertEqual([row["percentile"] for row in rows], [25.0, 50.0, 50.0, 100.0])
+
+    def test_processing_first_attempt_does_not_rank_until_grading_completes(self):
+        exam = self._make_exam()
+        peer = self._make_enrollment(self.tenant, self.lecture, "SCOPE002", "두번째 학생")
+        attempt = ExamAttempt.objects.create(
+            exam=exam, enrollment=self.enrollment, submission_id=0, attempt_index=1,
+            status="grading",
+        )
+        Result.objects.create(
+            target_type="exam", target_id=exam.id, enrollment=self.enrollment,
+            attempt=attempt, total_score=90, max_score=100,
+        )
+        Result.objects.create(
+            target_type="exam", target_id=exam.id, enrollment=peer, total_score=80, max_score=100,
+        )
+
+        def get_rows():
+            response = self._get(exam.id)
+            self.assertEqual(response.status_code, 200, response.data)
+            return {row["enrollment_id"]: row for row in response.data["results"]}
+
+        rows = get_rows()
+        self.assertEqual(rows[self.enrollment.id]["result_status"], "PROCESSING")
+        self.assertIsNone(rows[self.enrollment.id]["rank"])
+        self.assertEqual(rows[peer.id]["cohort_avg"], 80.0)
+        self.assertEqual(rows[peer.id]["rank"], 1)
+
+        attempt.status = "done"
+        attempt.save(update_fields=["status", "updated_at"])
+        rows = get_rows()
+        self.assertEqual(rows[self.enrollment.id]["result_status"], "DONE")
+        self.assertEqual(rows[self.enrollment.id]["rank"], 1)
+        self.assertEqual(rows[peer.id]["rank"], 2)
+        self.assertEqual(rows[peer.id]["cohort_avg"], 85.0)
+
+    def test_first_attempt_without_snapshot_controls_rank_before_done_retake(self):
+        exam = self._make_exam()
+        first = ExamAttempt.objects.create(
+            exam=exam, enrollment=self.enrollment, submission_id=0, attempt_index=1,
+            is_representative=False, status="grading",
+        )
+        retake = ExamAttempt.objects.create(
+            exam=exam, enrollment=self.enrollment, submission_id=0, attempt_index=2,
+            is_retake=True, status="done",
+        )
+        Result.objects.create(
+            target_type="exam", target_id=exam.id, enrollment=self.enrollment,
+            attempt=retake, total_score=90, max_score=100,
+        )
+
+        response = self._get(exam.id)
+        self.assertEqual(response.status_code, 200, response.data)
+        row = response.data["results"][0]
+        self.assertEqual(row["result_status"], "PROCESSING")
+        self.assertIsNone(row["rank"])
+
+        first.status = "failed"
+        first.save(update_fields=["status", "updated_at"])
+        response = self._get(exam.id)
+        self.assertEqual(response.data["results"][0]["result_status"], "FAILED")
+        self.assertIsNone(response.data["results"][0]["rank"])
 
     def test_shared_exam_filters_results_and_applies_each_lecture_cutoff(self):
         exam = self._make_exam()
