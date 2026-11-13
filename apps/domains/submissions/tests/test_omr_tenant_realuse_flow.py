@@ -1706,6 +1706,12 @@ class AcceptFromDuplicatesTests(TestCase):
         self.assertFalse(SubmissionAnswer.objects.filter(submission=self.other).exists())
         self.assertEqual(Result.objects.values().get(pk=result["id"]), result)
         self.assertIsNone(self._get_manual_edit(self.other.id).data["edit_revision"])
+        Submission.objects.filter(pk=self.other.id).update(
+            status=Submission.Status.FAILED, error_message="discarded:duplicate", meta={},
+        )
+        legacy = self._post_manual_edit(self.other.id, {})
+        self.assertEqual(legacy.status_code, 409)
+        self.assertEqual(legacy.data["code"], "OMR_EDIT_RETIRED")
 
     def test_stale_answer_and_student_edits_leave_grade_until_fresh_reapply(self):
         self.exam.student_results_published = True

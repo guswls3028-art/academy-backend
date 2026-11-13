@@ -105,8 +105,14 @@ def _answer_review_version(submission: Submission) -> str | None:
 
 
 def _omr_edit_retired(submission: Submission) -> bool:
-    return submission.status == Submission.Status.SUPERSEDED or isinstance(
-        (submission.meta or {}).get("discarded"), dict,
+    meta = submission.meta if isinstance(submission.meta, dict) else {}
+    return (
+        submission.status == Submission.Status.SUPERSEDED
+        or isinstance(meta.get("discarded"), dict)
+        or (
+            submission.status == Submission.Status.FAILED
+            and str(submission.error_message or "").startswith("discarded:")
+        )
     )
 
 
@@ -717,8 +723,9 @@ class SubmissionViewSet(ModelViewSet):
         )
 
         if submission.source == Submission.Source.OMR_SCAN:
-            discarded = (submission.meta or {}).get("discarded")
             if _omr_edit_retired(submission):
+                meta = submission.meta if isinstance(submission.meta, dict) else {}
+                discarded = meta.get("discarded")
                 kept_id = discarded.get("kept_sibling_id") if isinstance(discarded, dict) else None
                 return Response({
                     "code": "OMR_EDIT_RETIRED",
