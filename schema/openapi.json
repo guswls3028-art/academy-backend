@@ -20318,6 +20318,10 @@
             "minimum": 1,
             "type": "integer"
           },
+          "progress_revision": {
+            "nullable": true,
+            "type": "string"
+          },
           "review_watch": {
             "additionalProperties": {},
             "nullable": true,
