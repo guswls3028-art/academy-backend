@@ -1586,6 +1586,7 @@ class AcceptFromDuplicatesTests(TestCase):
                 "school_type": "HIGH",
             },
             password="test1234",
+            parent_password="test1234",
         )
         self.student = sr.student
 
