@@ -34,6 +34,13 @@ DB migration이나 API 응답 형식 변경은 없다. 구 frontend도 서버에
 재생은 현재 수강·차시 권한을 다시 확인한 뒤 새로 발급한다. 기존 세션 데이터의
 마이그레이션이나 응답 형식 변경은 없다.
 
+ACTIVE 수강의 재생 갱신과 새 감독 이벤트 저장은 강의 → 차시 → 수강 → 영상 순서로
+잠근 뒤 권한을 다시 확인한다. 강의와 차시의 PostgreSQL `FOR NO KEY UPDATE` 잠금은
+종료·변경·삭제와 직렬화하면서 출결·명단 저장의 외래 키 검사를 허용한다. 수강
+행을 먼저 잠근 출결 저장이 차시 참조를 확인하며 커밋할 때 갱신과 교착하지 않는다.
+`tests/test_video_playback_renewal_lock_concurrency_pg.py`가 같은 차시의 동시 출결 저장과 기존
+재생 세션의 정상 갱신을 실제 PostgreSQL에서 확인한다.
+
 검증: `apps/domains/video/tests/test_session_video_entitlement.py`는 8차시 중
 3차시만 등록, 홈/통계 범위, 정상 재생 후 차시 해제와 기존 토큰 재검사, 다른
 차시 유지, 강의 INACTIVE, 공개 영상, 다른 tenant 관계를 실제 DB/API로 검증한다.
