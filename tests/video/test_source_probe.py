@@ -21,8 +21,6 @@ class SourceProbeTests(TestCase):
             def do_GET(self):
                 entered.set()
                 release.wait(4)
-                self.send_response(503)
-                self.end_headers()
 
             def log_message(self, *_args):
                 pass
