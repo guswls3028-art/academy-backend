@@ -18,7 +18,6 @@ from rest_framework.permissions import IsAuthenticated
 
 from academy.adapters.db.django import repositories_enrollment as enrollment_repo
 from academy.adapters.db.django import repositories_exams as exams_repo
-from academy.adapters.db.django import repositories_homework as homework_repo
 from academy.adapters.db.django import repositories_submissions as submissions_repo
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.api.common.query_params import parse_query_int
@@ -44,8 +43,6 @@ def _get_photo_url(student) -> Optional[str]:
         return None
 
 
-SUBMISSION_TARGET_EXAM = submissions_repo.target_type_exam()
-SUBMISSION_TARGET_HOMEWORK = submissions_repo.target_type_homework()
 SUBMISSION_STATUS_DONE = submissions_repo.status_done()
 SUBMISSION_STATUS_FAILED = submissions_repo.status_failed()
 
@@ -105,10 +102,10 @@ class PendingSubmissionsView(APIView):
         # Filter before slicing so an old pending item or sparse done/failed tab
         # cannot disappear behind the latest 200 unrelated submissions.
         cutoff = now - timedelta(hours=24)
-        qs = submissions_repo.submission_filter_tenant(tenant).filter(
+        qs = submissions_repo.exam_inbox_submissions(tenant).filter(
             Q(status__in=PENDING_STATUSES)
             | Q(status__in=TERMINAL_STATUSES, created_at__gte=cutoff)
-        ).exclude(target_type=SUBMISSION_TARGET_HOMEWORK)
+        )
         qs = submissions_repo.annotate_submission_discarded(qs)
         summary = None
         if paginated:
@@ -136,16 +133,12 @@ class PendingSubmissionsView(APIView):
         # ── Batch-collect IDs for efficient lookups ─────────────
         enrollment_ids: set[int] = set()
         exam_ids: set[int] = set()
-        homework_ids: set[int] = set()
 
         for s in submissions:
             eid = s.enrollment_id
             if eid:
                 enrollment_ids.add(int(eid))
-            if s.target_type == SUBMISSION_TARGET_EXAM:
-                exam_ids.add(int(s.target_id))
-            elif s.target_type == SUBMISSION_TARGET_HOMEWORK:
-                homework_ids.add(int(s.target_id))
+            exam_ids.add(int(s.target_id))
 
         # ── Enrollment → student + lecture (batch) ──────────────
         # 🔐 tenant 필터: Submission이 tenant 스코프라도 enrollment_id 자체에는
@@ -159,11 +152,6 @@ class PendingSubmissionsView(APIView):
         exam_map: Dict[int, Dict[str, Any]] = {}
         if exam_ids:
             exam_map = exams_repo.exam_target_info_map(exam_ids, tenant=tenant)
-
-        # ── Homework targets → title + session info (batch) ────
-        homework_map: Dict[int, Dict[str, Any]] = {}
-        if homework_ids:
-            homework_map = homework_repo.homework_target_info_map(homework_ids, tenant=tenant)
 
         # ── Build response items ────────────────────────────────
         items: list[Dict[str, Any]] = []
@@ -185,12 +173,7 @@ class PendingSubmissionsView(APIView):
                 student_name = getattr(student, "name", "") or ""
 
             # Target info (title, session, lecture)
-            if s.target_type == SUBMISSION_TARGET_EXAM:
-                target_info = exam_map.get(int(s.target_id), {})
-            elif s.target_type == SUBMISSION_TARGET_HOMEWORK:
-                target_info = homework_map.get(int(s.target_id), {})
-            else:
-                target_info = {}
+            target_info = exam_map.get(int(s.target_id), {})
 
             # File type from file_key extension
             file_key = s.file_key or ""
@@ -230,7 +213,7 @@ class PendingSubmissionsView(APIView):
             omr_readiness = None
             recovery = None
             if (
-                s.source == "omr_scan" and s.target_type == SUBMISSION_TARGET_EXAM
+                s.source == "omr_scan"
                 and target_resolved and not is_discarded
             ):
                 exam_id = int(s.target_id)

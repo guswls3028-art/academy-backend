@@ -173,6 +173,12 @@ flowchart LR
 기존 과제 상세 검토 경로를 유지한다. 기존 제출·답안·성적·폐기 메타와 보관 기간을
 변경하지 않는다. `superseded`를 새 완료 항목으로 노출하지 않는다.
 
+성적 첫 화면의 `GET /api/v1/results/admin/landing-stats/`도 같은 시험 제출 범위를
+사용한다. 채점 대기 건수와 미리보기는 제출함 대기 탭과 같은 기준을 사용하고,
+최근 완료 건수와 미리보기는 최근 7일 이내 생성된 완료 제출을 집계한다.
+과제 사진·영상은 [과제 상세 검토](homework-grading.md)에서 계속 확인한다.
+`test_admin_landing_stats_security.py`는 과제 포함 여부, 7일 경계 및 테넌트 격리를 검증한다.
+
 최근 200개를 자른 뒤 상태를 거르던 흐름은 과거 대기와 드문 완료/실패를 숨겼다.
 `filter=all|pending|done|failed`와 실패 탭의 `failed_type=all|real_failed|discarded`를
 서버 조회에 먼저 적용한다. 폐기는 `meta.discarded`가 객체일 때만 판정하며
@@ -459,6 +465,9 @@ EventBridge 실행이 반복되어도 첫 성공만 `meta.state_recovery`를 기
 409와 원본 파일·제출 상태를 확인하라는 안내를 반환한다. 일괄 재시도도 실패한
 항목을 시작 건수에서 제외하며, 재시도한 항목이 전부 실패하면 409를 반환한다.
 일부만 실패하면 배치 응답에서 시작한 ordinal과 실패 ordinal을 각각 확인할 수 있다.
+AI 워커 증설은 SQS 발행이 성공한 뒤 공용 큐 발행 경로에서 처리한다. OMR 접수·재시도는
+답안지마다 별도로 EC2 상태를 다시 조회하지 않는다. 격리 development/preprod에서는
+공용 발행 경로가 운영 ASG 증설을 건너뛴다.
 
 단일정답 문항에서 워커가 강한 복수마킹을 `status=ok, marking=multi`로 보내더라도
 정답과 완전히 일치하는 다중정답 키가 아니면 `ANSWER_SCORE_AMBIGUOUS`로 검토를
@@ -611,7 +620,10 @@ retry lifecycle로 다시 dispatch한다. Batch item을 ordinal 순으로 잠근
 id 순으로 함께 잠그고 최신 상태와 file key를 재확인하므로 worker callback이나 다른 admin
 retry가 만든 새 상태를 stale 객체가 덮어쓰지 않는다. 잠금 뒤 전이 조건이 달라졌거나 lifecycle
 전이가 거부되면 해당 ordinal은 `skipped_ordinals`로 반환하며 500이나 중복 dispatch를 만들지
-않는다. 아직 파일을 받지 못했거나 admission 단계에서 실패한 ordinal은
+않는다. 작업 발행 준비 중 예외가 발생하면 해당 항목의 전이만 되돌리고 기존 원본과 실패 상태를
+유지한다. 나머지 항목은 계속 처리되며 실패한 항목은 원본을 다시 올리지 않고 재시도할 수 있다.
+`test_omr_receipt_guards.py`는 한 항목의 발행 예외, 다른 항목의 정상 진행, 저장 상태 재조회와
+이후 원본 재사용을 검증한다. 아직 파일을 받지 못했거나 admission 단계에서 실패한 ordinal은
 `requires_file_ordinals`로 반환해 명시적 파일 재선택을 요구한다. 다른 tenant, 다른 생성 직원,
 다른 시험 batch는 404/403으로 fail-closed 한다.
 

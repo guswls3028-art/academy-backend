@@ -989,11 +989,17 @@ class OmrUploadBatchRetryView(APIView):
                     skipped.append(int(ordinal))
                     continue
                 try:
-                    retry_failed_submission(submission, actor="admin.omr_batch_retry")
+                    with transaction.atomic():
+                        retry_failed_submission(submission, actor="admin.omr_batch_retry")
+                        dispatch_submission(submission)
                 except InvalidTransitionError:
                     skipped.append(int(ordinal))
                     continue
-                dispatch_submission(submission)
+                except Exception:
+                    logger.exception(
+                        "OMR batch item retry dispatch failed",
+                        extra={"batch_id": str(batch.id), "ordinal": int(ordinal)},
+                    )
                 retried.append(int(ordinal))
 
         response_data = _batch_summary(batch)

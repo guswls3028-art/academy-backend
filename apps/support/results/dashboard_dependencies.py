@@ -10,9 +10,9 @@ def pending_work_counts(*, tenant: Any) -> dict[str, int]:
     from apps.domains.community.selectors.post_selector import get_pending_post_counts
 
     counts = get_pending_post_counts(tenant)
-    counts["submission_pending"] = submissions_repo.submission_filter_tenant(tenant).filter(
+    counts["submission_pending"] = submissions_repo.exam_inbox_submissions(tenant).filter(
         status__in=submissions_repo.pending_statuses(),
-    ).exclude(target_type=submissions_repo.target_type_homework()).count()
+    ).count()
     return counts
 
 

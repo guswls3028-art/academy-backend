@@ -9,12 +9,6 @@ def target_type_exam() -> str:
     return Submission.TargetType.EXAM
 
 
-def target_type_homework() -> str:
-    from apps.domains.submissions.models import Submission
-
-    return Submission.TargetType.HOMEWORK
-
-
 def status_done() -> str:
     from apps.domains.submissions.models import Submission
 
@@ -44,6 +38,10 @@ def submission_filter_tenant(tenant):
     from apps.domains.submissions.models import Submission
 
     return Submission.objects.filter(tenant=tenant)
+
+
+def exam_inbox_submissions(tenant):
+    return submission_filter_tenant(tenant).filter(target_type=target_type_exam())
 
 
 def annotate_submission_discarded(queryset):

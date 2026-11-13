@@ -160,3 +160,31 @@ class OmrReceiptGuardTests(OmrReceiptFixture, TestCase):
         self.assertEqual(batch.status_code, 200)
         self.assertEqual(batch.data["retried_ordinals"], [2])
         self.assertEqual(batch.data["failed_ordinals"], [1])
+
+    def test_batch_retry_rolls_back_only_the_item_whose_dispatch_raises(self):
+        batch_id = self.initialize(total_count=2)
+        first, _ = self.upload(batch_id)
+        second, _ = self.upload(batch_id, ordinal=2, content=b"another scan")
+        Submission.objects.filter(pk__in=[first.submission_id, second.submission_id]).update(
+            status=Submission.Status.FAILED, error_message="original failure",
+        )
+        self.dispatch.side_effect = [RuntimeError("temporary dispatch error"), None]
+
+        response = self.request(OmrUploadBatchRetryView.as_view(), {"item_ordinals": [1, 2]}, batch_id=batch_id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["retried_ordinals"], [2])
+        self.assertEqual(response.data["failed_ordinals"], [1])
+        self.assertEqual(response.data["requires_file_ordinals"], [])
+        first.submission.refresh_from_db()
+        second.submission.refresh_from_db()
+        self.assertEqual(first.submission.status, Submission.Status.FAILED)
+        self.assertEqual(first.submission.error_message, "original failure")
+        self.assertTrue(first.submission.file_key)
+        self.assertEqual(second.submission.status, Submission.Status.SUBMITTED)
+
+        self.dispatch.side_effect = None
+        retried = self.request(OmrUploadBatchRetryView.as_view(), {"item_ordinals": [1]}, batch_id=batch_id)
+        self.assertEqual(retried.data["retried_ordinals"], [1])
+        self.assertEqual(retried.data["failed_ordinals"], [])
+        self.assertEqual(self.storage.call_count, 2)
