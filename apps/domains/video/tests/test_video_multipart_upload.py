@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from botocore.exceptions import ClientError
+
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.response import Response
 from rest_framework.test import APIRequestFactory, force_authenticate
 
+from academy.adapters.storage.r2_objects import completed_multipart_object_size
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.video.models import Video
 from apps.domains.video.views.video_views import VideoViewSet
@@ -15,7 +19,31 @@ from apps.domains.video.views.video_views import VideoViewSet
 User = get_user_model()
 
 
+@override_settings(R2_VIDEO_BUCKET="test-video-bucket")
+class MultipartStorageReadbackTests(SimpleTestCase):
+    @patch("academy.adapters.storage.r2_objects.video_bucket_client")
+    def test_exact_key_and_ordered_part_etag_required(self, make_client):
+        head = make_client.return_value.head_object
+        head.return_value = {"ETag": '"f77dc0eecdebcd774a2a22cb393ad2ff-2"', "ContentLength": 110_000_000}
+        parts = [
+            {"ETag": '"bce6bf66aeb76c7040fdd5f4eccb78e6"', "PartNumber": 1},
+            {"ETag": '"8165449fc15bbf43d3b674595cbcc406"', "PartNumber": 2},
+        ]
+        key = "tenants/10/video/raw/test.mp4"
+
+        self.assertEqual(completed_multipart_object_size(key=key, parts=parts), 110_000_000)
+        head.assert_called_once_with(Bucket="test-video-bucket", Key=key)
+        self.assertIsNone(completed_multipart_object_size(key=key, parts=parts[::-1]))
+        head.side_effect = ClientError({"Error": {"Code": "NoSuchKey"}}, "HeadObject")
+        self.assertIsNone(completed_multipart_object_size(key=key, parts=parts))
+
+
 class VideoMultipartUploadTests(TestCase):
+    multipart_payload = {
+        "upload_id": "upload-101mb",
+        "parts": [{"ETag": '"bce6bf66aeb76c7040fdd5f4eccb78e6"', "PartNumber": 1}],
+    }
+
     def setUp(self):
         self.factory = APIRequestFactory()
         self.tenant = Tenant.objects.create(
@@ -104,6 +132,61 @@ class VideoMultipartUploadTests(TestCase):
                 self.assertEqual(response.status_code, 400, response.data)
 
         complete_mock.assert_not_called()
+
+    @patch("apps.domains.video.views.video_views._cache_uploaded_status")
+    @patch("apps.domains.video.views.video_views.create_job_and_submit_batch",
+           return_value=SimpleNamespace(job=object(), reject_reason=None))
+    @patch("apps.domains.video.views.video_views._validate_source_media_via_ffprobe",
+           return_value=(True, {"duration": 60}, ""))
+    @patch("apps.domains.video.views.video_views.create_presigned_get_url", return_value="https://example.test/raw.mp4")
+    @patch("apps.domains.video.views.video_views.completed_multipart_object_size", return_value=110_000_000)
+    @patch("apps.domains.video.views.video_views.abort_multipart_upload")
+    @patch("apps.domains.video.views.video_views.complete_multipart_upload",
+           side_effect=ClientError({"Error": {"Code": "NoSuchUpload"}}, "CompleteMultipartUpload"))
+    def test_retry_recovers_assembled_object_and_replay_does_not_enqueue_again(
+        self, assemble, abort, size, _presign, _probe, enqueue, _cache,
+    ):
+        response = self._post("upload_multipart_complete", self.multipart_payload)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.video.refresh_from_db()
+        self.assertEqual(self.video.status, Video.Status.UPLOADED)
+
+        replay = self._post("upload_multipart_complete", self.multipart_payload)
+        self.assertEqual(replay.status_code, 200, replay.data)
+        self.assertEqual(replay.data["id"], self.video.id)
+        assemble.assert_called_once()
+        size.assert_called_once_with(key=self.video.file_key, parts=self.multipart_payload["parts"])
+        enqueue.assert_called_once()
+        abort.assert_not_called()
+
+    @patch("apps.domains.video.views.video_views.abort_multipart_upload")
+    @patch("apps.domains.video.views.video_views.complete_multipart_upload",
+           side_effect=ClientError({"Error": {"Code": "InternalError"}}, "CompleteMultipartUpload"))
+    def test_transient_assembly_failure_keeps_parts_and_pending_state(self, _assemble, abort):
+        response = self._post("upload_multipart_complete", self.multipart_payload)
+        self.assertEqual(response.status_code, 502, response.data)
+        self.video.refresh_from_db()
+        self.assertEqual(self.video.status, Video.Status.PENDING)
+        abort.assert_not_called()
+
+    @patch("apps.domains.video.views.video_views.completed_multipart_object_size", return_value=None)
+    @patch("apps.domains.video.views.video_views.complete_multipart_upload",
+           side_effect=ClientError({"Error": {"Code": "PreconditionFailed"}}, "CompleteMultipartUpload"))
+    @patch.object(VideoViewSet, "_trigger_upload_complete_pipeline")
+    def test_replay_does_not_process_a_different_stored_object(self, pipeline, _assemble, _size):
+        response = self._post("upload_multipart_complete", self.multipart_payload)
+        self.assertEqual(response.status_code, 409, response.data)
+        self.video.refresh_from_db()
+        self.assertEqual(self.video.status, Video.Status.PENDING)
+        pipeline.assert_not_called()
+
+    @patch("apps.domains.video.views.video_views.complete_multipart_upload")
+    def test_foreign_tenant_cannot_assemble_or_replay(self, assemble):
+        foreign = Tenant.objects.create(name="Other upload tenant", code="other-upload-tenant")
+        video = Video.objects.create(tenant=foreign, title="Other video", status=Video.Status.READY)
+        response = self._post("upload_multipart_complete", self.multipart_payload, video_id=video.id)
+        self.assertEqual(response.status_code, 404, response.data)
+        assemble.assert_not_called()
 
     @patch("apps.domains.video.views.video_views.abort_multipart_upload")
     def test_abort_uses_exact_tenant_video_key(self, abort_mock):

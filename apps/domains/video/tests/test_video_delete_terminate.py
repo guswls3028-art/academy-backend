@@ -5,13 +5,18 @@ Video 삭제 시 AWS Batch Terminate 호출 검증.
 - RUNNING/QUEUED/RETRY_WAIT + aws_batch_job_id 있으면 terminate 호출.
 - SUCCEEDED 이면 terminate 미호출.
 """
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from unittest import skipUnless
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.db import connection
+from django.test import TestCase, TransactionTestCase
+from rest_framework.response import Response
 
 from apps.domains.video.models import Video, VideoTranscodeJob
 from apps.domains.video.views.video_views import VideoViewSet
-from apps.domains.lectures.models import Lecture, Session
+from apps.domains.lectures.test_support import create_lecture_fixture, create_session_fixture
 from apps.core.models import Tenant
 
 
@@ -20,8 +25,8 @@ class VideoDeleteTerminateTest(TestCase):
 
     def setUp(self):
         tenant = Tenant.objects.create(name="Test Tenant", code="TEST_VIDEO_DEL")
-        lecture = Lecture.objects.create(title="L", name="L", subject="S", tenant=tenant)
-        session = Session.objects.create(lecture=lecture, title="S", order=1)
+        lecture = create_lecture_fixture(title="L", name="L", subject="S", tenant=tenant)
+        session = create_session_fixture(lecture=lecture, title="S", order=1)
         self.video = Video.objects.create(
             tenant=tenant,
             session=session,
@@ -107,3 +112,74 @@ class VideoDeleteTerminateTest(TestCase):
                 view.perform_destroy(self.video)
 
         self.assertFalse(Video.objects.filter(pk=self.video.id).exists())
+
+
+@skipUnless(connection.vendor == "postgresql", "PostgreSQL row-lock contract")
+class VideoUploadDeleteConcurrencyTest(TransactionTestCase):
+    def test_delete_waits_for_completion_and_cleans_the_new_job(self):
+        tenant = Tenant.objects.create(name="Upload delete", code="upload-delete-race")
+        video = Video.objects.create(
+            tenant=tenant, title="Upload", file_key="tenant/upload.mp4", status=Video.Status.PENDING,
+        )
+        completion_started = Event()
+        delete_query_started = Event()
+        allow_completion = Event()
+
+        def finish_upload(_view, locked_video, *, stored_size=None):
+            completion_started.set()
+            if not allow_completion.wait(10):
+                raise AssertionError("The test did not release completion")
+            job = VideoTranscodeJob.objects.create(
+                video=locked_video, tenant=tenant, state=VideoTranscodeJob.State.QUEUED,
+                aws_batch_job_id="aws-new-upload",
+            )
+            locked_video.status = Video.Status.UPLOADED
+            locked_video.current_job_id = job.id
+            locked_video.save(update_fields=["status", "current_job_id"])
+            return Response({"id": locked_video.pk})
+
+        def complete():
+            try:
+                view = VideoViewSet()
+                view.get_object = lambda: Video.objects.get(pk=video.pk)
+                return view.upload_multipart_complete(type("Request", (), {
+                    "data": {"upload_id": "test-upload", "parts": [{"ETag": '"part"', "PartNumber": 1}]},
+                })()).status_code
+            finally:
+                connection.close()
+
+        def observe_delete(execute, sql, params, many, context):
+            if "FOR NO KEY UPDATE" in sql or "UPDATE " in sql:
+                delete_query_started.set()
+            return execute(sql, params, many, context)
+
+        def delete():
+            try:
+                with connection.execute_wrapper(observe_delete):
+                    VideoViewSet().perform_destroy(video)
+            finally:
+                connection.close()
+
+        with (
+            patch.object(VideoViewSet, "_trigger_upload_complete_pipeline", finish_upload),
+            patch("apps.domains.video.views.video_views.complete_multipart_upload"),
+            patch("apps.domains.video.services.batch_control.terminate_aws_batch_job") as terminate,
+            patch("apps.domains.video.services.video_job_lock.release"),
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            complete_future = pool.submit(complete)
+            try:
+                self.assertTrue(completion_started.wait(10))
+                delete_future = pool.submit(delete)
+                self.assertTrue(delete_query_started.wait(10))
+                self.assertFalse(delete_future.done())
+            finally:
+                allow_completion.set()
+            self.assertEqual(complete_future.result(timeout=15), 200)
+            delete_future.result(timeout=15)
+        self.assertFalse(Video.objects.filter(pk=video.pk).exists())
+        job = VideoTranscodeJob.objects.get(video_id=video.pk)
+        self.assertEqual(job.state, VideoTranscodeJob.State.DEAD)
+        terminate.assert_called_once_with(
+            "aws-new-upload", "video_deleted", video_id=video.pk, job_id=str(job.pk),
+        )
