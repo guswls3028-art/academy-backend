@@ -294,6 +294,16 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         Terminate 실패해도 삭제 요청은 성공.
         """
         video_id = instance.id
+        # Fence upload completion/retry before looking for newly queued jobs.
+        # Commit the soft delete before taking job locks: the worker finalizes
+        # with Job -> Video locks and must be able to finish that transaction.
+        with transaction.atomic():
+            active_video = Video.objects.select_for_update(of=("self",), no_key=True).filter(
+                pk=video_id, tenant_id=instance.tenant_id,
+            ).first()
+            if active_video is None:
+                return
+            active_video.delete()
         # Kill ALL active TranscodeJobs for this video (not just current_job).
         # Soft-delete doesn't trigger CASCADE, so zombie RETRY_WAIT jobs can
         # block tenant concurrency slots indefinitely.
@@ -333,8 +343,6 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                     logger.info("Video delete: DEAD_SKIPPED_ALREADY_TERMINAL video_id=%s job_id=%s", video_id, cur.id)
         except Exception as e:
             logger.warning("Video delete: job cleanup failed video_id=%s: %s", video_id, e)
-        # Soft-delete: sets deleted_at, keeps row + R2 files for 6-month retention
-        instance.delete()
         logger.info("Video soft-deleted: video_id=%s", video_id)
 
     @transaction.atomic
