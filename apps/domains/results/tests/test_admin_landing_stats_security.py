@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.urls import resolve
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.domains.results.views.admin_landing_stats_view import AdminResultsLandingStatsView
@@ -116,3 +120,35 @@ class AdminLandingStatsTenantMetadataTests(TestCase):
         self.assertIn(self.contaminated.id, items)
         self.assertEqual(items[self.contaminated.id]["student_name"], "")
         self.assertEqual(items[self.contaminated.id]["target_title"], "")
+
+    def test_landing_inbox_counts_exclude_homework_and_limit_recent_done(self):
+        submission = self.submission_model
+        homework = submission.objects.create(
+            tenant=self.tenant, user=self.admin, target_type=submission.TargetType.HOMEWORK,
+            target_id=1, source=submission.Source.HOMEWORK_IMAGE, status=submission.Status.SUBMITTED,
+        )
+        recent_done = submission.objects.create(
+            tenant=self.tenant, user=self.admin, target_type=submission.TargetType.EXAM,
+            target_id=1, source=submission.Source.OMR_SCAN, status=submission.Status.DONE,
+        )
+        old_done = submission.objects.create(
+            tenant=self.tenant, user=self.admin, target_type=submission.TargetType.EXAM,
+            target_id=1, source=submission.Source.OMR_SCAN, status=submission.Status.DONE,
+        )
+        submission.objects.filter(pk=old_done.pk).update(created_at=timezone.now() - timedelta(days=8))
+
+        def get(path):
+            request = self.factory.get(path)
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            return resolve(request.path).func(request)
+
+        landing = get("/api/v1/results/admin/landing-stats/")
+        inbox = get("/api/v1/submissions/submissions/pending/?filter=pending&page=1")
+        self.assertEqual((landing.status_code, inbox.status_code), (200, 200))
+        self.assertEqual(landing.data["pending_submissions"], inbox.data["count"])
+        self.assertEqual([row["id"] for row in landing.data["pending_top"]], [self.contaminated.pk])
+        self.assertEqual(landing.data["done_last_7d"], 1)
+        self.assertEqual([row["id"] for row in landing.data["recent_done_top"]], [recent_done.pk])
+        homework.refresh_from_db()
+        self.assertEqual(homework.status, submission.Status.SUBMITTED)

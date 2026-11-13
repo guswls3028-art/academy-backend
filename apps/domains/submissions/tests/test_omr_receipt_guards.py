@@ -8,6 +8,7 @@ from apps.domains.submissions.tests.omr_receipt_test_support import OmrReceiptFi
 from apps.domains.submissions.views.exam_omr_batch_upload_view import (
     OmrUploadBatchDetailView, OmrUploadBatchRetryView, _mark_admission_failed, _mark_duplicate_admission,
 )
+from apps.domains.submissions.views.submission_view import SubmissionViewSet
 
 
 class OmrReceiptGuardTests(OmrReceiptFixture, TestCase):
@@ -75,6 +76,8 @@ class OmrReceiptGuardTests(OmrReceiptFixture, TestCase):
         self.assertEqual(retry.data["retried_ordinals"], [])
         self.assertEqual(retry.data["requires_file_ordinals"], [])
         self.assertEqual(retry.data["skipped_ordinals"], [1])
+        single = self.request(SubmissionViewSet.as_view({"post": "retry"}), pk=item.submission_id)
+        self.assertEqual(single.status_code, 409, single.data)
         self.assertEqual(Submission.objects.filter(pk=item.submission_id).values().get(), before)
         detail = self.request(OmrUploadBatchDetailView.as_view(), method="get", batch_id=item.batch_id)
         self.assertEqual(detail.data["failed_ordinals"], [])
@@ -123,7 +126,6 @@ class OmrReceiptGuardTests(OmrReceiptFixture, TestCase):
 
     def test_retry_reports_immediate_dispatch_rejection_for_single_and_batch(self):
         from apps.domains.submissions.services.dispatcher import dispatch_submission
-        from apps.domains.submissions.views.submission_view import SubmissionViewSet
 
         item, _ = self.upload()
         Submission.objects.filter(pk=item.submission_id).update(status=Submission.Status.FAILED)
@@ -143,6 +145,28 @@ class OmrReceiptGuardTests(OmrReceiptFixture, TestCase):
         item.submission.refresh_from_db()
         self.assertEqual(item.submission.status, Submission.Status.FAILED)
 
+    def test_single_retry_restores_failed_state_when_dispatch_raises(self):
+        item, _ = self.upload()
+        Submission.objects.filter(pk=item.submission_id).update(
+            status=Submission.Status.FAILED, error_message="original failure",
+        )
+        retry = SubmissionViewSet.as_view({"post": "retry"})
+        with patch(
+            "apps.domains.submissions.views.submission_view.dispatch_submission",
+            side_effect=RuntimeError("temporary dispatch error"),
+        ):
+            response = self.request(retry, pk=item.submission_id)
+        self.assertEqual(response.status_code, 409, response.data)
+        item.submission.refresh_from_db()
+        self.assertEqual(item.submission.status, Submission.Status.FAILED)
+        self.assertEqual(item.submission.error_message, "original failure")
+        self.assertTrue(item.submission.file_key)
+
+        with patch("apps.domains.submissions.views.submission_view.dispatch_submission") as dispatch:
+            response = self.request(retry, pk=item.submission_id)
+        self.assertEqual(response.status_code, 200, response.data)
+        dispatch.assert_called_once()
+
     def test_batch_retry_counts_only_items_that_started(self):
         from apps.domains.submissions.services.dispatcher import dispatch_submission
 
@@ -160,3 +184,31 @@ class OmrReceiptGuardTests(OmrReceiptFixture, TestCase):
         self.assertEqual(batch.status_code, 200)
         self.assertEqual(batch.data["retried_ordinals"], [2])
         self.assertEqual(batch.data["failed_ordinals"], [1])
+
+    def test_batch_retry_rolls_back_only_the_item_whose_dispatch_raises(self):
+        batch_id = self.initialize(total_count=2)
+        first, _ = self.upload(batch_id)
+        second, _ = self.upload(batch_id, ordinal=2, content=b"another scan")
+        Submission.objects.filter(pk__in=[first.submission_id, second.submission_id]).update(
+            status=Submission.Status.FAILED, error_message="original failure",
+        )
+        self.dispatch.side_effect = [RuntimeError("temporary dispatch error"), None]
+
+        response = self.request(OmrUploadBatchRetryView.as_view(), {"item_ordinals": [1, 2]}, batch_id=batch_id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["retried_ordinals"], [2])
+        self.assertEqual(response.data["failed_ordinals"], [1])
+        self.assertEqual(response.data["requires_file_ordinals"], [])
+        first.submission.refresh_from_db()
+        second.submission.refresh_from_db()
+        self.assertEqual(first.submission.status, Submission.Status.FAILED)
+        self.assertEqual(first.submission.error_message, "original failure")
+        self.assertTrue(first.submission.file_key)
+        self.assertEqual(second.submission.status, Submission.Status.SUBMITTED)
+
+        self.dispatch.side_effect = None
+        retried = self.request(OmrUploadBatchRetryView.as_view(), {"item_ordinals": [1]}, batch_id=batch_id)
+        self.assertEqual(retried.data["retried_ordinals"], [1])
+        self.assertEqual(retried.data["failed_ordinals"], [])
+        self.assertEqual(self.storage.call_count, 2)

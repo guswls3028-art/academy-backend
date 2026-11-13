@@ -1,6 +1,8 @@
 # apps/domains/results/views/admin_exam_results_view.py
 from __future__ import annotations
 
+from django.db.models import F, Window
+from django.db.models.functions import RowNumber
 from rest_framework.generics import ListAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -68,15 +70,21 @@ def _result_display_status(
     submission_status: str | None,
     visible_total_score: float | None,
     is_provisional: bool,
+    attempt_status: str | None = None,
+    subjective_pending: bool = False,
 ) -> str:
     """Return the backend-owned status shown in the admin result list."""
     if meta_status == "NOT_SUBMITTED":
         return "NOT_SUBMITTED"
 
     raw_submission_status = str(submission_status or "").strip().lower()
-    if raw_submission_status in _FAILED_SUBMISSION_STATUSES:
+    if raw_submission_status in _FAILED_SUBMISSION_STATUSES or attempt_status == "failed":
         return "FAILED"
     if raw_submission_status in _PROCESSING_SUBMISSION_STATUSES:
+        return "PROCESSING"
+    if subjective_pending:
+        return "PARTIAL"
+    if attempt_status in {"pending", "grading"}:
         return "PROCESSING"
     if is_provisional:
         return "PARTIAL"
@@ -179,11 +187,6 @@ class AdminExamResultsView(ListAPIView):
         results = list(queryset)
         pending_result_reasons = pending_omr_result_reasons(results)
         pending_result_ids = set(pending_result_reasons)
-        pending_enrollment_ids = {
-            int(result.enrollment_id)
-            for result in results
-            if int(result.id) in pending_result_ids
-        }
         linked_lecture_ids = getattr(self, "linked_lecture_ids", set())
         selected_lecture_id = getattr(self, "selected_lecture_id", None)
         pass_scores_by_lecture = effective_exam_pass_scores(
@@ -274,20 +277,22 @@ class AdminExamResultsView(ListAPIView):
         # -------------------------------------------------
         fact_qs = (
             ResultFact.objects.current()
-            .filter(target_type="exam", target_id=exam_id, enrollment__tenant=request.tenant)
+            .filter(
+                target_type="exam", target_id=exam_id,
+                enrollment__tenant=request.tenant, enrollment_id__in=enrollment_ids_page,
+            )
             .exclude(attempt_id__isnull=True)
-            .order_by("-attempt_id", "-id")
+            .annotate(latest_fact_rank=Window(
+                expression=RowNumber(),
+                partition_by=[F("enrollment_id")],
+                order_by=[F("attempt_id").desc(), F("id").desc()],
+            ))
+            .filter(latest_fact_rank=1)
+            .order_by()
             .values("enrollment_id", "attempt_id", "submission_id")
         )
 
-        latest_map = {}
-        for row in fact_qs:
-            eid = int(row["enrollment_id"])
-            if eid not in latest_map:
-                latest_map[eid] = {
-                    "attempt_id": int(row["attempt_id"]),
-                    "submission_id": int(row["submission_id"]) if row["submission_id"] is not None else 0,
-                }
+        latest_map = {int(row["enrollment_id"]): row for row in fact_qs}
 
         # Result.attempt_id fallback (현재 페이지 결과만)
         attempt_ids = [r.attempt_id for r in results if getattr(r, "attempt_id", None)]
@@ -373,6 +378,43 @@ class AdminExamResultsView(ListAPIView):
                 & lecture_enrollment_ids
             )
 
+        # The row and cohort must use the same first-attempt completion status.
+        achievement_items = []
+        for r in results:
+            enrollment = enrollment_map.get(int(r.enrollment_id))
+            lecture_id = int(getattr(enrollment, "lecture_id", 0) or 0)
+            achievement_items.append({
+                "enrollment_id": int(r.enrollment_id),
+                "exam_id": exam_id,
+                "total_score": projected_scores[int(r.enrollment_id)].total_score,
+                "pass_score": pass_scores_by_lecture.get(
+                    lecture_id,
+                    float(getattr(exam, "pass_score", 0.0) or 0.0),
+                ),
+                "attempt_id": getattr(r, "attempt_id", None),
+                "session": sessions_by_lecture.get(lecture_id),
+            })
+        achievement_map = compute_exam_achievement_bulk(
+            items=achievement_items,
+            tenant=request.tenant,
+        )
+        result_statuses = {}
+        for result in results:
+            enrollment_id = int(result.enrollment_id)
+            first_score = projected_scores[enrollment_id]
+            first_attempt = initial_scores.get((exam_id, enrollment_id))
+            achievement = achievement_map[(enrollment_id, exam_id)]
+            submission_id = latest_map.get(enrollment_id, {}).get("submission_id")
+            attempt = attempt_map.get(first_attempt.attempt_id if first_attempt else result.attempt_id)
+            result_statuses[enrollment_id] = _result_display_status(
+                meta_status=achievement["meta_status"],
+                submission_status=submission_status_map.get(submission_id),
+                visible_total_score=first_score.total_score,
+                is_provisional=bool(achievement["is_provisional"]),
+                attempt_status=attempt.status if attempt is not None else None,
+                subjective_pending=int(result.id) in pending_result_ids,
+            )
+
         # -------------------------------------------------
         # 석차 계산 (전체 응시자 대상, 페이지와 무관)
         # -------------------------------------------------
@@ -381,7 +423,7 @@ class AdminExamResultsView(ListAPIView):
                 (enrollment_id, float(projected.total_score))
                 for enrollment_id, projected in projected_scores.items()
                 if not projected.not_submitted and projected.total_score is not None
-                and enrollment_id not in pending_enrollment_ids
+                and result_statuses[enrollment_id] == "DONE"
             ),
             key=lambda row: (-row[1], row[0]),
         )
@@ -413,28 +455,6 @@ class AdminExamResultsView(ListAPIView):
                 "cohort_avg": cohort_avg,
             }
 
-        # -------------------------------------------------
-        # 성취/클리닉 상태 일괄 계산 (N+1 방지)
-        # -------------------------------------------------
-        achievement_items = []
-        for r in results:
-            enrollment = enrollment_map.get(int(r.enrollment_id))
-            lecture_id = int(getattr(enrollment, "lecture_id", 0) or 0)
-            achievement_items.append({
-                "enrollment_id": int(r.enrollment_id),
-                "exam_id": exam_id,
-                "total_score": projected_scores[int(r.enrollment_id)].total_score,
-                "pass_score": pass_scores_by_lecture.get(
-                    lecture_id,
-                    float(getattr(exam, "pass_score", 0.0) or 0.0),
-                ),
-                "attempt_id": getattr(r, "attempt_id", None),
-                "session": sessions_by_lecture.get(lecture_id),
-            })
-        achievement_map = compute_exam_achievement_bulk(
-            items=achievement_items,
-            tenant=request.tenant,
-        )
         exam_absence_count_map = current_exam_absence_counts(
             tenant=request.tenant,
             enrollment_ids=enrollment_ids_page,
@@ -482,14 +502,7 @@ class AdminExamResultsView(ListAPIView):
                 if achievement_data["meta_status"] == "NOT_SUBMITTED"
                 else rank_map.get(enrollment_id, {})
             )
-            result_status = _result_display_status(
-                meta_status=achievement_data["meta_status"],
-                submission_status=submission_status,
-                visible_total_score=visible_total_score,
-                is_provisional=bool(
-                    achievement_data["is_provisional"] or subjective_pending
-                ),
-            )
+            result_status = result_statuses[enrollment_id]
             enrollment = enrollment_map.get(enrollment_id)
             lecture_id = getattr(enrollment, "lecture_id", None)
             correction_meta = (

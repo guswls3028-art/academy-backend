@@ -89,6 +89,7 @@ class StudentVideoPlaybackSerializer(serializers.Serializer):
     학생 플레이어가 신뢰하는 단일 진실 payload
     """
     video = StudentVideoListItemSerializer()
+    progress_revision = serializers.CharField(allow_null=True, required=False)
     hls_url = serializers.CharField(allow_null=True, required=False)
     mp4_url = serializers.CharField(allow_null=True, required=False)
     play_url = serializers.CharField(allow_null=True, required=False)  # ✅ 재생 URL 추가

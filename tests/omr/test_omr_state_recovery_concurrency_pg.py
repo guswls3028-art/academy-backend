@@ -319,7 +319,6 @@ class StateRecoveryConcurrencyPostgresTests(TransactionTestCase):
                 "apps.support.omr.payload_builder.generate_presigned_get_url",
                 return_value="https://isolated.invalid/positive-flow.jpg",
             ),
-            patch("apps.domains.submissions.services.dispatcher.start_ai_worker_instance"),
             patch("academy.adapters.compute.ec2_control.ensure_ai_worker_asg_min_capacity"),
             patch.object(
                 ai_pipeline_dispatcher,

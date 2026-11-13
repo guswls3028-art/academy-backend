@@ -26,11 +26,31 @@
 - Ops jobs such as reconcile/scan_stuck/netprobe use the same worker image and worker settings.
 Current runtime snapshot: `docs/ssot/runtime-current.md`.
 
+### Upload completion
+
+The authenticated staff upload actions resolve the video in the request tenant and serialize
+completion on its row. A repeated completion for an already uploaded, processing or ready file
+returns the current video and starts no additional Batch job. A known Batch submission failure
+still uses the existing encoding retry flow.
+
+Multipart completion creates the object at its assigned raw key conditionally. If storage reports
+that the upload ID is gone or an object already exists, the API checks that object's multipart ETag
+against the ordered part ETags before continuing. A mismatch leaves the video pending and does
+not enter encoding. A transient storage failure preserves the uploaded parts so the same completion
+request can be retried. Existing R2 lifecycle handles abandoned multipart uploads.
+
+Staff deletion locks the video row and commits its soft deletion before cleaning up active
+transcode jobs. This includes jobs just created by upload completion and lets a worker finish
+its job-to-video lock sequence. Already completed jobs and retained raw files are preserved.
+
 In an environment with ffprobe, the optional upload metadata probe reads duration and video-stream
 presence for up to 15 seconds. The production API image ships without FFmpeg and uses the
 existing unknown-duration enqueue path, as do storage stalls. AWS Batch checks the source.
 Signed source URLs stay out of the probe failure reason.
-The synthetic video and stalled HTTP source cases are covered by `tests/video/test_source_probe.py`.
+
+Coverage: `test_video_multipart_upload.py`, `test_video_job_failure_status.py` and the
+`tests/video/test_source_probe.py` cases, plus the
+[staff upload UI](../../../../frontend/docs/PUBLIC-VIDEO-WORKFLOW.md).
 
 ## 2. Deploy Path
 

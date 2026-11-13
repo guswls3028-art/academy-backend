@@ -413,7 +413,11 @@ def handle_ai_job(job: AIJob) -> AIResult:
             """
             # 7단계: 다운로드(완료), 메타가져오기, 이미지로드, 정렬, ROI빌드, 식별자감지, 답안감지
 
-            from academy.adapters.ai.omr.engine import detect_omr_answers_v7, AnswerDetectConfig
+            from academy.adapters.ai.omr.engine import (
+                AnswerDetectConfig,
+                detect_omr_answers_v7,
+                prepare_omr_images,
+            )
             from academy.adapters.ai.omr.warp import align_to_a4_landscape, rotate_cardinal_cw
             from academy.adapters.ai.omr.identifier import detect_identifier_v1, IdentifierConfigV1
             from apps.domains.assets.omr.services.meta_generator import build_omr_meta
@@ -486,10 +490,13 @@ def handle_ai_job(job: AIJob) -> AIResult:
 
             # 5) 객관식 답안 감지 — v7 엔진 (image_bgr + meta 직접 전달)
             _record_progress(job.id, "detecting_answers", 75, step_index=5, step_total=6, step_name_display="답안감지", step_percent=0, tenant_id=tenant_id)
+            answer_config = AnswerDetectConfig()
+            prepared_images = prepare_omr_images(image_bgr=aligned, meta=meta, config=answer_config)
             answer_results = detect_omr_answers_v7(
                 image_bgr=aligned,
                 meta=meta,
-                config=AnswerDetectConfig(),
+                config=answer_config,
+                prepared_images=prepared_images,
             )
             answers = [a.to_dict() for a in answer_results]
             # Teacher score strips (Beta) are read only when the contract printed them.
@@ -501,7 +508,8 @@ def handle_ai_job(job: AIJob) -> AIResult:
                     essay_scores = detect_essay_score_marks(
                         image_bgr=aligned,
                         meta=meta,
-                        config=AnswerDetectConfig(),
+                        config=answer_config,
+                        prepared_images=prepared_images,
                     )
                 except Exception:  # noqa: BLE001 — never block objective grading
                     logger.exception("OMR essay score read failed job=%s", job.id)

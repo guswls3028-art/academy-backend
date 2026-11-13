@@ -22,9 +22,6 @@ from apps.support.submissions.dependencies import (
 
 dispatch_job = dispatch_submission_ai_job
 
-# AI 워커 EC2 제어 (2026-05-12: apps/domains/ai/services -> academy/adapters/compute 이관)
-from academy.adapters.compute.ec2_control import start_ai_worker_instance
-
 # OMR pipeline 의 sheet / payload 책임은 apps/support/omr/ 에 위치.
 # (Phase F: payload / sheet 책임 분리. boundary guard 범위 외 helper layer 로 이동.)
 from apps.support.omr.payload_builder import build_omr_payload
@@ -179,16 +176,3 @@ def dispatch_submission(submission: Submission) -> None:
             actor="dispatcher.ai_dispatch",
             extra_update_fields=["meta"],
         )
-        return
-
-    # SQS publish 가 DB commit 후에 안전하게 실행되도록 on_commit 사용
-    def _start_worker():
-        try:
-            start_ai_worker_instance()
-        except Exception:
-            logger.warning(
-                "[dispatcher] AI 워커 EC2 기동 실패 — job 은 SQS 에 정상 등록됨,"
-                " 워커 수동 확인 필요"
-            )
-
-    transaction.on_commit(_start_worker)

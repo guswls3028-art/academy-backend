@@ -512,12 +512,10 @@ class OMRDispatcherSheetResolutionTests(TestCase):
                     "rejection_code": "basic_photo_not_allowed",
                 },
             ) as dispatch_job,
-            patch.object(dispatcher, "start_ai_worker_instance") as start_worker,
         ):
             dispatcher.dispatch_submission(submission)
 
         dispatch_job.assert_called_once()
-        start_worker.assert_not_called()
         submission.refresh_from_db()
         self.assertEqual(submission.status, Submission.Status.FAILED)
         self.assertEqual(submission.error_message, "Validation failed")
@@ -539,11 +537,12 @@ class OMRDispatcherSheetResolutionTests(TestCase):
 
         with (
             patch("apps.domains.ai.gateway.publish_job", side_effect=RuntimeError("SQS down")),
-            patch.object(dispatcher, "start_ai_worker_instance"),
+            patch("academy.adapters.compute.ec2_control._aws_client") as aws_client,
             self.captureOnCommitCallbacks(execute=True),
         ):
             dispatcher.dispatch_submission(submission)
 
+        aws_client.assert_not_called()
         submission.refresh_from_db()
         self.assertEqual(submission.status, Submission.Status.FAILED)
         self.assertIn("SQS down", submission.error_message)
