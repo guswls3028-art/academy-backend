@@ -36,6 +36,7 @@ from apps.domains.submissions.services.lifecycle import (
     retry_failed_submission,
     schedule_unreferenced_ai_object_cleanup,
 )
+from apps.domains.submissions.services.omr_submission_guards import omr_submission_is_archived
 from apps.infrastructure.storage.r2 import delete_object_r2_ai
 from apps.support.submissions.dependencies import exam_belongs_to_tenant
 from apps.support.submissions.omr_grading_status import omr_grading_status_by_submission
@@ -346,7 +347,7 @@ def _batch_summary(batch: OmrUploadBatch, *, grading_statuses=None) -> dict:
             duplicate_ordinals.append(int(item.ordinal))
             continue
         if item_status == "failed":
-            if submission is not None and _submission_is_archived(submission):
+            if submission is not None and omr_submission_is_archived(submission):
                 continue
             failed_ordinals.append(int(item.ordinal))
             if entry["admission_status"] == OmrUploadBatchItem.AdmissionStatus.FAILED or entry["submission_id"] is None:
@@ -464,17 +465,6 @@ def _uploaded_file_sha256(upload_file) -> str:
     return digest.hexdigest()
 
 
-def _submission_is_archived(submission: Submission) -> bool:
-    meta = submission.meta if isinstance(submission.meta, dict) else {}
-    return submission.status == Submission.Status.SUPERSEDED or (
-        submission.status == Submission.Status.FAILED
-        and (
-            str(submission.error_message or "").startswith("discarded:")
-            or isinstance(meta.get("discarded"), dict)
-        )
-    )
-
-
 def _received_content_owner(*, tenant, exam_id: int, content_sha256: str, item_id: int):
     """Resolve an active hash owner inside the caller's admission transaction.
 
@@ -509,7 +499,7 @@ def _received_content_owner(*, tenant, exam_id: int, content_sha256: str, item_i
         # Leave inconsistent ownership untouched; the unique constraint fails
         # admission closed instead of linking a different tenant/exam's data.
         return None
-    if not _submission_is_archived(submission):
+    if not omr_submission_is_archived(submission):
         return existing
     existing.admission_status = OmrUploadBatchItem.AdmissionStatus.FAILED
     existing.failure_code = "submission_archived"
@@ -998,7 +988,7 @@ class OmrUploadBatchRetryView(APIView):
                     skipped.append(int(ordinal))
                     continue
                 submission = submissions.get(int(item.submission_id)) if item.submission_id else None
-                if submission is not None and _submission_is_archived(submission):
+                if submission is not None and omr_submission_is_archived(submission):
                     skipped.append(int(ordinal))
                     continue
                 if item.admission_status == OmrUploadBatchItem.AdmissionStatus.FAILED or submission is None:

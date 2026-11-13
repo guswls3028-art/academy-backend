@@ -39,6 +39,7 @@ from apps.domains.submissions.services.omr_submission_guards import (
     duplicate_conflict_payload,
     ensure_exam_enrollment_candidate,
     find_conflicting_exam_submission,
+    omr_submission_is_archived,
 )
 from apps.domains.submissions.services.lifecycle import (
     InvalidTransitionError,
@@ -551,18 +552,30 @@ class SubmissionViewSet(ModelViewSet):
     def retry(self, request, pk=None):
         with transaction.atomic():
             submission = Submission.objects.select_for_update().get(pk=self.get_object().pk)
+            is_omr = submission.source == Submission.Source.OMR_SCAN
+            if is_omr and omr_submission_is_archived(submission):
+                return Response(
+                    {"submission_id": submission.id, "status": submission.status,
+                     "detail": "폐기되거나 교체된 답안지입니다. 다시 채점하려면 원본을 새로 등록해 주세요."},
+                    status=status.HTTP_409_CONFLICT,
+                )
 
             try:
-                retry_failed_submission(submission, actor="admin.retry")
+                with transaction.atomic():
+                    retry_failed_submission(submission, actor="admin.retry")
+                    if is_omr:
+                        dispatch_submission(submission)
             except InvalidTransitionError:
                 return Response(
                     {"detail": "Only FAILED submissions can be retried."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            except Exception:
+                if not is_omr:
+                    raise
+                logger.exception("OMR single retry dispatch failed", extra={"submission_id": submission.id})
 
-        dispatch_submission(submission)
-
-        if submission.source == Submission.Source.OMR_SCAN:
+        if is_omr:
             submission.refresh_from_db(fields=["status"])
             if submission.status == Submission.Status.FAILED:
                 return Response(
@@ -570,6 +583,8 @@ class SubmissionViewSet(ModelViewSet):
                      "detail": "재시도 후에도 제출이 실패 상태입니다. 원본 파일과 제출 상태를 확인해 주세요."},
                     status=status.HTTP_409_CONFLICT,
                 )
+        else:
+            dispatch_submission(submission)
         return Response(
             {
                 "submission_id": submission.id,

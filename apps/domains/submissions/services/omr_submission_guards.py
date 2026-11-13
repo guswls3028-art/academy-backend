@@ -8,6 +8,17 @@ from apps.support.omr.candidate_matching import (
 )
 
 
+def omr_submission_is_archived(submission: Submission) -> bool:
+    meta = submission.meta if isinstance(submission.meta, dict) else {}
+    return submission.status == Submission.Status.SUPERSEDED or (
+        submission.status == Submission.Status.FAILED
+        and (
+            str(submission.error_message or "").startswith("discarded:")
+            or isinstance(meta.get("discarded"), dict)
+        )
+    )
+
+
 def allow_duplicate_requested(request) -> bool:
     # HTTP-only validation must not become an import-time dependency of the
     # AI worker callback, whose intentionally minimal image does not ship DRF.
