@@ -27,6 +27,8 @@ from academy.adapters.ai.omr.types import OMRAnswerV1
 
 logger = logging.getLogger(__name__)
 
+PreparedOmrImages = Tuple[PageScale, np.ndarray, np.ndarray, np.ndarray]
+
 
 @dataclass(frozen=True)
 class AnswerDetectConfig:
@@ -63,6 +65,7 @@ def detect_omr_answers_v7(
     image_bgr: np.ndarray,
     meta: Dict[str, Any],
     config: Optional[AnswerDetectConfig] = None,
+    prepared_images: PreparedOmrImages | None = None,
 ) -> List[OMRAnswerV1]:
     """
     워프된 A4 이미지에서 객관식 답안을 감지한다.
@@ -71,6 +74,7 @@ def detect_omr_answers_v7(
         image_bgr: 워프된 BGR 이미지 (전체 페이지 = 전체 이미지)
         meta: build_omr_meta() 결과
         config: 감지 설정
+        prepared_images: 같은 이미지, 메타, 설정으로 미리 계산한 읽기 전용 전처리 결과
 
     Returns:
         문항별 OMRAnswerV1 리스트
@@ -78,7 +82,7 @@ def detect_omr_answers_v7(
     if config is None:
         config = AnswerDetectConfig()
 
-    scale, gray_raw, gray, binary = prepare_omr_images(
+    scale, gray_raw, gray, binary = prepared_images or prepare_omr_images(
         image_bgr=image_bgr, meta=meta, config=config,
     )
 
@@ -171,7 +175,7 @@ def prepare_omr_images(
     image_bgr: np.ndarray,
     meta: Dict[str, Any],
     config: AnswerDetectConfig,
-) -> Tuple[PageScale, np.ndarray, np.ndarray, np.ndarray]:
+) -> PreparedOmrImages:
     """Page scale + raw gray, CLAHE gray and binarized image shared by readers."""
     scale = build_page_scale_from_meta(
         meta=meta,
