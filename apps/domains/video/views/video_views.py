@@ -1418,9 +1418,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             )
             ok, meta, reason = False, {"duration": 0}, "ffprobe_exception_fallback"
 
-        # ffprobe 실패 시(ffmpeg_module_missing, ffprobe_failed, ffprobe_exception 등) 반드시 enqueue
-        # duration=None fallback → Encoding worker에서 재검증
-        # 절대 enqueue를 스킵하지 않음 (video.status PENDING 유지 방지)
+        # API 프로브에서 확인하지 못한 원본은 인코딩 worker가 다시 검사한다.
         if not ok:
             duration = _safe_int(meta.get("duration"), None) if meta else None
             video.duration = duration

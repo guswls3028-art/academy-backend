@@ -43,7 +43,13 @@ Staff deletion locks the video row and commits its soft deletion before cleaning
 transcode jobs. This includes jobs just created by upload completion and lets a worker finish
 its job-to-video lock sequence. Already completed jobs and retained raw files are preserved.
 
+In an environment with ffprobe, the optional upload metadata probe reads duration and video-stream
+presence for up to 15 seconds. The production API image ships without FFmpeg and uses the
+existing unknown-duration enqueue path, as do storage stalls. AWS Batch checks the source.
+Signed source URLs stay out of the probe failure reason.
+
 Coverage: `test_video_multipart_upload.py`, `test_video_job_failure_status.py` and the
+`tests/video/test_source_probe.py` cases, plus the
 [staff upload UI](../../../../frontend/docs/PUBLIC-VIDEO-WORKFLOW.md).
 
 ## 2. Deploy Path
