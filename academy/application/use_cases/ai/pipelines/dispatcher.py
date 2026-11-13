@@ -7,7 +7,6 @@ from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
 
 from academy.adapters.ai.config import AIConfig
-from academy.adapters.ai.ocr.google import google_ocr
 from academy.adapters.ai.ocr.tesseract import tesseract_ocr
 from academy.adapters.ai.detection.segment_dispatcher import (
     begin_pdf_seg_scope,
@@ -264,9 +263,13 @@ def handle_ai_job(job: AIJob) -> AIResult:
             if engine == "tesseract":
                 r = tesseract_ocr(local_path)
             elif engine == "google":
+                from academy.adapters.ai.ocr.google import google_ocr
+
                 r = google_ocr(local_path)
             else:
                 try:
+                    from academy.adapters.ai.ocr.google import google_ocr
+
                     r = google_ocr(local_path)
                     if not r.text.strip():
                         r = tesseract_ocr(local_path)
