@@ -14,6 +14,7 @@ import tempfile
 from urllib.request import urlopen
 
 VERSION = "26.8.1"
+ARCHIVE_VERSION = f"{VERSION}.1"
 SERIES = "26.8"
 ARCHIVES = {
     "x86_64": ("x86_64", "x86-64", "30903df3b9f61360d9660cd707de48cd2831469114492a5008ed58a0ac77d044"),
@@ -33,8 +34,10 @@ def install(archive_path=None):
         root = Path(temp)
         archive = Path(archive_path) if archive_path else root / "office.tar.gz"
         if not archive_path:
-            url = (f"https://download.documentfoundation.org/libreoffice/stable/{VERSION}/deb/{directory}/"
-                   f"LibreOffice_{VERSION}_Linux_{architecture}_deb.tar.gz")
+            url = (
+                f"https://downloadarchive.documentfoundation.org/libreoffice/old/{ARCHIVE_VERSION}/deb/{directory}/"
+                f"LibreOffice_{ARCHIVE_VERSION}_Linux_{architecture}_deb.tar.gz"
+            )
             with urlopen(url, timeout=120) as response, archive.open("wb") as target:
                 total = 0
                 while chunk := response.read(1024 * 1024):

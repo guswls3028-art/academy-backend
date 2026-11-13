@@ -968,6 +968,8 @@ PBDS binary heap의 `erase_if` 재할당 뒤 entry pointer를 갱신하는 헤�
 - 공개 보고서 읽기의 Tools 전용 변환기는 공식 rhwp 0.8.7과 LibreOffice
   26.8.1 배포물을 아키텍처별 SHA-256으로 고정한다. 설치 정본은
   `scripts/install-resource-reader.py`, `scripts/install-resource-office.py`다.
+  LibreOffice는 공급자의 공식 보관소에서 `26.8.1.1` 경로로 내려받는다.
+  arm64와 amd64 아카이브 모두 기존에 고정한 SHA-256으로 검증한다.
   LibreOffice는 공식 vendor DEB의 Writer/Calc/Impress·그림/수식·필수 core만
   설치하며 Java/Python/JavaScript macro provider, updater, desktop integration을
   설치하지 않는다. Debian libreoffice-common의 ucf/Perl 의존성을 들이지 않으며
