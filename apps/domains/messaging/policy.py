@@ -15,6 +15,8 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+SCHOOL_REPORT_REQUEST_TRIGGER = "school_report_request"
+
 
 CLINIC_NOTIFICATION_TRIGGERS = frozenset(
     {
@@ -70,6 +72,7 @@ TRIGGER_POLICY = {
     "check_in_complete": "MANUAL_DEFAULT",
     "absent_occurred": "MANUAL_DEFAULT",
     "monthly_report_generated": "MANUAL_DEFAULT",
+    SCHOOL_REPORT_REQUEST_TRIGGER: "MANUAL_DEFAULT",
     "exam_scheduled_days_before": "MANUAL_DEFAULT",
     "exam_start_minutes_before": "MANUAL_DEFAULT",
     "lecture_session_reminder": "MANUAL_DEFAULT",
@@ -428,6 +431,9 @@ def send_alimtalk_via_owner(
     Returns:
         True if enqueue 성공
     """
+    if trigger == SCHOOL_REPORT_REQUEST_TRIGGER:
+        return False
+
     from apps.domains.messaging.models import ScheduledNotification
     from apps.domains.messaging.scheduled import dispatch_notification_now
     from apps.domains.messaging.selectors import get_auto_send_config

@@ -39,6 +39,21 @@ class MessagingPolicyTests(TestCase):
         )
         self.assertFalse(is_auto_send_enabled_by_default("assignment_not_submitted"))
 
+    def test_school_report_reminder_rejects_non_preview_send_paths(self):
+        from apps.domains.messaging.policy import (
+            SCHOOL_REPORT_REQUEST_TRIGGER,
+            get_trigger_implementation_status,
+            is_auto_send_enabled_by_default,
+            send_alimtalk_via_owner,
+        )
+        from apps.domains.messaging.services import send_event_notification
+
+        trigger = SCHOOL_REPORT_REQUEST_TRIGGER
+        self.assertEqual(get_trigger_implementation_status(trigger), "manual_only")
+        self.assertFalse(is_auto_send_enabled_by_default(trigger))
+        self.assertFalse(send_alimtalk_via_owner(trigger, "01000000000", {}))
+        self.assertFalse(send_event_notification(None, trigger, None))
+
     def test_clinic_reminder_is_default_enabled_after_scheduler_wiring(self):
         from apps.domains.messaging.policy import (
             get_trigger_implementation_status,

@@ -22,6 +22,7 @@ SPECTACULAR_SETTINGS = {
     "ENUM_NAME_OVERRIDES": {
         "SurveyKind": "apps.domains.surveys.models.Survey.Kind",
         "SurveyStatus": "apps.domains.surveys.models.Survey.Status",
+        "SchoolReportSubmissionStatus": ["submitted", "missing"],
         "PublicVideoCategory": ["interview", "lesson", "news"],
         "PublicVideoFormat": ["landscape", "vertical"],
         "PublicVideoStatus": ["draft", "published", "unpublished"],

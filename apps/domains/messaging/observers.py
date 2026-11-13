@@ -56,9 +56,10 @@ def build_messaging_observer_payloads(
     recipients: list[MessagingObserverRecipient],
 ) -> list[dict]:
     """Clone one durable payload for observers without changing the original target."""
+    from apps.domains.messaging.policy import SCHOOL_REPORT_REQUEST_TRIGGER
     from apps.domains.messaging.security import is_sensitive_notification
 
-    if is_sensitive_notification(
+    if original_outbox.trigger == SCHOOL_REPORT_REQUEST_TRIGGER or is_sensitive_notification(
         trigger=original_outbox.trigger,
         payload=original_outbox.payload,
     ):
@@ -102,7 +103,11 @@ def observer_copy_block_reason(*, trigger: str = "", payload: object = None) -> 
     ):
         return ""
     from apps.domains.messaging.security import is_sensitive_notification
+    from apps.domains.messaging.policy import SCHOOL_REPORT_REQUEST_TRIGGER
 
-    if is_sensitive_notification(trigger=trigger, payload=payload):
+    if (
+        trigger == SCHOOL_REPORT_REQUEST_TRIGGER or payload.get("event_type") == SCHOOL_REPORT_REQUEST_TRIGGER
+        or is_sensitive_notification(trigger=trigger, payload=payload)
+    ):
         return "sensitive_observer_copy_blocked"
     return ""

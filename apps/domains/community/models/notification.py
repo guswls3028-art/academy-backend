@@ -21,11 +21,13 @@ class CommunityNotification(models.Model):
     KIND_POST_LIKE = "post_like"
     KIND_REPLY_LIKE = "reply_like"
     KIND_CHILD_REPLY = "child_reply"
+    KIND_SCHOOL_REPORT_REQUEST = "school_report_request"
     KIND_CHOICES = [
         (KIND_POST_REPLY, "내 글에 댓글"),
         (KIND_POST_LIKE, "내 글에 좋아요"),
         (KIND_REPLY_LIKE, "내 댓글에 좋아요"),
         (KIND_CHILD_REPLY, "내 댓글에 답글"),
+        (KIND_SCHOOL_REPORT_REQUEST, "학교 성적 제출 요청"),
     ]
 
     tenant = models.ForeignKey(
@@ -36,7 +38,7 @@ class CommunityNotification(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
         related_name="community_notifications", db_index=True,
     )
-    kind = models.CharField(max_length=20, choices=KIND_CHOICES, db_index=True)
+    kind = models.CharField(max_length=24, choices=KIND_CHOICES, db_index=True)
     payload = models.JSONField(default=dict, blank=True)
     read_at = models.DateTimeField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)

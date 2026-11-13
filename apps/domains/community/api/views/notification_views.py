@@ -9,6 +9,7 @@ POST   /community/notifications/mark-all-read/        — 일괄 읽음
 """
 from django.utils import timezone
 from rest_framework import status, views
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 from apps.api.common.query_params import parse_query_bool, parse_query_int
@@ -38,6 +39,11 @@ class CommunityNotificationListView(views.APIView):
         )
 
         qs = CommunityNotification.objects.filter(tenant=tenant, recipient=user)
+        kind = request.query_params.get("kind")
+        if kind is not None:
+            if kind not in dict(CommunityNotification.KIND_CHOICES):
+                raise ValidationError({"kind": "알 수 없는 알림 유형입니다."})
+            qs = qs.filter(kind=kind)
         if unread_only:
             qs = qs.filter(read_at__isnull=True)
         total = qs.count()

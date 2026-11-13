@@ -47,6 +47,12 @@ from apps.domains.results.views.admin_student_performance_view import AdminStude
 from apps.domains.results.views.admin_student_reported_score_view import (
     AdminStudentReportedScoreReviewView,
 )
+from apps.domains.results.views.school_report_views import (
+    MySchoolReportView,
+    SchoolReportDetailView,
+    SchoolReportRequestView,
+    SchoolReportRosterView,
+)
 
 from apps.domains.results.views.question_stats_views import (
     AdminExamQuestionStatsView,
@@ -72,6 +78,10 @@ from apps.domains.results.views.admin_attempt_history_view import AdminAttemptHi
 from apps.support.results.clinic_route_dependencies import AdminClinicBookingViewSet
 
 urlpatterns = [
+    path("school-reports/", SchoolReportRosterView.as_view(), name="school-report-roster"),
+    path("school-reports/me/", MySchoolReportView.as_view(), name="school-report-me"),
+    path("school-reports/requests/", SchoolReportRequestView.as_view(), name="school-report-requests"),
+    path("school-reports/<int:student_id>/", SchoolReportDetailView.as_view(), name="school-report-detail"),
     path("admin/sessions/<int:session_id>/total-config/", SessionTotalConfigView.as_view(), name="session-total-config"),
     path("me/exams/<int:exam_id>/", MyExamResultView.as_view(), name="my-exam-result"),
     path("me/exams/<int:exam_id>/attempts/", MyExamAttemptsView.as_view(), name="my-exam-attempts"),
