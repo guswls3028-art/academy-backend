@@ -233,10 +233,12 @@ def roster_page(tenant, term, roster, search=None, status=None):
             _term_requests(tenant, term).filter(recipient_id=OuterRef("user_id"))
             .order_by("-created_at").values("created_at")[:1]
         ),
-    ).only("id", "name", "school_type", "elementary_school", "middle_school", "high_school", "grade").order_by("name", "id")
+    ).only(
+        "id", "name", "school_type", "elementary_school", "middle_school", "high_school", "grade", "phone",
+    ).order_by("name", "id")
 
 
-def roster_entries(tenant, term, students):
+def roster_entries(tenant, term, students, *, alimtalk_available=False):
     grouped = {student.pk: [] for student in students}
     if grouped:
         for row in _term_scores(tenant, term).filter(student_id__in=grouped).only(
@@ -254,17 +256,22 @@ def roster_entries(tenant, term, students):
             "submitted_at": _submitted_at(grouped[student.pk]),
             "requested_at": student.requested_at.isoformat() if student.requested_at else None,
             "can_request": student.request_account_active and not student.report_submitted and student.requested_at is None,
+            "can_request_alimtalk": (
+                alimtalk_available and student.request_account_active and not student.report_submitted
+                and len((student.phone or "").replace("-", "").strip()) >= 10
+            ),
         }
         for student in students
     ]
 
 
-@transaction.atomic
-def request_missing_scores(tenant, term, student_ids):
+def _request_targets(tenant, student_ids, *, lock):
     targets = _active_students(tenant).filter(pk__in=student_ids)
     original = dict(targets.values_list("id", "user_id"))
     if len(original) != len(student_ids):
         raise ValidationError({"student_ids": "요청 대상 학생을 다시 선택해 주세요."})
+    if not lock:
+        return original
     # Match score writes and student lifecycle: tenant/User FK gates precede
     # Student row locks. Concurrent submission and request then serialize.
     try:
@@ -276,11 +283,28 @@ def request_missing_scores(tenant, term, student_ids):
     locked = dict(targets.select_for_update().order_by("id").values_list("id", "user_id"))
     if locked != original:
         raise ValidationError({"student_ids": "요청 대상 학생을 다시 선택해 주세요."})
-    submitted = set(_term_scores(tenant, term).filter(student_id__in=locked).values_list("student_id", flat=True))
-    already_requested = set(
-        _term_requests(tenant, term).filter(recipient_id__in=locked.values()).values_list("recipient_id", flat=True)
+    return locked
+
+
+def missing_student_accounts(tenant, term, student_ids, *, lock=False):
+    targets = _request_targets(tenant, student_ids, lock=lock)
+    submitted = set(_term_scores(tenant, term).filter(student_id__in=targets).values_list("student_id", flat=True))
+    active_accounts = set(
+        _account_access(tenant).filter(user_id__in=targets.values()).values_list("user_id", flat=True)
     )
-    active_accounts = set(_account_access(tenant).filter(user_id__in=locked.values()).values_list("user_id", flat=True))
+    return {
+        student_id: user_id
+        for student_id, user_id in targets.items()
+        if student_id not in submitted and user_id in active_accounts
+    }
+
+
+@transaction.atomic
+def request_missing_scores(tenant, term, student_ids):
+    missing = missing_student_accounts(tenant, term, student_ids, lock=True)
+    already_requested = set(
+        _term_requests(tenant, term).filter(recipient_id__in=missing.values()).values_list("recipient_id", flat=True)
+    )
     notifications = [
         CommunityNotification(
             tenant=tenant,
@@ -288,8 +312,8 @@ def request_missing_scores(tenant, term, student_ids):
             kind=CommunityNotification.KIND_SCHOOL_REPORT_REQUEST,
             payload=term.as_dict(),
         )
-        for student_id, user_id in locked.items()
-        if student_id not in submitted and user_id in active_accounts and user_id not in already_requested
+        for user_id in missing.values()
+        if user_id not in already_requested
     ]
     CommunityNotification.objects.bulk_create(notifications)
     return {"requested": len(notifications), "skipped": len(student_ids) - len(notifications)}

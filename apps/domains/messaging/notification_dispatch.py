@@ -16,6 +16,8 @@ from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from django.db import transaction
 from django.utils import timezone
 
+from apps.domains.messaging.policy import SCHOOL_REPORT_REQUEST_TRIGGER
+
 logger = logging.getLogger(__name__)
 
 PREVIEW_TOKEN_TTL_SECONDS = 300  # 5분
@@ -341,7 +343,11 @@ def build_student_list_preview(
                 site_url=site_url,
             ) if template_type else [{"key": k, "value": str(v)} for k, v in ctx.items()]
         else:
-            alimtalk_reps = [{"key": k, "value": str(v)} for k, v in ctx.items()]
+            alimtalk_reps = [
+                {"key": k, "value": str(v)}
+                for k, v in ctx.items()
+                if trigger != SCHOOL_REPORT_REQUEST_TRIGGER or f"#{{{k}}}" in template.body
+            ]
         full_message_body = (
             render_alimtalk_preview_text(unified_type, alimtalk_reps)
             if use_unified and unified_type
@@ -381,6 +387,9 @@ def create_preview_token(
     session_id: int,
     notification_type: str,
     send_to: str,
+    *,
+    school_report_source=None,
+    actor_user_id=None,
 ) -> str:
     """preview 데이터를 토큰에 저장하고 UUID 반환."""
     from apps.domains.messaging.models import NotificationPreviewToken
@@ -406,6 +415,9 @@ def create_preview_token(
         "notification_type": notification_type,
         "send_to": send_to,
     }
+    if school_report_source is not None:
+        payload["school_report_source"] = school_report_source
+        payload["school_report_actor_id"] = actor_user_id
     payload_bytes = len(
         json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     )
@@ -576,6 +588,11 @@ def execute_notification_batch(
                         "target_id": r.get("student_id"),
                         "target_name": r.get("student_name", ""),
                         "occurrence_key": f"batch_{batch_id}",
+                        **({
+                            "origin_type": SCHOOL_REPORT_REQUEST_TRIGGER,
+                            "origin_id": "{academic_year}:{semester}:{exam_round}".format(**payload["school_report_source"]),
+                            "actor_id": payload["school_report_actor_id"],
+                        } if notification_type == SCHOOL_REPORT_REQUEST_TRIGGER else {}),
                     },
                 }
             )
@@ -655,7 +672,7 @@ def _preview_batch_result(tenant, batch_id, receipt):
     }
 
 
-def consume_preview_token_and_execute(token_str: str, tenant, *, session_type=None) -> dict:
+def consume_preview_token_and_execute(token_str: str, tenant, *, session_type=None, actor_user_id=None) -> dict:
     """Consume a preview token only after its durable outbox batch exists."""
     from apps.domains.messaging.models import NotificationPreviewToken
     from apps.domains.messaging.security import redact_consumed_preview_payload
@@ -676,6 +693,10 @@ def consume_preview_token_and_execute(token_str: str, tenant, *, session_type=No
             return {"error": "토큰을 찾을 수 없습니다.", "status": 400}
         if session_type is not None and token.session_type != session_type:
             return {"error": "이 발송 화면의 미리보기가 아닙니다.", "status": 400}
+        if token.notification_type == SCHOOL_REPORT_REQUEST_TRIGGER and (
+            actor_user_id is None or token.payload.get("school_report_actor_id") != actor_user_id
+        ):
+            return {"error": "본인이 만든 미리보기만 발송할 수 있습니다.", "status": 403}
         if token.used_at is not None:
             receipt = token.payload.get("confirmation")
             if isinstance(receipt, dict) and token.batch_id is not None:
@@ -693,6 +714,15 @@ def consume_preview_token_and_execute(token_str: str, tenant, *, session_type=No
 
         batch_id = uuid.uuid4()
         delivery_payload = token.payload
+        if token.notification_type == SCHOOL_REPORT_REQUEST_TRIGGER:
+            from apps.support.messaging.school_report_requests import school_report_confirmation_valid
+
+            if not school_report_confirmation_valid(tenant, delivery_payload):
+                return {
+                    "error": "제출 상태, 수신자 또는 승인 양식이 변경되었습니다. 미리보기를 다시 확인해 주세요.",
+                    "code": "preview_changed",
+                    "status": 409,
+                }
         batch_result = execute_notification_batch(
             tenant=tenant,
             payload=delivery_payload,
@@ -705,6 +735,8 @@ def consume_preview_token_and_execute(token_str: str, tenant, *, session_type=No
         token.used_at = timezone.now()
         token.batch_id = batch_id
         token.payload = redact_consumed_preview_payload(delivery_payload)
+        if token.notification_type == SCHOOL_REPORT_REQUEST_TRIGGER:
+            token.payload["school_report_actor_id"] = actor_user_id
         # Retain only a non-PII receipt, so lost acknowledgements can be recovered
         # without a new batch, new outbox or another provider request.
         receipt = {

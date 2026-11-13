@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
+from apps.support.messaging.school_report_requests import school_report_alimtalk_available
 from apps.support.results.school_reports import (
     SchoolReportTerm,
     own_student,
@@ -115,8 +116,12 @@ class SchoolReportRosterView(APIView):
         )
         paginator = SchoolReportPagination()
         page = paginator.paginate_queryset(roster, request, view=self)
-        response = paginator.get_paginated_response(roster_entries(request.tenant, term, page))
+        alimtalk_available = school_report_alimtalk_available(request, request.tenant)
+        response = paginator.get_paginated_response(roster_entries(
+            request.tenant, term, page, alimtalk_available=alimtalk_available,
+        ))
         response.data.update(counts)
+        response.data["alimtalk_available"] = alimtalk_available
         return response
 
 

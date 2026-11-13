@@ -3,9 +3,10 @@ from urllib.parse import urlencode
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.db import IntegrityError, connection, transaction
+from django.test import TestCase, override_settings
 from django.urls import resolve, reverse
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -42,7 +43,7 @@ class SchoolReportCollectionTests(TestCase):
             tenant=tenant, user=self.user(tenant, key, "student"), name=name,
             ps_number=f"QA{key}", omr_code={"own": "11111111", "second": "22222222",
                                             "disabled": "33333333", "outside": "44444444"}[key],
-            school_type="HIGH", high_school="가고", grade=2,
+            school_type="HIGH", high_school="가고", grade=2, phone="01000001234",
         )
         return student
 
@@ -196,3 +197,133 @@ class SchoolReportCollectionTests(TestCase):
         self.assertEqual(self.call(
             "community-notification-list", self.second.user, query={"kind": "wrong"},
         ).status_code, 400)
+
+    def test_legacy_insert_without_direct_column_is_visible_to_new_reader(self):
+        legacy = self.evidence_score()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """INSERT INTO results_student_reported_score (
+                    tenant_id, student_id, submitted_by_id, evidence_file_id, source, academic_year,
+                    semester, exam_round, exam_name, subject, score, max_score, status, review_note,
+                    grade_scale, achievement_level, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                [
+                    self.tenant.id, self.student.id, self.student.user_id, legacy.evidence_file_id,
+                    "school_exam", 2026, 1, "first", "", "영어", 88, 100, "pending", "", "", "",
+                    timezone.now(), timezone.now(),
+                ],
+            )
+            cursor.execute(
+                "SELECT subject, status FROM results_student_reported_score WHERE student_id = %s AND subject = %s",
+                [self.student.id, "영어"],
+            )
+            self.assertEqual(cursor.fetchone(), ("영어", "pending"))
+        result = self.staff_detail()
+        self.assertEqual(result.status_code, 200)
+        english = next(row for row in result.data["scores"] if row["subject"] == "영어")
+        self.assertFalse(english["direct_entry"])
+        self.assertEqual(english["evidence_file_id"], legacy.evidence_file_id)
+
+    def preview_alimtalk(self, *, user=None, students=None, send_to="student", context=None):
+        return self.call(
+            "manual-notification-preview", user or self.teacher, method="post",
+            body={
+                "trigger": "school_report_request", "send_to": send_to, "context": context,
+                "context_source": {
+                    "type": "school_report_request", **TERM,
+                    "student_ids": [row.id for row in (students or [self.student])],
+                },
+            },
+        )
+
+    def confirm_alimtalk(self, token, *, user=None):
+        return self.call(
+            "manual-notification-confirm", user or self.teacher, method="post", body={"preview_token": token},
+        )
+
+    @override_settings(
+        SOLAPI_KAKAO_PF_ID="TEST-PF", SOLAPI_API_KEY="test-key",
+        SOLAPI_API_SECRET="test-secret", SOLAPI_SENDER="01000000000",
+    )
+    def test_kakao_exact_approval_and_manual_confirmation_without_external_dispatch(self):
+        settings_context = override_settings(OWNER_TENANT_ID=self.tenant.id)
+        with settings_context, patch("apps.domains.messaging.scheduled.process_due_notifications") as dispatch:
+            self.tenant.domains.update_or_create(is_primary=True, defaults={"host": "school-qa.example.test"})
+            result = self.call("school-report-roster", self.teacher, query=TERM)
+            self.assertFalse(result.data["alimtalk_available"])
+            self.assertEqual(self.preview_alimtalk().status_code, 409)
+            template = apps.get_model("messaging", "MessageTemplate").objects.create(
+                tenant=self.tenant, name="QA school submission", solapi_status="PENDING",
+                solapi_template_id="QA-DEDICATED-SCHOOL-REPORT",
+                body="#{학생이름}님, #{시험명} 학교 성적을 제출해 주세요. #{사이트링크}",
+            )
+            config = apps.get_model("messaging", "AutoSendConfig").objects.create(
+                tenant=self.tenant, trigger="school_report_request", template=template, enabled=False,
+            )
+            self.assertEqual(self.preview_alimtalk().status_code, 409)
+            template.solapi_status = "APPROVED"
+            template.save(update_fields=["solapi_status"])
+            owner = self.user(self.tenant, "owner", "owner")
+            self.call(
+                "messaging-auto-send", owner, method="patch",
+                body={"configs": [{"trigger": "school_report_request", "enabled": True}]},
+            )
+            config.refresh_from_db()
+            self.assertFalse(config.enabled)
+            from apps.domains.messaging.policy import send_alimtalk_via_owner
+            from apps.domains.messaging.services.notification_service import send_event_notification
+
+            self.assertFalse(send_alimtalk_via_owner("school_report_request", self.student.phone, {}))
+            self.assertFalse(send_event_notification(self.tenant, "school_report_request", self.student))
+            with override_settings(SOLAPI_SENDER=""):
+                self.assertFalse(self.call("school-report-roster", self.teacher, query=TERM).data["alimtalk_available"])
+                self.assertEqual(self.preview_alimtalk().status_code, 409)
+            self.assertEqual(self.preview_alimtalk(send_to="parent").status_code, 400)
+            self.assertEqual(self.preview_alimtalk(students=[self.outside]).status_code, 400)
+            self.assertEqual(self.preview_alimtalk(context={"시험명": "잘못된 회차"}).status_code, 400)
+            self.assertEqual(self.request_scores(self.student).data["requested"], 1)
+            roster = self.call("school-report-roster", self.teacher, query=TERM)
+            self.assertTrue(roster.data["alimtalk_available"])
+            self.assertFalse(roster.data["results"][0]["can_request"])
+            self.assertTrue(roster.data["results"][0]["can_request_alimtalk"])
+            preview = self.preview_alimtalk()
+            self.assertEqual(preview.status_code, 200, preview.data)
+            recipient = preview.data["recipients"][0]
+            self.assertIn(
+                "https://school-qa.example.test/student/submit/school-report?academic_year=2026&semester=1&exam_round=first",
+                recipient["message_body"],
+            )
+            self.assertNotIn("phone_raw", recipient)
+            self.assertNotIn("alimtalk_replacements", recipient)
+            outboxes = apps.get_model("messaging", "ScheduledNotification").objects.filter(
+                trigger="school_report_request",
+            )
+            self.assertEqual(outboxes.count(), 0)
+            other_staff = self.user(self.tenant, "second-teacher", "teacher")
+            self.assertEqual(self.confirm_alimtalk(preview.data["preview_token"], user=other_staff).status_code, 403)
+            stale = self.preview_alimtalk(students=[self.second])
+            self.assertEqual(stale.status_code, 200)
+            self.call("school-report-me", self.second.user, method="put", query=TERM, body={"subjects": [MATH]})
+            self.assertEqual(self.confirm_alimtalk(stale.data["preview_token"]).status_code, 409)
+            template.solapi_status = "PENDING"
+            template.save(update_fields=["solapi_status"])
+            self.assertEqual(self.confirm_alimtalk(preview.data["preview_token"]).status_code, 409)
+            dispatch.assert_not_called()
+            template.solapi_status = "APPROVED"
+            template.save(update_fields=["solapi_status"])
+            apps.get_model("messaging", "MessagingObserver").objects.create(
+                tenant=self.tenant, user=self.user(self.tenant, "observer", "admin"),
+            )
+            observer = User.objects.get(username="qa-school-observer")
+            observer.phone = "01000005678"
+            observer.save(update_fields=["phone"])
+            sent = self.confirm_alimtalk(preview.data["preview_token"])
+            self.assertEqual(sent.status_code, 200, sent.data)
+            self.assertEqual(sent.data["pending_count"], 1)
+            self.assertEqual(self.confirm_alimtalk(preview.data["preview_token"]).data, sent.data)
+            dispatch.assert_called_once()
+            self.assertEqual(outboxes.count(), 1)
+            self.assertEqual(outboxes.get().payload["target_type"], "student")
+            self.assertEqual(outboxes.get().origin_id, "2026:1:first")
+            config.refresh_from_db()
+            self.assertFalse(config.enabled)

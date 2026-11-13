@@ -60,6 +60,7 @@ def send_event_notification(
     """
     from apps.domains.messaging.selectors import get_auto_send_config
     from apps.domains.messaging.policy import (
+        SCHOOL_REPORT_REQUEST_TRIGGER,
         get_owner_tenant_id,
         get_trigger_policy,
         is_messaging_disabled,
@@ -73,7 +74,7 @@ def send_event_notification(
     )
     from .url_helpers import get_tenant_site_url
 
-    if get_trigger_policy(trigger) == "DISABLED":
+    if trigger == SCHOOL_REPORT_REQUEST_TRIGGER or get_trigger_policy(trigger) == "DISABLED":
         logger.info(
             "send_event_notification skipped: trigger=%s policy disabled",
             trigger,
