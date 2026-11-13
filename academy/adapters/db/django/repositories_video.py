@@ -62,7 +62,7 @@ def lock_active_playback_renewal_scope(
     student_id: int,
     video_id: int,
 ):
-    """Lock one exact active-enrollment playback graph in canonical order."""
+    """Lock one exact active-enrollment playback graph against updates and deletes."""
     from apps.domains.enrollment.models import Enrollment
     from apps.domains.lectures.models import Lecture, Session
     from apps.domains.video.models import Video
@@ -77,15 +77,17 @@ def lock_active_playback_renewal_scope(
     except (TypeError, ValueError):
         return None, None, None, None
 
+    # Keep lecture → session → enrollment → video order. A writer holding
+    # enrollment must still be able to validate its lecture or session FK.
     lecture = (
-        Lecture.objects.select_for_update()
+        Lecture.objects.select_for_update(no_key=True)
         .filter(id=lecture_id, tenant_id=tenant_id)
         .first()
     )
     if lecture is None:
         return None, None, None, None
     session = (
-        Session.objects.select_for_update()
+        Session.objects.select_for_update(no_key=True)
         .filter(id=session_id, lecture=lecture)
         .first()
     )
