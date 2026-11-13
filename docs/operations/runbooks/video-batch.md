@@ -39,6 +39,10 @@ against the ordered part ETags before continuing. A mismatch leaves the video pe
 not enter encoding. A transient storage failure preserves the uploaded parts so the same completion
 request can be retried. Existing R2 lifecycle handles abandoned multipart uploads.
 
+Staff deletion locks the video row and commits its soft deletion before cleaning up active
+transcode jobs. This includes jobs just created by upload completion and lets a worker finish
+its job-to-video lock sequence. Already completed jobs and retained raw files are preserved.
+
 Coverage: `test_video_multipart_upload.py`, `test_video_job_failure_status.py` and the
 [staff upload UI](../../../../frontend/docs/PUBLIC-VIDEO-WORKFLOW.md).
 
