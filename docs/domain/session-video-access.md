@@ -165,3 +165,6 @@ CSV는 UTF-8 BOM을 포함해 Excel에서 직접 열어도 한글 이름과 활�
 같은 학원의 재생 가능한 HLS 영상으로 MP4를 준비하고 다운로드할 수 있다. 영상과 음성을 재인코딩하지 않는다.
 준비 상태를 확인하는 GET은 링크를 만들지 않으며, 완료 뒤 명시적으로 요청한 POST만 첨부 주소를 발급한다.
 준비한 파일은 최대 24시간 사용할 수 있고, 주소는 최대 5분 유효하다.
+두 다운로드의 서명 주소는 `Content-Disposition: attachment`와 `Content-Type: application/octet-stream`을 지정해
+WebKit에서 내장 영상 플레이어 대신 파일 저장이 시작되게 한다. 원본 객체와 학생 재생 응답에는 이 다운로드 설정을 적용하지 않는다.
+`test_video_source_download.py`의 서명 계약 검증이 MIME 유형과 한글 파일명 보존을 확인한다.
