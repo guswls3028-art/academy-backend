@@ -26,9 +26,10 @@
 - Ops jobs such as reconcile/scan_stuck/netprobe use the same worker image and worker settings.
 Current runtime snapshot: `docs/ssot/runtime-current.md`.
 
-The API reads duration and video-stream presence from a direct upload for up to 15 seconds.
-A storage stall or unavailable probe follows the existing enqueue path with an unknown duration
-and AWS Batch checks the source again. Signed source URLs stay out of the failure reason.
+In an environment with ffprobe, the optional upload metadata probe reads duration and video-stream
+presence for up to 15 seconds. The production API image ships without FFmpeg and uses the
+existing unknown-duration enqueue path, as do storage stalls. AWS Batch checks the source.
+Signed source URLs stay out of the probe failure reason.
 The synthetic video and stalled HTTP source cases are covered by `tests/video/test_source_probe.py`.
 
 ## 2. Deploy Path
