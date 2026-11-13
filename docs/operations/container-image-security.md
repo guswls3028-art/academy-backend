@@ -5,6 +5,22 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-11-13 PostgreSQL 클라이언트 라이브러리 수정
+
+배포 후보의 ECR scan이 Debian trixie `libpq5`의 source package인
+`postgresql-17 / 17.11-0+deb13u1`에서 신규 High 38건을 검출했다. Debian sid의
+공식 수정 패키지 `libpq5`와 `libpq-dev` `18.7-1` 두 개만 임시 APT 목록에서
+서명 검증 후 내려받고, arm64·amd64별 SHA-256과 패키지 메타데이터를 검증한다.
+런타임에는 `libpq5`만 설치하며 나머지 APT 패키지는 기존 trixie 소스를 사용한다.
+[차단된 배포](https://github.com/guswls3028-art/academy-backend/actions/runs/43398146196) ·
+[PostgreSQL 보안 릴리스](https://www.postgresql.org/about/news/postgresql-187-1712-1616-1520-1425-and-19-rc-2-released-3442/)
+
+Psycopg는 기존 2.9.12를 소스에서 빌드해 수정된 시스템 `libpq`에 연결한다. 공통
+base와 운영 서비스 다섯 이미지에서 `verify-libpq.py`로 빌드·실행 버전과 실제
+로드된 파일의 패키지 소유권을 확인한다. 모든 이미지의 완료 ECR scan, 격리 개발의
+DB 연결, preprod, 운영 rolling 검증을 통과해야 한다. 운영 RDS 버전 변경과
+High/Critical 허용 정책 변경은 이 배포 범위에 포함하지 않는다.
+
 ## 2026-11-09 ECR High 허용 목록 축소
 
 운영 성공 manifest `bc176407086733bffcbdb8ecae5cca37dd40e192`의 이미지 여섯 개와

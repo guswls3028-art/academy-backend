@@ -89,7 +89,8 @@ USER appuser
 FROM curl-fixed-system AS base
 
 COPY --chown=appuser:appuser requirements/constraints.txt requirements/common.txt requirements/worker-tools.txt ./requirements/
-RUN pip install --user --no-cache-dir -r requirements/worker-tools.txt
+RUN pip install --user --no-cache-dir -r requirements/worker-tools.txt \
+    && python /usr/local/bin/verify-libpq.py
 RUN python /usr/local/bin/verify-cups.py --office
 
 # 앱 소스는 의존성 설치 뒤에 둬 일반 코드 변경 시 pip 캐시를 보존한다.

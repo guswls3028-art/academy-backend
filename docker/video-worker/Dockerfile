@@ -91,7 +91,8 @@ RUN mkdir -p /tmp/video-worker /tmp/video-worker-locks && chown -R appuser:appus
 USER appuser
 # Shared requirements (API + Worker same file)
 COPY --chown=appuser:appuser requirements/constraints.txt requirements/requirements.txt ./requirements/
-RUN pip install --user --no-cache-dir -r requirements/requirements.txt
+RUN pip install --user --no-cache-dir -r requirements/requirements.txt \
+    && python /usr/local/bin/verify-libpq.py
 
 # 자주 바뀌는 앱 소스는 apt/pip 뒤에 둬 의존성 캐시를 보존한다.
 COPY --chown=appuser:appuser academy ./academy
