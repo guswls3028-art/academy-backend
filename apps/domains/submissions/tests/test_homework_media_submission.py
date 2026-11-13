@@ -1438,14 +1438,14 @@ class HomeworkSubmissionMediaTests(TestCase):
 
         with (
             patch.object(dispatcher, "dispatch_job") as dispatch_job,
-            patch.object(dispatcher, "start_ai_worker_instance") as start_worker,
+            patch("academy.adapters.compute.ec2_control._aws_client") as aws_client,
         ):
             dispatcher.dispatch_submission(parent)
 
         parent.refresh_from_db()
         self.assertEqual(parent.status, Submission.Status.SUBMITTED)
         dispatch_job.assert_not_called()
-        start_worker.assert_not_called()
+        aws_client.assert_not_called()
 
         request = self._request(
             "get",

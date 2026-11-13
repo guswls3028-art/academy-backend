@@ -2582,6 +2582,29 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(reloaded["progress"], 90)
         self.assertTrue(reloaded["completed"])
 
+    def test_resume_revision_identifies_latest_saved_position_after_rewind(self):
+        with patch(
+            "apps.domains.student_app.media.views.pick_video_urls",
+            return_value=("https://cdn.example.test/master.m3u8", None),
+        ):
+            initial = self._get_playback()
+            self.assertEqual(initial.status_code, 200, initial.data)
+            self.assertIsNone(initial.data["progress_revision"])
+            first = self._post_progress({"progress": 0.8, "last_position": 80})
+            self.assertEqual(first.status_code, 200, first.data)
+            rewind = self._post_progress(
+                {"progress": 0.2, "last_position": 0},
+                user=self.parent_user,
+                selected_student_id=self.student.id,
+            )
+            self.assertEqual(rewind.status_code, 200, rewind.data)
+            reloaded = self._get_playback()
+            self.assertEqual(reloaded.status_code, 200, reloaded.data)
+        self.assertNotEqual(first.data["progress_revision"], rewind.data["progress_revision"])
+        self.assertEqual(reloaded.data["progress_revision"], rewind.data["progress_revision"])
+        self.assertEqual(reloaded.data["video"]["last_position"], 0)
+        self.assertEqual(reloaded.data["video"]["progress"], 80)
+
     def test_parent_progress_echo_uses_domain_completion_threshold(self):
         response = self._post_progress(
             {"progress": 90, "last_position": 90, "completed": False},

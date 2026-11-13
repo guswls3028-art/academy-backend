@@ -8,6 +8,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from .r2_objects import completed_multipart_object_size
+
+
+class MultipartCompletionMismatch(Exception):
+    """The upload ID is gone and the stored object cannot be matched to its parts."""
+
 
 def _presign():
     from libs.r2_client import presign
@@ -55,8 +61,21 @@ def create_presigned_upload_part_url(
     return _presign().create_presigned_upload_part_url(**kwargs)
 
 
-def complete_multipart_upload(key: str, upload_id: str, parts: list[dict[str, Any]]) -> dict[str, Any]:
-    return _presign().complete_multipart_upload(key=key, upload_id=upload_id, parts=parts)
+def complete_multipart_upload(key: str, upload_id: str, parts: list[dict[str, Any]]) -> int | None:
+    """Complete the upload, or return the size of an already assembled matching object."""
+    from botocore.exceptions import ClientError
+
+    try:
+        _presign().complete_multipart_upload(key=key, upload_id=upload_id, parts=parts)
+    except ClientError as exc:
+        code = (exc.response.get("Error") or {}).get("Code")
+        if code not in {"NoSuchUpload", "PreconditionFailed", "412"}:
+            raise
+        stored_size = completed_multipart_object_size(key=key, parts=parts)
+        if not stored_size:
+            raise MultipartCompletionMismatch from exc
+        return stored_size
+    return None
 
 
 def abort_multipart_upload(key: str, upload_id: str) -> None:

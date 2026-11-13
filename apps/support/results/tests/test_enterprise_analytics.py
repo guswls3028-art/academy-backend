@@ -165,6 +165,20 @@ class EnterpriseAnalyticsTests(TestCase):
             self.assertEqual(get_homework_metrics(), {
                 "assigned_count": 3, "graded_count": 2, "avg_score_pct": None, "pass_rate_pct": 50.0,
             })
+        correction = apps.get_model("progress", "AssessmentCorrection").objects.create(
+            tenant=self.tenant, session=session, enrollment=enrollment,
+            source_type="homework", source_id=score_rows[0].homework_id, completed=True,
+        )
+        with self.subTest(state="unscored-teacher-approved"):
+            self.assertEqual(get_homework_metrics(), {
+                "assigned_count": 3, "graded_count": 3, "avg_score_pct": None, "pass_rate_pct": 66.7,
+            })
+        correction.completed = False
+        correction.save(update_fields=["completed", "updated_at"])
+        with self.subTest(state="approval-reverted"):
+            self.assertEqual(get_homework_metrics(), {
+                "assigned_count": 3, "graded_count": 2, "avg_score_pct": None, "pass_rate_pct": 50.0,
+            })
         score_rows[0].homework.delete()
         with self.subTest(state="only-completion-assigned"):
             self.assertEqual(get_homework_metrics(), {

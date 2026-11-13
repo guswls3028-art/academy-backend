@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from django.db.models import Count, Q
 from django.utils import timezone
 
 from rest_framework.views import APIView
@@ -20,13 +21,10 @@ from rest_framework.permissions import IsAuthenticated
 
 from academy.adapters.db.django import repositories_enrollment as enrollment_repo
 from academy.adapters.db.django import repositories_exams as exams_repo
-from academy.adapters.db.django import repositories_homework as homework_repo
 from academy.adapters.db.django import repositories_submissions as submissions_repo
 from apps.core.permissions import TenantResolvedAndStaff
 
 
-SUBMISSION_TARGET_EXAM = submissions_repo.target_type_exam()
-SUBMISSION_TARGET_HOMEWORK = submissions_repo.target_type_homework()
 SUBMISSION_STATUS_DONE = submissions_repo.status_done()
 SUBMISSION_STATUS_FAILED = submissions_repo.status_failed()
 PENDING_STATUSES = submissions_repo.pending_statuses()
@@ -34,15 +32,7 @@ PENDING_STATUSES = submissions_repo.pending_statuses()
 
 def _resolve_target_titles(submissions, tenant):
     """exam_id → title, lecture/session 정보 일괄 매핑."""
-    exam_ids = {int(s.target_id) for s in submissions if s.target_type == SUBMISSION_TARGET_EXAM}
-    homework_ids = {
-        int(s.target_id) for s in submissions if s.target_type == SUBMISSION_TARGET_HOMEWORK
-    }
-
-    return (
-        exams_repo.exam_target_info_map(exam_ids, tenant=tenant),
-        homework_repo.homework_target_info_map(homework_ids, tenant=tenant),
-    )
+    return exams_repo.exam_target_info_map({int(s.target_id) for s in submissions}, tenant=tenant)
 
 
 def _enrollment_student_map(submissions, tenant):
@@ -53,15 +43,10 @@ def _enrollment_student_map(submissions, tenant):
     return enrollment_repo.enrollment_student_map_by_ids(enrollment_ids, tenant=tenant)
 
 
-def _serialize_submissions(submissions, exam_map, homework_map, enrollment_map):
+def _serialize_submissions(submissions, exam_map, enrollment_map):
     items = []
     for s in submissions:
-        if s.target_type == SUBMISSION_TARGET_EXAM:
-            t = exam_map.get(int(s.target_id), {})
-        elif s.target_type == SUBMISSION_TARGET_HOMEWORK:
-            t = homework_map.get(int(s.target_id), {})
-        else:
-            t = {}
+        t = exam_map.get(int(s.target_id), {})
 
         student_name = ""
         if s.enrollment_id:
@@ -130,36 +115,37 @@ class AdminResultsLandingStatsView(APIView):
 
         active_exams = exams_repo.active_regular_exam_count(tenant)
 
-        sub_qs = submissions_repo.submission_filter_tenant(tenant)
-        pending_count = sub_qs.filter(status__in=PENDING_STATUSES).count()
-        done_7d = sub_qs.filter(status=SUBMISSION_STATUS_DONE, created_at__gte=cutoff_7d).count()
-        failed_24h = sub_qs.filter(
-            status=SUBMISSION_STATUS_FAILED, created_at__gte=cutoff_24h
-        ).count()
+        sub_qs = submissions_repo.exam_inbox_submissions(tenant)
+        pending = Q(status__in=PENDING_STATUSES)
+        done = Q(status=SUBMISSION_STATUS_DONE, created_at__gte=cutoff_7d)
+        failed = Q(status=SUBMISSION_STATUS_FAILED, created_at__gte=cutoff_24h)
+        counts = sub_qs.filter(pending | done | failed).aggregate(
+            pending_submissions=Count("pk", filter=pending),
+            done_last_7d=Count("pk", filter=done),
+            failed_last_24h=Count("pk", filter=failed),
+        )
 
         pending_subs = list(
-            sub_qs.filter(status__in=PENDING_STATUSES).order_by("-created_at")[:5]
+            sub_qs.filter(pending).order_by("-created_at", "-id")[:5]
         )
         recent_done = list(
-            sub_qs.filter(status=SUBMISSION_STATUS_DONE).order_by("-created_at")[:5]
+            sub_qs.filter(done).order_by("-created_at", "-id")[:5]
         )
 
         all_subs = pending_subs + recent_done
-        exam_map, homework_map = _resolve_target_titles(all_subs, tenant)
+        exam_map = _resolve_target_titles(all_subs, tenant)
         enrollment_map = _enrollment_student_map(all_subs, tenant)
 
         return Response(
             {
                 "active_lectures": int(active_lectures),
                 "active_exams": int(active_exams),
-                "pending_submissions": int(pending_count),
-                "done_last_7d": int(done_7d),
-                "failed_last_24h": int(failed_24h),
+                **counts,
                 "pending_top": _serialize_submissions(
-                    pending_subs, exam_map, homework_map, enrollment_map
+                    pending_subs, exam_map, enrollment_map
                 ),
                 "recent_done_top": _serialize_submissions(
-                    recent_done, exam_map, homework_map, enrollment_map
+                    recent_done, exam_map, enrollment_map
                 ),
             },
             status=200,

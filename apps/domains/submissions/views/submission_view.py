@@ -39,6 +39,7 @@ from apps.domains.submissions.services.omr_submission_guards import (
     duplicate_conflict_payload,
     ensure_exam_enrollment_candidate,
     find_conflicting_exam_submission,
+    omr_submission_is_archived,
 )
 from apps.domains.submissions.services.lifecycle import (
     InvalidTransitionError,
@@ -102,6 +103,18 @@ def _answer_review_version(submission: Submission) -> str | None:
     ):
         return None
     return submission.updated_at.isoformat()
+
+
+def _omr_edit_retired(submission: Submission) -> bool:
+    meta = submission.meta if isinstance(submission.meta, dict) else {}
+    return (
+        submission.status == Submission.Status.SUPERSEDED
+        or isinstance(meta.get("discarded"), dict)
+        or (
+            submission.status == Submission.Status.FAILED
+            and str(submission.error_message or "").startswith("discarded:")
+        )
+    )
 
 
 def _reject_unready_replacement(submission_id, readiness):
@@ -551,18 +564,30 @@ class SubmissionViewSet(ModelViewSet):
     def retry(self, request, pk=None):
         with transaction.atomic():
             submission = Submission.objects.select_for_update().get(pk=self.get_object().pk)
+            is_omr = submission.source == Submission.Source.OMR_SCAN
+            if is_omr and omr_submission_is_archived(submission):
+                return Response(
+                    {"submission_id": submission.id, "status": submission.status,
+                     "detail": "폐기되거나 교체된 답안지입니다. 다시 채점하려면 원본을 새로 등록해 주세요."},
+                    status=status.HTTP_409_CONFLICT,
+                )
 
             try:
-                retry_failed_submission(submission, actor="admin.retry")
+                with transaction.atomic():
+                    retry_failed_submission(submission, actor="admin.retry")
+                    if is_omr:
+                        dispatch_submission(submission)
             except InvalidTransitionError:
                 return Response(
                     {"detail": "Only FAILED submissions can be retried."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            except Exception:
+                if not is_omr:
+                    raise
+                logger.exception("OMR single retry dispatch failed", extra={"submission_id": submission.id})
 
-        dispatch_submission(submission)
-
-        if submission.source == Submission.Source.OMR_SCAN:
+        if is_omr:
             submission.refresh_from_db(fields=["status"])
             if submission.status == Submission.Status.FAILED:
                 return Response(
@@ -570,6 +595,8 @@ class SubmissionViewSet(ModelViewSet):
                      "detail": "재시도 후에도 제출이 실패 상태입니다. 원본 파일과 제출 상태를 확인해 주세요."},
                     status=status.HTTP_409_CONFLICT,
                 )
+        else:
+            dispatch_submission(submission)
         return Response(
             {
                 "submission_id": submission.id,
@@ -586,9 +613,14 @@ class SubmissionViewSet(ModelViewSet):
     def _manual_edit_get(self, request, pk=None):
         """GET: 현재 답안 목록 + identifier + 스캔 이미지 URL 반환 (수동 편집 화면용)."""
         submission: Submission = self.get_object()
-        answers = list(SubmissionAnswer.objects.filter(
-            submission=submission,
-        ))
+        if submission.source == Submission.Source.OMR_SCAN:
+            # Pair the revision and editable answers in one snapshot. Release
+            # the row before signing image URLs or looking up other scans.
+            with transaction.atomic():
+                submission = Submission.objects.select_for_update().get(pk=submission.pk)
+                answers = list(SubmissionAnswer.objects.filter(submission=submission))
+        else:
+            answers = list(SubmissionAnswer.objects.filter(submission=submission))
         question_ids = [int(a.exam_question_id) for a in answers]
         question_number_by_id = exam_question_number_by_id(
             tenant=submission.tenant,
@@ -683,6 +715,8 @@ class SubmissionViewSet(ModelViewSet):
             "target_id": submission.target_id,
             "identifier": identifier,
             "answers": answers_data,
+            "edit_revision": submission.updated_at.isoformat()
+            if submission.source == Submission.Source.OMR_SCAN and not _omr_edit_retired(submission) else None,
             "answer_review_version": (
                 _answer_review_version(submission) if answers_data and not duplicate_siblings else None
             ),
@@ -702,6 +736,25 @@ class SubmissionViewSet(ModelViewSet):
         submission: Submission = Submission.objects.select_for_update().get(
             pk=submission_scope.pk
         )
+
+        if submission.source == Submission.Source.OMR_SCAN:
+            if _omr_edit_retired(submission):
+                meta = submission.meta if isinstance(submission.meta, dict) else {}
+                discarded = meta.get("discarded")
+                kept_id = discarded.get("kept_sibling_id") if isinstance(discarded, dict) else None
+                return Response({
+                    "code": "OMR_EDIT_RETIRED",
+                    "detail": "이 답안지는 대체되었거나 폐기되었습니다. 답안지 목록에서 현재 답안지를 확인해 주세요.",
+                    "recovery": {"submission_id": kept_id} if kept_id else None,
+                }, status=status.HTTP_409_CONFLICT)
+            if (
+                "expected_edit_revision" in request.data
+                and request.data["expected_edit_revision"] != submission.updated_at.isoformat()
+            ):
+                return Response({
+                    "code": "OMR_EDIT_CHANGED",
+                    "detail": "다른 변경 사항이 저장되었습니다. 최신 답안과 학생 연결을 확인한 뒤 다시 저장해 주세요.",
+                }, status=status.HTTP_409_CONFLICT)
 
         identifier = request.data.get("identifier")
         answers = request.data.get("answers", [])
@@ -1037,7 +1090,7 @@ class SubmissionViewSet(ModelViewSet):
 
         if representative_scan_replaced and not decision.graded:
             return _reject_unready_replacement(submission.id, decision.readiness)
-        submission.refresh_from_db(fields=["status", "enrollment_id"])
+        submission.refresh_from_db(fields=["status", "enrollment_id", "updated_at"])
         if not decision.graded:
             missing = set(decision.readiness.missing)
             configuration = {"answer_key", "sheet", "grading_configuration"}
@@ -1055,6 +1108,7 @@ class SubmissionViewSet(ModelViewSet):
                     "status": submission.status,
                     "updated": updated,
                     "graded": False,
+                    "edit_revision": submission.updated_at.isoformat(),
                     "result_id": None,
                     "resolved_enrollment_id": resolved_enrollment_id,
                     "enrollment_id": submission.enrollment_id,
@@ -1105,6 +1159,7 @@ class SubmissionViewSet(ModelViewSet):
                 "status": submission.status,
                 "updated": updated,
                 "graded": True,
+                "edit_revision": submission.updated_at.isoformat(),
                 "absence_preserved": absence_preserved,
                 "can_resume_absence": absence_preserved,
                 "absence_resumed": bool(absence_resumed),

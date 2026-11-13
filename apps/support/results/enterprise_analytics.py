@@ -716,14 +716,27 @@ def build_student_enterprise_analytics(*, tenant: Any, student: Any, days: int =
         for number, count in wrong_counter.most_common(8)
     ]
 
-    graded_homeworks = [h for h in homeworks if h.get("score") is not None]
+    graded_homeworks = [
+        h for h in homeworks
+        if h.get("score") is not None or h.get("teacher_resolved") is True
+    ]
     homework_score_pcts = [
         pct for pct in (
             _score_pct(h.get("score"), h.get("max_score"))
             for h in graded_homeworks if h.get("grading_mode") != "COMPLETION"
         ) if pct is not None
     ]
-    homework_pass_count = sum(1 for h in graded_homeworks if h.get("achievement") in ("PASS", "REMEDIATED") or h.get("passed"))
+    homework_pass_count = homework_judged_count = 0
+    for homework in graded_homeworks:
+        achievement = homework.get("achievement")
+        if homework.get("teacher_resolved") is True or achievement in ("PASS", "REMEDIATED"):
+            homework_pass_count += 1
+            homework_judged_count += 1
+        elif achievement == "FAIL" or (
+            achievement != "NOT_SUBMITTED" and homework.get("passed") is not None
+        ):
+            homework_judged_count += 1
+            homework_pass_count += int(achievement != "FAIL" and homework.get("passed") is True)
 
     best_exam = max(scored_exams, key=lambda item: item["score_pct"], default=None)
     weakest_exam = min(scored_exams, key=lambda item: item["score_pct"], default=None)
@@ -769,7 +782,10 @@ def build_student_enterprise_analytics(*, tenant: Any, student: Any, days: int =
             "assigned_count": len(homeworks),
             "graded_count": len(graded_homeworks),
             "avg_score_pct": _stats(homework_score_pcts)["avg"],
-            "pass_rate_pct": _round((homework_pass_count / len(graded_homeworks)) * 100) if graded_homeworks else None,
+            "pass_rate_pct": (
+                _round((homework_pass_count / homework_judged_count) * 100)
+                if homework_judged_count else None
+            ),
         },
         "highlights": {
             "latest_exam": {

@@ -759,6 +759,12 @@ class StudentVideoStatsView(APIView):
         })
 
 
+def _progress_revision(progress) -> str | None:
+    if progress is None:
+        return None
+    return f"{progress.pk}:{progress.updated_at.isoformat()}"
+
+
 def _progress_echo_response(*, video_id: int, enrollment_id: int, request) -> Response:
     """Return the standard progress payload without writing VideoProgress."""
     p = _safe_video_progress(request.data.get("progress"))
@@ -1392,6 +1398,7 @@ class StudentVideoPlaybackView(APIView):
                 "effective_rule": rule,
                 "access_mode": video_access_mode_value,
             },
+            "progress_revision": _progress_revision(progress_obj),
             "hls_url": hls_url,
             "mp4_url": mp4_url,
             "play_url": play_url,
@@ -1592,6 +1599,7 @@ class StudentVideoProgressView(APIView):
             "progress_percent": round(float(progress_obj.progress) * 100, 1),
             "completed": is_video_progress_complete(progress_obj.progress, progress_obj.completed),
             "last_position": progress_obj.last_position,
+            "progress_revision": _progress_revision(progress_obj),
         }, status=status.HTTP_200_OK)
 
 

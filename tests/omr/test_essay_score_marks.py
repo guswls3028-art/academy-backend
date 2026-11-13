@@ -7,7 +7,11 @@ import numpy as np
 import pytest
 from pdf2image import convert_from_bytes
 
-from academy.adapters.ai.omr.engine import detect_omr_answers_v7
+from academy.adapters.ai.omr.engine import (
+    AnswerDetectConfig,
+    detect_omr_answers_v7,
+    prepare_omr_images,
+)
 from academy.adapters.ai.omr.essay_scores import detect_essay_score_marks
 from academy.adapters.ai.omr.warp import align_to_a4_landscape
 from apps.domains.assets.omr.dto.omr_document import OMRDocument
@@ -195,3 +199,23 @@ def test_meta_without_strip_returns_no_reads():
     plain, _ = _meta(marks=False)
     image = np.full((1240, 1754, 3), 255, dtype=np.uint8)
     assert detect_essay_score_marks(image_bgr=image, meta=plain) == []
+
+
+def test_shared_preprocessing_preserves_objective_and_essay_reads():
+    meta, _ = _meta(mc=30, essays=2)
+    image = _render(meta, mc=30, essays=2, dpi=300)
+    _mark_score(image, meta, meta["essay_score_marks"][0], ones=3, tenths=5)
+    config = AnswerDetectConfig()
+    expected_answers = detect_omr_answers_v7(image_bgr=image, meta=meta, config=config)
+    expected_essays = detect_essay_score_marks(image_bgr=image, meta=meta, config=config)
+    prepared = prepare_omr_images(image_bgr=image, meta=meta, config=config)
+
+    answers = detect_omr_answers_v7(
+        image_bgr=image, meta=meta, config=config, prepared_images=prepared,
+    )
+    essays = detect_essay_score_marks(
+        image_bgr=image, meta=meta, config=config, prepared_images=prepared,
+    )
+
+    assert [answer.to_dict() for answer in answers] == [answer.to_dict() for answer in expected_answers]
+    assert essays == expected_essays

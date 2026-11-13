@@ -22,6 +22,7 @@ import numpy as np  # type: ignore
 from academy.adapters.ai.omr.anchor_detector import detect_filled_anchor_square
 from academy.adapters.ai.omr.engine import (
     AnswerDetectConfig,
+    PreparedOmrImages,
     _compute_bubble_score,
     prepare_omr_images,
 )
@@ -55,13 +56,15 @@ def detect_essay_score_marks(
     meta: Dict[str, Any],
     config: Optional[AnswerDetectConfig] = None,
     read_config: Optional[EssayScoreReadConfig] = None,
+    prepared_images: PreparedOmrImages | None = None,
 ) -> List[Dict[str, Any]]:
+    """Read score strips from the same image, metadata and config as any prepared inputs."""
     marks = meta.get("essay_score_marks")
     if not isinstance(marks, list) or not marks:
         return []
     config = config or AnswerDetectConfig()
     read_config = read_config or EssayScoreReadConfig()
-    scale, gray_raw, gray, binary = prepare_omr_images(
+    scale, gray_raw, gray, binary = prepared_images or prepare_omr_images(
         image_bgr=image_bgr, meta=meta, config=config,
     )
     results: List[Dict[str, Any]] = []
