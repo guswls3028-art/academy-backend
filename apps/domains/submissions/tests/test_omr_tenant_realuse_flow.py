@@ -19,7 +19,6 @@ from apps.domains.exams.models import (
     Sheet,
 )
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.parents.test_support import create_parent_account_fixture
 from apps.domains.results.models import (
     ExamAttempt,
     ExamResult,
@@ -1582,7 +1581,7 @@ class AcceptFromDuplicatesTests(TestCase):
                 "ps_number": "DUP001",
                 "name": "중복 후보 학생",
                 "phone": "01012345678",
-                "parent_phone": "",
+                "parent_phone": "01099998888",
                 "omr_code": "12345678",
                 "school_type": "HIGH",
             },
@@ -1716,13 +1715,7 @@ class AcceptFromDuplicatesTests(TestCase):
     def test_stale_answer_and_student_edits_leave_grade_until_fresh_reapply(self):
         self.exam.student_results_published = True
         self.exam.save(update_fields=["student_results_published"])
-        parent = create_parent_account_fixture(
-            tenant=self.tenant, parent_phone="01099998888",
-            student_name=self.student.name, initial_password="test1234",
-        ).parent
-        parent_user = parent.user
-        self.student.parent = parent
-        self.student.save(update_fields=["parent"])
+        parent_user = self.student.parent.user
 
         def visible_scores():
             path = f"/api/v1/student/results/me/exams/{self.exam.id}/"
