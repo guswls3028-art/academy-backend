@@ -231,6 +231,7 @@ class StateRecoveryConcurrencyPostgresTests(TransactionTestCase):
                 "school_type": "HIGH",
             },
             password="test1234",
+            parent_password="test1234",
         )
         lecture = Lecture.objects.create(
             tenant=self.tenant,
