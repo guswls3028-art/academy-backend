@@ -4,6 +4,7 @@ import numpy as np
 from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.urls import resolve
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import TenantMembership
@@ -1580,11 +1581,12 @@ class AcceptFromDuplicatesTests(TestCase):
                 "ps_number": "DUP001",
                 "name": "중복 후보 학생",
                 "phone": "01012345678",
-                "parent_phone": "",
+                "parent_phone": "01099998888",
                 "omr_code": "12345678",
                 "school_type": "HIGH",
             },
             password="test1234",
+            parent_password="test1234",
         )
         self.student = sr.student
 
@@ -1681,6 +1683,81 @@ class AcceptFromDuplicatesTests(TestCase):
         force_authenticate(request, user=self.staff)
         view = SubmissionViewSet.as_view({"get": "manual_edit"})
         return view(request, pk=sub_id)
+
+    def _post_manual_edit(self, sub_id, payload):
+        request = self.factory.post("/submissions/manual-edit/", payload, format="json")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.staff)
+        return SubmissionViewSet.as_view({"post": "manual_edit"})(request, pk=sub_id)
+
+    def test_late_editor_cannot_change_replaced_scan_with_or_without_revision(self):
+        old_revision = self._get_manual_edit(self.other.id).data["edit_revision"]
+        self.assertEqual(self._post_accept(self.kept.id).status_code, 200)
+        retained = Submission.objects.values().get(pk=self.other.id)
+        result = Result.objects.values().get(target_id=self.exam.id, enrollment=self.enrollment)
+        for revision in ({}, {"expected_edit_revision": old_revision}):
+            response = self._post_manual_edit(self.other.id, {
+                **revision, "answers": [{"exam_question_id": self.q2.id, "answer": "2"}],
+            })
+            self.assertEqual(response.status_code, 409, response.data)
+            self.assertEqual(response.data["code"], "OMR_EDIT_RETIRED")
+            self.assertEqual(response.data["recovery"]["submission_id"], self.kept.id)
+        self.assertEqual(Submission.objects.values().get(pk=self.other.id), retained)
+        self.assertFalse(SubmissionAnswer.objects.filter(submission=self.other).exists())
+        self.assertEqual(Result.objects.values().get(pk=result["id"]), result)
+        self.assertIsNone(self._get_manual_edit(self.other.id).data["edit_revision"])
+        Submission.objects.filter(pk=self.other.id).update(
+            status=Submission.Status.FAILED, error_message="discarded:duplicate", meta={},
+        )
+        legacy = self._post_manual_edit(self.other.id, {})
+        self.assertEqual(legacy.status_code, 409)
+        self.assertEqual(legacy.data["code"], "OMR_EDIT_RETIRED")
+
+    def test_stale_answer_and_student_edits_leave_grade_until_fresh_reapply(self):
+        self.exam.student_results_published = True
+        self.exam.save(update_fields=["student_results_published"])
+        parent_user = self.student.parent.user
+
+        def visible_scores():
+            path = f"/api/v1/student/results/me/exams/{self.exam.id}/"
+            route = resolve(path)
+            scores = []
+            for user in (self.student.user, parent_user):
+                request = self.factory.get(path, HTTP_X_STUDENT_ID=str(self.student.id))
+                request.tenant = self.tenant
+                force_authenticate(request, user=user)
+                response = route.func(request, **route.kwargs)
+                self.assertEqual(response.status_code, 200, response.data)
+                scores.append(response.data["total_score"])
+            return scores
+
+        self.assertEqual(self._post_accept(self.kept.id).status_code, 200)
+        initial = self._get_manual_edit(self.kept.id).data["edit_revision"]
+        changed = self._post_manual_edit(self.kept.id, {
+            "expected_edit_revision": initial,
+            "answers": [{"exam_question_id": self.q2.id, "answer": "2"}],
+        })
+        self.assertEqual(changed.status_code, 200, changed.data)
+        current = self._get_manual_edit(self.kept.id).data["edit_revision"]
+        self.assertEqual(changed.data["edit_revision"], current)
+        self.assertNotEqual(initial, current)
+        for payload in (
+            {"answers": [{"exam_question_id": self.q2.id, "answer": "3"}]},
+            {"identifier": {"enrollment_id": self.enrollment.id}, "answers": []},
+        ):
+            response = self._post_manual_edit(self.kept.id, {"expected_edit_revision": initial, **payload})
+            self.assertEqual(response.status_code, 409, response.data)
+            self.assertEqual(response.data["code"], "OMR_EDIT_CHANGED")
+        self.assertEqual(Result.objects.get(target_id=self.exam.id, enrollment=self.enrollment).total_score, 100)
+        self.assertEqual(visible_scores(), [100, 100])
+        self.assertEqual(self._get_manual_edit(self.kept.id).data["edit_revision"], current)
+        reapplied = self._post_manual_edit(self.kept.id, {
+            "expected_edit_revision": current,
+            "answers": [{"exam_question_id": self.q2.id, "answer": "3"}],
+        })
+        self.assertEqual(reapplied.status_code, 200, reapplied.data)
+        self.assertEqual(Result.objects.get(target_id=self.exam.id, enrollment=self.enrollment).total_score, 50)
+        self.assertEqual(visible_scores(), [50, 50])
 
     def _post_rotate(
         self,
