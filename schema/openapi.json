@@ -53,6 +53,17 @@
         ],
         "type": "string"
       },
+      "AchievementLevelEnum": {
+        "description": "* `A` - A\n* `B` - B\n* `C` - C\n* `D` - D\n* `E` - E",
+        "enum": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E"
+        ],
+        "type": "string"
+      },
       "ActionEnum": {
         "description": "* `check_in` - check_in\n* `check_out` - check_out",
         "enum": [
@@ -3562,6 +3573,14 @@
         ],
         "type": "string"
       },
+      "ExamRoundEnum": {
+        "description": "* `first` - first\n* `second` - second",
+        "enum": [
+          "first",
+          "second"
+        ],
+        "type": "string"
+      },
       "ExamTypeEnum": {
         "description": "* `template` - Template\n* `regular` - Regular",
         "enum": [
@@ -4221,6 +4240,14 @@
           "skipped"
         ],
         "type": "object"
+      },
+      "GradeScaleEnum": {
+        "description": "* `five` - five\n* `nine` - nine",
+        "enum": [
+          "five",
+          "nine"
+        ],
+        "type": "string"
       },
       "GradingPendingReasonEnum": {
         "description": "* `subjective_pending` - subjective_pending\n* `objective_pending` - objective_pending\n* `manual_review_required` - manual_review_required",
@@ -15217,6 +15244,539 @@
         ],
         "type": "object"
       },
+      "SchoolReportDetailResponse": {
+        "properties": {
+          "academic_year": {
+            "maximum": 2100,
+            "minimum": 2000,
+            "type": "integer"
+          },
+          "direct_scores": {
+            "items": {
+              "$ref": "#/components/schemas/SchoolReportScoreResponse"
+            },
+            "type": "array"
+          },
+          "exam_round": {
+            "$ref": "#/components/schemas/ExamRoundEnum"
+          },
+          "grade": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "school": {
+            "type": "string"
+          },
+          "scores": {
+            "items": {
+              "$ref": "#/components/schemas/SchoolReportScoreResponse"
+            },
+            "type": "array"
+          },
+          "semester": {
+            "maximum": 2,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SchoolReportSubmissionStatus"
+          },
+          "student_id": {
+            "type": "integer"
+          },
+          "student_name": {
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "academic_year",
+          "direct_scores",
+          "exam_round",
+          "grade",
+          "requested_at",
+          "school",
+          "scores",
+          "semester",
+          "status",
+          "student_id",
+          "student_name",
+          "submitted_at"
+        ],
+        "type": "object"
+      },
+      "SchoolReportEntryRequest": {
+        "properties": {
+          "subjects": {
+            "items": {
+              "$ref": "#/components/schemas/SchoolReportSubjectRequest"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "subjects"
+        ],
+        "type": "object"
+      },
+      "SchoolReportRequestRequest": {
+        "properties": {
+          "academic_year": {
+            "maximum": 2100,
+            "minimum": 2000,
+            "type": "integer"
+          },
+          "exam_round": {
+            "$ref": "#/components/schemas/ExamRoundEnum"
+          },
+          "semester": {
+            "maximum": 2,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "student_ids": {
+            "items": {
+              "format": "int64",
+              "maximum": 9223372036854775807,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "academic_year",
+          "exam_round",
+          "semester",
+          "student_ids"
+        ],
+        "type": "object"
+      },
+      "SchoolReportRequestResponse": {
+        "properties": {
+          "requested": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "requested",
+          "skipped"
+        ],
+        "type": "object"
+      },
+      "SchoolReportRosterResponse": {
+        "properties": {
+          "alimtalk_available": {
+            "type": "boolean"
+          },
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "missing_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "next": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "previous": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SchoolReportRosterStudent"
+            },
+            "type": "array"
+          },
+          "submitted_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_count": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "alimtalk_available",
+          "count",
+          "missing_count",
+          "next",
+          "previous",
+          "results",
+          "submitted_count",
+          "total_count"
+        ],
+        "type": "object"
+      },
+      "SchoolReportRosterStudent": {
+        "properties": {
+          "can_request": {
+            "type": "boolean"
+          },
+          "can_request_alimtalk": {
+            "type": "boolean"
+          },
+          "grade": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "school": {
+            "type": "string"
+          },
+          "score_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SchoolReportSubmissionStatus"
+          },
+          "student_id": {
+            "type": "integer"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "can_request",
+          "can_request_alimtalk",
+          "grade",
+          "name",
+          "requested_at",
+          "school",
+          "score_count",
+          "status",
+          "student_id",
+          "submitted_at"
+        ],
+        "type": "object"
+      },
+      "SchoolReportScoreResponse": {
+        "properties": {
+          "academic_year": {
+            "maximum": 2100,
+            "minimum": 2000,
+            "type": "integer"
+          },
+          "achievement_level": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AchievementLevelEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "cohort_size": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "direct_entry": {
+            "type": "boolean"
+          },
+          "evidence_file_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "evidence_r2_key": {
+            "type": "string"
+          },
+          "exam_date": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "exam_month": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "exam_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "exam_round": {
+            "$ref": "#/components/schemas/ExamRoundEnum"
+          },
+          "grade_rank": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "grade_scale": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GradeScaleEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "id": {
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          },
+          "max_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "percentile": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "review_note": {
+            "type": "string"
+          },
+          "reviewed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "score": {
+            "format": "double",
+            "type": "number"
+          },
+          "score_pct": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "semester": {
+            "maximum": 2,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SchoolReportScoreResponseSourceEnum"
+          },
+          "source_group": {
+            "$ref": "#/components/schemas/SourceGroupEnum"
+          },
+          "standard_deviation": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "standard_score": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SchoolReportScoreResponseStatusEnum"
+          },
+          "student_id": {
+            "type": "integer"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "subject_average": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "required": [
+          "academic_year",
+          "achievement_level",
+          "cohort_size",
+          "created_at",
+          "direct_entry",
+          "evidence_file_id",
+          "evidence_r2_key",
+          "exam_date",
+          "exam_month",
+          "exam_name",
+          "exam_round",
+          "grade_rank",
+          "grade_scale",
+          "id",
+          "label",
+          "max_score",
+          "percentile",
+          "review_note",
+          "reviewed_at",
+          "score",
+          "score_pct",
+          "semester",
+          "source",
+          "source_group",
+          "standard_deviation",
+          "standard_score",
+          "status",
+          "student_id",
+          "subject",
+          "subject_average"
+        ],
+        "type": "object"
+      },
+      "SchoolReportScoreResponseSourceEnum": {
+        "description": "* `school_exam` - school_exam",
+        "enum": [
+          "school_exam"
+        ],
+        "type": "string"
+      },
+      "SchoolReportScoreResponseStatusEnum": {
+        "description": "* `pending` - pending\n* `verified` - verified",
+        "enum": [
+          "pending",
+          "verified"
+        ],
+        "type": "string"
+      },
+      "SchoolReportSubjectRequest": {
+        "properties": {
+          "achievement_level": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AchievementLevelEnum"
+              },
+              {
+                "$ref": "#/components/schemas/BlankEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "cohort_size": {
+            "maximum": 100000,
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "exam_date": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "grade_rank": {
+            "maximum": 9,
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "grade_scale": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GradeScaleEnum"
+              },
+              {
+                "$ref": "#/components/schemas/BlankEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "max_score": {
+            "oneOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "score": {
+            "oneOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "standard_deviation": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "subject": {
+            "maxLength": 50,
+            "minLength": 1,
+            "type": "string"
+          },
+          "subject_average": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [
+          "max_score",
+          "score",
+          "subject"
+        ],
+        "type": "object"
+      },
+      "SchoolReportSubmissionStatus": {
+        "description": "* `submitted` - submitted\n* `missing` - missing",
+        "enum": [
+          "submitted",
+          "missing"
+        ],
+        "type": "string"
+      },
       "SchoolTypeEnum": {
         "description": "* `ELEMENTARY` - 초등\n* `MIDDLE` - 중등\n* `HIGH` - 고등",
         "enum": [
@@ -16684,6 +17244,13 @@
           "auto",
           "manual",
           "student_request"
+        ],
+        "type": "string"
+      },
+      "SourceGroupEnum": {
+        "description": "* `school` - school",
+        "enum": [
+          "school"
         ],
         "type": "string"
       },
@@ -48363,6 +48930,386 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AssessmentDetailError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/school-reports/": {
+      "get": {
+        "operationId": "school_report_roster_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "academic_year",
+            "required": true,
+            "schema": {
+              "maximum": 2100,
+              "minimum": 2000,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "* `first` - first\n* `second` - second",
+            "in": "query",
+            "name": "exam_round",
+            "required": true,
+            "schema": {
+              "enum": [
+                "first",
+                "second"
+              ],
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lecture_id",
+            "schema": {
+              "format": "int64",
+              "maximum": 9223372036854775807,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Page number. Defaults to 1.",
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Students per page. Defaults to 50.",
+            "in": "query",
+            "name": "page_size",
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "semester",
+            "required": true,
+            "schema": {
+              "maximum": 2,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "* `submitted` - submitted\n* `missing` - missing",
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "enum": [
+                "submitted",
+                "missing"
+              ],
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchoolReportRosterResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/school-reports/me/": {
+      "get": {
+        "operationId": "school_report_student_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "academic_year",
+            "required": true,
+            "schema": {
+              "maximum": 2100,
+              "minimum": 2000,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "* `first` - first\n* `second` - second",
+            "in": "query",
+            "name": "exam_round",
+            "required": true,
+            "schema": {
+              "enum": [
+                "first",
+                "second"
+              ],
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "semester",
+            "required": true,
+            "schema": {
+              "maximum": 2,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchoolReportDetailResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      },
+      "put": {
+        "operationId": "school_report_student_update",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "academic_year",
+            "required": true,
+            "schema": {
+              "maximum": 2100,
+              "minimum": 2000,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "* `first` - first\n* `second` - second",
+            "in": "query",
+            "name": "exam_round",
+            "required": true,
+            "schema": {
+              "enum": [
+                "first",
+                "second"
+              ],
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "semester",
+            "required": true,
+            "schema": {
+              "maximum": 2,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchoolReportEntryRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/SchoolReportEntryRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/SchoolReportEntryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchoolReportDetailResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/school-reports/requests/": {
+      "post": {
+        "operationId": "school_report_request_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchoolReportRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/SchoolReportRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/SchoolReportRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchoolReportRequestResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/school-reports/{student_id}/": {
+      "get": {
+        "operationId": "school_report_staff_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "academic_year",
+            "required": true,
+            "schema": {
+              "maximum": 2100,
+              "minimum": 2000,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "* `first` - first\n* `second` - second",
+            "in": "query",
+            "name": "exam_round",
+            "required": true,
+            "schema": {
+              "enum": [
+                "first",
+                "second"
+              ],
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "semester",
+            "required": true,
+            "schema": {
+              "maximum": 2,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchoolReportDetailResponse"
                 }
               }
             },

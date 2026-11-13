@@ -449,6 +449,7 @@ def serialize_reported_score(row: StudentReportedScore | Mapping[str, Any]) -> d
             "cohort_size": row.cohort_size,
             "status": row.status,
             "review_note": row.review_note,
+            "direct_entry": row.direct_entry,
             "evidence_file_id": row.evidence_file_id,
             "evidence_r2_key": row.evidence_file.r2_key if row.evidence_file else "",
             "created_at": row.created_at,
@@ -482,6 +483,7 @@ def serialize_reported_score(row: StudentReportedScore | Mapping[str, Any]) -> d
         "cohort_size": values.get("cohort_size"),
         "status": values["status"],
         "review_note": values.get("review_note") or "",
+        "direct_entry": bool(values.get("direct_entry")),
         "evidence_file_id": int(values["evidence_file_id"]) if values.get("evidence_file_id") else None,
         "evidence_r2_key": values.get("evidence_r2_key") or "",
         "created_at": values.get("created_at").isoformat() if values.get("created_at") else None,
@@ -628,9 +630,13 @@ def review_student_scores(
         tenant=tenant,
         id=score_id,
         student_id=target_reference["student_id"],
-    ).values("student_id", "evidence_file_id", "status").first()
+    ).values("student_id", "evidence_file_id", "status", "direct_entry").first()
     if target is None:
         return None
+    if target["direct_entry"]:
+        raise ReportedScoreTransitionConflict(
+            "직접 입력한 성적은 원본 확인 대상으로 처리할 수 없습니다."
+        )
     if target["status"] != expected_status:
         raise ReportedScoreTransitionConflict(
             "확인 완료된 성적만 통계에서 제외할 수 있습니다."

@@ -23,6 +23,7 @@ from apps.domains.messaging.notification_dispatch import (
 )
 from apps.domains.messaging.scheduled import MessagingHourlyQuotaExceeded
 from apps.domains.messaging.permissions import can_send_messages
+from apps.domains.messaging.policy import SCHOOL_REPORT_REQUEST_TRIGGER
 
 logger = logging.getLogger(__name__)
 
@@ -347,6 +348,7 @@ class ManualNotificationPreviewView(APIView):
         "assignment_not_submitted", "assignment_registered", "assignment_due_hours_before",
         # 성적 리포트 (score 템플릿)
         "monthly_report_generated",
+        SCHOOL_REPORT_REQUEST_TRIGGER,
         # 퇴원/결제 (score 템플릿)
         "withdrawal_complete", "payment_complete", "payment_due_days_before",
         # 클리닉 (clinic_info 템플릿)
@@ -378,6 +380,8 @@ class ManualNotificationPreviewView(APIView):
         send_to = request.data.get("send_to", "parent")
         context, context_error = _normalize_context(request.data.get("context") or {}, "context")
         context_source = request.data.get("context_source", None)
+        school_report_term = None
+        school_report_template = None
         if context_error:
             return Response({"detail": context_error}, status=http_status.HTTP_400_BAD_REQUEST)
         # 학생별 개별 변수 (성적 등) — key: student_id(int)
@@ -399,6 +403,25 @@ class ManualNotificationPreviewView(APIView):
                 {"detail": "send_to는 'parent' 또는 'student'만 가능합니다."},
                 status=http_status.HTTP_400_BAD_REQUEST,
             )
+        if trigger == SCHOOL_REPORT_REQUEST_TRIGGER:
+            if (
+                send_to != "student" or not isinstance(context_source, dict)
+                or context_source.get("type") != SCHOOL_REPORT_REQUEST_TRIGGER
+                or context or context_per_student
+            ):
+                return Response(
+                    {"detail": "학교 성적 제출 요청은 회차와 학생을 선택해 학생에게만 발송할 수 있습니다."},
+                    status=http_status.HTTP_400_BAD_REQUEST,
+                )
+            from apps.support.messaging.school_report_requests import school_report_alimtalk_template
+
+            school_report_template = school_report_alimtalk_template(tenant)
+            if school_report_template is None:
+                return Response(
+                    {"detail": "학교 성적 제출 요청용 카카오 승인 양식을 사용할 수 없습니다.",
+                     "code": "school_report_alimtalk_unavailable"},
+                    status=http_status.HTTP_409_CONFLICT,
+                )
         if context_source is not None:
             from apps.support.messaging.manual_context_sources import (
                 ManualContextSourceError,
@@ -461,6 +484,7 @@ class ManualNotificationPreviewView(APIView):
                     status=http_status.HTTP_400_BAD_REQUEST,
                 )
             student_ids = resolved_source.student_ids
+            school_report_term = resolved_source.school_report_term
         else:
             student_ids, ids_error = _normalize_student_ids(student_ids)
             if ids_error:
@@ -477,6 +501,14 @@ class ManualNotificationPreviewView(APIView):
 
         if "error" in preview:
             return Response({"detail": preview["error"]}, status=http_status.HTTP_400_BAD_REQUEST)
+        if school_report_template is not None and (
+            preview["solapi_template_id"] != school_report_template.solapi_template_id.strip()
+            or preview["message_template_body"] != school_report_template.body.strip()
+        ):
+            return Response(
+                {"detail": "승인 양식이 변경되었습니다. 미리보기를 다시 실행해 주세요.", "code": "preview_changed"},
+                status=http_status.HTTP_409_CONFLICT,
+            )
 
         if preview["total_count"] == 0:
             return Response({
@@ -497,6 +529,9 @@ class ManualNotificationPreviewView(APIView):
                 session_id=0,
                 notification_type=trigger,
                 send_to=send_to,
+                **({
+                    "school_report_source": school_report_term, "actor_user_id": request.user.id,
+                } if school_report_term else {}),
             )
         except ValueError:
             logger.warning(
@@ -545,7 +580,7 @@ class ManualNotificationConfirmView(APIView):
             )
 
         try:
-            result = consume_preview_token_and_execute(preview_token, tenant, session_type="manual")
+            result = consume_preview_token_and_execute(preview_token, tenant, session_type="manual", actor_user_id=request.user.id)
         except MessagingHourlyQuotaExceeded as exc:
             return Response(
                 {"detail": str(exc)},

@@ -398,6 +398,7 @@ class AutoSendConfig(models.Model):
         ASSIGNMENT_NOT_SUBMITTED = "assignment_not_submitted", "과제 미제출"
         # E. 성적/리포트 — MANUAL_DEFAULT
         MONTHLY_REPORT_GENERATED = "monthly_report_generated", "월간 성적 리포트 발송"
+        SCHOOL_REPORT_REQUEST = "school_report_request", "학교 성적 제출 요청"
         # F. 클리닉/상담 — AUTO_DEFAULT
         CLINIC_REMINDER = "clinic_reminder", "클리닉 시작 N분 전"
         CLINIC_RESERVATION_CREATED = "clinic_reservation_created", "클리닉 예약 완료"
