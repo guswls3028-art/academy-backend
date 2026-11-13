@@ -10,14 +10,17 @@ from threading import Event
 from unittest import skipUnless
 from unittest.mock import patch
 
+from django.apps import apps
 from django.db import connection
 from django.test import TestCase, TransactionTestCase
 from rest_framework.response import Response
 
 from apps.domains.video.models import Video, VideoTranscodeJob
 from apps.domains.video.views.video_views import VideoViewSet
-from apps.domains.lectures.test_support import create_lecture_fixture, create_session_fixture
 from apps.core.models import Tenant
+
+Lecture = apps.get_model("lectures", "Lecture")
+Session = apps.get_model("lectures", "Session")
 
 
 class VideoDeleteTerminateTest(TestCase):
@@ -25,8 +28,8 @@ class VideoDeleteTerminateTest(TestCase):
 
     def setUp(self):
         tenant = Tenant.objects.create(name="Test Tenant", code="TEST_VIDEO_DEL")
-        lecture = create_lecture_fixture(title="L", name="L", subject="S", tenant=tenant)
-        session = create_session_fixture(lecture=lecture, title="S", order=1)
+        lecture = Lecture.objects.create(title="L", name="L", subject="S", tenant=tenant)
+        session = Session.objects.create(lecture=lecture, title="S", order=1)
         self.video = Video.objects.create(
             tenant=tenant,
             session=session,
