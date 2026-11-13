@@ -6,6 +6,7 @@ Keep direct libs.r2_client.client usage out of domain code.
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
+from hashlib import md5
 from typing import Any
 
 from django.conf import settings
@@ -50,6 +51,29 @@ def video_bucket_client():
             connect_timeout=5, read_timeout=20, retries={"total_max_attempts": 2, "mode": "standard"},
         ),
     )
+
+
+def completed_multipart_object_size(*, key: str, parts: list[dict[str, Any]]) -> int | None:
+    """Verify that the object at the exact video key matches the ordered uploaded parts."""
+    from botocore.exceptions import ClientError
+
+    try:
+        part_digests = [bytes.fromhex(part["ETag"].strip('"')) for part in parts]
+    except ValueError:
+        return None
+    if not part_digests or not all(len(digest) == 16 for digest in part_digests):
+        return None
+    digest = md5(b"".join(part_digests), usedforsecurity=False).hexdigest()
+    expected_etag = f"{digest}-{len(parts)}"
+    try:
+        result = video_bucket_client().head_object(Bucket=settings.R2_VIDEO_BUCKET, Key=key)
+    except ClientError as exc:
+        if (exc.response.get("Error") or {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
+            return None
+        raise
+    if (result.get("ETag") or "").strip('"') != expected_etag:
+        return None
+    return int(result.get("ContentLength") or 0) or None
 
 
 def head_storage_object_integrity(*, key: str) -> tuple[int, str] | None:

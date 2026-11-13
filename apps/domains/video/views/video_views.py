@@ -3,11 +3,12 @@ import logging
 from uuid import uuid4
 from datetime import timedelta
 
+from botocore.exceptions import ClientError
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import models, transaction
 from django.db.utils import DatabaseError, IntegrityError
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.utils import timezone
 
 from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_serializer
@@ -37,7 +38,7 @@ from academy.adapters.storage.r2_presign import (
     complete_multipart_upload,
     abort_multipart_upload,
 )
-from academy.adapters.storage.r2_objects import head_object
+from academy.adapters.storage.r2_objects import completed_multipart_object_size, head_object
 
 
 from apps.core.r2_paths import video_raw_key
@@ -1164,6 +1165,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     # ==================================================
     # upload/multipart/complete — R2 multipart upload 완료
     # ==================================================
+    @transaction.atomic
     @action(
         detail=True,
         methods=["post"],
@@ -1177,17 +1179,11 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         완료 후 기존 upload/complete와 동일한 인코딩 파이프라인 진입.
         """
         try:
-            video = self.get_object()
-        except Exception:
+            video = self._get_video_for_upload_completion()
+        except (Http404, Video.DoesNotExist):
             return Response(
                 {"detail": "영상을 찾을 수 없습니다."},
                 status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if video.status != Video.Status.PENDING:
-            return Response(
-                {"detail": f"PENDING 상태에서만 가능합니다. (현재: {video.status})"},
-                status=status.HTTP_409_CONFLICT,
             )
 
         upload_id = request.data.get("upload_id")
@@ -1220,23 +1216,38 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             )
         normalized_parts.sort(key=lambda part: part["PartNumber"])
 
+        if video.status != Video.Status.PENDING or video.is_youtube_source or video.reused_from_id:
+            return self._completed_upload_response(video)
+
+        stored_size = None
         try:
             complete_multipart_upload(
                 key=video.file_key,
                 upload_id=upload_id,
                 parts=normalized_parts,
             )
-        except Exception as e:
-            logger.exception("MULTIPART_COMPLETE_ERROR | video_id=%s | %s", video.id, e)
-            # 실패 시 abort 시도
-            abort_multipart_upload(key=video.file_key, upload_id=upload_id)
-            return Response(
-                {"detail": f"multipart 완료 실패: {str(e)[:200]}"},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
+        except Exception as exc:
+            code = (exc.response.get("Error") or {}).get("Code") if isinstance(exc, ClientError) else None
+            if code not in {"NoSuchUpload", "PreconditionFailed", "412"}:
+                return self._multipart_completion_unavailable(video)
+            try:
+                stored_size = completed_multipart_object_size(key=video.file_key, parts=normalized_parts)
+            except Exception:
+                return self._multipart_completion_unavailable(video)
+            if not stored_size:
+                return Response(
+                    {"detail": "저장된 영상 파일이 일치하지 않습니다. 원본 파일을 확인해 주세요."},
+                    status=status.HTTP_409_CONFLICT,
+                )
 
-        # 성공 — 기존 upload_complete 로직으로 인코딩 파이프라인 진입
-        return self._trigger_upload_complete_pipeline(video)
+        return self._trigger_upload_complete_pipeline(video, stored_size=stored_size)
+
+    def _multipart_completion_unavailable(self, video):
+        logger.exception("MULTIPART_COMPLETE_ERROR | video_id=%s", video.id)
+        return Response(
+            {"detail": "저장소에서 영상 업로드를 마치지 못했습니다. 잠시 후 다시 시도하세요."},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
 
     # ==================================================
     # upload/multipart/abort — R2 multipart upload 중단
@@ -1271,11 +1282,27 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         logger.info("MULTIPART_ABORTED | video_id=%s | upload_id=%s", video.id, upload_id)
         return Response({"detail": "aborted"}, status=status.HTTP_200_OK)
 
-    def _trigger_upload_complete_pipeline(self, video):
+    def _get_video_for_upload_completion(self):
+        scoped_video = self.get_object()
+        return Video.objects.select_for_update(of=("self",), no_key=True).select_related("session__lecture__tenant").get(
+            pk=scoped_video.pk, tenant_id=scoped_video.tenant_id,
+        )
+
+    def _completed_upload_response(self, video):
+        if not video.is_youtube_source and not video.reused_from_id and video.status in (
+            Video.Status.UPLOADED, Video.Status.PROCESSING, Video.Status.READY,
+        ):
+            return Response(VideoSerializer(video).data)
+        return Response(
+            {"detail": f"현재 상태에서는 업로드를 완료할 수 없습니다. ({video.status})"},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    def _trigger_upload_complete_pipeline(self, video, *, stored_size=None):
         """multipart 완료 후 기존 upload_complete 파이프라인 재사용."""
         try:
             with transaction.atomic():
-                return self._upload_complete_impl(video)
+                return self._upload_complete_impl(video, stored_size=stored_size)
         except Exception as e:
             logger.exception(
                 "VIDEO_UPLOAD_COMPLETE_ERROR | video_id=%s | type=%s | %s",
@@ -1298,9 +1325,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     )
     def upload_complete(self, request, pk=None):
         try:
-            video = self.get_object()
-        except Exception as e:
-            logger.exception("VIDEO_UPLOAD_COMPLETE_ERROR | get_object | %s", e)
+            video = self._get_video_for_upload_completion()
+        except (Http404, Video.DoesNotExist):
             return Response(
                 {"detail": "영상을 찾을 수 없습니다."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1323,21 +1349,11 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        try:
-            return self._upload_complete_impl(video)
-        except Exception as e:
-            logger.exception(
-                "VIDEO_UPLOAD_COMPLETE_ERROR | video_id=%s | type=%s | %s",
-                getattr(video, "id", None),
-                type(e).__name__,
-                e,
-            )
-            return Response(
-                {"detail": "업로드 완료 처리 중 오류가 발생했습니다. 잠시 후 다시 시도하세요."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+        if video.reused_from_id or video.status != Video.Status.PENDING:
+            return self._completed_upload_response(video)
+        return self._trigger_upload_complete_pipeline(video)
 
-    def _upload_complete_impl(self, video):
+    def _upload_complete_impl(self, video, *, stored_size=None):
         """upload_complete 실제 처리 (예외 시 호출부에서 503 반환)."""
         video_id = video.id
         # [TRACE] upload_complete entry
@@ -1357,7 +1373,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             )
 
         try:
-            exists, size = head_object(video.file_key)
+            exists, size = (True, stored_size) if stored_size is not None else head_object(video.file_key)
         except Exception as e:
             logger.exception("VIDEO_UPLOAD_COMPLETE_ERROR | head_object | video_id=%s | %s", video_id, e)
             return Response(

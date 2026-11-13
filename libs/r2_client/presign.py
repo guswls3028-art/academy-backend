@@ -101,6 +101,7 @@ def complete_multipart_upload(key: str, upload_id: str, parts: list[dict]) -> di
         Key=key,
         UploadId=upload_id,
         MultipartUpload={"Parts": sorted(parts, key=lambda p: p["PartNumber"])},
+        IfNoneMatch="*",
     )
 
 
