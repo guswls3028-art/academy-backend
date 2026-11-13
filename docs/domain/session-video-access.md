@@ -38,7 +38,7 @@ ACTIVE 수강의 재생 갱신과 새 감독 이벤트 저장은 강의 → 차�
 잠근 뒤 권한을 다시 확인한다. 강의와 차시의 PostgreSQL `FOR NO KEY UPDATE` 잠금은
 종료·변경·삭제와 직렬화하면서 출결·명단 저장의 외래 키 검사를 허용한다. 수강
 행을 먼저 잠근 출결 저장이 차시 참조를 확인하며 커밋할 때 갱신과 교착하지 않는다.
-`test_playback_renewal_lock_concurrency_pg.py`가 같은 차시의 동시 출결 저장과 기존
+`tests/test_video_playback_renewal_lock_concurrency_pg.py`가 같은 차시의 동시 출결 저장과 기존
 재생 세션의 정상 갱신을 실제 PostgreSQL에서 확인한다.
 
 검증: `apps/domains/video/tests/test_session_video_entitlement.py`는 8차시 중
