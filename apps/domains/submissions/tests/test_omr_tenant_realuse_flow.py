@@ -19,7 +19,7 @@ from apps.domains.exams.models import (
     Sheet,
 )
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.parents.models import Parent
+from apps.domains.parents.test_support import create_parent_account_fixture
 from apps.domains.results.models import (
     ExamAttempt,
     ExamResult,
@@ -1716,11 +1716,12 @@ class AcceptFromDuplicatesTests(TestCase):
     def test_stale_answer_and_student_edits_leave_grade_until_fresh_reapply(self):
         self.exam.student_results_published = True
         self.exam.save(update_fields=["student_results_published"])
-        parent_user = User.objects.create_user(username="dup_parent", tenant=self.tenant)
-        TenantMembership.ensure_active(tenant=self.tenant, user=parent_user, role="parent")
-        self.student.parent = Parent.objects.create(
-            tenant=self.tenant, user=parent_user, name="Parent", phone="01099998888",
-        )
+        parent = create_parent_account_fixture(
+            tenant=self.tenant, parent_phone="01099998888",
+            student_name=self.student.name, initial_password="test1234",
+        ).parent
+        parent_user = parent.user
+        self.student.parent = parent
         self.student.save(update_fields=["parent"])
 
         def visible_scores():
