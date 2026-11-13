@@ -144,6 +144,7 @@ def create_video_source_download_url(*, key: str, filename: str, expires_in: int
                 "Bucket": settings.R2_VIDEO_BUCKET,
                 "Key": key,
                 "ResponseContentDisposition": disposition,
+                "ResponseContentType": "application/octet-stream",
                 "ResponseCacheControl": "private, no-store",
             },
             ExpiresIn=expires_in,
