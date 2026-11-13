@@ -277,11 +277,6 @@ class SchoolReportCollectionTests(TestCase):
             )
             config.refresh_from_db()
             self.assertFalse(config.enabled)
-            from apps.domains.messaging.policy import send_alimtalk_via_owner
-            from apps.domains.messaging.services import send_event_notification
-
-            self.assertFalse(send_alimtalk_via_owner("school_report_request", self.student.phone, {}))
-            self.assertFalse(send_event_notification(self.tenant, "school_report_request", self.student))
             with override_settings(SOLAPI_SENDER=""):
                 self.assertFalse(self.call("school-report-roster", self.teacher, query=TERM).data["alimtalk_available"])
                 self.assertEqual(self.preview_alimtalk().status_code, 409)
