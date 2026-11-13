@@ -2,14 +2,30 @@ from unittest.mock import patch
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from academy.adapters.storage.r2_objects import VideoSourceStorageError
+from academy.adapters.storage.r2_objects import VideoSourceStorageError, create_video_source_download_url
 from apps.core.models import OpsAuditLog, Tenant, TenantMembership
 from apps.core.r2_paths import video_raw_key
 from apps.domains.video.models import Video
 from apps.domains.video.views.video_views import VideoViewSet
+
+
+class VideoDownloadResponseTests(SimpleTestCase):
+    @patch("academy.adapters.storage.r2_objects._r2_client")
+    def test_signed_video_attachment_forces_binary_download_and_preserves_filename(self, r2):
+        client = r2.return_value
+        create_video_source_download_url(key="source", filename="수업 영상.mp4", expires_in=300)
+        signed = client.generate_presigned_url.call_args.kwargs
+        self.assertEqual(signed["ClientMethod"], "get_object")
+        self.assertEqual(signed["ExpiresIn"], 300)
+        self.assertEqual(signed["Params"]["ResponseContentType"], "application/octet-stream")
+        self.assertEqual(signed["Params"]["ResponseCacheControl"], "private, no-store")
+        self.assertEqual(
+            signed["Params"]["ResponseContentDisposition"],
+            "attachment; filename=\"video.mp4\"; filename*=utf-8''%EC%88%98%EC%97%85%20%EC%98%81%EC%83%81.mp4",
+        )
 
 
 class VideoSourceDownloadTests(TestCase):
