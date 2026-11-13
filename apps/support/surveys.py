@@ -55,7 +55,9 @@ def response_materials(*, tenant, student, survey, file_ids, score_ids):
     ids = sorted(set(file_ids))
     score_ids = sorted(set(score_ids))
     scores = list(StudentReportedScore.objects.select_for_update().filter(tenant=tenant, student=student, id__in=score_ids).order_by("id"))
-    if len(scores) != len(score_ids) or any(row.status not in {"pending", "verified"} for row in scores):
+    if len(scores) != len(score_ids) or any(
+        row.status not in {"pending", "verified"} or row.direct_entry for row in scores
+    ):
         raise ValidationError("성적표 제출 기록을 확인한 뒤 다시 선택해 주세요.")
     if survey.kind == "school_score":
         if not scores:

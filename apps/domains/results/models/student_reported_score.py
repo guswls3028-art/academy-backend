@@ -6,7 +6,7 @@ from apps.core.models.base import TimestampModel
 
 
 class StudentReportedScore(TimestampModel):
-    """학생이 성적표 원본과 함께 제출한 학교·모의고사 성적."""
+    """학생이 제출한 학교·모의고사 과목 성적."""
 
     class Source(models.TextChoices):
         SCHOOL_EXAM = "school_exam", "학교 지필평가"
@@ -24,6 +24,8 @@ class StudentReportedScore(TimestampModel):
         VERIFIED = "verified", "확인 완료"
         REJECTED = "rejected", "반려"
         VOIDED = "voided", "통계 제외"
+        SELF_ENTERED = "self_entered", "직접 입력"
+        SELF_REMOVED = "self_removed", "직접 입력 수정으로 제외"
 
     class GradeScale(models.TextChoices):
         FIVE = "five", "5등급제"
@@ -50,6 +52,7 @@ class StudentReportedScore(TimestampModel):
         blank=True,
         related_name="student_reported_scores",
     )
+    direct_entry = models.BooleanField(default=False, db_default=False)
     submitted_by = models.ForeignKey(
         "core.User",
         on_delete=models.SET_NULL,
@@ -145,8 +148,27 @@ class StudentReportedScore(TimestampModel):
                 condition=(
                     models.Q(evidence_file__isnull=False)
                     | models.Q(status__in=["rejected", "voided"])
+                    | models.Q(
+                        direct_entry=True,
+                        status__in=["self_entered", "self_removed"],
+                        source="school_exam",
+                        semester__isnull=False,
+                        semester__in=[1, 2],
+                        exam_round__in=["first", "second"],
+                    )
                 ),
-                name="reported_score_active_requires_evidence",
+                name="reported_score_active_evidence_or_direct",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(direct_entry=False) & ~models.Q(status__in=["self_entered", "self_removed"])
+                    | models.Q(
+                        direct_entry=True,
+                        evidence_file__isnull=True,
+                        status__in=["self_entered", "self_removed"],
+                    )
+                ),
+                name="reported_score_direct_entry_valid",
             ),
         ]
 
