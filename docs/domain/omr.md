@@ -585,6 +585,9 @@ submission id, 안전한 접수 실패 사유를 제공한다. 다른 tenant·�
 전에 거부한다. Legacy 요청은 batch 생성 전 400, 예약된 batch는 그 ordinal만
 `empty_file`로 실패 처리하고 정상 파일 접수는 유지한다. 올바른 파일을 같은 순번으로
 재선택하면 원래 성공 항목을 중복 생성하지 않고 복구한다. 기존 사용자 데이터를 일괄 수정하지 않는다.
+스캐너가 파일 형식을 일반 바이너리(`application/octet-stream`)로 보내도 지원 확장자와
+파일 시작 바이트가 일치하면 실제 MIME으로 접수한다. PDF는 이 경우에도 한 페이지인지
+확인하며, 묶음 PDF는 해당 순번을 한 장짜리 파일로 교체해 복구할 수 있다.
 회귀 검증은 `test_exam_omr_batch_upload_pdf_guard.py`의 빈 파일→재접수, 100개 순번 보존,
 혼합 처리 상태, tenant 격리 및 GET 무변경 사례를 따른다.
 도입 전 item은 migration에서 tenant/exam scope만 backfill하고 기존 R2 원본을 다시 읽지

@@ -16,6 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.api.common.upload_validation import DEFAULT_MAX_OMR_SIZE, OMR_CONTENT_TYPES
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.submissions.models import (
     OmrUploadBatch,
@@ -41,12 +42,14 @@ from apps.support.submissions.omr_grading_status import omr_grading_status_by_su
 
 
 MAX_FILES = 100
-MAX_FILE_SIZE = 10 * 1024 * 1024
-ALLOWED_CONTENT_TYPES = {
-    "image/jpeg",
-    "image/png",
-    "image/tiff",
-    "application/pdf",
+MAX_FILE_SIZE = DEFAULT_MAX_OMR_SIZE
+GENERIC_SCAN_TYPES = {
+    "jpg": ("image/jpeg", (b"\xff\xd8",)),
+    "jpeg": ("image/jpeg", (b"\xff\xd8",)),
+    "png": ("image/png", (b"\x89PNG\r\n\x1a\n",)),
+    "tif": ("image/tiff", (b"II*\x00", b"MM\x00*")),
+    "tiff": ("image/tiff", (b"II*\x00", b"MM\x00*")),
+    "pdf": ("application/pdf", (b"%PDF-",)),
 }
 OMR_UPLOAD_FILE_PROPERTIES = {
     "file": {"type": "string", "format": "binary"},
@@ -417,15 +420,31 @@ def _file_validation_error(upload_file) -> tuple[str, str] | None:
         return "empty_file", "파일이 비어 있습니다. 스캔 파일을 확인한 뒤 다시 선택해 주세요."
     if upload_file.size > MAX_FILE_SIZE:
         return "file_too_large", "파일 크기가 10MB를 초과합니다."
-    if upload_file.content_type not in ALLOWED_CONTENT_TYPES:
+    content_type = str(upload_file.content_type or "").split(";", 1)[0].strip().lower()
+    if content_type in ("", "application/octet-stream"):
+        suffix = upload_file.name.rpartition(".")[2].lower()
+        detected = GENERIC_SCAN_TYPES.get(suffix)
+        if detected is None:
+            return "unsupported_file_type", "허용되지 않는 파일 형식입니다."
+        content_type, signatures = detected
+        position = upload_file.tell()
+        try:
+            upload_file.seek(0)
+            prefix = upload_file.read(8)
+        finally:
+            upload_file.seek(position)
+        if not prefix.startswith(signatures):
+            return "invalid_file_content", "파일 내용을 읽을 수 없습니다. 스캔 파일을 확인한 뒤 다시 선택해 주세요."
+    if content_type not in OMR_CONTENT_TYPES:
         return "unsupported_file_type", "허용되지 않는 파일 형식입니다."
-    if upload_file.content_type == "application/pdf":
+    if content_type == "application/pdf":
         try:
             page_count = _pdf_page_count(upload_file)
         except Exception:
             return "invalid_pdf", "PDF를 읽을 수 없습니다."
         if page_count != 1:
             return "multipage_pdf", f"{page_count}페이지 PDF입니다. 답안지 1장당 1개 파일로 업로드해 주세요."
+    upload_file.content_type = content_type
     return None
 
 
@@ -672,10 +691,10 @@ class ExamOMRBatchUploadView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
         else:
-            validation_errors = [_file_validation_error(upload_file) for upload_file in files]
-            first_error = next((error for error in validation_errors if error), None)
-            if first_error is not None:
-                return Response({"detail": first_error[1]}, status=status.HTTP_400_BAD_REQUEST)
+            for upload_file in files:
+                validation_error = _file_validation_error(upload_file)
+                if validation_error is not None:
+                    return Response({"detail": validation_error[1]}, status=status.HTTP_400_BAD_REQUEST)
             try:
                 session_id = _positive_int(
                     request.data.get("session_id"),
@@ -730,7 +749,7 @@ class ExamOMRBatchUploadView(APIView):
                     )
                     if locked_item.submission_id is not None or locked_item.duplicate_of_submission_id is not None:
                         continue
-                    validation_error = _file_validation_error(upload_file)
+                    validation_error = _file_validation_error(upload_file) if explicit_batch else None
                     if validation_error is not None:
                         locked_item.admission_status = OmrUploadBatchItem.AdmissionStatus.FAILED
                         locked_item.submission = None

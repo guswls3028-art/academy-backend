@@ -189,6 +189,33 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
 
     @patch("apps.domains.submissions.views.exam_omr_batch_upload_view.dispatch_submission")
     @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
+    def test_generic_scanner_mime_uses_pdf_contents_and_keeps_failed_ordinal_recoverable(
+        self, upload_fileobj_to_r2, dispatch_submission,
+    ):
+        batch_id = self._initialize(2).data["id"]
+        response = self._upload_to_batch(batch_id, [
+            SimpleUploadedFile("one.pdf", _pdf_bytes(1), content_type="application/octet-stream"),
+            SimpleUploadedFile("bundle.pdf", _pdf_bytes(2), content_type="application/octet-stream"),
+        ], [1, 2])
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["created_count"], 1)
+        self.assertEqual(response.data["items"][1]["failure_code"], "multipage_pdf")
+        self.assertEqual(response.data["admission_failed_ordinals"], [2])
+        self.assertEqual(upload_fileobj_to_r2.call_args.kwargs["content_type"], "application/pdf")
+
+        replacement = SimpleUploadedFile(
+            "corrected.pdf", _pdf_bytes(1) + b"\n", content_type="application/octet-stream",
+        )
+        response = self._upload_to_batch(batch_id, [replacement], [2])
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["created_count"], 1)
+        self.assertEqual(response.data["admission_failed_ordinals"], [])
+        self.assertEqual(self._detail(batch_id).data["counts"]["received"], 2)
+        self.assertEqual(dispatch_submission.call_count, 2)
+
+    @patch("apps.domains.submissions.views.exam_omr_batch_upload_view.dispatch_submission")
+    @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
     def test_accepts_single_page_pdf(self, upload_fileobj_to_r2, dispatch_submission):
         upload = SimpleUploadedFile(
             "one-sheet.pdf",
