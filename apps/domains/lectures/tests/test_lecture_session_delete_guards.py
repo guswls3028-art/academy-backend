@@ -5,11 +5,12 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.attendance.models import Attendance
+from apps.domains.attendance.models import Attendance, AttendanceQrPoint
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.exams.models import Exam
+from apps.domains.exams.models import Exam, ExamLecturePolicy
+from apps.domains.fees.models import FeeTemplate
 from apps.domains.homework_results.models import Homework
-from apps.domains.lectures.models import Lecture, Session
+from apps.domains.lectures.models import Lecture, Session, SessionScheduleChange
 from apps.domains.lectures.views import LectureViewSet, SessionViewSet
 from apps.domains.progress.models import ClinicLink, SessionProgress
 from apps.domains.results.models import ScoreEditDraft
@@ -150,6 +151,69 @@ class LectureSessionDeleteGuardTests(TestCase):
         self.assertEqual(response.status_code, 403, response.data)
         self.assertTrue(Lecture.objects.filter(id=lecture.id).exists())
         self.assertTrue(Session.objects.filter(id=session.id).exists())
+
+    def test_lecture_delete_preserves_fee_template_scope(self):
+        lecture = self._create_lecture("fee-template")
+        template = FeeTemplate.objects.create(
+            tenant=self.tenant, lecture=lecture, name="Lecture tuition",
+            fee_type=FeeTemplate.FeeType.TUITION, amount=50000, is_active=False,
+        )
+
+        response = self._delete_lecture(lecture)
+
+        self.assertEqual(response.status_code, 403, response.data)
+        template.refresh_from_db()
+        self.assertEqual(template.lecture_id, lecture.pk)
+
+    def test_lecture_delete_preserves_configured_attendance_qr_point(self):
+        lecture = self._create_lecture("attendance-qr")
+        point = AttendanceQrPoint.objects.create(
+            tenant=self.tenant, lecture=lecture, label="Lecture entrance",
+            kind="class", active=False,
+        )
+        original_token = point.token
+
+        response = self._delete_lecture(lecture)
+
+        self.assertEqual(response.status_code, 403, response.data)
+        point.refresh_from_db()
+        self.assertEqual(point.lecture_id, lecture.pk)
+        self.assertEqual(point.token, original_token)
+
+    def test_lecture_delete_preserves_saved_exam_policy_without_session_link(self):
+        lecture = self._create_lecture("exam-policy")
+        exam = Exam.objects.create(
+            tenant=self.tenant, title="Shared exam", exam_type=Exam.ExamType.REGULAR,
+            max_score=100, pass_score=60,
+        )
+        policy = ExamLecturePolicy.objects.create(exam=exam, lecture=lecture, pass_score=75)
+
+        response = self._delete_lecture(lecture)
+
+        self.assertEqual(response.status_code, 403, response.data)
+        policy.refresh_from_db()
+        self.assertEqual(policy.lecture_id, lecture.pk)
+        self.assertEqual(policy.pass_score, 75)
+
+    def test_session_and_lecture_delete_preserve_schedule_change_history(self):
+        for target in ("session", "lecture"):
+            with self.subTest(target=target):
+                lecture = self._create_lecture(f"schedule-history-{target}")
+                session = self._create_session(lecture, "schedule-history")
+                change = SessionScheduleChange.objects.create(
+                    session=session, actor_id=self.admin.pk,
+                    before={"label": "Morning"}, after={},
+                )
+
+                response = (
+                    self._delete_session(session) if target == "session"
+                    else self._delete_lecture(lecture)
+                )
+
+                self.assertEqual(response.status_code, 403, response.data)
+                change.refresh_from_db()
+                self.assertEqual(change.session_id, session.pk)
+                self.assertEqual(change.before, {"label": "Morning"})
 
     def test_session_with_operational_records_cannot_be_deleted(self):
         blockers = (
