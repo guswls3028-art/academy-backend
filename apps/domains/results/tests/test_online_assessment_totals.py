@@ -32,8 +32,11 @@ class OnlineAssessmentTotalsTests(TestCase):
             tenant=self.tenant, lecture=lecture, student=self.student, status="ACTIVE")
         apps.get_model("enrollment", "SessionEnrollment").objects.create(
             tenant=self.tenant, session=self.session, enrollment=self.enrollment)
+        self._add_objective_exam("Five objective questions")
+
+    def _add_objective_exam(self, title):
         self.exam = apps.get_model("exams", "Exam").objects.create(
-            tenant=self.tenant, title="Five objective questions", exam_type="regular", max_score=100, pass_score=50)
+            tenant=self.tenant, title=title, exam_type="regular", max_score=100, pass_score=50)
         self.exam.sessions.add(self.session)
         apps.get_model("exams", "ExamEnrollment").objects.create(exam=self.exam, enrollment=self.enrollment)
         self.sheet = apps.get_model("exams", "Sheet").objects.create(
@@ -288,6 +291,29 @@ class OnlineAssessmentTotalsTests(TestCase):
         self.assertFalse(payload["exams"][0]["is_provisional"])
         self.assertEqual(payload["exams"][0]["total_score"], 0)
         self.assertEqual(payload["exam_summary"]["scored_count"], 1)
+
+    def test_published_online_grade_history_batches_scoring_details_across_exams(self):
+        self._submit_online()
+        self.exam.student_results_published = True
+        self.exam.save(update_fields=["student_results_published"])
+        with CaptureQueriesContext(connection) as short_history:
+            first = self._published_grades()
+        self.assertEqual(len(first["exams"]), 1)
+
+        for index in range(2, 13):
+            self._add_objective_exam(f"Published online exam {index}")
+            self._submit_online()
+            self.exam.student_results_published = True
+            self.exam.save(update_fields=["student_results_published"])
+
+        with CaptureQueriesContext(connection) as long_history:
+            student = self._published_grades()
+        self.assertEqual(len(student["exams"]), 12)
+        self.assertEqual(student["exam_summary"]["scored_count"], 12)
+        self.assertTrue(all(exam["total_score"] == 60 and not exam["is_provisional"] for exam in student["exams"]))
+        self.assertEqual(student, self._published_grades(parent=True))
+        self.assertLessEqual(len(long_history), len(short_history) + 1,
+                             (len(short_history), len(long_history)))
 
     def test_later_online_attempt_does_not_replace_initial_total(self):
         self.exam.allow_retake = True

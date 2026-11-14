@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 from apps.domains.results.models import ExamResult
-from apps.support.exams.numeric_short_answer import math_numeric_short_answer_question_ids
-from apps.support.omr.score_shape import get_exam_score_shape
-from apps.support.results.admin_exam_result_detail_dependencies import get_answer_key_answers
-from apps.support.results.omr_subjective_completion_dependencies import exams_by_id
+from apps.support.exams.numeric_short_answer import numeric_short_answer_question_ids
+from apps.support.omr.score_shape_batch import load_exam_scoring_details
+from apps.support.results.omr_subjective_completion_dependencies import exams_by_id, math_exam_ids
 
 
 def completed_online_result_pairs(*, legacy_rows, completed_attempt_pairs, canonical_pairs, tenant_id):
@@ -34,11 +33,15 @@ def completed_online_result_pairs(*, legacy_rows, completed_attempt_pairs, canon
     if not candidates:
         return set()
 
+    scoped_exams = {
+        exam_id: exam
+        for exam_id, exam in exams_by_id(row["exam_id"] for row in candidates).items()
+        if exam.tenant_id == tenant_id
+    }
     automatic_questions = {}
-    for exam_id, exam in exams_by_id(row["exam_id"] for row in candidates).items():
-        if exam.tenant_id != tenant_id:
-            continue
-        shape = get_exam_score_shape(exam)
+    essay_candidates = {}
+    for exam_id, details in load_exam_scoring_details(scoped_exams.values()).items():
+        shape = details.shape
         question_ids = set(shape.question_kind_by_id)
         if (
             not question_ids or len(question_ids) != shape.total_questions
@@ -46,14 +49,14 @@ def completed_online_result_pairs(*, legacy_rows, completed_attempt_pairs, canon
         ):
             continue
         essay_ids = {qid for qid, kind in shape.question_kind_by_id.items() if kind == "essay"}
-        if essay_ids:
-            numeric_ids = math_numeric_short_answer_question_ids(
-                exam=exam, question_ids=question_ids, question_kind=shape.question_kind,
-                answers=get_answer_key_answers(template_exam_id=shape.template_exam_id),
-            )
-            if not essay_ids.issubset(numeric_ids):
-                continue
-        automatic_questions[exam_id] = question_ids
+        if not essay_ids:
+            automatic_questions[exam_id] = question_ids
+        elif essay_ids == numeric_short_answer_question_ids(
+            question_ids=question_ids, question_kind=shape.question_kind, answers=details.answers,
+        ):
+            essay_candidates[exam_id] = question_ids
+    math_ids = math_exam_ids({exam_id: scoped_exams[exam_id] for exam_id in essay_candidates})
+    automatic_questions.update({exam_id: essay_candidates[exam_id] for exam_id in math_ids})
 
     # Load answer snapshots only for scoped ONLINE candidates, never every
     # FINAL/OMR row in a large class. This remains one query for all students.
