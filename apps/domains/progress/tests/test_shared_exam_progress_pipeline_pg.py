@@ -323,3 +323,33 @@ class SharedExamProgressPipelinePostgresTests(TransactionTestCase):
             {(enrollment.id, self.lecture_a.id)},
         )
         self.assertEqual(self._protected_snapshot(), protected_before)
+
+    def test_total_score_and_absence_refresh_only_the_edited_enrollment(self):
+        enrollment = self.enrollments_a[0]
+        second_session = self.Session.objects.create(lecture=self.lecture_a, order=2, title="Second A")
+        self.exam.sessions.add(second_session)
+        self.SessionEnrollment.objects.create(tenant=self.tenant, session=second_session, enrollment=enrollment)
+        peer_ids = [peer.id for peer in [self.enrollments_a[1], *self.enrollments_b, self.other_enrollment]]
+        django_apps.get_model("results", "ScoreEditDraft").objects.create(
+            session=self.session_a, tenant=self.tenant, editor_user=self.admin,
+            payload={"client_id": "shared-score-tab", "changes": []},
+        )
+        score_headers = {
+            **self.headers,
+            "HTTP_X_SCORE_EDITOR_CLIENT": "shared-score-tab",
+            "HTTP_X_SCORE_SESSION_ID": str(self.session_a.id),
+        }
+        url = f"/api/v1/results/admin/exams/{self.exam.id}/enrollments/{enrollment.id}/score/"
+
+        for payload in ({"score": 85}, {"meta_status": "NOT_SUBMITTED"}):
+            with self.subTest(payload=payload):
+                response = self.client.patch(url, payload, format="json", **score_headers)
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertTrue(response.data["progress"]["dispatched"])
+                self.assertEqual(
+                    set(self.SessionProgress.objects.filter(enrollment=enrollment).values_list("session_id", flat=True)),
+                    {self.session_a.id, second_session.id},
+                )
+                self.assertFalse(self.SessionProgress.objects.filter(enrollment_id__in=peer_ids).exists())
+                self.assertFalse(self.LectureProgress.objects.filter(enrollment_id__in=peer_ids).exists())
+                self.assertFalse(self.ClinicLink.objects.filter(enrollment_id__in=peer_ids).exists())
