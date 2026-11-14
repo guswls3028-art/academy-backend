@@ -1,5 +1,6 @@
 from datetime import datetime, time, timedelta
 
+from django.apps import apps
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -12,7 +13,7 @@ from apps.domains.student_app.tests.test_session_tenant_isolation import (
     _create_lecture, _create_session, _create_student, _create_tenant, _create_user,
 )
 from apps.support.student_app.dashboard_dependencies import (
-    today_lecture_sessions_for_dashboard, upcoming_clinic_count_for_dashboard,
+    notice_posts_for_dashboard, today_lecture_sessions_for_dashboard, upcoming_clinic_count_for_dashboard,
 )
 from apps.support.student_app.session_dependencies import get_student_lecture_sessions
 
@@ -78,6 +79,64 @@ class DashboardLearningTodoTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertTrue(response.data["badges"]["clinic_upcoming"])
         self.assertEqual(response.data["badges"]["clinic_upcoming_count"], 1)
+
+    def test_dashboard_notice_scope_is_query_bounded_for_each_selected_student(self):
+        post_model = apps.get_model("community", "PostEntity")
+        node_model = apps.get_model("community", "ScopeNode")
+        mapping_model = apps.get_model("community", "PostMapping")
+
+        def lecture_scope(title, student, *, status="ACTIVE"):
+            lecture = _create_lecture(self.tenant, title)
+            create_enrollment_fixture(tenant=self.tenant, student=student, lecture=lecture, status=status)
+            return node_model.objects.create(tenant=self.tenant, lecture=lecture, level="COURSE")
+
+        def post(title, *nodes, tenant=None, kind="notice", status="published"):
+            row = post_model.objects.create(
+                title=title, tenant=tenant or self.tenant, post_type=kind, status=status,
+            )
+            for node in nodes:
+                mapping_model.objects.create(post=row, node=node)
+            return row
+
+        sibling = _create_student(self.tenant, _create_user(self.tenant, "sibling"), "Sibling")
+        first_scope = lecture_scope("First course", self.student)
+        second_scope = lecture_scope("Second course", sibling)
+        inactive_scope = lecture_scope("Ended enrollment", self.student, status="DROPPED")
+        session_scope = node_model.objects.create(
+            tenant=self.tenant, lecture=first_scope.lecture,
+            session=_create_session(first_scope.lecture, session_date=self.now.date()), level="SESSION",
+        )
+        old_global = [post(f"Older global {index}") for index in range(5)]
+        first_notice = post("First child", first_scope, session_scope)
+        second_notice = post("Second child", second_scope)
+        session_notice = post("Course session", session_scope)
+        newest = post("Newest global")
+        post("Inactive enrollment", inactive_scope)
+        post("Draft", first_scope, status="draft")
+        post("Board item", first_scope, kind="board")
+        post("Foreign notice", tenant=_create_tenant("todo-notice-foreign"))
+
+        parent_user = _create_user(self.tenant, "parent")
+        TenantMembership.ensure_active(tenant=self.tenant, user=parent_user, role="parent")
+        parent = apps.get_model("parents", "Parent").objects.create(
+            tenant=self.tenant, user=parent_user, phone="01012345678", name="Parent",
+        )
+        for student, expected in (
+            (self.student, [newest, session_notice, first_notice, *reversed(old_global[-2:])]),
+            (sibling, [newest, second_notice, *reversed(old_global[-3:])]),
+        ):
+            with self.subTest(student=student.id), self.assertNumQueries(3):
+                rows = list(notice_posts_for_dashboard(tenant=self.tenant, student=student)[:5])
+                expected_ids = [row.pk for row in expected]
+                self.assertEqual([row.pk for row in rows], expected_ids)
+            student.parent = parent
+            student.save(update_fields=["parent"])
+            request = APIRequestFactory().get("/student/dashboard/", HTTP_X_STUDENT_ID=str(student.pk))
+            request.tenant = self.tenant
+            force_authenticate(request, user=parent_user)
+            response = StudentDashboardView.as_view()(request)
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual([row["id"] for row in response.data["notices"]], expected_ids)
 
     def test_today_lesson_excludes_ended_and_mismatched_course_but_keeps_end_date(self):
         lecture = _create_lecture(self.tenant, "Vacation")
