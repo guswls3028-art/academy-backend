@@ -1147,9 +1147,8 @@ def _validated_booking_range(
     start_offset = booking_start - session_start
     end_offset = booking_end - session_start
     if session.start_time.second or session.start_time.microsecond:
-        # Legacy sessions can contain subminute starts. Preserve their existing
-        # accepted booking inputs until the minute-only availability contract is
-        # migrated; tightening these offsets would reject historical clients.
+        # Preserve previously accepted exact API inputs for legacy sessions;
+        # minute-only availability labels were restored to the exact grid above.
         start_offset = datetime.timedelta(minutes=int(start_offset.total_seconds() // 60))
         end_offset = datetime.timedelta(minutes=int(end_offset.total_seconds() // 60))
     interval_delta = datetime.timedelta(minutes=interval)
@@ -1268,6 +1267,10 @@ def booking_availability_for_session(*, tenant, session: Session) -> dict[str, A
         ).only("booking_start_time", "booking_end_time"))
     cursor = start
     while cursor < end:
+        if session.booking_mode == "time_range" and end - cursor < datetime.timedelta(minutes=interval):
+            # Historical sessions may predate duration alignment validation.
+            # A trailing partial interval cannot satisfy the booking grid.
+            break
         next_cursor = min(cursor + datetime.timedelta(minutes=interval), end)
         if session.booking_mode == "time_range":
             used = 0

@@ -121,12 +121,15 @@ class ClinicTimeRangePolicyAPITest(APITestCase, ClinicAPITestMixin):
     def test_legacy_availability_labels_book_exact_stored_grid_and_reload(self):
         self.session.start_time = datetime.time(9, 0, 30, 123)
         self.session.max_participants = 1
-        self.session.save(update_fields=["start_time", "max_participants"])
+        self.session.duration_minutes = 75
+        self.session.save(update_fields=["start_time", "max_participants", "duration_minutes"])
         self.client.force_authenticate(user=self.students[0].user)
         availability = self.client.get(
             f"/api/v1/clinic/sessions/{self.session.id}/availability/", **self._headers(),
         )
         self.assertEqual(availability.status_code, 200, availability.data)
+        self.assertEqual(availability.data["window"]["end_time"], "10:15")
+        self.assertEqual(len(availability.data["slots"]), 2)
         first, second = availability.data["slots"][:2]
         booked = self._book(self.students[0], first["start_time"], first["end_time"])
         self.assertEqual(booked.status_code, 201, booked.data)

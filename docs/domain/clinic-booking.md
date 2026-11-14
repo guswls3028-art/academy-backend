@@ -187,6 +187,9 @@ null은400이다. 기존 내부 재시험 처리와 token 없는 API 호출은 �
 세션 `end_date`와 참가자 `booking_start_date`/`booking_end_date`도 파생 읽기 필드다.
 `session_date`와 날짜 목록 필터는 운영 세션이 시작한 날짜를 유지한다.
 참가자 신원은 반환하지 않는다. 시간 범위 정원은 session row lock 아래
+검사한다. 간격의 배수가 아닌 운영 길이를 가진 과거 세션의 마지막 불완전 구간은
+예약 간격 검증을 통과할 수 없으므로 `slots`에 넣지 않으며 운영 `window`는 보존한다.
+시간 범위 정원은
 `pending`/`booked`/`attended`의 반열린 구간(`[start, end)`) 겹침을 각 간격마다
 검사한다. 따라서 10:00–11:00과 11:00–12:00은 겹치지 않으며 동시 요청도 같은
 구간 정원을 초과할 수 없다. 고정 시간대 정원 계산은 기존 pending/booked 계약을
