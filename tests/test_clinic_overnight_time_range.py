@@ -107,7 +107,7 @@ class ClinicOvernightTimeRangeTests(APITestCase, ClinicAPITestMixin):
         participant = SessionParticipant.objects.get(session=self.session, student=self.data["students"][0])
         self.assertEqual(participant.booking_start_time, datetime.time(0, 0, 30))
         self.assertEqual(participant.booking_end_time, datetime.time(0, 30, 30))
-        self.assertEqual(response.data["participants"][0]["booking_start_date"], slot["start_date"])
+        self.assertEqual(response.json()["participants"][0]["booking_start_date"], slot["start_date"])
 
     def test_active_overnight_passcard_keeps_actual_date_then_expires(self):
         response = self._book(start="00:30", end="01:30", staff=True)
