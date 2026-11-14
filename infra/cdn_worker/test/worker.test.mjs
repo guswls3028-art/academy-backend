@@ -49,16 +49,22 @@ test("master -> variant -> segment preserves valid playback and byte ranges", as
     [root + "v1/seg.ts"]: "0123456789",
   });
   const masterUrl = signed("/" + root + "master.m3u8");
-  const master = await worker.fetch(new Request(masterUrl), env, {});
+  const headers = { Origin: "https://academy.example" };
+  const master = await worker.fetch(new Request(masterUrl, { headers }), env, {});
   assert.equal(master.status, 200);
+  assert.equal(master.headers.get("Access-Control-Allow-Origin"), "*");
+  assert.equal(master.headers.get("Access-Control-Allow-Credentials"), null);
   const variantUrl = new URL((await master.text()).split("\n")[1], masterUrl);
-  const variant = await worker.fetch(new Request(variantUrl), env, {});
+  const variant = await worker.fetch(new Request(variantUrl, { headers }), env, {});
   assert.equal(variant.status, 200);
+  assert.equal(variant.headers.get("Access-Control-Allow-Origin"), "*");
   const segmentUrl = new URL((await variant.text()).split("\n")[2], variantUrl);
   const segment = await worker.fetch(new Request(segmentUrl), env, {});
   assert.equal(await segment.text(), "0123456789");
-  const partial = await worker.fetch(new Request(segmentUrl, { headers: { Range: "bytes=2-5" } }), env, {});
+  const partial = await worker.fetch(new Request(segmentUrl, { headers: { ...headers, Range: "bytes=2-5" } }), env, {});
   assert.equal(partial.status, 206);
+  assert.equal(partial.headers.get("Access-Control-Allow-Origin"), "*");
+  assert.equal(partial.headers.get("Access-Control-Expose-Headers"), "Accept-Ranges, Content-Range");
   assert.equal(partial.headers.get("Content-Range"), "bytes 2-5/10");
   assert.equal(await partial.text(), "2345");
 });
@@ -94,7 +100,9 @@ test("missing, expired, forged and cross-tenant signatures cannot access storage
     [signed(path, { exp: 1 }), 401], [forged, 403], [otherTenant, 403],
   ]) {
     const env = environment({});
-    assert.equal((await worker.fetch(new Request(url), env, {})).status, status);
+    const result = await worker.fetch(new Request(url, { headers: { Origin: "https://academy.example" } }), env, {});
+    assert.equal(result.status, status);
+    assert.equal(result.headers.get("Access-Control-Allow-Origin"), null);
     assert.equal(env.calls.length, 0);
   }
 });
