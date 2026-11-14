@@ -7,6 +7,8 @@ from django.utils.crypto import salted_hmac
 from apps.domains.homework.models import HomeworkAssignment
 from apps.support.attendance.learning_todo_eligibility import attendance_status_map
 
+NOTICE = "이번 차시는 영상으로 보강합니다. 아래 과제를 확인해 주세요."
+
 
 def resolve_video_makeup_homework(*, tenant, session, data, enrollments):
     """Populate a generic manual send with server-owned recipients and copy."""
@@ -43,10 +45,10 @@ def resolve_video_makeup_homework(*, tenant, session, data, enrollments):
             excluded.append({"student_id": student_id, "reason": "no_homework"})
             continue
         recipients.append({"student_id": student_id, "homework_titles": titles})
-        per_student[str(student_id)] = {"과제목록": "\n".join(f"• {title}" for title in titles)}
+        per_student[str(student_id)] = {"_body_subst": "\n".join([NOTICE, *(f"• {title}" for title in titles)])}
 
     data["student_ids"] = [recipient["student_id"] for recipient in recipients]
-    data["raw_body"] = "이번 차시는 영상으로 보강합니다. 아래 과제를 확인해 주세요.\n#{과제목록}"
+    data["raw_body"] = NOTICE
     data["alimtalk_extra_vars_per_student"] = per_student
     data["_video_makeup_homework"] = {
         "recipients": recipients,

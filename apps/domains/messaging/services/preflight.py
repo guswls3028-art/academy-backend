@@ -201,6 +201,7 @@ def _build_manual_preview_recipients(
             tenant_name=tenant_name,
             student_name=recipient.student_name,
             site_url=site_url,
+            literal_body=bool(data.get("video_makeup_homework")),
         )
         preview_recipients.append(
             {

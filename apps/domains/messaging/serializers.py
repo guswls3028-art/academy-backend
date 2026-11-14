@@ -339,11 +339,12 @@ class MessageTemplateCreateResponseSerializer(MessageTemplateSerializer):
 
 
 class SendMessageRequestSerializer(serializers.Serializer):
+    """알림톡 발송 요청: 학생/학부모 수신자 + 직접 입력 본문 또는 템플릿 ID."""
+
     video_makeup_homework = serializers.BooleanField(required=False, default=False)
     video_makeup_homework_fingerprint = serializers.RegexField(
         r"\A[0-9a-f]{64}\Z", required=False,
     )
-    """알림톡 발송 요청: 학생/학부모 수신자 + 직접 입력 본문 또는 템플릿 ID."""
     session_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     client_request_id = serializers.UUIDField(
         required=False,

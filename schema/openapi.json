@@ -16685,6 +16685,15 @@
           "template_id": {
             "nullable": true,
             "type": "integer"
+          },
+          "video_makeup_homework": {
+            "default": false,
+            "type": "boolean"
+          },
+          "video_makeup_homework_fingerprint": {
+            "minLength": 1,
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
           }
         },
         "type": "object"

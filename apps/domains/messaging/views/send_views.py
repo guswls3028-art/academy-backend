@@ -321,6 +321,8 @@ class SendMessageView(APIView):
                 text = text.replace(f"#{{{var_key}}}", str(var_val or ""))
             text = re.sub(r"#\{[^}]+\}", "", text)
             text = re.sub(r"\n{3,}", "\n\n", text).strip()
+            if data.get("video_makeup_homework"):
+                text = student_body
             if subject_base:
                 text = subject_base + "\n" + text
 
@@ -341,6 +343,7 @@ class SendMessageView(APIView):
                         tenant_name=academy_name,
                         student_name=name,
                         site_url=site_url,
+                        literal_body=bool(data.get("video_makeup_homework")),
                     )
                 else:
                     # ── 시스템 기본양식: 기존 방식 유지 (가입승인/비번 등) ──

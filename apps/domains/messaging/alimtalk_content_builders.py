@@ -261,6 +261,8 @@ def build_manual_replacements(
     tenant_name: str,
     student_name: str,
     site_url: str,
+    *,
+    literal_body: bool = False,
 ) -> list[dict[str, str]]:
     """
     수동 발송용 통합 템플릿 replacements 빌드.
@@ -304,11 +306,11 @@ def build_manual_replacements(
 
     # content_body 내 #{서브변수} 치환 → #{선생님메모} 값
     built_content = content_body
-    for k, v in all_vars.items():
-        built_content = built_content.replace(f"#{{{k}}}", v)
-
-    built_content = re.sub(r"#\{[^}]+\}", "", built_content)
-    built_content = re.sub(r"\n{3,}", "\n\n", built_content).strip()
+    if not literal_body:
+        for k, v in all_vars.items():
+            built_content = built_content.replace(f"#{{{k}}}", v)
+        built_content = re.sub(r"#\{[^}]+\}", "", built_content)
+        built_content = re.sub(r"\n{3,}", "\n\n", built_content).strip()
 
     # NONE 양식은 #{공지내용}으로, ITEM_LIST 양식은 #{선생님메모}로 들어감
     all_vars["공지내용"] = built_content

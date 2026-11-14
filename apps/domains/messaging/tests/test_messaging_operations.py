@@ -88,7 +88,8 @@ class SendMessagePreflightViewTests(MessagingOperationsBase):
                 tenant=self.tenant, session=session, enrollment=enrollment, status=attendance,
             )
             enrollments.append(enrollment)
-        homework = Homework.objects.create(tenant=self.tenant, session=session, title="워크북 15쪽")
+        title = "워크북 15쪽 #{학생이름} #{날짜}"
+        homework = Homework.objects.create(tenant=self.tenant, session=session, title=title)
         assignment = HomeworkAssignment.objects.create(
             tenant=self.tenant, session=session, homework=homework, enrollment=enrollments[0],
         )
@@ -106,13 +107,13 @@ class SendMessagePreflightViewTests(MessagingOperationsBase):
         self.assertTrue(preview.data["can_send"], preview.data)
         details = preview.data["video_makeup_homework_preview"]
         self.assertEqual(details["recipients"], [{
-            "student_id": students[0].pk, "homework_titles": ["워크북 15쪽"],
+            "student_id": students[0].pk, "homework_titles": [title],
         }])
         self.assertEqual(details["excluded"], [
             {"student_id": students[1].pk, "reason": "no_homework"},
             {"student_id": students[2].pk, "reason": "not_video"},
         ])
-        self.assertIn("워크북 15쪽", preview.data["preview_recipients"][0]["full_message_body"])
+        self.assertIn(title, preview.data["preview_recipients"][0]["full_message_body"])
         self.assertNotIn("미제출", preview.data["preview_recipients"][0]["full_message_body"])
         data["video_makeup_homework_fingerprint"] = details["fingerprint"]
 
@@ -139,6 +140,9 @@ class SendMessagePreflightViewTests(MessagingOperationsBase):
         self.assertEqual(accepted.status_code, 200, accepted.data)
         self.assertEqual(accepted.data["accepted_count"], 1)
         self.assertEqual(ScheduledNotification.objects.filter(tenant=self.tenant).count(), 1)
+        outbox = ScheduledNotification.objects.get(tenant=self.tenant)
+        replacements = outbox.payload["alimtalk_replacements"]
+        self.assertIn(title, {item["key"]: item["value"] for item in replacements}["선생님메모"])
         HomeworkAssignment.objects.filter(homework=homework).delete()
         replay = SendMessageView.as_view()(self._request("post", "/send/", data))
         self.assertEqual(replay.status_code, 200, replay.data)

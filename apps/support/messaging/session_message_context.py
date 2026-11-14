@@ -81,7 +81,7 @@ def resolve_session_message_data(*, tenant, data):
     result["alimtalk_extra_vars"] = {**(result.get("alimtalk_extra_vars") or {}), **values}
     for context in (result.get("alimtalk_extra_vars_per_student") or {}).values():
         context.update(values)
-        if isinstance(context.get("_body_subst"), str):
+        if not result.get("video_makeup_homework") and isinstance(context.get("_body_subst"), str):
             text = context["_body_subst"]
             for name, value in values.items():
                 text = text.replace(f"#{{{name}}}", value)
