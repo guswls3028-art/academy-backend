@@ -75,6 +75,34 @@ class ClinicTimeRangePolicyAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(valid.data["participants"][0]["booking_start_time"], "10:00:00")
         self.assertEqual(valid.data["participants"][0]["booking_end_time"], "11:30:00")
 
+    def test_time_range_rejects_subminute_offsets_without_creating_bookings(self):
+        for start, end in (
+            ("10:00:01", "11:00:01"),
+            ("10:00:00.000001", "11:00"),
+            ("10:00", "13:00:59"),
+        ):
+            with self.subTest(start=start, end=end):
+                response = self._book(self.students[0], start=start, end=end)
+                self.assertEqual(response.status_code, 400, response.data)
+                self.assertFalse(SessionParticipant.objects.filter(session=self.session).exists())
+
+        self.client.force_authenticate(user=self.admin)
+        staff_response = self.client.post(
+            "/api/v1/clinic/participants/",
+            {
+                "session": self.session.id,
+                "student": self.students[0].id,
+                "booking_start_time": "10:00",
+                "booking_end_time": "13:00:00.000001",
+            },
+            format="json", **self._headers(),
+        )
+        self.assertEqual(staff_response.status_code, 400, staff_response.data)
+        self.assertFalse(SessionParticipant.objects.filter(session=self.session).exists())
+
+        valid = self._book(self.students[0], start="10:00:00", end="13:00:00")
+        self.assertEqual(valid.status_code, 201, valid.data)
+
     def test_time_range_capacity_is_concurrent_per_interval_not_whole_window(self):
         first = self._book(self.students[0], start="10:00", end="11:00")
         second = self._book(self.students[1], start="11:00", end="12:00")

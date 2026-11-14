@@ -1130,13 +1130,18 @@ def _validated_booking_range(
             {"booking_time": "예약 시간은 클리닉 운영 시간 안에서 시작이 종료보다 빨라야 합니다."}
         )
     interval = int(session.booking_interval_minutes)
-    start_offset = int((booking_start - session_start).total_seconds() // 60)
-    end_offset = int((booking_end - session_start).total_seconds() // 60)
-    if interval not in (30, 60) or start_offset % interval or end_offset % interval:
+    start_offset = booking_start - session_start
+    end_offset = booking_end - session_start
+    interval_delta = datetime.timedelta(minutes=interval)
+    if (
+        interval not in (30, 60)
+        or start_offset % interval_delta
+        or end_offset % interval_delta
+    ):
         raise ValidationError(
             {"booking_time": f"예약 시간은 세션 시작 기준 {interval}분 간격에 맞춰 주세요."}
         )
-    if end_offset - start_offset > int(session.booking_max_stay_minutes):
+    if end_offset - start_offset > datetime.timedelta(minutes=int(session.booking_max_stay_minutes)):
         raise ValidationError(
             {"booking_time": f"한 번에 최대 {session.booking_max_stay_minutes}분까지 예약할 수 있습니다."}
         )

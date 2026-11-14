@@ -258,6 +258,7 @@ class ParticipantViewSet(
             .filter(tenant=tenant)
             .filter(student__deleted_at__isnull=True)  # 삭제된 학생 제외
             .select_related(
+                "tenant",
                 "student",
                 "student__parent__user",
                 "session",
