@@ -239,6 +239,11 @@ def is_ocr_available() -> bool:
     import os
     from pathlib import Path
 
+    # The Tools image uses local layout detection. Shared worker credentials
+    # must not route it into a Vision SDK that is only present in AI images.
+    if os.environ.get("WORKER_TYPE", "").strip().lower() == "tools":
+        return False
+
     creds_json = (os.getenv("GOOGLE_CREDENTIALS_JSON") or "").strip()
     if creds_json:
         try:

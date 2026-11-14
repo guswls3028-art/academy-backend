@@ -42,6 +42,14 @@ class VisualBlock:
     y1: float
 
 
+def _display_text_block(text: str, bbox, rotation_matrix) -> TextBlock:
+    if rotation_matrix is not None:
+        import fitz
+
+        bbox = fitz.Rect(bbox) * rotation_matrix
+    return TextBlock(text, *bbox)
+
+
 def has_vertical_center_rule(image_data: bytes) -> bool:
     """Return whether a raster page contains a long rule near its center."""
 
@@ -136,12 +144,13 @@ class PdfDocument:
         return rect.width, rect.height
 
     def extract_text_blocks(self, page_index: int) -> List[TextBlock]:
-        """Extract text blocks with positions from a single PDF page."""
+        """Return text positions in the same orientation as the rendered page."""
         if page_index < 0 or page_index >= len(self._doc):
             raise IndexError(
                 f"Page index {page_index} out of range (0-{len(self._doc) - 1})"
             )
         page = self._doc[page_index]
+        rotation = page.rotation_matrix if page.rotation else None
         raw_blocks = page.get_text("blocks")
 
         result: List[TextBlock] = []
@@ -149,35 +158,24 @@ class PdfDocument:
             if block[6] == 0:  # text block (0=text, 1=image)
                 text = block[4].strip()
                 if text:
-                    result.append(TextBlock(
-                        text=text,
-                        x0=block[0],
-                        y0=block[1],
-                        x1=block[2],
-                        y1=block[3],
-                    ))
+                    result.append(_display_text_block(text, block[:4], rotation))
         return result
 
     def extract_text_words(self, page_index: int) -> List[TextBlock]:
-        """Extract individual text words with positions from a single PDF page."""
+        """Return individual word positions in the rendered page orientation."""
         if page_index < 0 or page_index >= len(self._doc):
             raise IndexError(
                 f"Page index {page_index} out of range (0-{len(self._doc) - 1})"
             )
         page = self._doc[page_index]
+        rotation = page.rotation_matrix if page.rotation else None
         raw_words = page.get_text("words")
 
         result: List[TextBlock] = []
         for word in raw_words:
             text = str(word[4]).strip()
             if text:
-                result.append(TextBlock(
-                    text=text,
-                    x0=word[0],
-                    y0=word[1],
-                    x1=word[2],
-                    y1=word[3],
-                ))
+                result.append(_display_text_block(text, word[:4], rotation))
         return result
 
     def render_page(self, page_index: int, dpi: int = 200) -> Image.Image:

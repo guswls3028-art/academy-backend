@@ -9,10 +9,12 @@ from __future__ import annotations
 import io
 import logging
 import os
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, List, Optional
+from typing import Any, Callable, Iterable, Iterator, List, Optional
 
 from PIL import Image as PILImage
+from PIL import ImageDraw as PILImageDraw
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,7 @@ class _PdfQuestionPlan:
     workbook_doc: bool = False
     allow_image_segmentation: bool = True
     fallback_page_indices: List[int] = field(default_factory=list)
+    scan_page_indices: List[int] = field(default_factory=list)
 
 
 class GeneratePptUseCase:
@@ -161,7 +164,7 @@ class GeneratePptFromPdfUseCase:
                 contrast=float(image_settings.get("contrast", 1.0)),
             )
 
-        with PdfDocument(pdf_path) as doc:
+        with PdfDocument(pdf_path) as doc, ExitStack() as scan_scope:
             page_count = doc.page_count()
             if on_progress:
                 on_progress(0, "문항 구조 분석")
@@ -169,6 +172,13 @@ class GeneratePptFromPdfUseCase:
             use_whole_page = question_plan.use_whole_page
             fallback_pages = set(question_plan.fallback_page_indices)
             segmented_question_mode = False
+            mixed_scan_pages = {}
+            if question_plan.scan_page_indices:
+                if on_progress:
+                    on_progress(0, "스캔 문항 영역 분석")
+                mixed_scan_pages = scan_scope.enter_context(
+                    _load_pdf_segmentation(pdf_path, page_count, question_plan.scan_page_indices)
+                )
 
             def add_whole_page_slide(page_idx: int) -> None:
                 page_img = doc.render_page(page_idx, dpi=200)
@@ -209,6 +219,18 @@ class GeneratePptFromPdfUseCase:
                         on_progress(pct, f"페이지 {page_idx + 1}/{page_count}")
 
                     if use_whole_page or page_idx in fallback_pages:
+                        scan_page = mixed_scan_pages.get(page_idx)
+                        if scan_page is not None:
+                            crops = _prepare_scan_crops(
+                                scan_page,
+                                reflow=ppt_config.fit_mode == "contain",
+                                require_split=True,
+                            )
+                            if crops:
+                                for img_bytes in crops:
+                                    composer.add_slide(_apply_user_settings(img_bytes))
+                                fallback_pages.discard(page_idx)
+                                continue
                         # Keep an unresolved page without discarding valid question crops elsewhere.
                         add_whole_page_slide(page_idx)
                         continue
@@ -548,7 +570,199 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
         workbook_doc=workbook_doc,
         allow_image_segmentation=False,
         fallback_page_indices=fallback_page_indices,
+        scan_page_indices=[
+            idx for idx in fallback_page_indices if not phase1[idx]["text_blocks"]
+        ],
     )
+
+
+@contextmanager
+def _load_pdf_segmentation(
+    pdf_path: str,
+    expected_page_count: Optional[int],
+    page_indices: Optional[List[int]] = None,
+) -> Iterator[dict[int, dict[str, Any]]]:
+    """Validate page identity before consuming any detector output."""
+    from academy.adapters.ai.detection.segment_dispatcher import (
+        cleanup_pdf_seg_tmp_dirs,
+        segment_questions_multipage,
+    )
+
+    result = None
+    pages_by_index = {}
+    try:
+        try:
+            result = segment_questions_multipage(pdf_path)
+            pages = list(result.get("pages") or [])
+            if expected_page_count is not None and (
+                len(pages) != expected_page_count
+                or [page.get("page_index") for page in pages] != list(range(expected_page_count))
+            ):
+                logger.warning(
+                    "PPT_PDF_SEGMENTATION_PAGE_MISMATCH expected=%d actual=%d",
+                    expected_page_count, len(pages),
+                )
+            else:
+                indices = range(len(pages)) if page_indices is None else page_indices
+                pages_by_index = {
+                    idx: pages[idx] for idx in indices
+                    if pages[idx].get("image_path") and os.path.isfile(pages[idx]["image_path"])
+                }
+                if len(pages_by_index) != len(indices):
+                    logger.warning("PPT_PDF_SEGMENTATION_IMAGE_MISSING pages=%d", len(indices))
+                    if page_indices is None:
+                        pages_by_index = {}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("PPT_PDF_IMAGE_SEGMENTATION_FALLBACK_ERROR path=%s error=%s", pdf_path, exc)
+        yield pages_by_index
+    finally:
+        if result is not None:
+            cleanup_pdf_seg_tmp_dirs(list(result.get("tmp_dirs") or []))
+
+
+def _prepare_scan_crops(
+    page: dict[str, Any],
+    *,
+    reflow: bool = False,
+    require_split: bool = False,
+) -> list[bytes]:
+    """Prepare an entire scanned page before appending any of its crops."""
+    from academy.domain.tools.image_preprocessor import (
+        compact_internal_whitespace,
+        preprocess_for_export,
+        reflow_tall_question,
+        trim_bottom_whitespace,
+    )
+
+    if page.get("is_skip_page") or page.get("has_embedded_text"):
+        return []
+
+    try:
+        boxes = list(page.get("boxes") or [])
+        # In mixed documents a lone region can be an unnumbered figure whose
+        # number was inferred from neighboring pages.
+        if not boxes or (require_split and len(boxes) < 2):
+            return []
+        with PILImage.open(page["image_path"]) as source, source.convert("RGB") as image:
+            width, height = image.size
+            bounds_list = []
+            for x, y, w, h in boxes:
+                bounds = (
+                    max(0, int(x)), max(0, int(y)),
+                    min(width, int(x + w)), min(height, int(y + h)),
+                )
+                if bounds[2] - bounds[0] < 10 or bounds[3] - bounds[1] < 10:
+                    return []
+                if bounds == (0, 0, width, height):
+                    return []
+                bounds_list.append(bounds)
+            # An apparent question number may be inferred from neighboring
+            # pages, so it cannot prove that a crop contains the original ink.
+            if (
+                not _scan_covers_page_body(image, bounds_list)
+                or _scan_cuts_through_column_seam(image, bounds_list)
+                or _scan_cuts_through_rows(image, bounds_list)
+            ):
+                return []
+            crops = []
+            for bounds in bounds_list:
+                with image.crop(bounds) as crop:
+                    export = preprocess_for_export(
+                        compact_internal_whitespace(trim_bottom_whitespace(crop, padding_px=12))
+                    )
+                    if reflow:
+                        export = reflow_tall_question(export)
+                    crops.append(_image_to_bytes(export))
+            return crops
+    except (OSError, TypeError, ValueError):
+        logger.warning("PPT_PDF_SCAN_CROP_FAILED page=%s", page.get("page_index"))
+        return []
+
+
+def _scan_covers_page_body(
+    image: PILImage.Image,
+    bounds_list: list[tuple[int, int, int, int]],
+) -> bool:
+    """Reject crops that collectively omit substantial body content."""
+    width, height = image.size
+    top, bottom = round(height * 0.09), round(height * 0.92)
+    # Ignore the running header and folio when measuring printed body ink.
+    with image.crop((0, top, width, bottom)).convert("L") as body:
+        total_ink = sum(body.histogram()[:150])
+        if not total_ink:
+            return False
+        with PILImage.new("L", body.size) as covered:
+            draw = PILImageDraw.Draw(covered)
+            for x0, y0, x1, y1 in bounds_list:
+                box_top, box_bottom = max(top, y0), min(bottom, y1)
+                if box_top < box_bottom:
+                    draw.rectangle((x0, box_top - top, x1 - 1, box_bottom - top - 1), fill=255)
+            covered_ink = sum(body.histogram(mask=covered)[:150])
+            if covered_ink * 100 < total_ink * 85:
+                return False
+            # A single omitted answer line can account for very little total
+            # ink. Check for a sustained band of uncovered print separately.
+            body.paste(255, (0, 0, width, body.height), covered)
+            with body.point([255] * 150 + [0] * 106) as ink, ink.resize(
+                (1, body.height), PILImage.Resampling.BOX,
+            ) as rows:
+                run = 0
+                min_band = max(3, round(height * 0.003))
+                for density in rows.tobytes():
+                    run = run + 1 if density >= 5 else 0
+                    if run >= min_band:
+                        return False
+    return True
+
+
+def _scan_cuts_through_column_seam(
+    image: PILImage.Image,
+    bounds_list: list[tuple[int, int, int, int]],
+) -> bool:
+    """Reject a layout split where adjacent crops divide printed ink."""
+    probe = max(2, round(image.width * 0.004))
+    for x0, y0, x1, y1 in bounds_list:
+        if not image.width // 3 <= x1 <= 2 * image.width // 3:
+            continue
+        for next_x0, next_y0, next_x1, next_y1 in bounds_list:
+            top, bottom = max(y0, next_y0), min(y1, next_y1)
+            if abs(next_x0 - x1) > probe or bottom - top < 10:
+                continue
+            if x1 - x0 < probe or next_x1 - x1 < probe:
+                continue
+            with image.crop((x1 - probe, top, x1 + probe, bottom)) as strip:
+                # A centered divider may be inked, but a true gutter is clear
+                # immediately to one or both sides of that divider.
+                ink = strip.convert("L").point(lambda pixel: 255 if pixel < 150 else 0)
+                left = ink.crop((0, 0, probe, ink.height)).resize((1, ink.height), PILImage.Resampling.BOX)
+                right = ink.crop((probe, 0, 2 * probe, ink.height)).resize((1, ink.height), PILImage.Resampling.BOX)
+                if sum(a >= 64 and b >= 64 for a, b in zip(left.tobytes(), right.tobytes())) >= max(
+                    4, round(0.012 * (bottom - top)),
+                ):
+                    return True
+    return False
+
+
+def _scan_cuts_through_rows(
+    image: PILImage.Image,
+    bounds_list: list[tuple[int, int, int, int]],
+) -> bool:
+    """Detect ink crossing a crop's top or bottom, even when the page is covered."""
+    probe = max(2, round(image.height * 0.002))
+    ink_threshold = [255] * 150 + [0] * 106
+    for x0, y0, x1, y1 in bounds_list:
+        width = x1 - x0
+        min_ink_columns = max(5, round(width * 0.012))
+        for edge in (y0, y1):
+            if edge < probe or edge + probe > image.height:
+                continue
+            with image.crop((x0, edge - probe, x1, edge + probe)) as strip:
+                ink = strip.convert("L").point(ink_threshold)
+                above = ink.crop((0, 0, width, probe)).resize((width, 1), PILImage.Resampling.BOX)
+                below = ink.crop((0, probe, width, 2 * probe)).resize((width, 1), PILImage.Resampling.BOX)
+                if sum(a >= 64 and b >= 64 for a, b in zip(above.tobytes(), below.tobytes())) >= min_ink_columns:
+                    return True
+    return False
 
 
 def _add_segmented_pdf_slides_to_composer(
@@ -561,71 +775,12 @@ def _add_segmented_pdf_slides_to_composer(
     fallback_pages: Optional[set[int]] = None,
 ) -> int:
     """Use the Matchup image segmentation path when a PDF has no text layer."""
-    from academy.adapters.ai.detection.segment_dispatcher import (
-        cleanup_pdf_seg_tmp_dirs,
-        segment_questions_multipage,
-    )
-    from academy.domain.tools.image_preprocessor import (
-        compact_internal_whitespace,
-        preprocess_for_export,
-        trim_bottom_whitespace,
-    )
-
-    result: dict[str, Any] | None = None
     initial_slide_count = composer.slide_count
     try:
-        result = segment_questions_multipage(pdf_path)
-        pages = list(result.get("pages") or [])
-        total_pages = len(pages)
-        if expected_page_count is not None and (
-            total_pages != expected_page_count
-            or [page.get("page_index") for page in pages] != list(range(expected_page_count))
-        ):
-            logger.warning("PPT_PDF_SEGMENTATION_PAGE_MISMATCH expected=%d actual=%d", expected_page_count, total_pages)
-            return 0
-        if any(not page.get("image_path") or not os.path.isfile(page["image_path"]) for page in pages):
-            logger.warning("PPT_PDF_SEGMENTATION_IMAGE_MISSING pages=%d", total_pages)
-            return 0
-        added = 0
-        for page_idx, page in enumerate(pages):
-            boxes = list(page.get("boxes") or [])
-            if on_progress:
-                pct = int(page_idx / max(total_pages, 1) * 100)
-                on_progress(pct, f"문항 슬라이드 {page_idx + 1}/{total_pages}")
-            with PILImage.open(page["image_path"]) as source_img:
-                page_img = source_img.convert("RGB")
-            try:
-                img_w, img_h = page_img.size
-                slides_before_page = composer.slide_count
-                for box in boxes:
-                    x, y, w, h = box
-                    px0 = max(0, int(x))
-                    py0 = max(0, int(y))
-                    px1 = min(img_w, int(x + w))
-                    py1 = min(img_h, int(y + h))
-                    if px1 - px0 < 10 or py1 - py0 < 10:
-                        continue
-                    crop = page_img.crop((px0, py0, px1, py1))
-                    crop = compact_internal_whitespace(
-                        trim_bottom_whitespace(crop, padding_px=12)
-                    )
-                    export_img = preprocess_for_export(crop)
-                    img_bytes = _image_to_bytes(export_img)
-                    img_bytes = apply_user_settings(img_bytes)
-                    composer.add_slide(img_bytes)
-                    added += 1
-                    del crop, export_img
-                if composer.slide_count == slides_before_page:
-                    page_img.thumbnail((2400, 2400), resample=PILImage.LANCZOS)
-                    export_img = preprocess_for_export(page_img)
-                    composer.add_slide(apply_user_settings(_image_to_bytes(export_img, fmt="JPEG")))
-                    if fallback_pages is not None:
-                        fallback_pages.add(page_idx)
-                    added += 1
-                    del export_img
-            finally:
-                page_img.close()
-        return added
+        with _load_pdf_segmentation(pdf_path, expected_page_count) as pages:
+            return _append_segmented_pdf_pages(
+                pages, composer, apply_user_settings, on_progress, fallback_pages,
+            )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "PPT_PDF_IMAGE_SEGMENTATION_FALLBACK_ERROR path=%s error=%s",
@@ -635,9 +790,35 @@ def _add_segmented_pdf_slides_to_composer(
         if composer.slide_count != initial_slide_count:
             raise
         return 0
-    finally:
-        if result is not None:
-            cleanup_pdf_seg_tmp_dirs(list(result.get("tmp_dirs") or []))
+
+
+def _append_segmented_pdf_pages(
+    pages: dict[int, dict[str, Any]],
+    composer: Any,
+    apply_user_settings: Callable[[bytes], bytes],
+    on_progress: Optional[Callable[[int, str], None]],
+    fallback_pages: Optional[set[int]],
+) -> int:
+    from academy.domain.tools.image_preprocessor import preprocess_for_export
+
+    total_pages = len(pages)
+    added = 0
+    for page_idx, page in pages.items():
+        if on_progress:
+            pct = int(page_idx / max(total_pages, 1) * 100)
+            on_progress(pct, f"문항 슬라이드 {page_idx + 1}/{total_pages}")
+        crops = _prepare_scan_crops(page)
+        if not crops:
+            with PILImage.open(page["image_path"]) as source_img, source_img.convert("RGB") as page_img:
+                page_img.thumbnail((2400, 2400), resample=PILImage.LANCZOS)
+                export_img = preprocess_for_export(page_img)
+                crops = [_image_to_bytes(export_img, fmt="JPEG")]
+            if fallback_pages is not None:
+                fallback_pages.add(page_idx)
+        for img_bytes in crops:
+            composer.add_slide(apply_user_settings(img_bytes))
+        added += len(crops)
+    return added
 
 
 def _image_to_bytes(img, fmt: str = "PNG") -> bytes:

@@ -7,11 +7,90 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image, ImageChops
 
 from academy.adapters.ai.detection import segment_dispatcher as dispatcher
 from academy.adapters.tools import pymupdf_renderer
 from academy.application.use_cases.ai.pipelines.matchup_pipeline import _boxes_to_questions
 from academy.domain.tools import paper_type, question_splitter
+
+
+@pytest.mark.parametrize("rotation", [90, 180, 270])
+def test_pdf_rotation_uses_rendered_coordinates_for_question_crops(tmp_path, rotation):
+    import fitz
+
+    source = tmp_path / "rotated-exam.pdf"
+    width, height = 595, 842
+    media_width, media_height = (height, width) if rotation in (90, 270) else (width, height)
+    starts = [85, 260, 435]
+    with fitz.open() as pdf:
+        page = pdf.new_page(width=media_width, height=media_height)
+        page.set_rotation(rotation)
+        for number, y in enumerate(starts, 1):
+            for x, row, text in (
+                (35, y, f"{number}. Find the value of x in this equation."),
+                (50, y + 34, "Given that x + 3 = 8, choose the correct option."),
+                (50, y + 62, "A. 3    B. 5    C. 8    D. 11"),
+            ):
+                position = fitz.Point(x, row) * page.derotation_matrix
+                page.insert_text(position, text, fontsize=12, rotate=rotation)
+        pdf.save(source)
+
+    with pymupdf_renderer.PdfDocument(str(source)) as pdf:
+        assert pdf.page_dimensions(0) == (width, height)
+        starts_by_word = {
+            word.text: word for word in pdf.extract_text_words(0)
+            if word.text in {"1.", "2.", "3."}
+        }
+        assert [starts_by_word[f"{n}."].x0 for n in range(1, 4)] == pytest.approx([35] * 3)
+
+    dispatcher.begin_pdf_seg_scope()
+    try:
+        result = dispatcher.segment_questions_multipage(str(source), source_type="school_exam_pdf")
+        page = result["pages"][0]
+        assert page["numbers"] == [1, 2, 3]
+        with Image.open(page["image_path"]) as rendered:
+            scale = rendered.height / height
+            previous_bottom = 0
+            for row, (x, y, w, h) in zip(starts, page["boxes"]):
+                assert previous_bottom <= y < round(row * scale) < y + h
+                assert round((row + 62) * scale) < y + h
+                with rendered.crop((x, y, x + w, y + h)) as crop:
+                    assert ImageChops.invert(crop).getbbox() is not None
+                previous_bottom = y + h
+    finally:
+        dispatcher.cleanup_registered_pdf_seg_tmp_dirs()
+
+
+def test_school_exam_with_marginal_labels_keeps_bottom_answer_choices(tmp_path):
+    import fitz
+
+    source = tmp_path / "school-exam-with-figure-labels.pdf"
+    choice_y = 820
+    with fitz.open() as pdf:
+        for page_index in range(5):
+            page = pdf.new_page(width=595, height=842)
+            for column, x in enumerate((34, 309)):
+                number = page_index * 2 + column + 1
+                page.insert_text((x, 60), f"{number}. Which statement is correct?", fontsize=12)
+                page.insert_text((x + 15, 100), "Use the information in the figure.", fontsize=11)
+                page.draw_rect(fitz.Rect(x + 14, 140, x + 208, 250), color=(0, 0, 0), width=1)
+                page.insert_text((x + 10, 350), f"{number}.", fontsize=12)
+                page.insert_text((x + 15, 760), "A. Experiment One   B. Experiment Two", fontsize=10)
+                page.insert_text((x + 2, choice_y), "(1) A    (2) B    (3) Both    (4) Neither", fontsize=10)
+        pdf.save(source)
+
+    dispatcher.begin_pdf_seg_scope()
+    try:
+        result = dispatcher.segment_questions_multipage(str(source), source_type="school_exam_pdf")
+        assert [page["numbers"] for page in result["pages"]] == [[n, n + 1] for n in range(1, 10, 2)]
+        for page in result["pages"]:
+            with Image.open(page["image_path"]) as rendered:
+                scale = rendered.height / 842
+                for x, y, w, h in page["boxes"]:
+                    assert y < round(60 * scale) < round(choice_y * scale) < y + h
+    finally:
+        dispatcher.cleanup_registered_pdf_seg_tmp_dirs()
 
 
 @pytest.mark.parametrize(

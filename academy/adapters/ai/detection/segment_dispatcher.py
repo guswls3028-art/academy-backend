@@ -1347,7 +1347,7 @@ def _pdf_to_images(
                         for b in raw_blocks
                     ]
                     page_text = "\n".join(b.text for b in tbs)[:8000] if tbs else ""
-                    pw, ph = doc.page_dimensions(i)
+                    pw, ph = physical_width, physical_height
                     if _looks_like_sparse_problem_text_overlay(
                         raw_blocks,
                         page_height=ph,
@@ -1442,14 +1442,16 @@ def _pdf_to_images(
     # 둘 중 하나라도 True → workbook 강제 → 2차 split(prefer_marginal=True).
     pages_with_marginal = 0
     eligible_pages = 0  # text 있고 non-question 아닌 페이지
+    # Printed figure labels can resemble workbook margin anchors. Use the
+    # caller's explicit school-exam intent instead of these layout heuristics.
+    allow_workbook_detection = source_type != "school_exam_pdf"
     for p in phase1:
         if not p["has_text"] or p["is_skip_page"] or not p["text_blocks"]:
             continue
         eligible_pages += 1
-        m_count = count_marginal_anchor_candidates(
+        if allow_workbook_detection and count_marginal_anchor_candidates(
             p["text_blocks"], p["page_width"], p["page_height"],
-        )
-        if m_count >= 1:
+        ) >= 1:
             pages_with_marginal += 1
     signal_a = False
     if eligible_pages >= 5:
@@ -1474,13 +1476,9 @@ def _pdf_to_images(
             first_pass_regions.append([])
 
     # 신호 B — per-page-restart 패턴 (page-level dedup 안 한 anchor list 기반).
-    pages_per_number_b: dict = {}
-    for page_regions in first_pass_regions:
-        for n in {r.number for r in page_regions}:
-            pages_per_number_b[n] = pages_per_number_b.get(n, 0) + 1
     pages_with_low_b = sum(
         1 for page_regions in first_pass_regions
-        if {r.number for r in page_regions} & {1, 2, 3}
+        if allow_workbook_detection and any(r.number in (1, 2, 3) for r in page_regions)
     )
     eligible_with_anchors = sum(1 for r in first_pass_regions if r)
     signal_b = False
@@ -1489,6 +1487,8 @@ def _pdf_to_images(
         ratio_low = pages_with_low_b / eligible_with_anchors
         signal_b = ratio_low >= 0.3 and pages_with_low_b >= 3
 
+    # Explicit school exams can contain marginal numbers inside figure labels.
+    # Those labels must not select workbook anchors or workbook-only ink trimming.
     workbook_doc = signal_a or signal_b
     logger.info(
         "PDF_WORKBOOK_DETECT | eligible=%d/%d | marginal_pages=%d | "
