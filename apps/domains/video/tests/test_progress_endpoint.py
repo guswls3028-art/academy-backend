@@ -13,10 +13,23 @@ from apps.core.models.tenant_membership import TenantMembership
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.video.models import Video
 from apps.domains.video.serializers import VideoSerializer
+from apps.domains.video.services.ops_events import emit_progress_layer_metrics
 from apps.domains.video.views.progress_views import VideoProgressView
 
 
 User = get_user_model()
+
+
+class VideoProgressObservabilityTests(TestCase):
+    @patch("academy.adapters.monitoring.cloudwatch_metrics.put_video_metric_data")
+    def test_progress_counter_does_not_wait_for_cloudwatch(self, publish):
+        with self.assertLogs("apps.domains.video.services.ops_events", level="INFO") as captured:
+            emit_progress_layer_metrics(progress_requests=1, redis_miss=1)
+
+        record = captured.records[0]
+        self.assertEqual(record.event, "video_encoding_progress_poll")
+        self.assertEqual((record.progress_requests, record.redis_miss, record.db_hit), (1, 1, 0))
+        publish.assert_not_called()
 
 
 class VideoProgressEndpointTests(TestCase):

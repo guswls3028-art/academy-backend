@@ -81,27 +81,15 @@ def emit_progress_layer_metrics(
     redis_miss: int = 0,
     db_hit: int = 0,
 ) -> None:
-    """Progress endpoint 관측: ProgressRequests, RedisMiss, ProgressEndpointDBHit (0 기대)."""
+    """Log progress counters without a network call in the HTTP request."""
     if progress_requests == 0 and redis_miss == 0:
         return
-    from academy.adapters.monitoring.cloudwatch_metrics import put_video_metric_data
-
-    metrics = []
-    if progress_requests:
-        metrics.append({
-            "MetricName": "ProgressRequests",
-            "Value": progress_requests,
-            "Unit": "Count",
-        })
-    if redis_miss:
-        metrics.append({
-            "MetricName": "RedisMiss",
-            "Value": redis_miss,
-            "Unit": "Count",
-        })
-    metrics.append({
-        "MetricName": "ProgressEndpointDBHit",
-        "Value": db_hit,
-        "Unit": "Count",
-    })
-    put_video_metric_data(metrics)
+    logger.info(
+        "video encoding progress poll",
+        extra={
+            "event": "video_encoding_progress_poll",
+            "progress_requests": progress_requests,
+            "redis_miss": redis_miss,
+            "db_hit": db_hit,
+        },
+    )

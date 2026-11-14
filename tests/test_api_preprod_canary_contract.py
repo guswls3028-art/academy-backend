@@ -135,6 +135,9 @@ def test_canary_proves_signed_cdn_master_variant_and_segment_chain() -> None:
     assert "variant_status" in canary
     assert "segment_status" in canary
     assert '"Range"] = "bytes=0-1023"' in canary
+    assert '"Origin": MEDIA_ORIGIN' in canary
+    assert "assert_media_cors(response.headers" in canary
+    assert "segment_status != 206" in canary
     assert "CDN_PLAYBACK_CHAIN_PASS" in canary
     assert 'if ($proof -notmatch "CDN_PLAYBACK_CHAIN_PASS")' in canary
 
