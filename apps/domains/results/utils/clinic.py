@@ -56,12 +56,13 @@ def classify_source_links(
         for link in links_list
         if getattr(link, "session_id", None)
     }
-    exam_ids = {
-        exam_id
+    exam_link_pairs = {
+        (exam_id, int(getattr(link, "enrollment_id", 0) or 0))
         for link in links_list
         for exam_id in [_link_source_id(link, "exam")]
         if exam_id is not None
     }
+    exam_ids = {exam_id for exam_id, _ in exam_link_pairs}
     homework_ids = {
         homework_id
         for link in links_list
@@ -103,25 +104,26 @@ def classify_source_links(
         }
         if hide_pending_omr:
             Result = apps.get_model("results", "Result")
-            candidate_results = list(
-                Result.objects.filter(
-                    target_type="exam",
-                    target_id__in=exam_ids,
-                    enrollment_id__in={
-                        int(getattr(link, "enrollment_id", 0) or 0)
-                        for link in links_list
-                    },
-                    enrollment__tenant=tenant,
-                )
+            candidate_results = Result.objects.filter(
+                target_type="exam",
+                target_id__in=exam_ids,
+                enrollment_id__in={enrollment_id for _, enrollment_id in exam_link_pairs},
+                enrollment__tenant=tenant,
             )
             from apps.domains.results.services.omr_subjective_completion import (
                 pending_omr_result_ids,
             )
 
-            pending_result_ids = pending_omr_result_ids(candidate_results)
+            # Independent ID filters can also match other exams taken by these students.
+            # The readiness calculation only needs results that back a link in this batch.
+            linked_results = [
+                result for result in candidate_results.iterator(chunk_size=2000)
+                if (result.target_id, result.enrollment_id) in exam_link_pairs
+            ]
+            pending_result_ids = pending_omr_result_ids(linked_results)
             pending_omr_pairs = {
                 (int(result.target_id), int(result.enrollment_id))
-                for result in candidate_results
+                for result in linked_results
                 if int(result.id) in pending_result_ids
             }
 
