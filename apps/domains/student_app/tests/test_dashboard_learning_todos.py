@@ -88,7 +88,7 @@ class DashboardLearningTodoTests(TestCase):
         def lecture_scope(title, student, *, status="ACTIVE"):
             lecture = _create_lecture(self.tenant, title)
             create_enrollment_fixture(tenant=self.tenant, student=student, lecture=lecture, status=status)
-            return node_model.objects.create(tenant=self.tenant, lecture=lecture, level="COURSE")
+            return node_model.objects.get(tenant=self.tenant, lecture=lecture, level="COURSE")
 
         def post(title, *nodes, tenant=None, kind="notice", status="published"):
             row = post_model.objects.create(
@@ -102,10 +102,8 @@ class DashboardLearningTodoTests(TestCase):
         first_scope = lecture_scope("First course", self.student)
         second_scope = lecture_scope("Second course", sibling)
         inactive_scope = lecture_scope("Ended enrollment", self.student, status="DROPPED")
-        session_scope = node_model.objects.create(
-            tenant=self.tenant, lecture=first_scope.lecture,
-            session=_create_session(first_scope.lecture, session_date=self.now.date()), level="SESSION",
-        )
+        session = _create_session(first_scope.lecture, session_date=self.now.date())
+        session_scope = node_model.objects.get(tenant=self.tenant, session=session, level="SESSION")
         old_global = [post(f"Older global {index}") for index in range(5)]
         first_notice = post("First child", first_scope, session_scope)
         second_notice = post("Second child", second_scope)
