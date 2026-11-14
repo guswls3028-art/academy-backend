@@ -99,6 +99,72 @@ def test_ppt_pdf_plan_uses_whole_page_for_scan_pdf_without_text():
     assert plan.regions_per_page == [[], []]
 
 
+@pytest.mark.parametrize("scan_layout", ["dual", "wide", "unavailable"])
+def test_mixed_pdf_exports_native_and_raster_questions_in_page_order(
+    tmp_path, monkeypatch, scan_layout,
+):
+    import fitz
+    from PIL import Image
+    from pptx import Presentation
+
+    from academy.adapters.ai.detection import segment_dispatcher
+    from academy.application.use_cases.tools.generate_ppt import GeneratePptFromPdfUseCase
+
+    source = tmp_path / "mixed-native-and-scanned.pdf"
+    detect_scan_questions = scan_layout == "dual"
+    with fitz.open() as scan_source, fitz.open() as mixed:
+        scan = scan_source.new_page(width=595, height=842)
+        for number, x in ((2, 36), (3, 332)):
+            if scan_layout == "wide":
+                y = 100 if number == 2 else 500
+                scan.insert_text((46, y), f"{number}. Which of the following statements is true?", fontsize=20)
+                for i in range(3):
+                    scan.insert_text(
+                        (64, y + 25 + i * 21),
+                        f"({i + 1}) Read the statement and consider the evidence from the experiment.",
+                        fontsize=16,
+                    )
+            else:
+                scan.insert_text((x, 150), f"{number}. Which statement is true?", fontsize=15)
+                for i, option in enumerate(("First answer choice", "Second answer choice", "Third answer choice")):
+                    scan.insert_text((x + 12, 175 + i * 24), f"({i + 1}) {option}", fontsize=13)
+            # Distinct visual markers verify that output images are in reading order.
+            marker = (0.8, 0.2, 0.2) if number == 2 else (0.2, 0.2, 0.8)
+            scan.draw_rect(fitz.Rect(x + 200, 160, x + 214, 190), color=marker, fill=marker)
+        for number in (1, None, 4):
+            page = mixed.new_page(width=595, height=842)
+            if number is None:
+                scan_png = scan.get_pixmap(matrix=fitz.Matrix(2, 2)).tobytes("png")
+                page.insert_image(page.rect, stream=scan_png)
+            else:
+                page.insert_text((42, 85), f"{number}. 다음 중 옳은 것은?", fontname="korea")
+                page.insert_text((42, 110), "① 보기 하나 ② 보기 둘 ③ 보기 셋 ④ 보기 넷", fontname="korea")
+        mixed.save(source)
+    monkeypatch.setattr(segment_dispatcher, "is_ocr_available", lambda: False)
+    if scan_layout == "unavailable":
+        monkeypatch.setattr(segment_dispatcher, "segment_questions_multipage", lambda _path: {"pages": []})
+
+    result = GeneratePptFromPdfUseCase().execute(str(source))
+    assert result.mode == ("question" if detect_scan_questions else "page")
+    presentation = Presentation(io.BytesIO(result.pptx_bytes))
+    assert len(presentation.slides) == result.slide_count == (4 if detect_scan_questions else 3)
+    heights = []
+    markers = []
+    for slide in presentation.slides:
+        with Image.open(io.BytesIO(slide.shapes[0].image.blob)) as image:
+            heights.append(image.height)
+            markers.append({
+                "red" if r - b > 60 else "blue"
+                for r, g, b in image.convert("RGB").getdata()
+                if abs(r - b) > 60 and max(r, b) - g > 60
+            })
+    if detect_scan_questions:
+        assert markers == [set(), {"red"}, {"blue"}, set()]
+    else:
+        assert heights[0] < heights[1] > heights[2]
+        assert markers == [set(), {"red", "blue"}, set()]
+
+
 def test_ppt_pdf_plan_preserves_image_only_pages_between_anchored_text_pages(monkeypatch):
     from academy.domain.tools import paper_type, question_splitter
 
@@ -124,6 +190,7 @@ def test_ppt_pdf_plan_preserves_image_only_pages_between_anchored_text_pages(mon
     assert plan.allow_image_segmentation is False
     assert [bool(regions) for regions in plan.regions_per_page] == [True, True, False, False, False, False, True]
     assert plan.fallback_page_indices == [2, 3, 4, 5]
+    assert plan.scan_page_indices == [2, 3, 4, 5]
 
 
 @pytest.mark.parametrize("anchor_index", [0, 3])
