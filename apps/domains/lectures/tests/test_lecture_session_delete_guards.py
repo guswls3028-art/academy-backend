@@ -202,6 +202,17 @@ class LectureSessionDeleteGuardTests(TestCase):
         response = self._delete_lecture(lecture)
         self.assertEqual(response.status_code, 204, response.data)
         self.assertFalse(AttendanceQrPoint.objects.filter(pk=point.pk).exists())
+        for path, method, body in (
+            (f"/api/v1/lectures/attendance-qr/{point.pk}/", self.factory.patch, {"active": True}),
+            (f"/api/v1/lectures/attendance-qr/{point.pk}/rotate/", self.factory.post, {}),
+        ):
+            with self.subTest(path=path):
+                request = method(path, body, format="json")
+                request.tenant = self.tenant
+                force_authenticate(request, user=self.admin)
+                route = resolve(request.path)
+                response = route.func(request, **route.kwargs)
+                self.assertEqual(response.status_code, 404, response.data)
 
     def test_lecture_delete_preserves_schedule_history_until_explicit_session_delete(self):
         lecture = self._create_lecture("schedule-history")

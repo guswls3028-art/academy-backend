@@ -75,6 +75,16 @@ def first_session_delete_blocker(sessions: Any) -> str | None:
     return None
 
 
+def lock_lecture_attendance_qr_points_for_delete(lecture: Any) -> None:
+    from apps.domains.attendance.models import AttendanceQrPoint
+
+    # Lock inactive points too: an existing sign can be reactivated.
+    list(
+        AttendanceQrPoint.objects.filter(lecture=lecture).order_by("pk")
+        .select_for_update().values_list("pk", flat=True)
+    )
+
+
 def first_lecture_delete_blocker(lecture: Any) -> str | None:
     from apps.domains.attendance.models import AttendanceQrPoint
     from apps.domains.community.models import PostMapping

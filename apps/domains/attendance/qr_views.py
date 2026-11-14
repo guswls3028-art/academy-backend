@@ -1,6 +1,7 @@
 import uuid
 
 from django.db import transaction
+from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
 from rest_framework import mixins, serializers, viewsets
 from rest_framework.decorators import action
@@ -67,9 +68,14 @@ class AttendanceQrPointViewSet(
     def perform_create(self, serializer):
         serializer.save(tenant=self.request.tenant)
 
+    def _lock_point(self):
+        return get_object_or_404(
+            self.get_queryset().select_for_update(), pk=self.get_object().pk,
+        )
+
     @transaction.atomic
     def update(self, request, *args, **kwargs):
-        point = self.get_queryset().select_for_update().get(pk=self.get_object().pk)
+        point = self._lock_point()
         serializer = self.get_serializer(point, data=request.data, partial=kwargs.pop("partial", False))
         serializer.is_valid(raise_exception=True)
         serializer.save()
@@ -79,7 +85,7 @@ class AttendanceQrPointViewSet(
     @action(detail=True, methods=["post"])
     def rotate(self, request, pk=None):
         with transaction.atomic():
-            point = self.get_queryset().select_for_update().get(pk=self.get_object().pk)
+            point = self._lock_point()
             point.token = uuid.uuid4()
             point.save(update_fields=["token"])
         return Response(self.get_serializer(point).data)

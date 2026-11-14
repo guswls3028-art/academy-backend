@@ -25,6 +25,7 @@ from apps.support.lectures.view_dependencies import (
     active_enrollment_total_by_lecture_ref,
     first_lecture_delete_blocker,
     first_session_delete_blocker,
+    lock_lecture_attendance_qr_points_for_delete,
     list_unassigned_active_enrollments,
 )
 from .models import Lecture, Session, Section, SectionAssignment
@@ -290,6 +291,7 @@ class LectureViewSet(ModelViewSet):
                 lecture = get_object_or_404(
                     Lecture.objects.select_for_update(), pk=reference.pk, tenant=request.tenant,
                 )
+                lock_lecture_attendance_qr_points_for_delete(lecture)
                 # Schedule changes lock the affected sessions before writing history.
                 list(
                     Session.objects.filter(lecture=lecture).order_by("pk")
