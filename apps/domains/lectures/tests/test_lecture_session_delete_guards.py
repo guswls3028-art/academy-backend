@@ -9,7 +9,6 @@ from apps.domains.attendance.models import Attendance, AttendanceQrPoint
 from apps.domains.attendance.qr_views import AttendanceQrPointViewSet
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import Exam, ExamLecturePolicy
-from apps.domains.fees.models import FeeTemplate
 from apps.domains.homework_results.models import Homework
 from apps.domains.lectures.models import Lecture, Session, SessionScheduleChange
 from apps.domains.lectures.views import LectureViewSet, SessionViewSet
@@ -155,9 +154,9 @@ class LectureSessionDeleteGuardTests(TestCase):
 
     def test_lecture_delete_preserves_fee_template_scope(self):
         lecture = self._create_lecture("fee-template")
-        template = FeeTemplate.objects.create(
-            tenant=self.tenant, lecture=lecture, name="Lecture tuition",
-            fee_type=FeeTemplate.FeeType.TUITION, amount=50000, is_active=False,
+        template = lecture.fee_templates.create(
+            tenant=self.tenant, name="Lecture tuition",
+            fee_type="TUITION", amount=50000, is_active=False,
         )
 
         response = self._delete_lecture(lecture)
