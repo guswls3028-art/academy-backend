@@ -362,6 +362,7 @@ def _fill_equation_slots(template: str, equations: list[str], slot_count: int) -
 
 
 _ANSWER_SECTION_RE = re.compile(r"^\s*정답\s*(?:및|과)?\s*(?:해설|풀이)\s*$")
+_HWPX_ANSWER_SECTION_RE = re.compile(r"^\s*(?:유형\s*출제\s*)?정답\s*(?:및|과)?\s*(?:해설|풀이)\s*$")
 
 
 def _content_from_hwp_records(
@@ -992,6 +993,9 @@ def _render_paragraph_flow(paragraph: str, *, font, max_width: int) -> Image.Ima
                 equation = resized
             atoms.append((equation, False))
             continue
+        # The bundled font lacks typographic space glyphs. Use supported
+        # spaces at render time while keeping source text and equation scripts.
+        part = part.replace("\u2003", "    ").replace("\u2002", "  ")
         logical_lines = part.splitlines() or [part]
         for line_index, logical_line in enumerate(logical_lines):
             wrapped = _wrap_review_text(
@@ -1305,7 +1309,7 @@ def _hwpx_body_content(element: ElementTree.Element) -> tuple[tuple[str, ...], t
 
     def walk(node: ElementTree.Element) -> None:
         name = node.tag.rsplit("}", 1)[-1]
-        if name == "endNote":
+        if name == "endNote" and node is not element:
             return
         if name == "t":
             parts.append(str(node.text or ""))
@@ -1336,6 +1340,19 @@ def _hwpx_body_content(element: ElementTree.Element) -> tuple[tuple[str, ...], t
         if name == "lineBreak":
             parts.append("\n")
             return
+        if name == "tr":
+            cells = [child for child in node if child.tag.rsplit("}", 1)[-1] == "tc"]
+            if len(cells) > 1:
+                values = []
+                for cell in cells:
+                    start = len(parts)
+                    walk(cell)
+                    values.append(" / ".join(line.strip() for line in "".join(parts[start:]).splitlines() if line.strip()))
+                    del parts[start:]
+                row = " | ".join(values).strip(" |")
+                if row:
+                    parts.extend(("\n", row, "\n"))
+                return
         for child in node:
             walk(child)
             parts.append(str(child.tail or ""))
@@ -1345,6 +1362,7 @@ def _hwpx_body_content(element: ElementTree.Element) -> tuple[tuple[str, ...], t
     walk(element)
     value = "".join(parts)
     value = re.sub(r"[ \u00a0]+", " ", value)
+    value = re.sub(r"(?m)^([①-⑳])[ \t]*\n(?=[^①-⑳\n])", r"\1 ", value)
     value = re.sub(r" *\n *", "\n", value)
     paragraphs = tuple(line.strip() for line in value.splitlines() if line.strip())
     return paragraphs, tuple(image_refs)
@@ -1355,26 +1373,25 @@ def _collect_hwpx_question_contents(
 ) -> list[_HwpEndnoteContent]:
     questions: list[_HwpEndnoteContent] = []
     current_number: int | None = None
-    current_paragraphs: list[str] = []
-    current_image_refs: list[str] = []
+    current_blocks: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
 
     def finish_question() -> None:
-        nonlocal current_number, current_paragraphs, current_image_refs
-        if current_number is not None and (current_paragraphs or current_image_refs):
+        nonlocal current_number, current_blocks
+        if current_number is not None and current_blocks:
+            paragraphs = tuple(line for body, _ in current_blocks for line in body)
+            image_refs = tuple(dict.fromkeys(ref for _, refs in current_blocks for ref in refs))
             questions.append(
                 _HwpEndnoteContent(
                     number=current_number,
-                    paragraphs=tuple(current_paragraphs),
+                    paragraphs=paragraphs,
                     equation_count=sum(
-                        paragraph.count(_EQUATION_MARKER_START)
-                        for paragraph in current_paragraphs
+                        paragraph.count(_EQUATION_MARKER_START) for paragraph in paragraphs
                     ),
-                    picture_refs=tuple(current_image_refs),
+                    picture_refs=image_refs,
                 )
             )
         current_number = None
-        current_paragraphs = []
-        current_image_refs = []
+        current_blocks = []
 
     for root in roots:
         paragraphs = [
@@ -1388,19 +1405,37 @@ def _collect_hwpx_question_contents(
             ]
             body, image_refs = _hwpx_body_content(paragraph)
             if endnotes:
+                leading = []
+                # Some authoring templates attach the numbered note to the
+                # follow-up prompt after the question's graph/table rather
+                # than to the first paragraph. A verified five-choice block
+                # gives the previous question an explicit end boundary.
+                if current_blocks and body and body[0].startswith(("이에 대한 ", "이를 바탕으로 ")):
+                    markers = ""
+                    for index, (lines, _) in enumerate(current_blocks):
+                        markers = (markers + "".join(re.findall(r"[①-⑤]", "".join(lines))))[-5:]
+                        if markers == "①②③④⑤" and index < len(current_blocks) - 1:
+                            trailing = current_blocks[index + 1:]
+                            first_text = next((line for text, _ in trailing for line in text), "")
+                            if first_text.startswith(("그림", "표", "다음", "자료")):
+                                leading = trailing
+                                current_blocks = current_blocks[:index + 1]
+                            break
                 finish_question()
                 raw_number = str(endnotes[0].attrib.get("number") or "")
                 if raw_number.isdigit() and 0 < int(raw_number) <= 999:
                     current_number = int(raw_number)
+                    current_blocks = leading
             if current_number is None:
                 continue
-            if any(_ANSWER_SECTION_RE.match(value) for value in body):
+            answer_heading = next((i for i, value in enumerate(body) if _HWPX_ANSWER_SECTION_RE.fullmatch(value)), None)
+            if answer_heading is not None:
+                if answer_heading:
+                    current_blocks.append((body[:answer_heading], ()))
                 finish_question()
                 return questions
-            current_paragraphs.extend(body)
-            for image_ref in image_refs:
-                if image_ref not in current_image_refs:
-                    current_image_refs.append(image_ref)
+            if body or image_refs:
+                current_blocks.append((body, image_refs))
     finish_question()
     return questions
 
@@ -1408,6 +1443,7 @@ def _collect_hwpx_question_contents(
 def extract_hwpx_endnotes(
     path: str,
     *,
+    include_paired_reconstruction: bool = False,
     include_problem_reconstruction: bool = False,
 ) -> HwpEndnoteExtraction:
     """Return HWPX endnote visuals without rewriting the source document."""
@@ -1434,6 +1470,7 @@ def extract_hwpx_endnotes(
         )
         control_numbers: list[int] = []
         visuals: list[HwpEndnoteVisual] = []
+        paired_visuals: list[HwpEndnoteVisual] = []
         seen_numbers: set[int] = set()
         total_picture_count = 0
         roots: list[ElementTree.Element] = []
@@ -1455,8 +1492,9 @@ def extract_hwpx_endnotes(
                     continue
                 if number not in control_numbers:
                     control_numbers.append(number)
-                if number in seen_numbers or len(visuals) >= _MAX_NOTES:
+                if number in seen_numbers or len(seen_numbers) >= _MAX_NOTES:
                     continue
+                seen_numbers.add(number)
 
                 image_refs = []
                 for element in endnote.iter():
@@ -1475,27 +1513,42 @@ def extract_hwpx_endnotes(
                     image = _load_picture(archive.read(member_name))
                     if image is not None:
                         images.append(image)
-                if not images:
-                    continue
                 try:
-                    png_bytes, width, height = _stack_as_png(images)
+                    original = None
+                    if images:
+                        png_bytes, width, height = _stack_as_png(images)
+                        original = HwpEndnoteVisual(number, png_bytes, width, height, len(images))
+                        visuals.append(original)
+                    if include_paired_reconstruction and len(images) == len(image_refs):
+                        paragraphs, _ = _hwpx_body_content(endnote)
+                        if paragraphs:
+                            # Multi-cell equations/tables need their native layout. Flattening
+                            # cells into consecutive paragraphs can change an explanation.
+                            if any(
+                                sum(node.tag.rsplit("}", 1)[-1] == "tc" for node in table.iter()) > 1
+                                for table in endnote.iter() if table.tag.rsplit("}", 1)[-1] == "tbl"
+                            ):
+                                continue
+                            content = _HwpEndnoteContent(
+                                number=number, paragraphs=paragraphs,
+                                equation_count=sum(p.count(_EQUATION_MARKER_START) for p in paragraphs),
+                            )
+                            png_bytes, width, height = _render_source_content(
+                                content=content, images=images,
+                                label=f"미주 {number}번 · 선생님 원문(문자·수식·삽화 재현)",
+                            )
+                            paired_visuals.append(HwpEndnoteVisual(
+                                number, png_bytes, width, height, len(images), "source_content_reconstruction",
+                            ))
+                        elif original is not None:
+                            paired_visuals.append(original)
                 finally:
                     for image in images:
                         image.close()
-                visuals.append(
-                    HwpEndnoteVisual(
-                        number=number,
-                        png_bytes=png_bytes,
-                        width=width,
-                        height=height,
-                        picture_count=len(images),
-                    )
-                )
-                total_picture_count += len(images)
-                seen_numbers.add(number)
+                    total_picture_count += len(images)
 
         problem_visuals: list[HwpEndnoteVisual] = []
-        if include_problem_reconstruction:
+        if include_problem_reconstruction and len(control_numbers) <= _MAX_NOTES:
             for content in _collect_hwpx_question_contents(roots):
                 images = []
                 for picture_ref in content.picture_refs:
@@ -1508,6 +1561,8 @@ def extract_hwpx_endnotes(
                     if image is not None:
                         images.append(image)
                 try:
+                    if len(images) != len(content.picture_refs):
+                        continue
                     png_bytes, width, height = _render_problem_content(
                         content=content,
                         images=images,
@@ -1529,7 +1584,8 @@ def extract_hwpx_endnotes(
     return HwpEndnoteExtraction(
         control_numbers=tuple(control_numbers),
         visuals=tuple(sorted(visuals, key=lambda item: item.number)),
-        paired_visuals=tuple(sorted(visuals, key=lambda item: item.number)),
+        paired_visuals=tuple(sorted(paired_visuals if include_paired_reconstruction else visuals,
+                                    key=lambda item: item.number)),
         problem_visuals=tuple(sorted(problem_visuals, key=lambda item: item.number)),
     )
 
@@ -1551,6 +1607,7 @@ def extract_document_endnotes(
     if suffix == ".hwpx":
         return extract_hwpx_endnotes(
             path,
+            include_paired_reconstruction=include_paired_reconstruction,
             include_problem_reconstruction=include_problem_reconstruction,
         )
     raise ValueError("HWP 또는 HWPX 파일이 필요합니다.")
