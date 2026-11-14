@@ -1097,6 +1097,20 @@ def _validated_booking_range(
             {"booking_time": "예약 시작과 종료 시간을 함께 입력해 주세요."}
         )
     if (
+        (session.start_time.second or session.start_time.microsecond)
+        and not (booking_start_time.second or booking_start_time.microsecond)
+        and not (booking_end_time.second or booking_end_time.microsecond)
+    ):
+        # Availability labels are HH:MM. Restore the stored session precision
+        # before interpreting dates so an offered first slot cannot roll forward
+        # a day merely because its label omitted the session's seconds.
+        booking_start_time = booking_start_time.replace(
+            second=session.start_time.second, microsecond=session.start_time.microsecond,
+        )
+        booking_end_time = booking_end_time.replace(
+            second=session.start_time.second, microsecond=session.start_time.microsecond,
+        )
+    if (
         booking_start_time > datetime.time.min
         and booking_end_time == datetime.time.min
         and not settings.CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED

@@ -118,6 +118,31 @@ class ClinicTimeRangePolicyAPITest(APITestCase, ClinicAPITestMixin):
                 self.assertEqual(participant.booking_start_time, datetime.time.fromisoformat(start))
                 self.assertEqual(participant.booking_end_time, datetime.time.fromisoformat(end))
 
+    def test_legacy_availability_labels_book_exact_stored_grid_and_reload(self):
+        self.session.start_time = datetime.time(9, 0, 30, 123)
+        self.session.max_participants = 1
+        self.session.save(update_fields=["start_time", "max_participants"])
+        self.client.force_authenticate(user=self.students[0].user)
+        availability = self.client.get(
+            f"/api/v1/clinic/sessions/{self.session.id}/availability/", **self._headers(),
+        )
+        self.assertEqual(availability.status_code, 200, availability.data)
+        first, second = availability.data["slots"][:2]
+        booked = self._book(self.students[0], first["start_time"], first["end_time"])
+        self.assertEqual(booked.status_code, 201, booked.data)
+        participant = SessionParticipant.objects.get(id=booked.data["participants"][0]["id"])
+        self.assertEqual(participant.booking_start_time, datetime.time(9, 0, 30, 123))
+        self.assertEqual(participant.booking_end_time, datetime.time(9, 30, 30, 123))
+        reloaded = self.client.get(
+            f"/api/v1/clinic/participants/{participant.id}/", **self._headers(),
+        )
+        self.assertEqual(reloaded.status_code, 200, reloaded.data)
+        self.assertEqual(reloaded.data["booking_start_time"], "09:00:30.000123")
+        conflicting = self._book(self.students[1], first["start_time"], first["end_time"])
+        self.assertEqual(conflicting.status_code, 409, conflicting.data)
+        adjacent = self._book(self.students[1], second["start_time"], second["end_time"])
+        self.assertEqual(adjacent.status_code, 201, adjacent.data)
+
     def test_time_range_capacity_is_concurrent_per_interval_not_whole_window(self):
         first = self._book(self.students[0], start="10:00", end="11:00")
         second = self._book(self.students[1], start="11:00", end="12:00")
