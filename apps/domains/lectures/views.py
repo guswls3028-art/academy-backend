@@ -290,9 +290,11 @@ class LectureViewSet(ModelViewSet):
                 lecture = get_object_or_404(
                     Lecture.objects.select_for_update(), pk=reference.pk, tenant=request.tenant,
                 )
-                # Schedule writes lock the sessions; hold them through preflight and deletion.
-                list(Session.objects.filter(lecture=lecture).order_by("pk")
-                     .select_for_update().values_list("pk", flat=True))
+                # Schedule changes lock the affected sessions before writing history.
+                list(
+                    Session.objects.filter(lecture=lecture).order_by("pk")
+                    .select_for_update().values_list("pk", flat=True)
+                )
                 blocker = first_lecture_delete_blocker(lecture)
                 if blocker:
                     raise PermissionDenied(
@@ -680,24 +682,20 @@ class SessionViewSet(ModelViewSet):
             serializer.save()
 
     def destroy(self, request, *args, **kwargs):
-        reference = self.get_object()
+        session = self.get_object()
+        blocker = first_session_delete_blocker(
+            Session.objects.filter(pk=session.pk)
+        )
+        if blocker:
+            raise PermissionDenied(
+                _COMMUNITY_SCOPE_DELETE_MESSAGE if blocker == "community posts" else
+                f"This session has {blocker} and cannot be deleted."
+            )
         try:
-            with transaction.atomic():
-                session = get_object_or_404(
-                    Session.objects.select_for_update(of=("self",)),
-                    pk=reference.pk, lecture__tenant=request.tenant,
-                )
-                blocker = first_session_delete_blocker(Session.objects.filter(pk=session.pk))
-                if blocker:
-                    raise PermissionDenied(
-                        _COMMUNITY_SCOPE_DELETE_MESSAGE if blocker == "community posts" else
-                        f"This session has {blocker} and cannot be deleted."
-                    )
-                self.perform_destroy(session)
+            return super().destroy(request, *args, **kwargs)
         except RestrictedError as exc:
             # A reference may appear after the explanatory preflight query.
             raise PermissionDenied(_COMMUNITY_SCOPE_DELETE_MESSAGE) from exc
-        return Response(status=http_status.HTTP_204_NO_CONTENT)
 
 
 class SectionViewSet(ModelViewSet):

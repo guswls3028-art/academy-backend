@@ -37,7 +37,6 @@ def first_session_delete_blocker(sessions: Any) -> str | None:
     from apps.domains.exams.models import Exam
     from apps.domains.homework.models import HomeworkAssignment, HomeworkEnrollment
     from apps.domains.homework_results.models import Homework, HomeworkScore
-    from apps.domains.lectures.models import SessionScheduleChange
     from apps.domains.progress.models import (
         ClinicLink,
         LectureProgress,
@@ -52,7 +51,6 @@ def first_session_delete_blocker(sessions: Any) -> str | None:
         ("community posts", PostMapping.objects.filter(node__session_id__in=session_ids)),
         ("session enrollments", SessionEnrollment.objects.filter(session_id__in=session_ids)),
         ("attendance records", Attendance.objects.filter(session_id__in=session_ids)),
-        ("schedule change history", SessionScheduleChange.objects.filter(session_id__in=session_ids)),
         ("exams", Exam.objects.filter(sessions__in=sessions)),
         ("homework enrollments", HomeworkEnrollment.objects.filter(session_id__in=session_ids)),
         ("homework assignments", HomeworkAssignment.objects.filter(session_id__in=session_ids)),
@@ -80,7 +78,7 @@ def first_session_delete_blocker(sessions: Any) -> str | None:
 def first_lecture_delete_blocker(lecture: Any) -> str | None:
     from apps.domains.attendance.models import AttendanceQrPoint
     from apps.domains.community.models import PostMapping
-    from apps.domains.lectures.models import SectionAssignment, Session
+    from apps.domains.lectures.models import SectionAssignment, Session, SessionScheduleChange
 
     if PostMapping.objects.filter(node__lecture=lecture).exists():
         return "community posts"
@@ -92,10 +90,12 @@ def first_lecture_delete_blocker(lecture: Any) -> str | None:
         return "clinic sessions"
     if lecture.fee_templates.exists():
         return "fee templates"
-    if AttendanceQrPoint.objects.filter(lecture=lecture).exists():
-        return "attendance QR points"
     if lecture.exam_policies.exists():
         return "exam policies"
+    if AttendanceQrPoint.objects.filter(lecture=lecture, active=True).exists():
+        return "active attendance QR points"
+    if SessionScheduleChange.objects.filter(session__lecture=lecture).exists():
+        return "sessions with schedule change history"
     if SectionAssignment.objects.filter(
         Q(class_section__lecture=lecture) | Q(clinic_section__lecture=lecture)
     ).exists():

@@ -6,6 +6,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.attendance.models import Attendance, AttendanceQrPoint
+from apps.domains.attendance.qr_views import AttendanceQrPointViewSet
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import Exam, ExamLecturePolicy
 from apps.domains.fees.models import FeeTemplate
@@ -165,21 +166,6 @@ class LectureSessionDeleteGuardTests(TestCase):
         template.refresh_from_db()
         self.assertEqual(template.lecture_id, lecture.pk)
 
-    def test_lecture_delete_preserves_configured_attendance_qr_point(self):
-        lecture = self._create_lecture("attendance-qr")
-        point = AttendanceQrPoint.objects.create(
-            tenant=self.tenant, lecture=lecture, label="Lecture entrance",
-            kind="class", active=False,
-        )
-        original_token = point.token
-
-        response = self._delete_lecture(lecture)
-
-        self.assertEqual(response.status_code, 403, response.data)
-        point.refresh_from_db()
-        self.assertEqual(point.lecture_id, lecture.pk)
-        self.assertEqual(point.token, original_token)
-
     def test_lecture_delete_preserves_saved_exam_policy_without_session_link(self):
         lecture = self._create_lecture("exam-policy")
         exam = Exam.objects.create(
@@ -195,25 +181,46 @@ class LectureSessionDeleteGuardTests(TestCase):
         self.assertEqual(policy.lecture_id, lecture.pk)
         self.assertEqual(policy.pass_score, 75)
 
-    def test_session_and_lecture_delete_preserve_schedule_change_history(self):
-        for target in ("session", "lecture"):
-            with self.subTest(target=target):
-                lecture = self._create_lecture(f"schedule-history-{target}")
-                session = self._create_session(lecture, "schedule-history")
-                change = SessionScheduleChange.objects.create(
-                    session=session, actor_id=self.admin.pk,
-                    before={"label": "Morning"}, after={},
-                )
+    def test_lecture_delete_requires_active_qr_point_to_be_deactivated(self):
+        lecture = self._create_lecture("attendance-qr")
+        point = AttendanceQrPoint.objects.create(
+            tenant=self.tenant, lecture=lecture, label="Lecture entrance", kind="class",
+        )
+        response = self._delete_lecture(lecture)
+        self.assertEqual(response.status_code, 403, response.data)
+        point.refresh_from_db()
+        self.assertTrue(point.active)
 
-                response = (
-                    self._delete_session(session) if target == "session"
-                    else self._delete_lecture(lecture)
-                )
+        request = self.factory.patch(
+            f"/api/v1/lectures/attendance-qr/{point.pk}/", {"active": False}, format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = AttendanceQrPointViewSet.as_view({"patch": "partial_update"})(
+            request, pk=point.pk,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data["active"])
+        response = self._delete_lecture(lecture)
+        self.assertEqual(response.status_code, 204, response.data)
+        self.assertFalse(AttendanceQrPoint.objects.filter(pk=point.pk).exists())
 
-                self.assertEqual(response.status_code, 403, response.data)
-                change.refresh_from_db()
-                self.assertEqual(change.session_id, session.pk)
-                self.assertEqual(change.before, {"label": "Morning"})
+    def test_lecture_delete_preserves_schedule_history_until_explicit_session_delete(self):
+        lecture = self._create_lecture("schedule-history")
+        session = self._create_session(lecture, "schedule-history")
+        change = SessionScheduleChange.objects.create(
+            session=session, actor_id=self.admin.pk, before={"label": "Morning"}, after={},
+        )
+
+        response = self._delete_lecture(lecture)
+        self.assertEqual(response.status_code, 403, response.data)
+        change.refresh_from_db()
+        self.assertEqual(change.before, {"label": "Morning"})
+        response = self._delete_session(session)
+        self.assertEqual(response.status_code, 204, response.data)
+        self.assertFalse(SessionScheduleChange.objects.filter(pk=change.pk).exists())
+        response = self._delete_lecture(lecture)
+        self.assertEqual(response.status_code, 204, response.data)
 
     def test_session_with_operational_records_cannot_be_deleted(self):
         blockers = (
