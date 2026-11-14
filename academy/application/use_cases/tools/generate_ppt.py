@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Iterator, List, Optional
 
 from PIL import Image as PILImage
+from PIL import ImageDraw as PILImageDraw
 
 logger = logging.getLogger(__name__)
 
@@ -648,7 +649,10 @@ def _prepare_mixed_scan_crops(page: dict[str, Any], fit_mode: str) -> list[bytes
                 bounds_list.append(bounds)
             numbers = page.get("numbers") or []
             if len(numbers) != len(bounds_list) or any(number is None for number in numbers):
-                if _scan_cuts_through_column_seam(image, bounds_list):
+                if (
+                    not _scan_covers_page_body(image, bounds_list)
+                    or _scan_cuts_through_column_seam(image, bounds_list)
+                ):
                     return []
             crops = []
             for bounds in bounds_list:
@@ -663,6 +667,28 @@ def _prepare_mixed_scan_crops(page: dict[str, Any], fit_mode: str) -> list[bytes
     except (OSError, TypeError, ValueError):
         logger.warning("PPT_PDF_MIXED_SCAN_CROP_FAILED page=%s", page.get("page_index"))
         return []
+
+
+def _scan_covers_page_body(
+    image: PILImage.Image,
+    bounds_list: list[tuple[int, int, int, int]],
+) -> bool:
+    """Reject numberless crops that collectively omit substantial body content."""
+    width, height = image.size
+    top, bottom = round(height * 0.09), round(height * 0.92)
+    # Ignore the running header and folio when measuring printed body ink.
+    with image.crop((0, top, width, bottom)).convert("L") as body:
+        total_ink = sum(body.histogram()[:150])
+        if not total_ink:
+            return False
+        with PILImage.new("L", body.size) as covered:
+            draw = PILImageDraw.Draw(covered)
+            for x0, y0, x1, y1 in bounds_list:
+                box_top, box_bottom = max(top, y0), min(bottom, y1)
+                if box_top < box_bottom:
+                    draw.rectangle((x0, box_top - top, x1 - 1, box_bottom - top - 1), fill=255)
+            covered_ink = sum(body.histogram(mask=covered)[:150])
+    return covered_ink * 100 >= total_ink * 85
 
 
 def _scan_cuts_through_column_seam(

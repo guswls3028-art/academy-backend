@@ -165,6 +165,27 @@ def test_mixed_pdf_exports_native_and_raster_questions_in_page_order(
         assert markers == [set(), {"red", "blue"}, set()]
 
 
+def test_numberless_mixed_scan_keeps_full_page_when_boxes_omit_body_ink(tmp_path):
+    from PIL import Image, ImageDraw
+
+    from academy.application.use_cases.tools.generate_ppt import _prepare_mixed_scan_crops
+
+    source = tmp_path / "uncovered-right-side.png"
+    with Image.new("RGB", (600, 800), "white") as image:
+        ink = ImageDraw.Draw(image)
+        ink.rectangle((35, 100, 145, 140), fill="black")
+        ink.rectangle((35, 430, 145, 470), fill="black")
+        ink.rectangle((212, 150, 480, 365), outline="black", width=8)
+        image.save(source)
+    page = {
+        "image_path": str(source),
+        "boxes": [(25, 90, 140, 70), (25, 420, 140, 70)],
+        "numbers": [None, None],
+    }
+
+    assert _prepare_mixed_scan_crops(page, "contain") == []
+
+
 def test_ppt_pdf_plan_preserves_image_only_pages_between_anchored_text_pages(monkeypatch):
     from academy.domain.tools import paper_type, question_splitter
 
