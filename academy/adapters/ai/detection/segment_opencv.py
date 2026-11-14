@@ -228,6 +228,62 @@ def segment_questions_opencv(image_path: str, *, apply_clahe: bool = False) -> L
     return boxes
 
 
+def segment_exam_raster_gutters(image_path: str) -> List[BBox]:
+    """Split a flat exam image only where broad gutters separate printed groups."""
+    gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if gray is None:
+        return []
+    height, width = gray.shape
+    if min(height, width) < 400:
+        return []
+    _, mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    ink = mask > 0
+
+    def runs(rows):
+        edges = np.diff(np.r_[False, rows, False].astype(np.int8))
+        return zip(np.flatnonzero(edges == 1).tolist(), np.flatnonzero(edges == -1).tolist())
+
+    # Short text rows can leave a wide blank area beside a single column.
+    # Require substantial printed content on both sides before accepting a seam.
+    x_start, x_end = round(width * 0.40), round(width * 0.60)
+    central = ink[:, x_start:x_end].sum(axis=0)
+    gutters = [
+        (left + x_start, right + x_start)
+        for left, right in runs(central == 0)
+        if right - left >= width * 0.025
+    ]
+    if not gutters:
+        return []
+    left, right = min(gutters, key=lambda pair: abs(sum(pair) - width))
+    left_ink, right_ink = int(ink[:, :left].sum()), int(ink[:, right:].sum())
+    if min(left_ink, right_ink) < 0.2 * max(left_ink, right_ink):
+        return []
+    seam = (left + right) // 2
+    columns = [(0, seam), (seam, width)]
+
+    boxes = []
+    for left, right in columns:
+        active = np.flatnonzero(ink[:, left:right].any(axis=1))
+        if not active.size:
+            return []
+        # Ordinary whitespace between the stem, figures and choices stays
+        # inside each group. This path demands a wide inter-question gap.
+        breaks = np.flatnonzero(np.diff(active) > height * 0.10) + 1
+        groups = np.split(active, breaks)
+        if len(groups) < 2:
+            return []
+        for group in groups:
+            top, bottom = int(group[0]), int(group[-1]) + 1
+            if bottom - top < height * 0.09:
+                return []
+            px = np.flatnonzero(ink[top:bottom, left:right].any(axis=0))
+            pad = max(4, round(height * 0.006))
+            x0, x1 = max(left, left + int(px[0]) - pad), min(right, left + int(px[-1]) + pad + 1)
+            y0, y1 = max(0, top - pad), min(height, bottom + pad)
+            boxes.append((x0, y0, x1 - x0, y1 - y0))
+    return boxes
+
+
 def segment_questions_scan_layout(
     image_path: str,
     *,

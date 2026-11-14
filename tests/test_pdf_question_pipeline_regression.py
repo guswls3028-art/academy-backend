@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
+
+import pytest
 
 from apps.shared.contracts.ai_job import AIJob
 from academy.application.use_cases.ai.pipelines.pdf_question_pipeline import (
@@ -23,6 +26,75 @@ def _page(page_index: int, number: int | None, bbox: tuple[int, int, int, int]):
         "has_embedded_text": True,
         "paper_type": "clean_pdf_dual",
     }
+
+
+@pytest.mark.parametrize("layout", ["two_columns", "single_column", "marked_divider"])
+def test_raster_exam_proposals_keep_stems_charts_and_choices_in_printed_order(tmp_path, monkeypatch, layout):
+    import fitz
+    from PIL import Image
+
+    from academy.adapters.ai.detection import segment_dispatcher
+    from academy.adapters.ai.detection.segment_opencv import segment_exam_raster_gutters
+
+    source = tmp_path / "exam.jpg"
+    columns = 1 if layout == "single_column" else 2
+    with fitz.open() as document:
+        page = document.new_page(width=595, height=842)
+        colors = [(0.9, 0.1, 0.1), (0.1, 0.1, 0.9), (0.1, 0.6, 0.1), (0.6, 0.1, 0.6)]
+        for col in range(columns):
+            for row in range(2):
+                index = col * 2 + row
+                x, y = (32, 320)[col], (115, 485)[row]
+                page.insert_text((x, y), f"{index + 1}. Compute the total.", fontsize=13)
+                page.insert_text((x, y + 34), "Compare the plotted values.", fontsize=11)
+                chart_width = 180 if columns == 2 else 410
+                page.draw_rect(
+                    fitz.Rect(x + 20, y + 55, x + 20 + chart_width, y + 94),
+                    color=colors[index], fill=colors[index],
+                )
+                page.insert_text((x, y + 123), "(1) 7  (2) 11  (3) 18  (4) 23", fontsize=12)
+        if layout == "marked_divider":
+            page.draw_line((235, 380), (355, 380), color=(0.5, 0.5, 0.5), width=3)
+        page.get_pixmap(matrix=fitz.Matrix(2, 2)).pil_save(source, format="JPEG", quality=85)
+    monkeypatch.setattr(segment_dispatcher, "is_ocr_available", lambda: False)
+    monkeypatch.setenv("QUESTION_SEGMENTATION_ENGINE", "opencv")
+    if layout != "two_columns":
+        assert segment_exam_raster_gutters(str(source)) == []
+        expected = segment_dispatcher.segment_questions_multipage(str(source))
+        actual = segment_dispatcher.segment_questions_multipage(str(source), prefer_exam_raster=True)
+        assert actual["pages"][0]["boxes"] == expected["pages"][0]["boxes"]
+        return
+    uploads = {}
+
+    def capture_upload(*, fileobj, key, content_type):
+        from io import BytesIO
+
+        assert content_type == "image/png"
+        uploads[key] = Image.open(BytesIO(fileobj.read()))
+
+    monkeypatch.setattr("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage", capture_upload)
+    result = run_pdf_question_pipeline(
+        job=AIJob.new(type="question_segmentation", payload={}), local_path=str(source),
+        payload={"exam_id": "31"}, tenant_id="7", record_progress=lambda *args, **kwargs: None,
+    )
+    payload = json.loads(json.dumps(result.result))
+    assert result.status == "DONE"
+    assert [question["number"] for question in payload["questions"]] == list(range(1, columns * 2 + 1))
+    for index, question in enumerate(payload["questions"]):
+        x, y, width, height = question["bbox"]
+        col, row = divmod(index, 2)
+        stem_x, stem_y = (64, 640)[col], (230, 970)[row]
+        assert x <= stem_x + 4 < x + width
+        assert y <= stem_y - 22 and y + height > stem_y + 246
+        if columns == 2:
+            if col == 0:
+                assert x + width < 600
+            else:
+                assert x > 600
+        with uploads[payload["question_image_keys"][str(question["number"])]] as crop:
+            sx, sy = stem_x + 100 - x, stem_y + 150 - y
+            actual = crop.getpixel((sx, sy))
+            assert actual == pytest.approx(tuple(255 * c for c in colors[index]), abs=12)
 
 
 def test_short_dated_academy_review_cover_is_filtered_after_segmentation():
