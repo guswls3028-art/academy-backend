@@ -493,6 +493,9 @@ def run_matchup_pipeline(
             "zero_problem_reason": "no_questions_after_post_filter",
         })
 
+    if source_type == "student_exam_photo":
+        _clip_student_photo_columns(questions_raw)
+
     # ── Skeleton INSERT — 신규 업로드 사용자에게 즉시 부분 결과 노출 ──
     # 백엔드 파이프라인이 끝(Step 5)에 일괄 INSERT하던 결함으로, 신규 업로드 doc은
     # 처음부터 끝까지 빈 화면이었음 (재분석은 이전 결과 노출). 세그멘테이션 직후
@@ -2847,6 +2850,18 @@ def _cap_padded_crop_to_next_question(
     return max(1.0, capped_bottom - y)
 
 
+def _clip_student_photo_columns(questions: List[Dict]) -> None:
+    """Use a confirmed printed divider to stop slight overlap between photo columns."""
+    from academy.adapters.ai.detection.photo_grounding import clip_photo_column_boxes
+
+    by_image: Dict[str, List[Dict]] = {}
+    for question in questions:
+        if question.get("bbox") and question.get("image_path"):
+            by_image.setdefault(question["image_path"], []).append(question)
+    for path, page_questions in by_image.items():
+        clip_photo_column_boxes(path, page_questions)
+
+
 def _upload_cropped_images(
     questions: List[Dict],
     tenant_id: str | None,
@@ -2903,8 +2918,9 @@ def _upload_cropped_images(
                 # 사용자 directive: '작게 잘라 손상 = 실패. 조금 크게 잘라 여백/출처 = 허용'.
                 # 추가 directive: '2분할 / 4분할 자료에서 다른 문항 침범 X'.
                 # ENV flag default off → T1 점진 → T2.
+                meta = q.get("meta_extra") or {}
                 if (os.environ.get("MATCHUP_OVER_CROP_PADDING", "0") == "1"
-                        and not (q.get("meta_extra") or {}).get("photo_ocr_grounded")):
+                        and not (meta.get("photo_ocr_grounded") or meta.get("photo_divider_clipped"))):
                     # 자가 검수 (2026-05-10 doc 615 num=1 보기 ㄴ 잘림) 결과 padding
                     # 부족 발견. pad_y_bottom h*7%→15% min 12→30px (~1줄) 강화.
                     # auto-merge 가 fragment 합치기 + padding 이 마지막 줄 안전망.
