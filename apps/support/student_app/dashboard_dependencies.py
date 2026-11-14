@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.db.models import F, Q
+from django.db.models import Exists, F, OuterRef, Q
 
 from apps.support.student_app.learning_todo_policy import ongoing_lecture_filter
 
 
 def notice_posts_for_dashboard(*, tenant: Any, student: Any | None):
-    from apps.domains.community.models import PostMapping, ScopeNode
+    from apps.domains.community.models import PostMapping
     from apps.domains.community.selectors import get_notice_posts_for_tenant
     from apps.domains.enrollment.selectors import active_enrollments_for_student
 
@@ -18,26 +18,16 @@ def notice_posts_for_dashboard(*, tenant: Any, student: Any | None):
     if not student:
         return notice_qs
 
-    enrolled_lecture_ids = set(
-        active_enrollments_for_student(
-            tenant=tenant,
-            student=student,
-        ).values_list("lecture_id", flat=True)
+    enrolled_lecture_ids = active_enrollments_for_student(
+        tenant=tenant,
+        student=student,
+    ).values("lecture_id")
+    mappings = PostMapping.objects.filter(post_id=OuterRef("pk"))
+    visible_mappings = mappings.filter(
+        node__tenant=tenant,
+        node__lecture_id__in=enrolled_lecture_ids,
     )
-    visible_node_ids = set(
-        ScopeNode.objects.filter(
-            tenant=tenant,
-            lecture_id__in=enrolled_lecture_ids,
-        ).values_list("id", flat=True)
-    )
-    scoped_post_ids = set(
-        PostMapping.objects.filter(
-            node_id__in=visible_node_ids,
-        ).values_list("post_id", flat=True)
-    )
-    return notice_qs.filter(
-        Q(mappings__isnull=True) | Q(id__in=scoped_post_ids)
-    ).distinct()
+    return notice_qs.filter(~Exists(mappings) | Exists(visible_mappings))
 
 
 def today_lecture_sessions_for_dashboard(*, tenant: Any, student: Any, today):
