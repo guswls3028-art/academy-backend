@@ -54,7 +54,8 @@ class ProgressPipelineService:
         """
         Entry point.
         - submission_id: compute progress based on that submission's target.
-        - exam_id      : compute progress for sessions that include that exam (all takers).
+        - exam_id      : compute progress for sessions that include that exam.
+          enrollment_id selects one taker; omitted means all takers.
         - enrollment_id + session_id : recompute a single (student × session) point.
           homework ClinicLink 해소나 admin manual resolve 처럼 exam_id 가 없는
           진입점에서 특정 학생 한 명의 세션 집계만 갱신할 때 사용.
@@ -64,7 +65,7 @@ class ProgressPipelineService:
             return
 
         if exam_id is not None:
-            self._apply_by_exam(exam_id=int(exam_id))
+            self._apply_by_exam(exam_id=int(exam_id), enrollment_id=enrollment_id)
             return
 
         if enrollment_id is not None and session_id is not None:
@@ -168,8 +169,8 @@ class ProgressPipelineService:
     # ---------------------------------------------------------
     # Internal: exam-based
     # ---------------------------------------------------------
-    def _apply_by_exam(self, *, exam_id: int) -> None:
-        progress_enrollments = list_exam_result_progress_enrollments(int(exam_id))
+    def _apply_by_exam(self, *, exam_id: int, enrollment_id: int | None = None) -> None:
+        progress_enrollments = list_exam_result_progress_enrollments(exam_id, enrollment_id=enrollment_id)
 
         if not progress_enrollments:
             logger.info("progress pipeline: no enrollments for exam_id=%s", exam_id)
