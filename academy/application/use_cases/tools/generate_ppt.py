@@ -647,13 +647,13 @@ def _prepare_mixed_scan_crops(page: dict[str, Any], fit_mode: str) -> list[bytes
                 if bounds == (0, 0, width, height):
                     return []
                 bounds_list.append(bounds)
-            numbers = page.get("numbers") or []
-            if len(numbers) != len(bounds_list) or any(number is None for number in numbers):
-                if (
-                    not _scan_covers_page_body(image, bounds_list)
-                    or _scan_cuts_through_column_seam(image, bounds_list)
-                ):
-                    return []
+            # An apparent question number may be inferred from neighboring
+            # pages, so it cannot prove that a crop contains the original ink.
+            if (
+                not _scan_covers_page_body(image, bounds_list)
+                or _scan_cuts_through_column_seam(image, bounds_list)
+            ):
+                return []
             crops = []
             for bounds in bounds_list:
                 with image.crop(bounds) as crop:
@@ -673,7 +673,7 @@ def _scan_covers_page_body(
     image: PILImage.Image,
     bounds_list: list[tuple[int, int, int, int]],
 ) -> bool:
-    """Reject numberless crops that collectively omit substantial body content."""
+    """Reject crops that collectively omit substantial body content."""
     width, height = image.size
     top, bottom = round(height * 0.09), round(height * 0.92)
     # Ignore the running header and folio when measuring printed body ink.
@@ -688,14 +688,28 @@ def _scan_covers_page_body(
                 if box_top < box_bottom:
                     draw.rectangle((x0, box_top - top, x1 - 1, box_bottom - top - 1), fill=255)
             covered_ink = sum(body.histogram(mask=covered)[:150])
-    return covered_ink * 100 >= total_ink * 85
+            if covered_ink * 100 < total_ink * 85:
+                return False
+            # A single omitted answer line can account for very little total
+            # ink. Check for a sustained band of uncovered print separately.
+            body.paste(255, (0, 0, width, body.height), covered)
+            with body.point([255] * 150 + [0] * 106) as ink, ink.resize(
+                (1, body.height), PILImage.Resampling.BOX,
+            ) as rows:
+                run = 0
+                min_band = max(3, round(height * 0.003))
+                for density in rows.tobytes():
+                    run = run + 1 if density >= 5 else 0
+                    if run >= min_band:
+                        return False
+    return True
 
 
 def _scan_cuts_through_column_seam(
     image: PILImage.Image,
     bounds_list: list[tuple[int, int, int, int]],
 ) -> bool:
-    """Reject a numberless layout split where adjacent crops divide printed ink."""
+    """Reject a layout split where adjacent crops divide printed ink."""
     probe = max(2, round(image.width * 0.004))
     for x0, y0, x1, y1 in bounds_list:
         if not image.width // 3 <= x1 <= 2 * image.width // 3:
