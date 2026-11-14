@@ -380,19 +380,28 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             int(session_id),
             exam_id,
         )) if session_id is not None else None
+        score = exam.get("total_score")
+        result = result_by_id.get(result_id)
+        source_fingerprint = None
+        if (
+            result is not None
+            and correction is not None
+            and correction.completed
+            and correction.source_fingerprint
+            and score is not None
+            and 0 < current_exam_max_score
+            and score < current_exam_max_score
+        ):
+            source_fingerprint = exam_correction_fingerprint(
+                result=result,
+                items=result.items.all(),
+                current_max_score=current_exam_max_score,
+            )
         correction_payload = assessment_correction_payload(
             source_type=AssessmentCorrection.SourceType.EXAM,
-            score=exam.get("total_score"),
+            score=score,
             max_score=current_exam_max_score,
-            source_fingerprint=(
-                exam_correction_fingerprint(
-                    result=result_by_id[result_id],
-                    items=result_by_id[result_id].items.all(),
-                    current_max_score=current_exam_max_score,
-                )
-                if result_by_id.get(result_id) is not None
-                else None
-            ),
+            source_fingerprint=source_fingerprint,
             correction=correction,
         )
         exam.update({

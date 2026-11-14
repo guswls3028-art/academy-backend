@@ -2,6 +2,7 @@ from datetime import date, timedelta
 import hashlib
 import json
 import uuid
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.apps import apps as django_apps
@@ -512,6 +513,47 @@ class MyGradesSummaryHomeworkTests(TestCase):
 
         self.assertEqual(stale.data["exams"][0]["correction_status"], "PENDING")
         self.assertEqual(stale_detail.data["correction_status"], "PENDING")
+
+    def test_summary_hashes_only_completed_corrections_with_comparable_fingerprints(self):
+        result = self._score_exam(title="Exam correction", order=1, score=70, max_score=100)
+        exam = self.Exam.objects.get(id=result.target_id)
+        self.ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        fingerprint = _exam_correction_fingerprint(result)
+        target = "apps.support.student_app.results_summary.exam_correction_fingerprint"
+
+        with patch(target) as calculate:
+            response = self._call()
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["exams"][0]["correction_status"], "PENDING")
+            calculate.assert_not_called()
+
+        correction = self.AssessmentCorrection.objects.create(
+            tenant=self.tenant, enrollment=self.enrollment, session=exam.sessions.get(),
+            source_type="exam", source_id=exam.id,
+        )
+        for completed, stored, calculated, expected, calls in (
+            (False, fingerprint, fingerprint, "PENDING", 0),
+            (True, "", fingerprint, "COMPLETED", 0),
+            (True, fingerprint, fingerprint, "COMPLETED", 1),
+            (True, fingerprint, "stale", "PENDING", 1),
+        ):
+            with self.subTest(completed=completed, stored=stored, expected=expected):
+                correction.completed = completed
+                correction.source_fingerprint = stored
+                correction.save(update_fields=["completed", "source_fingerprint"])
+                with patch(target, return_value=calculated) as calculate:
+                    response = self._call()
+                    self.assertEqual(response.status_code, 200, response.data)
+                    self.assertEqual(response.data["exams"][0]["correction_status"], expected)
+                    self.assertEqual(calculate.call_count, calls)
+
+        result.total_score = 100
+        result.save(update_fields=["total_score", "updated_at"])
+        with patch(target) as calculate:
+            response = self._call()
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["exams"][0]["correction_status"], "NOT_REQUIRED")
+            calculate.assert_not_called()
 
     def test_foreign_and_template_exam_metadata_is_fail_closed(self):
         other_tenant = Tenant.objects.create(code="student-grades-foreign", name="Foreign", is_active=True)
