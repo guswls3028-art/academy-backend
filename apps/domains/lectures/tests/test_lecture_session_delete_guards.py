@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.urls import resolve
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.attendance.models import Attendance, AttendanceQrPoint
-from apps.domains.attendance.qr_views import AttendanceQrPointViewSet
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import Exam, ExamLecturePolicy
 from apps.domains.homework_results.models import Homework
@@ -195,9 +195,8 @@ class LectureSessionDeleteGuardTests(TestCase):
         )
         request.tenant = self.tenant
         force_authenticate(request, user=self.admin)
-        response = AttendanceQrPointViewSet.as_view({"patch": "partial_update"})(
-            request, pk=point.pk,
-        )
+        route = resolve(request.path)
+        response = route.func(request, **route.kwargs)
         self.assertEqual(response.status_code, 200, response.data)
         self.assertFalse(response.data["active"])
         response = self._delete_lecture(lecture)
