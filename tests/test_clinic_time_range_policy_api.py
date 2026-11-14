@@ -145,6 +145,37 @@ class ClinicTimeRangePolicyAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(conflicting.status_code, 409, conflicting.data)
         adjacent = self._book(self.students[1], second["start_time"], second["end_time"])
         self.assertEqual(adjacent.status_code, 201, adjacent.data)
+        self.client.force_authenticate(user=self.admin)
+        partial = self.client.post(
+            "/api/v1/clinic/participants/",
+            {
+                "session": self.session.id, "student": self.students[2].id,
+                "booking_start_time": "10:00", "booking_end_time": "10:15",
+            },
+            format="json", **self._headers(),
+        )
+        self.assertEqual(partial.status_code, 400, partial.data)
+
+    def test_fixed_slot_partial_availability_and_staff_booking_are_preserved(self):
+        fixed = self.make_clinic_session(
+            self.tenant, date=self.session.date, start_time=datetime.time(9), location="legacy-fixed",
+        )
+        fixed.duration_minutes = 75
+        fixed.save(update_fields=["duration_minutes"])
+        self.client.force_authenticate(user=self.admin)
+        availability = self.client.get(
+            f"/api/v1/clinic/sessions/{fixed.id}/availability/", **self._headers(),
+        )
+        self.assertEqual(availability.status_code, 200, availability.data)
+        self.assertEqual(availability.data["booking_mode"], "fixed_slot")
+        self.assertEqual(availability.data["slots"][-1]["end_time"], "10:15")
+        booked = self.client.post(
+            "/api/v1/clinic/participants/",
+            {"session": fixed.id, "student": self.students[0].id},
+            format="json", **self._headers(),
+        )
+        self.assertEqual(booked.status_code, 201, booked.data)
+        self.assertIsNone(SessionParticipant.objects.get(id=booked.data["id"]).booking_start_time)
 
     def test_time_range_capacity_is_concurrent_per_interval_not_whole_window(self):
         first = self._book(self.students[0], start="10:00", end="11:00")
