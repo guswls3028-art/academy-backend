@@ -1,9 +1,13 @@
+import json
 import math
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from django.apps import apps
+from django.db import connection
+from django.test import RequestFactory
+from django.test.utils import CaptureQueriesContext
 
 from apps.domains.matchup.models import (
     MatchupDocument,
@@ -16,6 +20,78 @@ from apps.domains.matchup.pdf_report import (
     _compute_display_sim,
     calculate_matchup_hit_statistics,
 )
+from apps.domains.matchup.views_hit_report import HitReportDraftView
+
+
+@pytest.mark.django_db
+def test_editor_separates_rank_and_report_scores_and_keeps_manual_pins(monkeypatch):
+    tenant = apps.get_model("core", "Tenant").objects.create(code="display-sim", name="Display sim")
+    InventoryFile = apps.get_model("inventory", "InventoryFile")
+
+    def document(name):
+        inventory = InventoryFile.objects.create(
+            tenant=tenant, scope="admin", display_name=f"{name}.pdf",
+            r2_key=f"display-sim/{name}.pdf", original_name=f"{name}.pdf",
+        )
+        return MatchupDocument.objects.create(
+            tenant=tenant, inventory_file=inventory, title=name, r2_key=inventory.r2_key,
+        )
+
+    exam, lesson = document("exam"), document("lesson")
+    question = MatchupProblem.objects.create(
+        tenant=tenant, document=exam, number=1, text="short question", embedding=[1.0, 0.0],
+        image_embedding=[1.0, 0.0],
+    )
+    choice_vector = [0.658, math.sqrt(1 - 0.658**2)]
+    choice = MatchupProblem.objects.create(
+        tenant=tenant, document=lesson, number=1, embedding=choice_vector,
+        image_embedding=choice_vector, meta={"manual": True, "bbox_norm": [0, 0, 1, 1]},
+    )
+    unreadable = MatchupProblem.objects.create(tenant=tenant, document=lesson, number=2)
+    fallback = MatchupProblem.objects.create(
+        tenant=tenant, document=lesson, number=3, embedding=[1.0, 0.0],
+    )
+    identical = MatchupProblem.objects.create(
+        tenant=tenant, document=lesson, number=4, embedding=[1.0, 0.0],
+        image_embedding=[1.0, 0.0], meta={"bbox": [0, 0, 1, 1]},
+    )
+    report = MatchupHitReport.objects.create(tenant=tenant, document=exam, title="Report")
+    entry = MatchupHitReportEntry.objects.create(
+        tenant=tenant, report=report, exam_problem=question, selected_problem_ids=[choice.id, unreadable.id],
+    )
+    monkeypatch.setattr("apps.domains.matchup.views_hit_report._is_tenant_staff", lambda _: True)
+    monkeypatch.setattr("apps.domains.matchup.views_hit_report.generate_presigned_get_url_storage", None)
+    monkeypatch.setattr(
+        "apps.domains.matchup.services.find_similar_problems",
+        lambda **_: [(identical, 1.0), (choice, 0.829), (fallback, 0.8)],
+    )
+
+    def payload(**query):
+        request = RequestFactory().get("/", query)
+        request.tenant, request.user = tenant, None
+        with CaptureQueriesContext(connection) as queries:
+            response = HitReportDraftView().get(request, exam.id)
+        assert response.status_code == 200
+        vector_reads = [
+            query["sql"] for query in queries
+            if '"matchup_matchupproblem"."image_embedding"' in query["sql"]
+        ]
+        assert len(vector_reads) == (2 if query.get("mode") == "quick" else 3)
+        return json.loads(response.content)["exam_problems"][0]
+
+    for result in (payload(), payload(mode="candidates", problem_ids=str(question.id))):
+        assert [c["id"] for c in result["candidates"]] == [identical.id, choice.id, fallback.id]
+        assert result["candidates"][0]["display_similarity"] == 1.0
+        assert result["candidates"][1]["similarity"] == 0.829
+        assert result["candidates"][1]["display_similarity"] == pytest.approx(0.658)
+        assert result["candidates"][2]["display_similarity"] == pytest.approx(0.89)
+    for result in (payload(), payload(mode="quick")):
+        assert result["entry"]["selected_display_similarity"] == {
+            str(choice.id): pytest.approx(_compute_display_sim(question, choice)),
+            str(unreadable.id): None,
+        }
+    entry.refresh_from_db()
+    assert entry.selected_problem_ids == [choice.id, unreadable.id]
 
 
 @pytest.mark.parametrize(

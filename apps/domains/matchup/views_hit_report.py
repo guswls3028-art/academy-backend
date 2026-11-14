@@ -343,7 +343,7 @@ class HitReportDraftView(View):
         # 시험지 problems
         all_exam_problems = list(
             doc.problems.order_by("number").only(
-                "id", "number", "text", "image_key", "embedding", "meta",
+                "id", "document_id", "number", "text", "image_key", "embedding", "image_embedding", "meta",
             )
         )
         exam_problems = _filter_hit_report_candidate_exam_problems(
@@ -356,12 +356,19 @@ class HitReportDraftView(View):
             for e in report.entries.all()
         }
 
-        def _entry_payload(entry):
+        from .pdf_report import _compute_display_sim
+
+        def _entry_payload(entry, exam_problem, selections):
             if not entry:
                 return None
             return {
                 "id": entry.id,
                 "selected_problem_ids": entry.selected_problem_ids or [],
+                "selected_display_similarity": {
+                    pid: _compute_display_sim(exam_problem, selections[pid])
+                    for pid in entry.selected_problem_ids or []
+                    if isinstance(pid, int) and pid in selections
+                },
                 "comment": entry.comment or "",
                 "order": entry.order,
                 "excluded": bool(entry.excluded),
@@ -376,13 +383,20 @@ class HitReportDraftView(View):
                     pass
         selected_problem_ids = list(dict.fromkeys(selected_problem_ids))
 
+        extra_meta = {
+            p.id: p
+            for p in MatchupProblem.objects.filter(
+                tenant=request.tenant,
+                id__in=selected_problem_ids,
+            ).only(
+                "id", "image_key", "document_id", "number", "text", "meta",
+                "embedding", "image_embedding",
+            )
+        }
         if mode == "quick":
             # Fast shell for the editor: render the report immediately, then let the
             # frontend hydrate expensive vector candidates in the background.
-            extra_qs = list(MatchupProblem.objects.filter(
-                tenant=request.tenant,
-                id__in=selected_problem_ids,
-            ).only("id", "image_key", "document_id", "number", "text", "meta"))
+            extra_qs = list(extra_meta.values())
 
             url_map: dict = {}
             if generate_presigned_get_url_storage:
@@ -432,7 +446,7 @@ class HitReportDraftView(View):
                         "image_url": url_map.get(public_image_key_for_report(ep))
                         if public_image_key_for_report(ep) else None,
                         "candidates": [],
-                        "entry": _entry_payload(entries_by_pid.get(ep.id)),
+                        "entry": _entry_payload(entries_by_pid.get(ep.id), ep, extra_meta),
                     }
                     for ep in exam_problems
                 ],
@@ -491,7 +505,18 @@ class HitReportDraftView(View):
                 sim_by_eid[ep_id] = sim_results
 
         problem_data = []
-        all_candidate_ids = set()
+        candidate_ids = {
+            candidate.id
+            for results in sim_by_eid.values()
+            for candidate, _ in results
+        }
+        display_candidates = dict(extra_meta)
+        display_candidates.update(
+            MatchupProblem.objects.filter(
+                tenant=request.tenant,
+                id__in=candidate_ids - extra_meta.keys(),
+            ).only("id", "embedding", "image_embedding", "meta").in_bulk()
+        )
         for ep in exam_problems:
             entry = entries_by_pid.get(ep.id)
             cand = []
@@ -508,11 +533,14 @@ class HitReportDraftView(View):
                     "number": cp.number,
                     "text_preview": (cp.text or "")[:120],
                     "similarity": round(sim, 4),
+                    "display_similarity": (
+                        _compute_display_sim(ep, display_candidates[cp.id])
+                        if cp.id in display_candidates else None
+                    ),
                     "image_key": cp.image_key,
                     "public_image_key": get_problem_public_image_key(cp),
                     "page_index": int(page_index) if isinstance(page_index, int) else None,
                 })
-                all_candidate_ids.add(cp.id)
 
             problem_data.append({
                 "id": ep.id,
@@ -521,7 +549,7 @@ class HitReportDraftView(View):
                 "image_key": ep.image_key,
                 "public_image_key": get_problem_public_image_key(ep),
                 "candidates": cand,
-                "entry": _entry_payload(entry),
+                "entry": _entry_payload(entry, ep, extra_meta),
             })
 
         # presigned URL 일괄 — 시험지 problem + 후보 problem
@@ -541,12 +569,7 @@ class HitReportDraftView(View):
                     if key:
                         cand_keys.add(key)
             # 사용자 명시 선택 problem (자동 후보에 없을 수도) — 보강
-            extra_qs = MatchupProblem.objects.filter(
-                tenant=request.tenant,
-                id__in=selected_problem_ids,
-            ).only("id", "image_key", "document_id", "number", "text", "meta")
-            extra_meta = {p.id: p for p in extra_qs}
-            for p in extra_qs:
+            for p in extra_meta.values():
                 key = public_image_key_for_report(p)
                 if key:
                     cand_keys.add(key)
@@ -563,9 +586,6 @@ class HitReportDraftView(View):
                     key = c.get("public_image_key") or c["image_key"]
                     if key:
                         c["image_url"] = url_map.get(key)
-        else:
-            extra_meta = {}
-
         # 후보/선택 자료의 출처 식별 메타 — 강사가 "자료 198번"만 보고 출처를 직접
         # 찾는 불편(2026-05-05 사용자 보고)을 제거하기 위해 파일명·카테고리·source_type을
         # 응답에 포함. 1 query in_bulk로 N+1 회피. 후보·extra_meta·exam doc 모두 동일 lookup.
