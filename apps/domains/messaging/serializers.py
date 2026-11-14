@@ -340,6 +340,11 @@ class MessageTemplateCreateResponseSerializer(MessageTemplateSerializer):
 
 class SendMessageRequestSerializer(serializers.Serializer):
     """알림톡 발송 요청: 학생/학부모 수신자 + 직접 입력 본문 또는 템플릿 ID."""
+
+    video_makeup_homework = serializers.BooleanField(required=False, default=False)
+    video_makeup_homework_fingerprint = serializers.RegexField(
+        r"\A[0-9a-f]{64}\Z", required=False,
+    )
     session_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     client_request_id = serializers.UUIDField(
         required=False,
@@ -421,6 +426,24 @@ class SendMessageRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"student_ids": "학생/학부모 수신 시 최소 1명의 학생을 선택해 주세요."}
             )
+        video_makeup = attrs.get("video_makeup_homework")
+        if video_makeup:
+            if attrs.get("block_category") != "assignment" or not attrs.get("session_id"):
+                raise serializers.ValidationError({
+                    "video_makeup_homework": "영상보강 과제 안내에는 차시와 과제 안내 유형이 필요합니다.",
+                })
+            if any(attrs.get(field) for field in (
+                "raw_body", "raw_subject", "template_id", "alimtalk_extra_vars", "alimtalk_extra_vars_per_student",
+            )):
+                raise serializers.ValidationError({
+                    "video_makeup_homework": "영상보강 과제 안내의 본문과 발송 양식은 차시 과제에서 생성됩니다.",
+                })
+            if self.context.get("allow_elapsed_schedule_for_replay") and not attrs.get("video_makeup_homework_fingerprint"):
+                raise serializers.ValidationError({
+                    "video_makeup_homework_fingerprint": "영상보강 과제 안내를 미리 본 뒤 발송해 주세요.",
+                })
+        elif attrs.get("video_makeup_homework_fingerprint"):
+            raise serializers.ValidationError({"video_makeup_homework_fingerprint": "영상보강 과제 안내에만 사용할 수 있습니다."})
         per_student = attrs.get("alimtalk_extra_vars_per_student") or {}
         if len(attrs.get("alimtalk_extra_vars") or {}) > 50:
             raise serializers.ValidationError({
@@ -448,7 +471,7 @@ class SendMessageRequestSerializer(serializers.Serializer):
             })
         if "raw_body" in attrs and not attrs["raw_body"].strip():
             raise serializers.ValidationError({"raw_body": "발송할 본문이 비어 있습니다. 내용을 작성해 주세요."})
-        if not attrs.get("template_id") and not (attrs.get("raw_body") or "").strip():
+        if not video_makeup and not attrs.get("template_id") and not (attrs.get("raw_body") or "").strip():
             raise serializers.ValidationError(
                 {"raw_body": "직접 입력 본문을 넣거나 템플릿을 선택해 주세요."}
             )

@@ -201,6 +201,7 @@ def _build_manual_preview_recipients(
             tenant_name=tenant_name,
             student_name=recipient.student_name,
             site_url=site_url,
+            literal_body=bool(data.get("video_makeup_homework")),
         )
         preview_recipients.append(
             {
@@ -251,6 +252,15 @@ def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
     student_ids = list(dict.fromkeys(int(student_id) for student_id in (data.get("student_ids") or [])))
     selected_count = len(student_ids)
     recipients = resolve_student_message_recipients(tenant, student_ids, send_to=send_to)
+    from apps.support.messaging.video_makeup_homework import video_makeup_homework_preview
+
+    homework_preview = video_makeup_homework_preview(tenant=tenant, data=data, recipients=recipients)
+    if homework_preview and not homework_preview["fingerprint"] and student_ids:
+        blockers.append(PreflightIssue(
+            "video_makeup_homework_changed",
+            "영상보강 과제 대상 확인",
+            "과제 안내 대상을 다시 확인해 주세요.",
+        ))
     resolved_count = len(recipients)
     phones = [recipient.phone for recipient in recipients]
 
@@ -388,6 +398,7 @@ def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
             "limit": MAX_MANUAL_RECIPIENTS,
         },
         "template": template_plan.as_dict(),
+        **({"video_makeup_homework_preview": homework_preview} if homework_preview is not None else {}),
         "preview_recipients": _build_manual_preview_recipients(
             tenant,
             data,
