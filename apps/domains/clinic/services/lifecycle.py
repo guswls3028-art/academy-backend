@@ -1097,6 +1097,31 @@ def _validated_booking_range(
             {"booking_time": "예약 시작과 종료 시간을 함께 입력해 주세요."}
         )
     if (
+        (session.start_time.second or session.start_time.microsecond)
+        and not (booking_start_time.second or booking_start_time.microsecond)
+        and not (booking_end_time.second or booking_end_time.microsecond)
+    ):
+        # Availability labels are HH:MM. Restore the stored session precision
+        # before interpreting dates so an offered first slot cannot roll forward
+        # a day merely because its label omitted the session's seconds.
+        restored_start_time = booking_start_time.replace(
+            second=session.start_time.second, microsecond=session.start_time.microsecond,
+        )
+        restored_end_time = booking_end_time.replace(
+            second=session.start_time.second, microsecond=session.start_time.microsecond,
+        )
+        restored_start, restored_end = booking_window(
+            session=session, start_time=restored_start_time, end_time=restored_end_time,
+        )
+        grid_start, _ = session_window(session)
+        grid_interval = datetime.timedelta(minutes=int(session.booking_interval_minutes))
+        if (
+            int(session.booking_interval_minutes) in (30, 60)
+            and not (restored_start - grid_start) % grid_interval
+            and not (restored_end - grid_start) % grid_interval
+        ):
+            booking_start_time, booking_end_time = restored_start_time, restored_end_time
+    if (
         booking_start_time > datetime.time.min
         and booking_end_time == datetime.time.min
         and not settings.CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED
@@ -1130,13 +1155,23 @@ def _validated_booking_range(
             {"booking_time": "예약 시간은 클리닉 운영 시간 안에서 시작이 종료보다 빨라야 합니다."}
         )
     interval = int(session.booking_interval_minutes)
-    start_offset = int((booking_start - session_start).total_seconds() // 60)
-    end_offset = int((booking_end - session_start).total_seconds() // 60)
-    if interval not in (30, 60) or start_offset % interval or end_offset % interval:
+    start_offset = booking_start - session_start
+    end_offset = booking_end - session_start
+    if session.start_time.second or session.start_time.microsecond:
+        # Preserve previously accepted exact API inputs for legacy sessions;
+        # minute-only availability labels were restored to the exact grid above.
+        start_offset = datetime.timedelta(minutes=int(start_offset.total_seconds() // 60))
+        end_offset = datetime.timedelta(minutes=int(end_offset.total_seconds() // 60))
+    interval_delta = datetime.timedelta(minutes=interval)
+    if (
+        interval not in (30, 60)
+        or start_offset % interval_delta
+        or end_offset % interval_delta
+    ):
         raise ValidationError(
             {"booking_time": f"예약 시간은 세션 시작 기준 {interval}분 간격에 맞춰 주세요."}
         )
-    if end_offset - start_offset > int(session.booking_max_stay_minutes):
+    if end_offset - start_offset > datetime.timedelta(minutes=int(session.booking_max_stay_minutes)):
         raise ValidationError(
             {"booking_time": f"한 번에 최대 {session.booking_max_stay_minutes}분까지 예약할 수 있습니다."}
         )
@@ -1243,6 +1278,10 @@ def booking_availability_for_session(*, tenant, session: Session) -> dict[str, A
         ).only("booking_start_time", "booking_end_time"))
     cursor = start
     while cursor < end:
+        if session.booking_mode == "time_range" and end - cursor < datetime.timedelta(minutes=interval):
+            # Historical sessions may predate duration alignment validation.
+            # A trailing partial interval cannot satisfy the booking grid.
+            break
         next_cursor = min(cursor + datetime.timedelta(minutes=interval), end)
         if session.booking_mode == "time_range":
             used = 0

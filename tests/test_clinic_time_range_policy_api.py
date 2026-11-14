@@ -75,6 +75,110 @@ class ClinicTimeRangePolicyAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(valid.data["participants"][0]["booking_start_time"], "10:00:00")
         self.assertEqual(valid.data["participants"][0]["booking_end_time"], "11:30:00")
 
+    def test_time_range_rejects_subminute_offsets_without_creating_bookings(self):
+        for start, end in (
+            ("10:00:01", "11:00:01"),
+            ("10:00:00.000001", "11:00"),
+            ("10:00", "13:00:59"),
+        ):
+            with self.subTest(start=start, end=end):
+                response = self._book(self.students[0], start=start, end=end)
+                self.assertEqual(response.status_code, 400, response.data)
+                self.assertFalse(SessionParticipant.objects.filter(session=self.session).exists())
+
+        self.client.force_authenticate(user=self.admin)
+        staff_response = self.client.post(
+            "/api/v1/clinic/participants/",
+            {
+                "session": self.session.id,
+                "student": self.students[0].id,
+                "booking_start_time": "10:00",
+                "booking_end_time": "13:00:00.000001",
+            },
+            format="json", **self._headers(),
+        )
+        self.assertEqual(staff_response.status_code, 400, staff_response.data)
+        self.assertFalse(SessionParticipant.objects.filter(session=self.session).exists())
+
+        valid = self._book(self.students[0], start="10:00:00", end="13:00:00")
+        self.assertEqual(valid.status_code, 201, valid.data)
+
+    def test_legacy_subminute_session_preserves_accepted_booking_inputs(self):
+        cases = (
+            (datetime.time(9, 0, 30), "10:00:45", "11:00:45"),
+            (datetime.time(9, 0, 0, 1), "10:00:00.000002", "11:00:00.000002"),
+            (datetime.time(9, 0, 30), "10:01", "11:01"),
+        )
+        for index, (session_start, start, end) in enumerate(cases):
+            with self.subTest(session_start=session_start):
+                self.session.start_time = session_start
+                self.session.max_participants = len(cases)
+                self.session.save(update_fields=["start_time", "max_participants"])
+                response = self._book(self.students[index], start=start, end=end)
+                self.assertEqual(response.status_code, 201, response.data)
+                participant = SessionParticipant.objects.get(id=response.data["participants"][0]["id"])
+                self.assertEqual(participant.booking_start_time, datetime.time.fromisoformat(start))
+                self.assertEqual(participant.booking_end_time, datetime.time.fromisoformat(end))
+
+    def test_legacy_availability_labels_book_exact_stored_grid_and_reload(self):
+        self.session.start_time = datetime.time(9, 0, 30, 123)
+        self.session.max_participants = 1
+        self.session.duration_minutes = 75
+        self.session.save(update_fields=["start_time", "max_participants", "duration_minutes"])
+        self.client.force_authenticate(user=self.students[0].user)
+        availability = self.client.get(
+            f"/api/v1/clinic/sessions/{self.session.id}/availability/", **self._headers(),
+        )
+        self.assertEqual(availability.status_code, 200, availability.data)
+        self.assertEqual(availability.data["window"]["end_time"], "10:15")
+        self.assertEqual(len(availability.data["slots"]), 2)
+        first, second = availability.data["slots"][:2]
+        booked = self._book(self.students[0], first["start_time"], first["end_time"])
+        self.assertEqual(booked.status_code, 201, booked.data)
+        participant = SessionParticipant.objects.get(id=booked.data["participants"][0]["id"])
+        self.assertEqual(participant.booking_start_time, datetime.time(9, 0, 30, 123))
+        self.assertEqual(participant.booking_end_time, datetime.time(9, 30, 30, 123))
+        reloaded = self.client.get(
+            f"/api/v1/clinic/participants/{participant.id}/", **self._headers(),
+        )
+        self.assertEqual(reloaded.status_code, 200, reloaded.data)
+        self.assertEqual(reloaded.data["booking_start_time"], "09:00:30.000123")
+        conflicting = self._book(self.students[1], first["start_time"], first["end_time"])
+        self.assertEqual(conflicting.status_code, 409, conflicting.data)
+        adjacent = self._book(self.students[1], second["start_time"], second["end_time"])
+        self.assertEqual(adjacent.status_code, 201, adjacent.data)
+        self.client.force_authenticate(user=self.admin)
+        partial = self.client.post(
+            "/api/v1/clinic/participants/",
+            {
+                "session": self.session.id, "student": self.students[2].id,
+                "booking_start_time": "10:00", "booking_end_time": "10:15",
+            },
+            format="json", **self._headers(),
+        )
+        self.assertEqual(partial.status_code, 400, partial.data)
+
+    def test_fixed_slot_partial_availability_and_staff_booking_are_preserved(self):
+        fixed = self.make_clinic_session(
+            self.tenant, date=self.session.date, start_time=datetime.time(9), location="legacy-fixed",
+        )
+        fixed.duration_minutes = 75
+        fixed.save(update_fields=["duration_minutes"])
+        self.client.force_authenticate(user=self.admin)
+        availability = self.client.get(
+            f"/api/v1/clinic/sessions/{fixed.id}/availability/", **self._headers(),
+        )
+        self.assertEqual(availability.status_code, 200, availability.data)
+        self.assertEqual(availability.data["booking_mode"], "fixed_slot")
+        self.assertEqual(availability.data["slots"][-1]["end_time"], "10:15")
+        booked = self.client.post(
+            "/api/v1/clinic/participants/",
+            {"session": fixed.id, "student": self.students[0].id},
+            format="json", **self._headers(),
+        )
+        self.assertEqual(booked.status_code, 201, booked.data)
+        self.assertIsNone(SessionParticipant.objects.get(id=booked.data["id"]).booking_start_time)
+
     def test_time_range_capacity_is_concurrent_per_interval_not_whole_window(self):
         first = self._book(self.students[0], start="10:00", end="11:00")
         second = self._book(self.students[1], start="11:00", end="12:00")

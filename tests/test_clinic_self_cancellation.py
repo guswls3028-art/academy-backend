@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from django.db import close_old_connections, connection
 from django.test import TransactionTestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
@@ -46,6 +47,34 @@ class ClinicSelfCancellationAPITest(APITestCase, ClinicAPITestMixin):
             start_time=datetime.time(hour, 0),
             location=f"{day_offset}-{hour}호",
         )
+
+    def test_student_booking_list_does_not_fetch_tenant_for_each_row(self):
+        self.client.force_authenticate(user=self.student.user)
+
+        def fetch_tenant_query_count():
+            with CaptureQueriesContext(connection) as queries:
+                response = self.client.get(
+                    "/api/v1/clinic/participants/", **self._headers(self.tenant),
+                )
+            self.assertEqual(response.status_code, 200, response.data)
+            rows = response.data["results"] if isinstance(response.data, dict) else response.data
+            self.assertTrue(all(row["can_self_cancel"] for row in rows))
+            tenant_from = f'FROM "{Tenant._meta.db_table}"'
+            return len(rows), sum(tenant_from in query["sql"] for query in queries)
+
+        self.make_participant(
+            self.tenant, self._session(0, 15), self.student,
+            status=SessionParticipant.Status.BOOKED,
+        )
+        initial_rows, initial_queries = fetch_tenant_query_count()
+        for day in range(1, 5):
+            self.make_participant(
+                self.tenant, self._session(day, 15), self.student,
+                status=SessionParticipant.Status.BOOKED,
+            )
+        expanded_rows, expanded_queries = fetch_tenant_query_count()
+        self.assertEqual((initial_rows, expanded_rows), (1, 5))
+        self.assertEqual(expanded_queries, initial_queries)
 
     def _current_required_link(self):
         exam = Exam.objects.create(

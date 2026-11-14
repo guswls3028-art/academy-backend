@@ -93,6 +93,22 @@ class ClinicOvernightTimeRangeTests(APITestCase, ClinicAPITestMixin):
             response = self._book(start="00:30", end="01:30")
         self.assertEqual(response.status_code, 201, response.data)
 
+    def test_legacy_overnight_availability_label_preserves_actual_next_day(self):
+        self.session.start_time = datetime.time(23, 0, 30)
+        self.session.save(update_fields=["start_time"])
+        self.client.force_authenticate(user=self.data["students"][0].user)
+        availability = self.client.get(
+            f"/api/v1/clinic/sessions/{self.session.id}/availability/", **self._headers(),
+        )
+        self.assertEqual(availability.status_code, 200, availability.data)
+        slot = next(item for item in availability.data["slots"] if item["start_time"] == "00:00")
+        response = self._book(start=slot["start_time"], end=slot["end_time"])
+        self.assertEqual(response.status_code, 201, response.data)
+        participant = SessionParticipant.objects.get(session=self.session, student=self.data["students"][0])
+        self.assertEqual(participant.booking_start_time, datetime.time(0, 0, 30))
+        self.assertEqual(participant.booking_end_time, datetime.time(0, 30, 30))
+        self.assertEqual(response.json()["participants"][0]["booking_start_date"], slot["start_date"])
+
     def test_active_overnight_passcard_keeps_actual_date_then_expires(self):
         response = self._book(start="00:30", end="01:30", staff=True)
         self.assertEqual(response.status_code, 201, response.data)
