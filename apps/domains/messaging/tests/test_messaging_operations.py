@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from unittest.mock import patch
+from uuid import uuid4
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
@@ -13,10 +14,18 @@ from apps.core.models import Tenant, TenantMembership, WorkerHeartbeatModel
 from apps.core.models.user import user_internal_username
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, NotificationLog, ScheduledNotification
 from apps.domains.messaging.views.operations_views import MessagingOperationsStatusView, SendMessagePreflightView
+from apps.domains.messaging.views.send_views import SendMessageView
 
 
 User = get_user_model()
 Student = apps.get_model("students", "Student")
+Attendance = apps.get_model("attendance", "Attendance")
+Enrollment = apps.get_model("enrollment", "Enrollment")
+SessionEnrollment = apps.get_model("enrollment", "SessionEnrollment")
+HomeworkAssignment = apps.get_model("homework", "HomeworkAssignment")
+Homework = apps.get_model("homework_results", "Homework")
+Lecture = apps.get_model("lectures", "Lecture")
+Session = apps.get_model("lectures", "Session")
 
 
 class MessagingOperationsBase(TestCase):
@@ -65,6 +74,77 @@ class MessagingOperationsBase(TestCase):
 
 
 class SendMessagePreflightViewTests(MessagingOperationsBase):
+    def test_video_homework_preview_uses_current_assignments_and_rejects_drift(self):
+        lecture = Lecture.objects.create(tenant=self.tenant, title="수학", name="수학")
+        session = Session.objects.create(lecture=lecture, title="1차시", order=1)
+        students = [self._student(f"08{index}") for index in range(3)]
+        enrollments = []
+        for student, attendance in zip(students, ["ONLINE", "ONLINE", "PRESENT"], strict=True):
+            enrollment = Enrollment.objects.create(
+                tenant=self.tenant, lecture=lecture, student=student, status="ACTIVE",
+            )
+            SessionEnrollment.objects.create(tenant=self.tenant, session=session, enrollment=enrollment)
+            Attendance.objects.create(
+                tenant=self.tenant, session=session, enrollment=enrollment, status=attendance,
+            )
+            enrollments.append(enrollment)
+        homework = Homework.objects.create(tenant=self.tenant, session=session, title="워크북 15쪽")
+        assignment = HomeworkAssignment.objects.create(
+            tenant=self.tenant, session=session, homework=homework, enrollment=enrollments[0],
+        )
+        data = {
+            "session_id": session.pk,
+            "student_ids": [student.pk for student in students],
+            "send_to": "parent",
+            "block_category": "assignment",
+            "video_makeup_homework": True,
+            "client_request_id": str(uuid4()),
+        }
+        preflight = SendMessagePreflightView.as_view()
+        preview = preflight(self._request("post", "/preflight/", data))
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertTrue(preview.data["can_send"], preview.data)
+        details = preview.data["video_makeup_homework_preview"]
+        self.assertEqual(details["recipients"], [{
+            "student_id": students[0].pk, "homework_titles": ["워크북 15쪽"],
+        }])
+        self.assertEqual(details["excluded"], [
+            {"student_id": students[1].pk, "reason": "no_homework"},
+            {"student_id": students[2].pk, "reason": "not_video"},
+        ])
+        self.assertIn("워크북 15쪽", preview.data["preview_recipients"][0]["full_message_body"])
+        self.assertNotIn("미제출", preview.data["preview_recipients"][0]["full_message_body"])
+        data["video_makeup_homework_fingerprint"] = details["fingerprint"]
+
+        Student.objects.filter(pk=students[0].pk).update(parent_phone="01088881111")
+        response = SendMessageView.as_view()(self._request("post", "/send/", data))
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["code"], "video_makeup_homework_changed")
+
+        assignment.delete()
+        response = SendMessageView.as_view()(self._request("post", "/send/", data))
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertFalse(ScheduledNotification.objects.filter(tenant=self.tenant).exists())
+        empty = preflight(self._request("post", "/preflight/", data))
+        self.assertFalse(empty.data["can_send"])
+        self.assertIsNone(empty.data["video_makeup_homework_preview"]["fingerprint"])
+        self.assertEqual(empty.data["video_makeup_homework_preview"]["recipients"], [])
+
+        HomeworkAssignment.objects.create(
+            tenant=self.tenant, session=session, homework=homework, enrollment=enrollments[0],
+        )
+        refreshed = preflight(self._request("post", "/preflight/", data))
+        data["video_makeup_homework_fingerprint"] = refreshed.data["video_makeup_homework_preview"]["fingerprint"]
+        accepted = SendMessageView.as_view()(self._request("post", "/send/", data))
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+        self.assertEqual(accepted.data["accepted_count"], 1)
+        self.assertEqual(ScheduledNotification.objects.filter(tenant=self.tenant).count(), 1)
+        HomeworkAssignment.objects.filter(homework=homework).delete()
+        replay = SendMessageView.as_view()(self._request("post", "/send/", data))
+        self.assertEqual(replay.status_code, 200, replay.data)
+        self.assertTrue(replay.data["replayed"])
+        self.assertEqual(ScheduledNotification.objects.filter(tenant=self.tenant).count(), 1)
+
     def test_preflight_allows_complete_grade_messages_to_students(self):
         student = self._student("011")
 

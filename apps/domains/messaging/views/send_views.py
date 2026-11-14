@@ -127,6 +127,23 @@ class SendMessageView(APIView):
             student_ids,
             send_to=send_to,
         )
+        if data.get("video_makeup_homework"):
+            from django.utils.crypto import constant_time_compare
+
+            from apps.support.messaging.video_makeup_homework import video_makeup_homework_preview
+
+            preview = video_makeup_homework_preview(tenant=tenant, data=data, recipients=recipients)
+            fingerprint = preview["fingerprint"]
+            if not fingerprint or not constant_time_compare(
+                fingerprint, data["video_makeup_homework_fingerprint"],
+            ):
+                return Response(
+                    {
+                        "detail": "영상보강 과제 또는 수신 정보가 변경되었습니다. 미리보기를 다시 확인해 주세요.",
+                        "code": "video_makeup_homework_changed",
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
         if not recipients:
             return Response(
                 {"detail": "선택한 학생을 찾을 수 없거나 삭제된 학생입니다."},

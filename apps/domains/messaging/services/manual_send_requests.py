@@ -49,6 +49,8 @@ def _payload_fingerprint(data: dict) -> str:
     }
     if data.get("session_id") is not None:
         canonical["session_id"] = data["session_id"]
+    if data.get("video_makeup_homework"):
+        canonical["video_makeup_homework_fingerprint"] = data.get("video_makeup_homework_fingerprint")
     encoded = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
 

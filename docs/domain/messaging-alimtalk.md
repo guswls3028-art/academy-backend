@@ -83,6 +83,32 @@
 
 ### 수동 발송 파이프라인
 
+차시 성적 화면의 **영상보강 과제 안내**는 교사가 같은 확인 창에서 선택하는
+별도 발송 목적이다. 기존 성적 발송 대상과 채점 기록을 그대로 유지한다.
+교사가 선택한 차시의 후보 학생을 일반 수동 발송 미리보기에 넘기면, 서버는
+같은 테넌트의 활성 차시 명단에서 출결 `ONLINE`이고 실제 과제가 배정된
+학생만 남긴다. 제거된 과제와 미배정 학생은 발송 대상에 포함하지 않는다.
+메시지는 승인된 `assignment` → `attendance` 봉투에 학생별 과제명을 담는다.
+과제 기록에 제출 기한이 없으므로 기한을 추정하지 않는다.
+
+`POST /messaging/send/preflight/`에는 `session_id`, `student_ids`,
+`send_to`, `block_category: "assignment"`, `video_makeup_homework: true`를
+보낸다. 응답의 `video_makeup_homework_preview`는 `recipients`(학생 ID 및
+과제명 목록), `excluded`(학생 ID 및 `not_video` 또는 `no_homework`),
+`fingerprint`를 반환한다. 최종 문구와 수신 가능한 전화번호 여부는 기존
+`preview_recipients`에서 확인한다. 보낼 대상이 없으면 `fingerprint`는
+`null`이며 화면에서 제외 사유를 확인할 수 있다.
+
+`POST /messaging/send/`에는 같은 요청과 함께
+`video_makeup_homework_fingerprint` 및 해당 수신 경로의
+`client_request_id`를 보낸다. 본문, 템플릿 또는 치환값을 요청에서
+지정할 수 없다. 확인 후 과제나 연락처가 바뀌면 HTTP 409에서 미리보기
+갱신을 안내한다. 같은 UUID와 내용을 재전송하면 최초 접수 결과를
+반환한다. 성적 발송과 과제 안내의 접수 결과는 독립적으로 조회하며,
+각 발송 목적·수신 경로에는 고유한 UUID를 사용한다.
+백엔드의 `SendMessagePreflightViewTests`에서 혼합 출결·배정 목록, 접수 전
+연락처 및 배정 변경, 대상 없음, 중복 접수 방지를 검증한다.
+
 ```
 관리자 UI (SendMessageModal)
   -> SendMessageView.post()             [views/send_views.py]
