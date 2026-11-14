@@ -112,7 +112,8 @@ class ClinicTimeRangePolicyAPITest(APITestCase, ClinicAPITestMixin):
         for index, (session_start, start, end) in enumerate(cases):
             with self.subTest(session_start=session_start):
                 self.session.start_time = session_start
-                self.session.save(update_fields=["start_time"])
+                self.session.max_participants = len(cases)
+                self.session.save(update_fields=["start_time", "max_participants"])
                 response = self._book(self.students[index], start=start, end=end)
                 self.assertEqual(response.status_code, 201, response.data)
                 participant = SessionParticipant.objects.get(id=response.data["participants"][0]["id"])
