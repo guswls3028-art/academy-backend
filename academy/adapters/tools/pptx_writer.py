@@ -8,7 +8,7 @@ from __future__ import annotations
 import io
 from typing import Any, Dict, Tuple
 
-from PIL import Image
+from PIL import Image, ImageOps
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.util import Inches
@@ -157,9 +157,18 @@ def add_slide(
     fill.solid()
     fill.fore_color.rgb = bg_color
 
-    # Image dimensions
-    img = Image.open(io.BytesIO(image_bytes))
-    img_w, img_h = img.size
+    # PowerPoint picture placement uses the stored pixel dimensions. Normalize
+    # camera orientation before calculating them and embedding the picture.
+    with Image.open(io.BytesIO(image_bytes)) as img:
+        img_w, img_h = img.size
+        if img.getexif().get(274) in range(2, 9):
+            oriented = ImageOps.exif_transpose(img)
+            if oriented.mode == "CMYK":
+                oriented = oriented.convert("RGB")
+            img_w, img_h = oriented.size
+            with io.BytesIO() as normalized:
+                oriented.save(normalized, format="PNG")
+                image_bytes = normalized.getvalue()
 
     # Placement
     left, top, width, height = _fit_image_to_slide(
