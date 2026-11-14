@@ -320,11 +320,6 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             )
         }
 
-    exam_rank_maps = compute_exam_rankings_batch(
-        exam_ids=exam_ids,
-        enrollment_ids=enrollment_ids,
-        tenant=tenant,
-    )
     exam_rank_visibility = {
         int(exam_id): (bool(rank_published), bool(cohort_size_published))
         for exam_id, rank_published, cohort_size_published in Exam.objects.filter(
@@ -336,6 +331,11 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "student_cohort_size_published",
         )
     }
+    exam_rank_maps = compute_exam_rankings_batch(
+        exam_ids=[exam_id for exam_id, visibility in exam_rank_visibility.items() if any(visibility)],
+        enrollment_ids=enrollment_ids,
+        tenant=tenant,
+    )
 
     for exam in exam_list:
         result_id = int(exam.pop("_result_id"))

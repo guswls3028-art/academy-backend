@@ -90,6 +90,31 @@ class GradesSummaryQueryBudgetTests(TestCase):
     def test_manual_history_query_budget_and_response_parity(self):
         self._assert_history_budget("manual")
 
+    def test_summary_limits_ranking_to_exams_with_published_comparison_fields(self):
+        from apps.support.student_app import results_summary
+
+        exam_ids = []
+        for order, (rank, cohort_size) in enumerate(((False, False), (True, False), (False, True)), 1):
+            exam, _, _, _ = self._add_exam(order, "manual")
+            exam.student_rank_published = rank
+            exam.student_cohort_size_published = cohort_size
+            exam.save(update_fields=["student_rank_published", "student_cohort_size_published"])
+            exam_ids.append(exam.id)
+
+        original_ranking = results_summary.compute_exam_rankings_batch
+        with patch.object(results_summary, "compute_exam_rankings_batch", wraps=original_ranking) as ranking:
+            actual = self._call()
+        self.assertEqual(actual.status_code, 200, actual.data)
+        self.assertEqual(set(ranking.call_args.kwargs["exam_ids"]), set(exam_ids[1:]))
+
+        with patch.object(
+            results_summary,
+            "compute_exam_rankings_batch",
+            side_effect=lambda **kwargs: original_ranking(**{**kwargs, "exam_ids": exam_ids}),
+        ):
+            unfiltered = self._call()
+        self.assertEqual(actual.data, unfiltered.data)
+
     def test_batch_matches_legacy_template_inference_adjustment_and_missing_sheet(self):
         exams = []
         for order in range(1, 6):
