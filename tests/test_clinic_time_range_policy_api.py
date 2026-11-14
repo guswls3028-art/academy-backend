@@ -107,6 +107,7 @@ class ClinicTimeRangePolicyAPITest(APITestCase, ClinicAPITestMixin):
         cases = (
             (datetime.time(9, 0, 30), "10:00:45", "11:00:45"),
             (datetime.time(9, 0, 0, 1), "10:00:00.000002", "11:00:00.000002"),
+            (datetime.time(9, 0, 30), "10:01", "11:01"),
         )
         for index, (session_start, start, end) in enumerate(cases):
             with self.subTest(session_start=session_start):

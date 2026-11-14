@@ -1104,12 +1104,23 @@ def _validated_booking_range(
         # Availability labels are HH:MM. Restore the stored session precision
         # before interpreting dates so an offered first slot cannot roll forward
         # a day merely because its label omitted the session's seconds.
-        booking_start_time = booking_start_time.replace(
+        restored_start_time = booking_start_time.replace(
             second=session.start_time.second, microsecond=session.start_time.microsecond,
         )
-        booking_end_time = booking_end_time.replace(
+        restored_end_time = booking_end_time.replace(
             second=session.start_time.second, microsecond=session.start_time.microsecond,
         )
+        restored_start, restored_end = booking_window(
+            session=session, start_time=restored_start_time, end_time=restored_end_time,
+        )
+        grid_start, _ = session_window(session)
+        grid_interval = datetime.timedelta(minutes=int(session.booking_interval_minutes))
+        if (
+            int(session.booking_interval_minutes) in (30, 60)
+            and not (restored_start - grid_start) % grid_interval
+            and not (restored_end - grid_start) % grid_interval
+        ):
+            booking_start_time, booking_end_time = restored_start_time, restored_end_time
     if (
         booking_start_time > datetime.time.min
         and booking_end_time == datetime.time.min
