@@ -6,6 +6,7 @@ from django.utils import timezone
 from apps.domains.lectures.models import Session
 from apps.domains.enrollment.models import Enrollment
 from apps.support.results.progress_read_dependencies import session_score_enrollment_ids
+from apps.support.messaging.video_makeup_homework import resolve_video_makeup_homework
 
 TOKEN = re.compile(r"#\{(현재차시명|현재차시날짜|다음차시명|다음차시날짜|[1-9]\d?차시후명|[1-9]\d?차시후날짜)\}")
 
@@ -43,13 +44,17 @@ def resolve_session_message_data(*, tenant, data):
     if session.section_id and (session.section.tenant_id != tenant.id or session.section.lecture_id != session.lecture_id):
         raise SessionMessageContextError("선택한 수업의 반 정보를 확인할 수 없습니다. 차시 설정을 확인해 주세요.")
     student_ids = set(result.get("student_ids") or [])
-    allowed_ids = set(Enrollment.objects.filter(
+    allowed_enrollments = dict(Enrollment.objects.filter(
         tenant=tenant, lecture=session.lecture, status="ACTIVE", student_id__in=student_ids,
         student__tenant=tenant, student__deleted_at__isnull=True,
         id__in=session_score_enrollment_ids(tenant=tenant, session=session),
-    ).values_list("student_id", flat=True))
-    if student_ids - allowed_ids:
+    ).values_list("id", "student_id"))
+    if student_ids - set(allowed_enrollments.values()):
         raise SessionMessageContextError("선택한 수업에 등록되지 않은 학생이 있습니다. 발송 대상을 다시 선택해 주세요.")
+    if result.get("video_makeup_homework"):
+        resolve_video_makeup_homework(
+            tenant=tenant, session=session, data=result, enrollments=allowed_enrollments,
+        )
     future = list(Session.objects.filter(lecture=session.lecture, lecture__tenant=tenant, section_id=session.section_id)
                   .filter(Q(order__gt=session.order) | Q(order=session.order, id__gte=session.id)).order_by("order", "id")[:100])
     values = {"차시명": session.title, "현재차시명": session.title, "강의명": session.lecture.title}
@@ -71,10 +76,12 @@ def resolve_session_message_data(*, tenant, data):
             values[name] = target.title
     send_at = result.get("scheduled_send_at") or timezone.now()
     values.update({"날짜": timezone.localtime(send_at).date().isoformat(), "시간": timezone.localtime(send_at).strftime("%H:%M")})
+    if result.get("video_makeup_homework"):
+        values.update({"날짜": values.get("강의날짜", ""), "시간": ""})
     result["alimtalk_extra_vars"] = {**(result.get("alimtalk_extra_vars") or {}), **values}
     for context in (result.get("alimtalk_extra_vars_per_student") or {}).values():
         context.update(values)
-        if isinstance(context.get("_body_subst"), str):
+        if not result.get("video_makeup_homework") and isinstance(context.get("_body_subst"), str):
             text = context["_body_subst"]
             for name, value in values.items():
                 text = text.replace(f"#{{{name}}}", value)
