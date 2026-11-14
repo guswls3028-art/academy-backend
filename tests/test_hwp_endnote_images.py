@@ -5,6 +5,7 @@ from zipfile import ZipFile
 
 from io import BytesIO
 from PIL import Image
+import pytest
 
 from academy.adapters.tools.hwp_endnote_images import (
     HwpEndnoteExtraction,
@@ -13,6 +14,7 @@ from academy.adapters.tools.hwp_endnote_images import (
     _collect_endnote_contents,
     _collect_endnote_numbers,
     _collect_hwp_question_contents,
+    _collect_hwpx_question_contents,
     _decode_hwp_equation,
     _equation_requires_text_render,
     _hwp_equation_to_mathtext,
@@ -22,7 +24,9 @@ from academy.adapters.tools.hwp_endnote_images import (
     _render_equation_image,
     extract_hwpx_endnotes,
 )
+from academy.adapters.tools import hwp_endnote_images as extractor
 from apps.shared.contracts.ai_job import AIJob
+from academy.application.use_cases.ai.pipelines import hwp_question_pipeline as worker
 from academy.application.use_cases.ai.pipelines.hwp_question_pipeline import (
     extract_and_upload_hwp_explanations,
     merge_paired_teacher_explanations,
@@ -113,6 +117,22 @@ def test_humanizes_common_hwp_equation_tokens_without_changing_meaning():
     )
     assert "over" not in nested_fraction
     assert r"\frac{\alpha+\beta}{2}" in nested_fraction
+
+
+@pytest.mark.parametrize(
+    ('source', 'fraction'),
+    [('1over3 pi', r'\frac{1}{3}\pi'), ('pi over2', r'\frac{\pi}{2}'),
+     ('root2 over2', r'\frac{\sqrt{2}}{2}'), ('2oversintheta', r'\frac{2}{\sin \theta}'),
+     ('1overa', r'\frac{1}{a}')],
+)
+def test_equation_formats_compact_teacher_fraction(source, fraction):
+    rendered = _hwp_equation_to_mathtext(source)
+    assert rendered.replace(' ', '') == fraction.replace(' ', '')
+
+
+def test_equation_preserves_inequality_between_native_fractions_and_trig_function():
+    rendered = _hwp_equation_to_mathtext('root2 over2 le cos x le root3 over2')
+    assert rendered.replace(' ', '') == r'\frac{\sqrt{2}}{2}\leq\cosx\leq\frac{\sqrt{3}}{2}'
 
 
 def test_routes_hangul_equation_labels_to_the_review_font_renderer():
@@ -339,6 +359,92 @@ def test_hwpx_keeps_text_after_tabs_inside_choice_paragraphs():
 
     assert paragraphs == ("① \u2003\u2003② \u2003\u2003③",)
     assert image_refs == ()
+
+
+def test_hwpx_pairs_leading_table_with_followup_note_without_stealing_choices():
+    source = ElementTree.fromstring(
+        '<sec><p><endNote number="1"/><t>첫 문제</t></p>'
+        '<p><t>① 하나 ② 둘 ③ 셋 ④ 넷 ⑤ 다섯</t></p>'
+        '<p><t>표는 다음 자료이다.</t><tbl><tr>'
+        '<tc><p><t>산성</t></p></tc><tc><p><t>푸른색</t></p></tc>'
+        '</tr></tbl></p>'
+        '<p><endNote number="2"/><t>이에 대한 설명으로 옳은 것은?</t></p>'
+        '</sec>'
+    )
+    first, second = _collect_hwpx_question_contents([source])
+    assert first.paragraphs == ("첫 문제", "① 하나 ② 둘 ③ 셋 ④ 넷 ⑤ 다섯")
+    assert second.paragraphs == ("표는 다음 자료이다.", "산성 | 푸른색", "이에 대한 설명으로 옳은 것은?")
+
+
+@pytest.mark.parametrize("unsupported", [None, "missing_picture", "duplicate_note", "picture_table"])
+def test_hwpx_worker_reconstructs_native_note_and_excludes_answer_appendix(tmp_path, monkeypatch, unsupported):
+    source = tmp_path / "native.hwpx"
+
+    def paragraph(content):
+        return f"<hp:p><hp:run>{content}</hp:run></hp:p>"
+
+    note = '<hp:t>원문 해설</hp:t><hp:equation><hp:script>x over 2</hp:script></hp:equation>'
+    if unsupported == "missing_picture":
+        note += '<hp:pic><hp:img binaryItemIDRef="missing"/></hp:pic>'
+    body_table = ''
+    if unsupported == "picture_table":
+        body_table = ('<hp:tbl><hp:tr><hp:tc><hp:pic><hp:img binaryItemIDRef="photo"/>'
+                      '</hp:pic></hp:tc><hp:tc><hp:t>반대 셀</hp:t></hp:tc></hp:tr></hp:tbl>')
+    duplicated = paragraph('<hp:endNote number="1"/><hp:t>다른 문항</hp:t>') if unsupported == "duplicate_note" else ''
+    with ZipFile(source, "w") as archive:
+        archive.writestr("mimetype", "application/hwp+zip")
+        photo = BytesIO()
+        Image.new("RGB", (50, 50), "blue").save(photo, format="PNG")
+        archive.writestr("BinData/photo.png", photo.getvalue())
+        archive.writestr(
+            "Contents/section0.xml",
+            '<hs:sec xmlns:hs="urn:section" xmlns:hp="urn:paragraph">'
+            + paragraph('<hp:ctrl><hp:endNote number="1"><hp:subList>' + paragraph(note)
+                        + '</hp:subList></hp:endNote></hp:ctrl><hp:t>본문 문제</hp:t>' + body_table)
+            + paragraph('<hp:t>①<hp:lineBreak/>선택지</hp:t>')
+            + duplicated
+            + paragraph('<hp:t>유형출제 정답 및 해설</hp:t>')
+            + paragraph('<hp:t>학생 문제 이미지에 포함되면 안 되는 정답</hp:t>')
+            + '</hs:sec>',
+        )
+    rendered = {}
+    render_source = extractor._render_source_content
+
+    def verify_source(*, content, images, label, **kwargs):
+        rendered[label] = content.paragraphs
+        return render_source(content=content, images=images, label=label, **kwargs)
+
+    uploads = {}
+
+    def upload(*, fileobj, key, **_):
+        uploads[key] = fileobj.read()
+
+    monkeypatch.setattr(extractor, "_render_source_content", verify_source)
+    monkeypatch.setattr(worker, "upload_fileobj_to_r2_storage", upload)
+    result = worker.run_hwp_question_pipeline(
+        job=AIJob.new(type="question_segmentation", payload={}), local_path=str(source),
+        payload={"exam_id": 42, "filename": "native.hwpx"}, tenant_id="7",
+        record_progress=lambda *_args, **_kwargs: None,
+    )
+    assert result.status == "DONE"
+    if unsupported in {"missing_picture", "duplicate_note"}:
+        assert result.result["conversion_required"] and not uploads
+        return
+    assert not result.result.get("conversion_required")
+    assert len(result.result["questions"]) == len(result.result["explanations"]) == 1
+    assert len(uploads) == 2 and len(set(uploads.values())) == 2
+    body = next(parts for name, parts in rendered.items() if '한글 본문' in name)
+    note = next(parts for name, parts in rendered.items() if '선생님 원문' in name)
+    if unsupported == "picture_table":
+        assert body == ("본문 문제", "\ufff4photo\ufff5 | 반대 셀", "① 선택지")
+        with Image.open(BytesIO(next(raw for key, raw in uploads.items() if '/questions/' in key))) as body_image:
+            assert (0, 0, 255) in body_image.convert('RGB').getdata()
+    else:
+        assert body == ("본문 문제", "① 선택지")
+    assert "원문 해설" in note[0] and 'x over 2' in note[0]
+    for raw in uploads.values():
+        with Image.open(BytesIO(raw)) as image:
+            assert image.format == "PNG" and image.height > 100
 
 
 def test_single_hwp_with_partial_visual_coverage_requires_problem_pdf(monkeypatch):

@@ -47,6 +47,77 @@ def _question_text(n: int) -> str:
     )
 
 
+@pytest.mark.parametrize("layout", ["same_page", "next_page", "previous_question_complete"])
+def test_workbook_joins_only_verified_leading_continuation(tmp_path, layout):
+    import fitz
+    import numpy as np
+    from PIL import Image
+    from pptx import Presentation
+
+    from academy.adapters.tools.pymupdf_renderer import PdfDocument
+    from academy.application.use_cases.tools.generate_ppt import GeneratePptFromPdfUseCase
+
+    source = tmp_path / "workbook-continuation.pdf"
+    with fitz.open() as doc:
+        first = doc.new_page(width=595, height=842)
+
+        def anchor(page, number, x, y):
+            page.insert_text((x, y), f"{number}) {number}. 다음 중 옳은 것은?", fontname="korea")
+
+        if layout == "next_page":
+            for n, x, y in [(62, 40, 140), (63, 40, 440), (64, 322, 140), (65, 322, 680)]:
+                anchor(first, n, x, y)
+            following = doc.new_page(width=595, height=842)
+            anchor(following, 66, 40, 340)
+            anchor(following, 67, 322, 140)
+            anchor(following, 68, 322, 410)
+            following.insert_text((322, 175), "오른쪽 열에는 별도 문항이 있습니다.", fontname="korea")
+            following.insert_text((322, 440), "오른쪽 열에는 별도 문항이 있습니다.", fontname="korea")
+            lead_x = 40
+        else:
+            for n, x, y in [(64, 40, 150), (65, 40, 680), (66, 322, 340), (67, 322, 560)]:
+                anchor(first, n, x, y)
+            if layout == "previous_question_complete":
+                first.insert_text((40, 702), "① 하나 ② 둘 ③ 셋 ④ 넷 ⑤ 다섯", fontname="korea")
+            following = first
+            lead_x = 322
+
+        following.insert_text((175, 45), "WORKBOOK HEADER", fontsize=12)
+        for y, text in [(100, "내용이 계속됩니다."), (180, "< 보기 >"),
+                        (210, "① 하나 ② 둘 ③ 셋"), (240, "④ 넷 ⑤ 다섯")]:
+            following.insert_text((lead_x, y), text, fontname="korea")
+        following.draw_rect(
+            fitz.Rect(lead_x + 8, 122, lead_x + 128, 147),
+            color=(0, 0, 1), fill=(0, 0, 1),
+        )
+        figure = io.BytesIO()
+        Image.new("RGB", (100, 50), (230, 20, 20)).save(figure, format="PNG")
+        following.insert_image(fitz.Rect(lead_x + 8, 57, lead_x + 108, 107), stream=figure.getvalue())
+        header = io.BytesIO()
+        Image.new("RGB", (450, 50), (20, 205, 20)).save(header, format="PNG")
+        following.insert_image(fitz.Rect(42, 10, 535, 52), stream=header.getvalue())
+        doc.save(source)
+
+    with PdfDocument(str(source)) as doc:
+        plan = _build_pdf_question_plan(doc)
+    matched = layout != "previous_question_complete"
+    assert ((0, 65) in plan.continuations) == matched
+    result = GeneratePptFromPdfUseCase().execute(str(source))
+    slides = Presentation(io.BytesIO(result.pptx_bytes)).slides
+    numbers = [r.number for regions in plan.regions_per_page for r in regions]
+    assert len(slides) == len(numbers)
+    for number, slide in zip(numbers, slides, strict=True):
+        with Image.open(io.BytesIO(slide.shapes[0].image.blob)) as image:
+            pixels = np.asarray(image.convert("RGB"))
+        blue = np.count_nonzero((pixels[:, :, 2] > 170) & (pixels[:, :, 0] < 90))
+        assert bool(blue) == (matched and number == 65)
+        if matched and number == 65:
+            red = (pixels[:, :, 0] > 170) & (pixels[:, :, 1] < 70)
+            assert np.count_nonzero(red) > 28_000
+            green = (pixels[:, :, 1] > 150) & (pixels[:, :, 0] < 90)
+            assert np.count_nonzero(green) == 0
+
+
 @pytest.mark.parametrize("middle_content", ["blank", "image", "vector", "annotation"])
 def test_blank_separator_preserves_question_crops_but_visible_textless_pages_are_kept(tmp_path, middle_content):
     import fitz
