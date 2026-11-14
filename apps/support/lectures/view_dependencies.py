@@ -76,8 +76,9 @@ def first_session_delete_blocker(sessions: Any) -> str | None:
 
 
 def first_lecture_delete_blocker(lecture: Any) -> str | None:
+    from apps.domains.attendance.models import AttendanceQrPoint
     from apps.domains.community.models import PostMapping
-    from apps.domains.lectures.models import SectionAssignment, Session
+    from apps.domains.lectures.models import SectionAssignment, Session, SessionScheduleChange
 
     if PostMapping.objects.filter(node__lecture=lecture).exists():
         return "community posts"
@@ -87,6 +88,14 @@ def first_lecture_delete_blocker(lecture: Any) -> str | None:
         return "lecture progress"
     if lecture.clinic_sessions_by_lecture.exists():
         return "clinic sessions"
+    if lecture.fee_templates.exists():
+        return "fee templates"
+    if lecture.exam_policies.exists():
+        return "exam policies"
+    if AttendanceQrPoint.objects.filter(lecture=lecture, active=True).exists():
+        return "active attendance QR points"
+    if SessionScheduleChange.objects.filter(session__lecture=lecture).exists():
+        return "sessions with schedule change history"
     if SectionAssignment.objects.filter(
         Q(class_section__lecture=lecture) | Q(clinic_section__lecture=lecture)
     ).exists():
