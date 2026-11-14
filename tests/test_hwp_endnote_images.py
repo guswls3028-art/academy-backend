@@ -360,24 +360,33 @@ def test_hwpx_pairs_leading_table_with_followup_note_without_stealing_choices():
     assert second.paragraphs == ("표는 다음 자료이다.", "산성 | 푸른색", "이에 대한 설명으로 옳은 것은?")
 
 
-@pytest.mark.parametrize("unsupported_note", [False, True])
-def test_hwpx_worker_reconstructs_native_note_and_excludes_answer_appendix(tmp_path, monkeypatch, unsupported_note):
+@pytest.mark.parametrize("unsupported", [None, "missing_picture", "duplicate_note", "picture_table"])
+def test_hwpx_worker_reconstructs_native_note_and_excludes_answer_appendix(tmp_path, monkeypatch, unsupported):
     source = tmp_path / "native.hwpx"
 
     def paragraph(content):
         return f"<hp:p><hp:run>{content}</hp:run></hp:p>"
 
     note = '<hp:t>원문 해설</hp:t><hp:equation><hp:script>x over 2</hp:script></hp:equation>'
-    if unsupported_note:
+    if unsupported == "missing_picture":
         note += '<hp:pic><hp:img binaryItemIDRef="missing"/></hp:pic>'
+    body_table = ''
+    if unsupported == "picture_table":
+        body_table = ('<hp:tbl><hp:tr><hp:tc><hp:pic><hp:img binaryItemIDRef="photo"/>'
+                      '</hp:pic></hp:tc><hp:tc><hp:t>반대 셀</hp:t></hp:tc></hp:tr></hp:tbl>')
+    duplicated = paragraph('<hp:endNote number="1"/><hp:t>다른 문항</hp:t>') if unsupported == "duplicate_note" else ''
     with ZipFile(source, "w") as archive:
         archive.writestr("mimetype", "application/hwp+zip")
+        photo = BytesIO()
+        Image.new("RGB", (50, 50), "blue").save(photo, format="PNG")
+        archive.writestr("BinData/photo.png", photo.getvalue())
         archive.writestr(
             "Contents/section0.xml",
             '<hs:sec xmlns:hs="urn:section" xmlns:hp="urn:paragraph">'
             + paragraph('<hp:ctrl><hp:endNote number="1"><hp:subList>' + paragraph(note)
-                        + '</hp:subList></hp:endNote></hp:ctrl><hp:t>본문 문제</hp:t>')
+                        + '</hp:subList></hp:endNote></hp:ctrl><hp:t>본문 문제</hp:t>' + body_table)
             + paragraph('<hp:t>①<hp:lineBreak/>선택지</hp:t>')
+            + duplicated
             + paragraph('<hp:t>유형출제 정답 및 해설</hp:t>')
             + paragraph('<hp:t>학생 문제 이미지에 포함되면 안 되는 정답</hp:t>')
             + '</hs:sec>',
@@ -385,9 +394,9 @@ def test_hwpx_worker_reconstructs_native_note_and_excludes_answer_appendix(tmp_p
     rendered = {}
     render_source = extractor._render_source_content
 
-    def verify_source(*, content, images, label):
+    def verify_source(*, content, images, label, **kwargs):
         rendered[label] = content.paragraphs
-        return render_source(content=content, images=images, label=label)
+        return render_source(content=content, images=images, label=label, **kwargs)
 
     uploads = {}
 
@@ -402,7 +411,7 @@ def test_hwpx_worker_reconstructs_native_note_and_excludes_answer_appendix(tmp_p
         record_progress=lambda *_args, **_kwargs: None,
     )
     assert result.status == "DONE"
-    if unsupported_note:
+    if unsupported in {"missing_picture", "duplicate_note"}:
         assert result.result["conversion_required"] and not uploads
         return
     assert not result.result.get("conversion_required")
@@ -410,7 +419,12 @@ def test_hwpx_worker_reconstructs_native_note_and_excludes_answer_appendix(tmp_p
     assert len(uploads) == 2 and len(set(uploads.values())) == 2
     body = next(parts for name, parts in rendered.items() if '한글 본문' in name)
     note = next(parts for name, parts in rendered.items() if '선생님 원문' in name)
-    assert body == ("본문 문제", "① 선택지")
+    if unsupported == "picture_table":
+        assert body == ("본문 문제", "\ufff4photo\ufff5 | 반대 셀", "① 선택지")
+        with Image.open(BytesIO(next(raw for key, raw in uploads.items() if '/questions/' in key))) as body_image:
+            assert (0, 0, 255) in body_image.convert('RGB').getdata()
+    else:
+        assert body == ("본문 문제", "① 선택지")
     assert "원문 해설" in note[0] and 'x over 2' in note[0]
     for raw in uploads.values():
         with Image.open(BytesIO(raw)) as image:

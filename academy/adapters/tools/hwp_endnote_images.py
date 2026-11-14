@@ -29,6 +29,9 @@ _ENDNOTE_CHID = b"  ne"
 _EQUATION_CHID = b"deqe"
 _EQUATION_MARKER_START = "\ufff2"
 _EQUATION_MARKER_END = "\ufff3"
+_PICTURE_MARKER_START = "\ufff4"
+_PICTURE_MARKER_END = "\ufff5"
+_INLINE_MARKERS = re.compile(r"(\ufff2.*?\ufff3|\ufff4.*?\ufff5)", re.S)
 _MAX_NOTES = 200
 _MAX_PICTURES = 500
 _MAX_IMAGE_PIXELS = 40_000_000
@@ -969,15 +972,11 @@ def _render_text_fragment(value: str, *, font) -> Image.Image | None:
     return image
 
 
-def _render_paragraph_flow(paragraph: str, *, font, max_width: int) -> Image.Image:
+def _render_paragraph_flow(paragraph: str, *, font, max_width: int, inline_pictures=None) -> Image.Image:
     scratch = Image.new("RGB", (max_width, 100), "white")
     measure = ImageDraw.Draw(scratch)
     atoms: list[tuple[Image.Image, bool]] = []
-    parts = re.split(
-        f"({_EQUATION_MARKER_START}.*?{_EQUATION_MARKER_END})",
-        paragraph,
-        flags=re.S,
-    )
+    parts = _INLINE_MARKERS.split(paragraph)
     for part in parts:
         if not part:
             continue
@@ -992,6 +991,13 @@ def _render_paragraph_flow(paragraph: str, *, font, max_width: int) -> Image.Ima
                 equation.close()
                 equation = resized
             atoms.append((equation, False))
+            continue
+        if part.startswith(_PICTURE_MARKER_START) and part.endswith(_PICTURE_MARKER_END):
+            picture = inline_pictures[part[1:-1]]
+            target = picture.copy()
+            max_picture_width = max_width // 3 if " | " in paragraph else max_width
+            target.thumbnail((max_picture_width, target.height), Image.Resampling.LANCZOS)
+            atoms.append((target, False))
             continue
         # The bundled font lacks typographic space glyphs. Use supported
         # spaces at render time while keeping source text and equation scripts.
@@ -1057,6 +1063,7 @@ def _render_source_content(
     content: _HwpEndnoteContent,
     images: list[Image.Image],
     label: str,
+    inline_pictures=None,
 ) -> tuple[bytes, int, int]:
     """Render source text, native equations, and source images for review."""
     width = 1600
@@ -1072,6 +1079,7 @@ def _render_source_content(
             paragraph,
             font=body_font,
             max_width=max_text_width,
+            inline_pictures=inline_pictures,
         )
         for paragraph in content.paragraphs
         if paragraph.strip()
@@ -1153,10 +1161,14 @@ def _render_problem_content(
     content: _HwpEndnoteContent,
     images: list[Image.Image],
 ) -> tuple[bytes, int, int]:
+    inline_pictures = None
+    if any(_PICTURE_MARKER_START in paragraph for paragraph in content.paragraphs):
+        inline_pictures = dict(zip(content.picture_refs, images, strict=True))
     return _render_source_content(
         content=content,
-        images=images,
+        images=[] if inline_pictures is not None else images,
         label=f"{content.number}번 · 한글 본문 원문(문자·수식·삽화 재현)",
+        inline_pictures=inline_pictures,
     )
 
 
@@ -1303,7 +1315,7 @@ def _safe_hwpx_entries(archive: ZipFile):
     return entries
 
 
-def _hwpx_body_content(element: ElementTree.Element) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _hwpx_body_content(element: ElementTree.Element, *, inline_images=False) -> tuple[tuple[str, ...], tuple[str, ...]]:
     parts: list[str] = []
     image_refs: list[str] = []
 
@@ -1333,6 +1345,8 @@ def _hwpx_body_content(element: ElementTree.Element) -> tuple[tuple[str, ...], t
             image_ref = str(node.attrib.get("binaryItemIDRef") or "").strip().lower()
             if image_ref and image_ref not in image_refs:
                 image_refs.append(image_ref)
+            if image_ref and inline_images:
+                parts.append(f"{_PICTURE_MARKER_START}{image_ref}{_PICTURE_MARKER_END}")
             return
         if name == "tab":
             parts.append("\u2003\u2003")
@@ -1403,7 +1417,7 @@ def _collect_hwpx_question_contents(
                 for item in paragraph.iter()
                 if item.tag.rsplit("}", 1)[-1] == "endNote"
             ]
-            body, image_refs = _hwpx_body_content(paragraph)
+            body, image_refs = _hwpx_body_content(paragraph, inline_images=True)
             if endnotes:
                 leading = []
                 # Some authoring templates attach the numbered note to the
@@ -1431,7 +1445,11 @@ def _collect_hwpx_question_contents(
             answer_heading = next((i for i, value in enumerate(body) if _HWPX_ANSWER_SECTION_RE.fullmatch(value)), None)
             if answer_heading is not None:
                 if answer_heading:
-                    current_blocks.append((body[:answer_heading], ()))
+                    body = body[:answer_heading]
+                    image_refs = tuple(ref for ref in image_refs if any(
+                        f"{_PICTURE_MARKER_START}{ref}{_PICTURE_MARKER_END}" in line for line in body
+                    ))
+                    current_blocks.append((body, image_refs))
                 finish_question()
                 return questions
             if body or image_refs:
@@ -1472,6 +1490,7 @@ def extract_hwpx_endnotes(
         visuals: list[HwpEndnoteVisual] = []
         paired_visuals: list[HwpEndnoteVisual] = []
         seen_numbers: set[int] = set()
+        duplicate_numbers: set[int] = set()
         total_picture_count = 0
         roots: list[ElementTree.Element] = []
 
@@ -1492,7 +1511,10 @@ def extract_hwpx_endnotes(
                     continue
                 if number not in control_numbers:
                     control_numbers.append(number)
-                if number in seen_numbers or len(seen_numbers) >= _MAX_NOTES:
+                if number in seen_numbers:
+                    duplicate_numbers.add(number)
+                    continue
+                if len(seen_numbers) >= _MAX_NOTES:
                     continue
                 seen_numbers.add(number)
 
@@ -1584,8 +1606,11 @@ def extract_hwpx_endnotes(
     return HwpEndnoteExtraction(
         control_numbers=tuple(control_numbers),
         visuals=tuple(sorted(visuals, key=lambda item: item.number)),
-        paired_visuals=tuple(sorted(paired_visuals if include_paired_reconstruction else visuals,
-                                    key=lambda item: item.number)),
+        paired_visuals=tuple(sorted(
+            (item for item in (paired_visuals if include_paired_reconstruction else visuals)
+             if item.number not in duplicate_numbers),
+            key=lambda item: item.number,
+        )),
         problem_visuals=tuple(sorted(problem_visuals, key=lambda item: item.number)),
     )
 
