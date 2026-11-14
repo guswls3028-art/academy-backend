@@ -173,7 +173,7 @@ def test_mixed_pdf_exports_native_and_raster_questions_in_page_order(
 def test_mixed_scan_keeps_full_page_when_boxes_omit_body_ink(tmp_path, numbers, omitted_content):
     from PIL import Image, ImageDraw
 
-    from academy.application.use_cases.tools.generate_ppt import _prepare_mixed_scan_crops
+    from academy.application.use_cases.tools.generate_ppt import _prepare_scan_crops
 
     source = tmp_path / "uncovered-right-side.png"
     with Image.new("RGB", (600, 800), "white") as image:
@@ -191,7 +191,7 @@ def test_mixed_scan_keeps_full_page_when_boxes_omit_body_ink(tmp_path, numbers, 
         "numbers": numbers,
     }
 
-    assert _prepare_mixed_scan_crops(page, "contain") == []
+    assert _prepare_scan_crops(page, reflow=True, require_split=True) == []
 
 
 def test_ppt_pdf_plan_preserves_image_only_pages_between_anchored_text_pages(monkeypatch):
@@ -522,7 +522,7 @@ def test_ppt_scanned_question_shortens_only_empty_middle(tmp_path, monkeypatch):
     draw.rectangle((20, 700, 120, 760), fill="black")
     image.save(image_path)
     monkeypatch.setattr(segment_dispatcher, "segment_questions_multipage", lambda _path: {
-        "pages": [{"image_path": str(image_path), "boxes": [(0, 0, 320, 900)]}],
+        "pages": [{"image_path": str(image_path), "boxes": [(0, 0, 320, 800)]}],
         "tmp_dirs": [],
     })
     monkeypatch.setattr(segment_dispatcher, "cleanup_pdf_seg_tmp_dirs", lambda _paths: None)
@@ -553,8 +553,10 @@ def test_scanned_pdf_keeps_pages_without_detected_boxes(tmp_path, monkeypatch):
     from academy.adapters.ai.detection import segment_dispatcher
 
     image_paths = [tmp_path / f"page-{idx}.png" for idx in range(2)]
-    for path in image_paths:
-        Image.new("RGB", (320, 220), "white").save(path)
+    first = Image.new("RGB", (320, 220), "white")
+    first.paste("black", (50, 40, 100, 80))
+    first.save(image_paths[0])
+    Image.new("RGB", (320, 220), "white").save(image_paths[1])
     monkeypatch.setattr(segment_dispatcher, "segment_questions_multipage", lambda _path: {
         "pages": [
             {"page_index": 0, "image_path": str(image_paths[0]), "boxes": [(20, 20, 120, 90)]},
@@ -589,6 +591,47 @@ def test_scanned_pdf_keeps_pages_without_detected_boxes(tmp_path, monkeypatch):
     assert fallback_pages == {1}
     assert composer.slides[0].startswith(b"\x89PNG")
     assert composer.slides[1].startswith(b"\xff\xd8")
+
+
+def test_scanned_workbook_keeps_page_when_crop_divides_answer_rows(tmp_path, monkeypatch):
+    from io import BytesIO
+
+    import fitz
+    from PIL import Image
+    from pptx import Presentation
+
+    from academy.adapters.ai.detection import segment_dispatcher
+    from academy.application.use_cases.tools.generate_ppt import GeneratePptFromPdfUseCase
+
+    page_image = Image.new("RGB", (320, 420), "white")
+    page_image.paste("black", (45, 70, 240, 90))
+    page_image.paste("black", (45, 185, 225, 215))
+    page_image.paste("black", (45, 285, 240, 308))
+    image_path = tmp_path / "workbook-scan.png"
+    page_image.save(image_path)
+    source = tmp_path / "workbook-scan.pdf"
+    with fitz.open() as document:
+        page = document.new_page(width=320, height=420)
+        page.insert_image(page.rect, filename=str(image_path))
+        document.save(source)
+
+    monkeypatch.setattr(segment_dispatcher, "segment_questions_multipage", lambda _path: {
+        "pages": [{
+            "page_index": 0,
+            "image_path": str(image_path),
+            "boxes": [(20, 50, 260, 150), (20, 200, 260, 125)],
+            "numbers": [None, None],
+        }],
+        "tmp_dirs": [],
+    })
+
+    result = GeneratePptFromPdfUseCase().execute(str(source))
+    assert result.mode == "page"
+    assert result.slide_count == 1
+    slides = Presentation(BytesIO(result.pptx_bytes)).slides
+    with Image.open(BytesIO(slides[0].shapes[0].image.blob)) as exported_page:
+        assert exported_page.size == page_image.size
+        assert all(exported_page.getpixel((120, y))[0] < 20 for y in (80, 190, 210, 300))
 
 
 def test_native_pdf_visual_content_beyond_text_survives_ppt_export(tmp_path):

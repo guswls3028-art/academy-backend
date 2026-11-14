@@ -221,7 +221,11 @@ class GeneratePptFromPdfUseCase:
                     if use_whole_page or page_idx in fallback_pages:
                         scan_page = mixed_scan_pages.get(page_idx)
                         if scan_page is not None:
-                            crops = _prepare_mixed_scan_crops(scan_page, ppt_config.fit_mode)
+                            crops = _prepare_scan_crops(
+                                scan_page,
+                                reflow=ppt_config.fit_mode == "contain",
+                                require_split=True,
+                            )
                             if crops:
                                 for img_bytes in crops:
                                     composer.add_slide(_apply_user_settings(img_bytes))
@@ -616,7 +620,12 @@ def _load_pdf_segmentation(
             cleanup_pdf_seg_tmp_dirs(list(result.get("tmp_dirs") or []))
 
 
-def _prepare_mixed_scan_crops(page: dict[str, Any], fit_mode: str) -> list[bytes]:
+def _prepare_scan_crops(
+    page: dict[str, Any],
+    *,
+    reflow: bool = False,
+    require_split: bool = False,
+) -> list[bytes]:
     """Prepare an entire scanned page before appending any of its crops."""
     from academy.domain.tools.image_preprocessor import (
         compact_internal_whitespace,
@@ -630,9 +639,9 @@ def _prepare_mixed_scan_crops(page: dict[str, Any], fit_mode: str) -> list[bytes
 
     try:
         boxes = list(page.get("boxes") or [])
-        # The dispatcher can infer a number for a lone unnumbered figure from
-        # neighboring pages. Keep that page intact instead of calling it split.
-        if len(boxes) < 2:
+        # In mixed documents a lone region can be an unnumbered figure whose
+        # number was inferred from neighboring pages.
+        if not boxes or (require_split and len(boxes) < 2):
             return []
         with PILImage.open(page["image_path"]) as source, source.convert("RGB") as image:
             width, height = image.size
@@ -652,20 +661,21 @@ def _prepare_mixed_scan_crops(page: dict[str, Any], fit_mode: str) -> list[bytes
             if (
                 not _scan_covers_page_body(image, bounds_list)
                 or _scan_cuts_through_column_seam(image, bounds_list)
+                or _scan_cuts_through_rows(image, bounds_list)
             ):
                 return []
             crops = []
             for bounds in bounds_list:
                 with image.crop(bounds) as crop:
                     export = preprocess_for_export(
-                        compact_internal_whitespace(trim_bottom_whitespace(crop))
+                        compact_internal_whitespace(trim_bottom_whitespace(crop, padding_px=12))
                     )
-                    if fit_mode == "contain":
+                    if reflow:
                         export = reflow_tall_question(export)
                     crops.append(_image_to_bytes(export))
             return crops
     except (OSError, TypeError, ValueError):
-        logger.warning("PPT_PDF_MIXED_SCAN_CROP_FAILED page=%s", page.get("page_index"))
+        logger.warning("PPT_PDF_SCAN_CROP_FAILED page=%s", page.get("page_index"))
         return []
 
 
@@ -733,6 +743,28 @@ def _scan_cuts_through_column_seam(
     return False
 
 
+def _scan_cuts_through_rows(
+    image: PILImage.Image,
+    bounds_list: list[tuple[int, int, int, int]],
+) -> bool:
+    """Detect ink crossing a crop's top or bottom, even when the page is covered."""
+    probe = max(2, round(image.height * 0.002))
+    ink_threshold = [255] * 150 + [0] * 106
+    for x0, y0, x1, y1 in bounds_list:
+        width = x1 - x0
+        min_ink_columns = max(5, round(width * 0.012))
+        for edge in (y0, y1):
+            if edge < probe or edge + probe > image.height:
+                continue
+            with image.crop((x0, edge - probe, x1, edge + probe)) as strip:
+                ink = strip.convert("L").point(ink_threshold)
+                above = ink.crop((0, 0, width, probe)).resize((width, 1), PILImage.Resampling.BOX)
+                below = ink.crop((0, probe, width, 2 * probe)).resize((width, 1), PILImage.Resampling.BOX)
+                if sum(a >= 64 and b >= 64 for a, b in zip(above.tobytes(), below.tobytes())) >= min_ink_columns:
+                    return True
+    return False
+
+
 def _add_segmented_pdf_slides_to_composer(
     pdf_path: str,
     *,
@@ -767,46 +799,25 @@ def _append_segmented_pdf_pages(
     on_progress: Optional[Callable[[int, str], None]],
     fallback_pages: Optional[set[int]],
 ) -> int:
-    from academy.domain.tools.image_preprocessor import (
-        compact_internal_whitespace,
-        preprocess_for_export,
-        trim_bottom_whitespace,
-    )
+    from academy.domain.tools.image_preprocessor import preprocess_for_export
 
     total_pages = len(pages)
     added = 0
     for page_idx, page in pages.items():
-        boxes = list(page.get("boxes") or [])
         if on_progress:
             pct = int(page_idx / max(total_pages, 1) * 100)
             on_progress(pct, f"문항 슬라이드 {page_idx + 1}/{total_pages}")
-        with PILImage.open(page["image_path"]) as source_img, source_img.convert("RGB") as page_img:
-            img_w, img_h = page_img.size
-            slides_before_page = composer.slide_count
-            for x, y, w, h in boxes:
-                px0 = max(0, int(x))
-                py0 = max(0, int(y))
-                px1 = min(img_w, int(x + w))
-                py1 = min(img_h, int(y + h))
-                if px1 - px0 < 10 or py1 - py0 < 10:
-                    continue
-                crop = page_img.crop((px0, py0, px1, py1))
-                crop = compact_internal_whitespace(
-                    trim_bottom_whitespace(crop, padding_px=12)
-                )
-                export_img = preprocess_for_export(crop)
-                img_bytes = apply_user_settings(_image_to_bytes(export_img))
-                composer.add_slide(img_bytes)
-                added += 1
-                del crop, export_img
-            if composer.slide_count == slides_before_page:
+        crops = _prepare_scan_crops(page)
+        if not crops:
+            with PILImage.open(page["image_path"]) as source_img, source_img.convert("RGB") as page_img:
                 page_img.thumbnail((2400, 2400), resample=PILImage.LANCZOS)
                 export_img = preprocess_for_export(page_img)
-                composer.add_slide(apply_user_settings(_image_to_bytes(export_img, fmt="JPEG")))
-                if fallback_pages is not None:
-                    fallback_pages.add(page_idx)
-                added += 1
-                del export_img
+                crops = [_image_to_bytes(export_img, fmt="JPEG")]
+            if fallback_pages is not None:
+                fallback_pages.add(page_idx)
+        for img_bytes in crops:
+            composer.add_slide(apply_user_settings(img_bytes))
+        added += len(crops)
     return added
 
 
