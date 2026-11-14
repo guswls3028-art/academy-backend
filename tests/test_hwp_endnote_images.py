@@ -119,6 +119,22 @@ def test_humanizes_common_hwp_equation_tokens_without_changing_meaning():
     assert r"\frac{\alpha+\beta}{2}" in nested_fraction
 
 
+@pytest.mark.parametrize(
+    ('source', 'fraction'),
+    [('1over3 pi', r'\frac{1}{3}\pi'), ('pi over2', r'\frac{\pi}{2}'),
+     ('root2 over2', r'\frac{\sqrt{2}}{2}'), ('2oversintheta', r'\frac{2}{\sin \theta}'),
+     ('1overa', r'\frac{1}{a}')],
+)
+def test_equation_formats_compact_teacher_fraction(source, fraction):
+    rendered = _hwp_equation_to_mathtext(source)
+    assert rendered.replace(' ', '') == fraction.replace(' ', '')
+
+
+def test_equation_preserves_inequality_between_native_fractions_and_trig_function():
+    rendered = _hwp_equation_to_mathtext('root2 over2 le cos x le root3 over2')
+    assert rendered.replace(' ', '') == r'\frac{\sqrt{2}}{2}\leq\cosx\leq\frac{\sqrt{3}}{2}'
+
+
 def test_routes_hangul_equation_labels_to_the_review_font_renderer():
     assert _equation_requires_text_render("ㄱ, ㄴ, ㄷ") is True
     assert _equation_requires_text_render("한글 x=1") is True

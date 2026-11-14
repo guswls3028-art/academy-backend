@@ -32,6 +32,11 @@ _EQUATION_MARKER_END = "\ufff3"
 _PICTURE_MARKER_START = "\ufff4"
 _PICTURE_MARKER_END = "\ufff5"
 _INLINE_MARKERS = re.compile(r"(\ufff2.*?\ufff3|\ufff4.*?\ufff5)", re.S)
+_HWP_PACKED_OVER_RE = re.compile(
+    r"(?<=[\d}\)])\s*over\s*(?=[\d{(]|(?:sin|cos|tan)(?:theta|alpha|beta|\s)|[A-Za-z](?![A-Za-z]))"
+    r"|(?<=[a-z])\s+over(?=[\d{(])",
+    re.I,
+)
 _MAX_NOTES = 200
 _MAX_PICTURES = 500
 _MAX_IMAGE_PIXELS = 40_000_000
@@ -231,8 +236,8 @@ def _humanize_hwp_equation(script: str) -> str:
         flags=re.I,
     )
     value = re.sub(
-        r"((?<![A-Za-z])[A-Za-z0-9]|[)\]])\s*le(?!q)\s*"
-        r"(?=(?:alpha|beta|gamma|delta|theta|lambda|mu|pi|sigma|phi|omega|"
+        r"((?<![A-Za-z])[A-Za-z0-9]|[})\]])\s*le(?!q)\s*"
+        r"(?=(?:alpha|beta|gamma|delta|theta|lambda|mu|pi|sigma|phi|omega|sin|cos|tan|root|sqrt|\{|"
         r"[A-Za-z](?![A-Za-z])))",
         r"\1≤",
         value,
@@ -736,6 +741,9 @@ def _replace_hwp_cases(value: str) -> str:
 
 def _hwp_equation_to_mathtext(script: str) -> str:
     value = str(script or "").replace("`", " ").replace("｜", "|")
+    value = _HWP_PACKED_OVER_RE.sub(" over ", value)
+    value = re.sub(r"\bover\s+(sin|cos|tan)\s*(theta|alpha|beta)\b", r"over {\1 \2}", value, flags=re.I)
+    value = re.sub(r"\b(pi|(?:sqrt|root)\s*\d+)\s+over\b", r"{\1} over", value, flags=re.I)
     value = re.sub(
         r"(?<=[A-Za-z0-9)\]])\s*ge(?!q)\s*(?=[A-Za-z0-9(])",
         lambda _match: r"\geq ",
@@ -749,8 +757,8 @@ def _hwp_equation_to_mathtext(script: str) -> str:
         flags=re.I,
     )
     value = re.sub(
-        r"((?<![A-Za-z])[A-Za-z0-9]|[)\]])\s*le(?!q)\s*"
-        r"(?=(?:alpha|beta|gamma|delta|theta|lambda|mu|pi|sigma|phi|omega|"
+        r"((?<![A-Za-z])[A-Za-z0-9]|[})\]])\s*le(?!q)\s*"
+        r"(?=(?:alpha|beta|gamma|delta|theta|lambda|mu|pi|sigma|phi|omega|sin|cos|tan|root|sqrt|\{|"
         r"[A-Za-z](?![A-Za-z])))",
         lambda match: f"{match.group(1)}\\leq ",
         value,
