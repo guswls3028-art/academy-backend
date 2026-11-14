@@ -33,7 +33,8 @@ def extract_and_upload_hwp_explanations(
         filename,
         include_paired_reconstruction=True,
     )
-    paired_visuals = extraction.paired_visuals or extraction.visuals
+    paired_visuals = (extraction.paired_visuals if filename.lower().endswith(".hwpx")
+                      else extraction.paired_visuals or extraction.visuals)
     paired_numbers = {visual.number for visual in paired_visuals}
     missing_numbers = [
         number for number in extraction.control_numbers if number not in paired_numbers
@@ -123,6 +124,7 @@ def run_hwp_question_pipeline(
 ) -> AIResult:
     exam_id = payload.get("exam_id")
     filename = str(payload.get("filename") or "")
+    is_hwpx = filename.lower().endswith(".hwpx")
     if not tenant_id or not exam_id:
         return AIResult.failed(job.id, "tenant_id/exam_id missing")
 
@@ -138,7 +140,7 @@ def run_hwp_question_pipeline(
             include_paired_reconstruction=True,
             include_problem_reconstruction=True,
         )
-        if not extraction.visuals:
+        if not extraction.control_numbers or (not is_hwpx and not extraction.visuals):
             raise ValueError("번호가 있는 미주 해설 이미지가 없습니다.")
     except Exception:
         logger.exception(
@@ -158,7 +160,9 @@ def run_hwp_question_pipeline(
                 ),
             },
         )
-    if extraction.missing_visual_numbers:
+    missing_visual_numbers = (extraction.missing_paired_visual_numbers if is_hwpx
+                              else extraction.missing_visual_numbers)
+    if missing_visual_numbers:
         return AIResult.done(
             job.id,
             {
@@ -166,10 +170,10 @@ def run_hwp_question_pipeline(
                 "conversion_required": True,
                 "source_mode": "problem_document_requires_pdf",
                 "detected_question_count": len(extraction.control_numbers),
-                "extracted_visual_count": len(extraction.visuals),
-                "missing_visual_numbers": list(extraction.missing_visual_numbers),
+                "extracted_visual_count": len(extraction.control_numbers) - len(missing_visual_numbers),
+                "missing_visual_numbers": list(missing_visual_numbers),
                 "message": (
-                    "이 한글 파일은 일부 문항만 미주 원본 이미지가 있어 문제와 해설을 "
+                    "이 한글 파일은 일부 미주 해설을 온전히 재현하지 못해 문제와 해설을 "
                     "완전하게 나눌 수 없습니다. 원본은 보관했으며 시험 상세에서 직접 "
                     "등록해 검수할 수 있습니다. PDF 재업로드는 필수가 아닙니다."
                 ),

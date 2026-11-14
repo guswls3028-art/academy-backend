@@ -161,6 +161,16 @@ class PdfDocument:
                     result.append(_display_text_block(text, block[:4], rotation))
         return result
 
+    def raster_image_boxes(self, page_index: int) -> list[tuple[float, float, float, float]]:
+        """Return embedded image geometry in render coordinates without decoding pixels."""
+        import fitz
+
+        page = self._doc[page_index]
+        boxes = [fitz.Rect(item["bbox"]) for item in page.get_image_info()]
+        if page.rotation:
+            boxes = [rect * page.rotation_matrix for rect in boxes]
+        return [tuple(rect) for rect in boxes]
+
     def extract_text_words(self, page_index: int) -> List[TextBlock]:
         """Return individual word positions in the rendered page orientation."""
         if page_index < 0 or page_index >= len(self._doc):

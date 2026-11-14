@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Iterator, List, Optional
@@ -38,6 +39,9 @@ class _PdfQuestionPlan:
     allow_image_segmentation: bool = True
     fallback_page_indices: List[int] = field(default_factory=list)
     scan_page_indices: List[int] = field(default_factory=list)
+    continuations: dict[tuple[int, int], tuple[int, tuple[float, float, float, float], float | None]] = field(
+        default_factory=dict,
+    )
 
 
 class GeneratePptUseCase:
@@ -260,6 +264,20 @@ class GeneratePptFromPdfUseCase:
                         if px1 - px0 < 10 or py1 - py0 < 10:
                             continue
                         crop = page_img.crop((px0, py0, px1, py1))
+                        continuation = question_plan.continuations.get((page_idx, getattr(region, "number", None)))
+                        if continuation:
+                            continuation_page, bounds, first_bottom = continuation
+                            bounds = _include_native_continuation_image(doc, continuation_page, bounds)
+                            if first_bottom is not None:
+                                with crop:
+                                    crop = crop.crop((0, 0, crop.width, min(crop.height, int(first_bottom * scale_y) - py0)))
+                            if continuation_page == page_idx:
+                                crop = _join_native_question_parts(crop, page_img, bounds, page_w, page_h)
+                            else:
+                                with doc.render_page(continuation_page, dpi=200) as next_image:
+                                    crop = _join_native_question_parts(
+                                        crop, next_image, bounds, *doc.page_dimensions(continuation_page),
+                                    )
                         crop = compact_internal_whitespace(
                             trim_bottom_whitespace(crop, padding_px=12)
                         )
@@ -573,7 +591,121 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
         scan_page_indices=[
             idx for idx in fallback_page_indices if not phase1[idx]["text_blocks"]
         ],
+        continuations=_plan_native_continuations(phase1, validated_regions),
     )
+
+
+def _plan_native_continuations(pages, regions_per_page):
+    """Find a missing answer block before the following consecutive question."""
+    from academy.domain.tools.paper_type import PaperType
+
+    def columns(index):
+        page = pages[index]
+        paper = page["paper_type_result"]
+        if getattr(paper, "paper_type", None) != PaperType.CLEAN_PDF_DUAL:
+            return [], []
+        middle = page["page_width"] / 2
+        return (
+            sorted((r for r in regions_per_page[index] if r.bbox[0] < middle / 2), key=lambda r: r.bbox[1]),
+            sorted((r for r in regions_per_page[index] if r.bbox[0] >= middle / 2), key=lambda r: r.bbox[1]),
+        )
+
+    def inside(block, left, top, right, bottom):
+        return left <= block.x0 < block.x1 <= right and top <= (block.y0 + block.y1) / 2 < bottom
+
+    def is_numbered_workbook_block(page, region):
+        left, top, right, _ = region.bbox
+        number = region.number
+        return any(
+            left <= block.x0 < right and top - 16 <= block.y0 <= top + 20
+            and re.search(rf"(?<!\d){number}\)\s+{number}\.\s*\S", block.text)
+            for block in page["text_blocks"]
+        )
+
+    result = {}
+    lanes = [(index, side, regions) for index in range(len(pages))
+             for side, regions in enumerate(columns(index))]
+    for (index, side, before), (next_index, next_side, after) in zip(lanes, lanes[1:]):
+        if not before or not after:
+            continue
+        question, next_question = before[-1], after[0]
+        if next_question.number != question.number + 1:
+            continue
+        page, following = pages[index], pages[next_index]
+        if not (
+            is_numbered_workbook_block(page, question)
+            and is_numbered_workbook_block(following, next_question)
+        ):
+            continue
+        width, height = page["page_width"], page["page_height"]
+        x0, y0, x1, y1 = question.bbox
+        if y0 < height * .60 or x1 - x0 > width * .57:
+            continue
+        current = " ".join(
+            block.text for block in page["text_blocks"]
+            if inside(block, side * width / 2, y0, (side + 1) * width / 2, y1)
+        )
+        if re.search(r"[①②③④⑤]", current):
+            continue
+        next_width, next_height = following["page_width"], following["page_height"]
+        left, right = next_side * next_width / 2, (next_side + 1) * next_width / 2
+        stop = next_question.bbox[1]
+        prefix = sorted(
+            (block for block in following["text_blocks"]
+             if inside(block, left, next_height * .075, right, stop)),
+            key=lambda block: block.y0,
+        )
+        if not prefix or prefix[0].y0 > next_height * .19:
+            continue
+        text = " ".join(block.text for block in prefix)
+        if (
+            re.search(r"(?:^|\n)\s*\d{1,3}\s*[.)]\s*\S", text)
+            or not re.search(r"<\s*보\s*기\s*>", text)
+            or re.findall(r"[①②③④⑤]", text) != list("①②③④⑤")
+            or not re.search(r"⑤[^①②③④⑤]*$", prefix[-1].text)
+        ):
+            continue
+        footer_starts = [
+            block.y0 for block in page["text_blocks"]
+            if block.y0 > height * .90 and block.x0 < width / 2 < block.x1
+            and re.search(r"(?:[•·]\s*\d+|\d+\s*[•·])", block.text)
+        ]
+        footer = min(footer_starts, default=height)
+        result[(index, question.number)] = (
+            next_index, (left, max(next_height * .075, prefix[0].y0 - 12), right, min(stop, prefix[-1].y1 + 8)),
+            footer - 2 if y0 + 20 < footer < y1 else None,
+        )
+    return result
+
+
+def _include_native_continuation_image(doc, page_index, bounds):
+    """Preserve embedded figures intersecting a verified continuation's top."""
+    left, top, right, bottom = bounds
+    _, height = doc.page_dimensions(page_index)
+    try:
+        image_boxes = doc.raster_image_boxes(page_index)
+    except (RuntimeError, ValueError):
+        logger.warning("PPT_PDF_CONTINUATION_IMAGE_GEOMETRY_FAILED page=%d", page_index)
+        return bounds
+    image_tops = [
+        y0 for x0, y0, x1, y1 in image_boxes
+        if left <= x0 < x1 <= right and height * .06 <= y0 < top < y1 < bottom
+        and y1 - y0 >= height * .02
+    ]
+    if not image_tops:
+        return bounds
+    return left, max(0, min(image_tops) - 2), right, bottom
+
+
+def _join_native_question_parts(first, page_image, bounds, page_width, page_height):
+    sx, sy = page_image.width / page_width, page_image.height / page_height
+    left, top, right, bottom = bounds
+    with page_image.crop((int(left * sx), int(top * sy), int(right * sx), int(bottom * sy))) as second:
+        joined = PILImage.new("RGB", (max(first.width, second.width), first.height + second.height + 16), "white")
+        joined.paste(first, (0, 0))
+        joined.paste(second, (0, first.height + 16))
+    first.close()
+    return joined
 
 
 @contextmanager
