@@ -187,6 +187,13 @@ function Load-SSOT {
     $script:ApiDevelopmentR2BucketName = if ($apiDevelopment["r2BucketName"]) { $apiDevelopment["r2BucketName"] } else { "academy-development-artifacts" }
     $script:ApiDevelopmentAccessMode = if ($apiDevelopment["accessMode"]) { $apiDevelopment["accessMode"] } else { "ssm-only" }
     $script:ApiDevelopmentMatchProductionCompute = ($apiDevelopment["matchProductionCompute"] -eq $true -or $apiDevelopment["matchProductionCompute"] -eq "true")
+    $developmentRootSize = if ($apiDevelopment.ContainsKey("rootVolumeSizeGb")) { $apiDevelopment["rootVolumeSizeGb"] } else { 20 }
+    $parsedDevelopmentRootSize = 0
+    if (-not [int]::TryParse([string]$developmentRootSize, [ref]$parsedDevelopmentRootSize) -or
+        $parsedDevelopmentRootSize -lt 16 -or $parsedDevelopmentRootSize -gt 1024) {
+        throw "apiDevelopment.rootVolumeSizeGb must be an integer from 16 to 1024 GiB."
+    }
+    $script:ApiDevelopmentRootVolumeSizeGb = $parsedDevelopmentRootSize
 
     # Build server DEPRECATED: 빌드는 GitHub Actions에서만 수행한다.
     $script:BuildTagKey = ""

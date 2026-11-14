@@ -8,6 +8,17 @@
 
 - EC2 이름은 `academy-v1-api-development`이며 외부 inbound가 없는 전용 보안그룹을 쓴다.
   접속은 Session Manager와 `connect-api-development.ps1`의 로컬 포트 포워딩으로만 한다.
+- 새 개발 candidate의 루트 볼륨은 `apiDevelopment.rootVolumeSizeGb`(20 GiB)를 쓴다.
+  API·Tools·Messaging·AI를 한 호스트에 풀면서 8 GiB AMI 루트가 AI 레이어 추출 중
+  `no space left on device`로 실패한 경계를 해결하기 위한 개발 전용 여유 공간이다.
+  AMI·인스턴스 유형은 계속 운영과 같고, `DescribeImages`에서 확인한 EBS 루트 장치에만
+  크기와 `DeleteOnTermination=true`를 덮어쓴다. AMI snapshot·볼륨 유형·성능 및
+  암호화/account 기본값은 그대로 상속하며 별도 KMS·볼륨 태그 권한을 추가하지 않는다.
+  크기는 정수 16–1024 GiB이며 AMI 루트보다 작으면 launch 전에 실패한다.
+  기존 active/volume은 수정하지 않고 모든 개발 검증 통과 후에만 이전 active를 교체한다.
+  실패 candidate는 기존 cleanup 계약으로 종료한다. 적용 후 루트 크기·파일시스템 여유와
+  네 컨테이너 및 실사용 smoke를 확인하며 크기 설정만으로 성공을 선언하지 않는다.
+  검증: `python -B -m unittest scripts.v1.test_development_storage -v`와 기존 개발 런타임 계약.
 - 인스턴스 역할 `academy-api-development-role`은 개발 환경 파라미터, API/Tools ECR pull,
   개발 전용 SQS 세 큐만 Allow 대상으로 삼는다. 관리형 SSM 정책의 광역 parameter
   Allow는 아래 explicit deny로 별도 제한해야 하며 실제 적용 여부는 readback한다.

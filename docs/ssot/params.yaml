@@ -101,6 +101,8 @@ api:
 # ASG·ALB·SSM·DB·IAM에는 연결하지 않는다. 외부 inbound 없이 SSM으로만 접근한다.
 apiDevelopment:
   enabled: true
+  # API + Tools + Messaging + AI share this host; 8 GiB exhausted during AI extraction.
+  rootVolumeSizeGb: 20
   instanceName: academy-v1-api-development
   managedByTag: academy-api-development
   instanceProfileName: academy-api-development
