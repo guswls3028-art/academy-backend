@@ -49,6 +49,7 @@ $script:PlanMode = $false
 . (Join-Path $ScriptRoot "core\logging.ps1")
 . (Join-Path $ScriptRoot "core\aws.ps1")
 . (Join-Path $ScriptRoot "core\wait.ps1")
+. (Join-Path $ScriptRoot "core\development_storage.ps1")
 . (Join-Path $ScriptRoot "resources\worker_userdata.ps1")
 . (Join-Path $ScriptRoot "resources\api.ps1")
 Assert-AwsMutationIdentity | Out-Null
@@ -120,6 +121,18 @@ if (-not $instanceType) { $instanceType = [string]$script:ApiInstanceType }
 if ($ami -ne [string]$script:ApiAmiId -or $instanceType -ne [string]$script:ApiInstanceType) {
     throw "Production Launch Template compute shape does not match API SSOT."
 }
+
+$developmentImages = Invoke-AwsJson @(
+    "ec2", "describe-images", "--image-ids", $ami,
+    "--region", $script:Region, "--output", "json"
+)
+if (@($developmentImages.Images).Count -ne 1) {
+    throw "Development AMI readback must return exactly one image."
+}
+$developmentRootMapping = Get-ApiDevelopmentRootBlockDeviceMapping `
+    -Image @($developmentImages.Images)[0] `
+    -VolumeSizeGb $script:ApiDevelopmentRootVolumeSizeGb
+$developmentBlockDevices = ConvertTo-Json -InputObject @($developmentRootMapping) -Depth 5 -Compress
 
 $subnets = @($script:PublicSubnets | Where-Object { $_ })
 $productionSubnets = @(
@@ -335,11 +348,15 @@ $oldInstanceIds = @(
 
 $instanceId = ""
 $promoted = $false
+$developmentBlockFile = ""
 try {
+    $developmentBlockRef = Convert-JsonArgToFileRef $developmentBlockDevices
+    $developmentBlockFile = $developmentBlockRef -replace '^file://', ''
     $runArgs = @(
         "ec2", "run-instances",
         "--image-id", $ami,
         "--instance-type", $instanceType,
+        "--block-device-mappings", $developmentBlockRef,
         "--iam-instance-profile", "Name=$($script:ApiDevelopmentInstanceProfileName)",
         "--network-interfaces", $networkRef,
         "--user-data", $userData,
@@ -590,7 +607,7 @@ echo DEVELOPMENT_RUNTIME_PASS
         $AiImageUri
     ) -ForegroundColor Green
 } finally {
-    Remove-TempFiles @($networkFile)
+    Remove-TempFiles @($networkFile, $developmentBlockFile)
     if ($instanceId -and -not $promoted) {
         try {
             Invoke-Aws @(
