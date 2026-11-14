@@ -32,7 +32,7 @@ class OnlineAssessmentTotalsTests(TestCase):
             tenant=self.tenant, lecture=lecture, student=self.student, status="ACTIVE")
         apps.get_model("enrollment", "SessionEnrollment").objects.create(
             tenant=self.tenant, session=self.session, enrollment=self.enrollment)
-        self._add_objective_exam("Five objective questions")
+        OnlineAssessmentTotalsTests._add_objective_exam(self, "Five objective questions")
 
     def _add_objective_exam(self, title):
         self.exam = apps.get_model("exams", "Exam").objects.create(
