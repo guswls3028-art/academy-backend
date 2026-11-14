@@ -1,4 +1,6 @@
 """Clinic target projection stays bounded without changing score/source semantics."""
+from unittest.mock import patch
+
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
@@ -12,6 +14,7 @@ from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.progress.models import ClinicLink
 from apps.domains.results.models import ExamAttempt, Result, ResultFact
 from apps.domains.results.services.clinic_target_service import ClinicTargetService
+from apps.domains.results.utils.clinic import filter_live_source_links
 
 
 class ClinicTargetBulkReadTests(TestCase, ClinicTestMixin):
@@ -49,6 +52,31 @@ class ClinicTargetBulkReadTests(TestCase, ClinicTestMixin):
 
     def targets(self, **kwargs):
         return ClinicTargetService.list_admin_targets(tenant=self.tenant, **kwargs)
+
+    def test_readiness_checks_only_results_for_the_linked_exam_and_enrollment(self):
+        other_student = self.make_student(self.tenant, "2")
+        other_enrollment = self.make_enrollment(self.tenant, other_student, self.data["lecture"])
+        first_session, first_exam, _, _ = self.add_sources(0)
+        _, second_exam, _, second_link = self.add_sources(1, other_enrollment)
+        legacy_link = self.make_clinic_link(self.enrollment, first_session, source_type=None, source_id=None)
+        legacy_link.meta = {"exam_id": first_exam.id}
+        legacy_link.save(update_fields=["meta"])
+        pending = Result.objects.get(target_id=first_exam.id, enrollment=self.enrollment)
+        ready = Result.objects.get(target_id=second_exam.id, enrollment=other_enrollment)
+        Result.objects.create(target_type="exam", target_id=first_exam.id, enrollment=other_enrollment)
+        Result.objects.create(target_type="exam", target_id=second_exam.id, enrollment=self.enrollment)
+
+        def pending_ids(results):
+            self.assertEqual({result.id for result in results}, {pending.id, ready.id})
+            return {pending.id}
+
+        with patch(
+            "apps.domains.results.services.omr_subjective_completion.pending_omr_result_ids",
+            side_effect=pending_ids,
+        ) as check:
+            visible = filter_live_source_links([legacy_link, second_link], tenant=self.tenant)
+        self.assertEqual(visible, [second_link])
+        check.assert_called_once()
 
     def test_700_mixed_targets_do_not_add_queries_per_source_or_student(self):
         self.add_sources(0)
