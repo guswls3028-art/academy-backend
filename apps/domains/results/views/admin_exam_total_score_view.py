@@ -332,7 +332,7 @@ class AdminExamTotalScoreView(APIView):
                 if progress_submission_id:
                     dispatch_progress_pipeline(submission_id=int(progress_submission_id))
                 else:
-                    dispatch_progress_pipeline(exam_id=int(exam_id))
+                    dispatch_progress_pipeline(exam_id=exam_id, enrollment_id=enrollment_id)
                 progress_ok = True
         except Exception as exc:
             logger.exception(
@@ -511,7 +511,7 @@ class AdminExamTotalScoreView(APIView):
         # progress pipeline (clinic 판정)
         progress_ok = False
         try:
-            dispatch_progress_pipeline(exam_id=int(exam_id))
+            dispatch_progress_pipeline(exam_id=exam_id, enrollment_id=enrollment_id)
             progress_ok = True
         except Exception:
             logger.exception("progress pipeline failed for NOT_SUBMITTED (exam=%s)", exam_id)

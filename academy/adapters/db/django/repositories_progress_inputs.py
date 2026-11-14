@@ -78,6 +78,8 @@ def get_submission_progress_target_for_update(
 
 def list_exam_result_progress_enrollments(
     exam_id: int,
+    *,
+    enrollment_id: int | None = None,
 ) -> list[ExamResultProgressEnrollment]:
     from apps.domains.exams.models import Exam
     from apps.domains.results.models import Result
@@ -86,14 +88,16 @@ def list_exam_result_progress_enrollments(
     if not exam:
         return []
 
+    results = Result.objects.filter(
+        target_type="exam",
+        target_id=int(exam_id),
+        enrollment__tenant_id=int(exam.tenant_id),
+        enrollment__exam_enrollments__exam_id=int(exam_id),
+    )
+    if enrollment_id is not None:
+        results = results.filter(enrollment_id=int(enrollment_id))
     rows = (
-        Result.objects.filter(
-            target_type="exam",
-            target_id=int(exam_id),
-            enrollment__tenant_id=int(exam.tenant_id),
-            enrollment__exam_enrollments__exam_id=int(exam_id),
-        )
-        .values_list("enrollment_id", "enrollment__lecture_id")
+        results.values_list("enrollment_id", "enrollment__lecture_id")
         .distinct()
         .order_by("enrollment_id", "enrollment__lecture_id")
     )
