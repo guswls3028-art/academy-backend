@@ -90,10 +90,15 @@ class DashboardLearningTodoTests(TestCase):
             create_enrollment_fixture(tenant=self.tenant, student=student, lecture=lecture, status=status)
             return node_model.objects.get(tenant=self.tenant, lecture=lecture, level="COURSE")
 
+        created_at = self.now
+
         def post(title, *nodes, tenant=None, kind="notice", status="published"):
+            nonlocal created_at
+            created_at += timedelta(seconds=1)
             row = post_model.objects.create(
                 title=title, tenant=tenant or self.tenant, post_type=kind, status=status,
             )
+            post_model.objects.filter(pk=row.pk).update(created_at=created_at)
             for node in nodes:
                 mapping_model.objects.create(post=row, node=node)
             return row
