@@ -157,17 +157,18 @@ def add_slide(
     fill.solid()
     fill.fore_color.rgb = bg_color
 
-    # PowerPoint picture placement uses the stored pixel dimensions. Normalize
-    # camera orientation before calculating them and embedding the picture.
+    # Normalize camera orientation before calculating the picture dimensions.
+    # The upload API also accepts WebP, which python-pptx cannot embed directly.
     with Image.open(io.BytesIO(image_bytes)) as img:
         img_w, img_h = img.size
-        if img.getexif().get(274) in range(2, 9):
-            oriented = ImageOps.exif_transpose(img)
-            if oriented.mode == "CMYK":
-                oriented = oriented.convert("RGB")
-            img_w, img_h = oriented.size
+        has_orientation = img.getexif().get(274) in range(2, 9)
+        if has_orientation or img.format == "WEBP":
+            normalized_img = ImageOps.exif_transpose(img) if has_orientation else img
+            if normalized_img.mode == "CMYK":
+                normalized_img = normalized_img.convert("RGB")
+            img_w, img_h = normalized_img.size
             with io.BytesIO() as normalized:
-                oriented.save(normalized, format="PNG")
+                normalized_img.save(normalized, format="PNG")
                 image_bytes = normalized.getvalue()
 
     # Placement

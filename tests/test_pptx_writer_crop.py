@@ -84,3 +84,20 @@ def test_image_export_applies_camera_orientation_without_effects(orientation):
         assert exported.tobytes() == expected.tobytes()
         assert exported.getexif().get(274) is None
         assert picture.width / picture.height == pytest.approx(expected.width / expected.height, rel=1e-5)
+
+
+def test_image_export_preserves_webp_pixels_and_transparency_without_effects():
+    from academy.application.use_cases.tools.generate_ppt import GeneratePptUseCase
+
+    image = Image.new("RGBA", (100, 180), (0, 0, 0, 0))
+    image.paste((5, 50, 150, 200), (20, 30, 90, 110))
+    with io.BytesIO() as buffer:
+        image.save(buffer, format="WEBP", lossless=True)
+        data = buffer.getvalue()
+
+    result = GeneratePptUseCase().execute([data])
+    picture = Presentation(io.BytesIO(result.pptx_bytes)).slides[0].shapes[0]
+    with Image.open(io.BytesIO(picture.image.blob)) as exported:
+        assert exported.format == "PNG"
+        assert exported.mode == "RGBA"
+        assert exported.tobytes() == image.tobytes()
