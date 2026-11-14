@@ -4,10 +4,49 @@ import pytest
 
 from scripts.post_deploy_smoke.video_playback_chain import (
     API_URL,
+    MEDIA_ORIGIN,
     SmokeFail,
+    assert_segment,
+    assert_variant_chain,
+    fetch_master,
     fetch_play_url,
     find_first_video,
 )
+
+
+def test_cdn_chain_requires_browser_origin_at_each_hop_and_a_readable_byte_range() -> None:
+    master = "https://cdn.example/master.m3u8?sig=synthetic&exp=123"
+    variant = "https://cdn.example/v1/index.m3u8?sig=synthetic&exp=123"
+    segment = "https://cdn.example/v1/index0.ts?sig=synthetic&exp=123"
+    cors = {"access-control-allow-origin": MEDIA_ORIGIN}
+    responses = [
+        (200, f"#EXTM3U\n{variant}".encode(), cors),
+        (200, f"#EXTM3U\n{segment}".encode(), cors),
+        (206, b"x" * 1024, {**cors, "Content-Range": "bytes 0-1023/8200",
+                            "Access-Control-Expose-Headers": "Accept-Ranges, Content-Range"}),
+    ]
+    with patch("scripts.post_deploy_smoke.video_playback_chain._req", side_effect=responses) as request:
+        fetch_master(master)
+        playlist, url = assert_variant_chain([variant])
+        assert_segment(playlist, url)
+
+    assert [item.kwargs["headers"] for item in request.call_args_list] == [
+        {"Origin": MEDIA_ORIGIN}, {"Origin": MEDIA_ORIGIN},
+        {"Origin": MEDIA_ORIGIN, "Range": "bytes=0-1023"},
+    ]
+
+
+@pytest.mark.parametrize("allow_origin", [None, "https://wrong.example"])
+def test_successful_http_status_does_not_hide_missing_browser_access(allow_origin, capsys) -> None:
+    headers = {"Access-Control-Allow-Origin": allow_origin} if allow_origin else {}
+    with (
+        patch("scripts.post_deploy_smoke.video_playback_chain._req", return_value=(200, b"#EXTM3U", headers)),
+        pytest.raises(SmokeFail),
+    ):
+        fetch_master("https://cdn.example/master.m3u8?sig=do-not-log")
+    error = capsys.readouterr().err
+    assert "does not allow the browser origin" in error
+    assert "do-not-log" not in error
 
 
 def test_fetch_play_url_uses_explicit_post_bootstrap() -> None:

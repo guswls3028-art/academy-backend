@@ -52,6 +52,13 @@ Coverage: `test_video_multipart_upload.py`, `test_video_job_failure_status.py` a
 `tests/video/test_source_probe.py` cases, plus the
 [staff upload UI](../../../../frontend/docs/PUBLIC-VIDEO-WORKFLOW.md).
 
+The authenticated encoding status endpoint reads the tenant-scoped Redis state.
+It records each poll through the API's structured logs without waiting on a
+CloudWatch metrics request. To inspect requests, Redis misses and DB fallbacks
+in `/academy/api`, filter `extra.event = "video_encoding_progress_poll"` and sum
+`extra.progress_requests`, `extra.redis_miss` and `extra.db_hit`. Domain job
+and failure metrics still use their existing CloudWatch publishing path.
+
 ## 2. Deploy Path
 
 Normal production deployment is the backend GitHub Actions workflow:
