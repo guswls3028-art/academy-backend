@@ -16,6 +16,7 @@ import numpy as np
 
 from academy.adapters.ai.config import AIConfig
 from academy.adapters.ai.detection.segment_opencv import (
+    segment_exam_raster_gutters,
     segment_questions_opencv,
     segment_questions_scan_layout,
 )
@@ -1599,6 +1600,7 @@ def _segment_single_image(
     is_pdf_page: bool = False,
     source_type: str | None = None,
     has_embedded_text: bool = False,
+    prefer_exam_raster: bool = False,
 ) -> List[BBox]:
     """
     단일 이미지에 대한 세그멘테이션 (엔진 자동 선택).
@@ -1624,8 +1626,15 @@ def _segment_single_image(
         has_embedded_text=has_embedded_text, source_type=source_type,
     )
 
-    if engine == "opencv":
+    def opencv_boxes():
+        if prefer_exam_raster:
+            boxes = segment_exam_raster_gutters(image_path)
+            if boxes:
+                return boxes
         return segment_questions_opencv(image_path, apply_clahe=apply_clahe)
+
+    if engine == "opencv":
+        return opencv_boxes()
     if engine == "yolo":
         return segment_questions_yolo(image_path, source_type=source_type)
     if engine == "ocr":
@@ -1648,7 +1657,7 @@ def _segment_single_image(
         except Exception as e:
             logger.warning("OCR_SEGMENT_AUTO_FAIL | path=%s | error=%s", image_path, e)
 
-    return segment_questions_opencv(image_path, apply_clahe=apply_clahe)
+    return opencv_boxes()
 
 
 def _boxes_and_regions_for_pdf_page(
@@ -2106,6 +2115,7 @@ def segment_questions_multipage(
     image_path: str,
     *,
     source_type: Optional[str] = None,
+    prefer_exam_raster: bool = False,
 ) -> Dict[str, any]:
     """
     PDF 문항 분할 확장판 — 페이지별 결과 + 전체 이미지 경로 반환.
@@ -2184,6 +2194,7 @@ def segment_questions_multipage(
         image_path,
         source_type=source_type,
         has_embedded_text=False,
+        prefer_exam_raster=prefer_exam_raster,
     )
     # 단일 이미지 경로에서도 paper_type을 분류 — 학생답안지 폰사진이 보통 단일 이미지.
     # source_type=student_exam_photo + handwriting_bias로 STUDENT_ANSWER_PHOTO 강제.

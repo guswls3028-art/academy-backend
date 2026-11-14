@@ -299,3 +299,51 @@ def test_crop_writer_keeps_exact_grounded_bounds_without_extra_percentage_paddin
     with Image.open(io.BytesIO(saved[0])) as crop:
         assert crop.size == (500, 300)
     Path(q["cropped_image_path"]).unlink()
+
+
+@pytest.mark.parametrize("layout", ["divider", "unruled", "short_diagram", "already_clear"])
+def test_student_photo_divider_excludes_neighbour_and_preserves_existing_bounds(monkeypatch, tmp_path, layout):
+    from PIL import ImageDraw
+
+    import apps.infrastructure.storage.r2 as r2
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline as pipeline
+
+    path = tmp_path / "student-photo.jpg"
+    with Image.new("RGB", (1654, 2339), "white") as page:
+        draw = ImageDraw.Draw(page)
+        if layout != "unruled":
+            end = (845, 1100) if layout == "short_diagram" else (845, 1982)
+            draw.line([(810, 350), end], fill="black", width=3)
+        draw.rectangle((705, 490, 790, 620), fill="red")
+        draw.rectangle((820, 490, 825, 620), fill="green")
+        page.save(path, quality=95)
+    boxes = [
+        [0, 451, 829, 807], [0, 1258, 829, 1081],
+        [825, 465, 829, 785], [825, 1250, 829, 1089],
+    ]
+    if layout == "already_clear":
+        boxes = [[0, 451, 790, 807], [0, 1258, 790, 1081],
+                 [875, 465, 779, 785], [875, 1250, 779, 1089]]
+    questions = [
+        {"number": i + 1, "page_index": 0, "image_path": str(path), "bbox": list(box)}
+        for i, box in enumerate(boxes)
+    ]
+    questions[-1]["meta_extra"] = {"shared_with": [5]}
+    pipeline._clip_student_photo_columns(questions)
+    if layout != "divider":
+        assert [question["bbox"] for question in questions] == boxes
+        return
+    assert questions[0]["bbox"][2] < 820
+    assert questions[-1]["bbox"] == boxes[-1]
+    assert questions[0]["meta_extra"]["photo_divider_clipped"]
+    images = []
+    monkeypatch.setenv("MATCHUP_OVER_CROP_PADDING", "1")
+    monkeypatch.setattr(r2, "upload_fileobj_to_r2_storage", lambda **kwargs: images.append(kwargs["fileobj"].read()))
+    try:
+        pipeline._upload_cropped_images(questions[:1], "17", "23", "divider-test-job")
+        with Image.open(io.BytesIO(images[0])) as crop:
+            assert crop.size == tuple(questions[0]["bbox"][2:])
+            pixel = crop.getpixel((750, 65))
+            assert pixel[0] > 230 and pixel[1] < 20
+    finally:
+        pipeline._cleanup_cropped_image_temps(questions)

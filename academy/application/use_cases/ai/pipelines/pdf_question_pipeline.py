@@ -88,7 +88,11 @@ def run_pdf_question_pipeline(
     )
 
     # PDF/이미지 판별 + 페이지 이미지 렌더링 (크롭에 필요)
-    seg_result = segment_questions_multipage(local_path)
+    source_role = str(payload.get("source_role") or "problem").strip().lower()
+    seg_result = segment_questions_multipage(
+        local_path,
+        prefer_exam_raster=source_role == "problem",
+    )
     register_pdf_seg_tmp_dirs(seg_result.get("tmp_dirs") or [])
     is_pdf = seg_result["is_pdf"]
     pages = seg_result["pages"]  # [{page_index, image_path, boxes}, ...]
@@ -161,7 +165,6 @@ def run_pdf_question_pipeline(
             solution_tail_start,
         )
 
-    source_role = str(payload.get("source_role") or "problem").strip().lower()
     if source_role in {"answer", "explanation"}:
         if not is_pdf:
             full_text_by_page.update(_extract_ocr_page_texts(pages))

@@ -206,6 +206,80 @@ def _assign_photo_content(regions: list[dict], blocks: list[dict], width: int, h
                 region["content_bbox"] = bbox
 
 
+def clip_photo_column_boxes(image_path: str, questions: list[dict]) -> None:
+    """Clip center overlap in provisional crops on a visibly ruled photo."""
+    import cv2
+    import numpy as np
+
+    # A divider alone is not enough: single-column problems may draw a long
+    # central line inside a diagram. Require repeated captures on both sides.
+    if len(questions) < 4:
+        return
+    gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if gray is None:
+        return
+    height, width = gray.shape
+    seam = width / 2
+    left, right = [], []
+    for question in questions:
+        x, _, w, _ = question["bbox"]
+        if w > width * .65 or abs(x + w / 2 - seam) < width * .12:
+            continue
+        (left if x + w / 2 < seam else right).append(question)
+    if min(len(left), len(right)) < 2:
+        return
+
+    lines = cv2.HoughLinesP(
+        cv2.Canny(gray, 60, 160), 1, np.pi / 360,
+        threshold=max(40, height // 20), minLineLength=height * .38,
+        maxLineGap=height * .06,
+    )
+    if lines is None:
+        return
+    dividers = []
+    for x0, y0, x1, y1 in lines.reshape(-1, 4).tolist():
+        if y0 > y1:
+            x0, y0, x1, y1 = x1, y1, x0, y0
+        if (
+            y1 - y0 >= height * .40 and abs(x1 - x0) <= width * .04
+            and max(abs(x0 - seam), abs(x1 - seam)) <= width * .10
+        ):
+            dividers.append((x0, y0, x1, y1))
+    if not dividers:
+        return
+    # Reject competing parallel lines (e.g. the edges of a central table).
+    centers = [(line[0] + line[2]) / 2 for line in dividers]
+    if max(centers) - min(centers) > width * .01:
+        return
+    x0, y0, x1, y1 = max(dividers, key=lambda line: line[3] - line[1])
+
+    for group, is_left in ((left, True), (right, False)):
+        for question in group:
+            meta = question.get("meta_extra") or {}
+            if question.get("shared_with") or any(
+                question.get(key) or meta.get(key)
+                for key in (
+                    "shared_with", "photo_ocr_grounded", "display_bbox",
+                    "body_bbox", "context_bbox", "audit_bbox", "segmentation_flags",
+                )
+            ):
+                continue
+            x, y, w, h = question["bbox"]
+            overlap = min(y + h, y1) - max(y, y0)
+            if overlap < h * .40 or max(y0 - y, y + h - y1) > height * .22:
+                continue
+            line_top = x0 + (x1 - x0) * (y - y0) / (y1 - y0)
+            line_bottom = x0 + (x1 - x0) * (y + h - y0) / (y1 - y0)
+            margin = max(2, round(width * .003))
+            boundary = (math.floor(min(line_top, line_bottom)) - margin if is_left
+                        else math.ceil(max(line_top, line_bottom)) + margin)
+            cut = x + w - boundary if is_left else boundary - x
+            if not 0 < cut <= min(width * .08, w * .16) or w - cut <= 0:
+                continue
+            question["bbox"] = [x if is_left else boundary, y, w - cut, h]
+            question.setdefault("meta_extra", {})["photo_divider_clipped"] = True
+
+
 def grounded_photo_regions(data: dict, blocks: list[dict], width: int, height: int) -> list[dict]:
     """Validate the entire page and derive source-pixel crops from observed content.
 

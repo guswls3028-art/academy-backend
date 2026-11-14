@@ -219,9 +219,13 @@ def _compute_display_sim(source, candidate) -> Optional[float]:
             display_sim = (1 - img_w) * raw_text_sim + img_w * raw_img_sim
         else:
             display_sim = raw_text_sim if raw_text_sim is not None else raw_img_sim
-        # 페이지 폴백 candidate (bbox=null) → 페이지 통째 텍스트로 sim 부풀림 방지
+        # A teacher's crop may have bbox_norm or only the manual marker.
         cand_meta = candidate.meta or {}
-        if cand_meta.get("bbox") is None:
+        if (
+            cand_meta.get("manual") is not True
+            and cand_meta.get("bbox") is None
+            and cand_meta.get("bbox_norm") is None
+        ):
             display_sim = min(0.89, display_sim - 0.10)
         return max(0.0, min(1.0, display_sim))
     except Exception:

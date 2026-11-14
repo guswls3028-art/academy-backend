@@ -8,7 +8,7 @@ from __future__ import annotations
 import io
 from typing import Any, Dict, Tuple
 
-from PIL import Image
+from PIL import Image, ImageOps
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.util import Inches
@@ -157,9 +157,19 @@ def add_slide(
     fill.solid()
     fill.fore_color.rgb = bg_color
 
-    # Image dimensions
-    img = Image.open(io.BytesIO(image_bytes))
-    img_w, img_h = img.size
+    # Normalize camera orientation before calculating the picture dimensions.
+    # The upload API also accepts WebP, which python-pptx cannot embed directly.
+    with Image.open(io.BytesIO(image_bytes)) as img:
+        img_w, img_h = img.size
+        has_orientation = img.getexif().get(274) in range(2, 9)
+        if has_orientation or img.format == "WEBP":
+            normalized_img = ImageOps.exif_transpose(img) if has_orientation else img
+            if normalized_img.mode == "CMYK":
+                normalized_img = normalized_img.convert("RGB")
+            img_w, img_h = normalized_img.size
+            with io.BytesIO() as normalized:
+                normalized_img.save(normalized, format="PNG")
+                image_bytes = normalized.getvalue()
 
     # Placement
     left, top, width, height = _fit_image_to_slide(
