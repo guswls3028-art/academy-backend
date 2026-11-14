@@ -4,6 +4,13 @@ from __future__ import annotations
 from academy.adapters.ai.detection.segment_ocr import is_ocr_available
 
 
+def test_tools_worker_stays_on_local_detection_with_shared_credentials(monkeypatch):
+    monkeypatch.setenv("WORKER_TYPE", "TOOLS")
+    monkeypatch.setenv("GOOGLE_CREDENTIALS_JSON", '{"client_email":"synthetic"}')
+
+    assert is_ocr_available() is False
+
+
 def test_ocr_unavailable_when_google_credentials_path_missing(monkeypatch):
     monkeypatch.delenv("GOOGLE_CREDENTIALS_JSON", raising=False)
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "C:/missing/ocr.json")

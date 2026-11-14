@@ -526,7 +526,7 @@ OpenAI source/게시 권한은 [공급자 전환 계약](openai-provider.md)이 
 3. `deploy-api-development.ps1`이 새 candidate 인스턴스를 만들고 migration, DB 역할,
    운영 DB 접근 거부, 개발 큐, 개발 R2와 운영 R2 접근 거부, Redis, `/healthz`,
    `/health`, 정확한 API/Tools/AI digest를 검증한다.
-4. `run-api-development-smoke.ps1`이 합성 학생 XLSX 파싱, 1장 PPTX 생성·재열기,
+4. `run-api-development-smoke.ps1`이 합성 학생 XLSX 파싱, 혼합 PDF의 4장 반전 PPTX 생성·재열기,
    API와 AI worker 설정 경로 각각에서 개발 R2 객체 put/get/delete를 실행하고
    각 처리시간을 기록한다.
    현재 이 smoke는 Video Batch 제출 성공을 증명하지 않는다. Video Batch는 전용 개발

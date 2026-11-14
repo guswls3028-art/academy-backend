@@ -80,8 +80,9 @@ from openpyxl import Workbook
 from PIL import Image
 from pptx import Presentation
 
+from academy.adapters.ai.detection import segment_dispatcher
 from academy.application.services.excel_parsing_service import parse_student_excel_file
-from academy.domain.tools.ppt_composer import PptComposer, PptConfig
+from academy.application.use_cases.tools.generate_ppt import GeneratePptFromPdfUseCase
 
 started = time.perf_counter()
 with tempfile.TemporaryDirectory(prefix="academy-development-smoke-") as temp_dir:
@@ -127,17 +128,49 @@ with tempfile.TemporaryDirectory(prefix="academy-development-smoke-") as temp_di
     assert import_rows[2]["phone"] == "01099991111"
     assert [error["row"] for error in import_errors] == [3, 6]
 
-    image_buffer = io.BytesIO()
-    Image.new("RGB", (160, 90), "white").save(image_buffer, format="PNG")
+    ppt_source = Path(temp_dir) / "mixed-questions.pdf"
+    with fitz.open() as scan_source, fitz.open() as mixed:
+        scan = scan_source.new_page(width=595, height=842)
+        for number, x, marker in ((2, 36, (0.8, 0.2, 0.2)), (3, 332, (0.2, 0.2, 0.8))):
+            scan.insert_text((x, 150), f"{number}. Which statement is true?", fontsize=15)
+            for index, answer in enumerate(("First answer choice", "Second answer choice", "Third answer choice")):
+                scan.insert_text((x + 12, 175 + index * 24), f"({index + 1}) {answer}", fontsize=13)
+            scan.draw_rect(fitz.Rect(x + 200, 160, x + 214, 190), color=marker, fill=marker)
+        for number in (1, None, 4):
+            page = mixed.new_page(width=595, height=842)
+            if number is None:
+                page.insert_image(page.rect, stream=scan.get_pixmap(matrix=fitz.Matrix(2, 2)).tobytes("png"))
+            else:
+                page.insert_text((42, 85), f"{number}. 다음 중 옳은 것은?", fontname="korea")
+                page.insert_text((42, 110), "① 보기 하나 ② 보기 둘 ③ 보기 셋 ④ 보기 넷", fontname="korea")
+        mixed.save(ppt_source)
+
+    # Exercise the Tools image's bundled local detector without calling an OCR provider.
+    assert os.environ.get("WORKER_TYPE", "").upper() == "TOOLS"
+    assert not segment_dispatcher.is_ocr_available()
+    segment_dispatcher.begin_pdf_seg_scope()
     ppt_started = time.perf_counter()
-    composer = PptComposer(PptConfig(aspect_ratio="16:9", background="white"))
-    composer.add_slide(image_buffer.getvalue())
-    pptx_bytes = composer.finalize()
+    try:
+        result = GeneratePptFromPdfUseCase().execute(str(ppt_source), image_settings={"invert": True})
+    finally:
+        segment_dispatcher.cleanup_registered_pdf_seg_tmp_dirs()
     ppt_seconds = time.perf_counter() - ppt_started
+    pptx_bytes = result.pptx_bytes
     presentation = Presentation(io.BytesIO(pptx_bytes))
-    assert len(presentation.slides) == 1
-    assert pptx_bytes.startswith(b"PK")
-    assert len(pptx_bytes) > 1_000
+    assert len(presentation.slides) == result.slide_count == 4 and result.mode == "question"
+    markers = []
+    for slide in presentation.slides:
+        with Image.open(io.BytesIO(slide.shapes[0].image.blob)) as image:
+            rgb = image.convert("RGB")
+            assert rgb.getpixel((0, 0)) == (0, 0, 0), "Expected inverted paper background"
+            colors = rgb.getcolors(maxcolors=4096)
+            assert colors is not None, "Unexpected color complexity in synthetic slide"
+            markers.append({
+                "cyan" if b - r > 60 else "yellow"
+                for _count, (r, g, b) in colors
+                if abs(r - b) > 60 and g - min(r, b) > 60
+            })
+    assert markers == [set(), {"cyan"}, {"yellow"}, set()], markers
 
     # Exercise both pinned native renderers in the exact candidate image before
     # development promotion, with the same credential-free child environment.
@@ -183,6 +216,7 @@ print(json.dumps({
     "status": "TOOLS_SMOKE_PASS",
     "excel_seconds": round(excel_seconds, 3),
     "ppt_seconds": round(ppt_seconds, 3),
+    "ppt_slides": result.slide_count,
     "reader_seconds": round(reader_seconds, 3),
     "total_seconds": round(total_seconds, 3),
     "pptx_bytes": len(pptx_bytes),

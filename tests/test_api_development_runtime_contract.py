@@ -93,7 +93,8 @@ def test_development_gate_runs_synthetic_excel_ppt_and_r2_review() -> None:
         '"Key=Lifecycle,Value=active"'
     )
     assert "parse_student_excel_file" in smoke
-    assert "PptComposer" in smoke
+    assert "GeneratePptFromPdfUseCase" in smoke
+    assert 'len(presentation.slides) == result.slide_count == 4 and result.mode == "question"' in smoke
     assert "apps.infrastructure.storage.resource_document_renderer" in smoke
     assert "HwpxDocument.new()" in smoke
     assert 'manifest["mode"] == "pages"' in smoke
