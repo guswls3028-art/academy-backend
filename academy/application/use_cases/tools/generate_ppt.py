@@ -267,6 +267,7 @@ class GeneratePptFromPdfUseCase:
                         continuation = question_plan.continuations.get((page_idx, getattr(region, "number", None)))
                         if continuation:
                             continuation_page, bounds, first_bottom = continuation
+                            bounds = _include_native_continuation_image(doc, continuation_page, bounds)
                             if first_bottom is not None:
                                 with crop:
                                     crop = crop.crop((0, 0, crop.width, min(crop.height, int(first_bottom * scale_y) - py0)))
@@ -675,6 +676,25 @@ def _plan_native_continuations(pages, regions_per_page):
             footer - 2 if y0 + 20 < footer < y1 else None,
         )
     return result
+
+
+def _include_native_continuation_image(doc, page_index, bounds):
+    """Preserve embedded figures intersecting a verified continuation's top."""
+    left, top, right, bottom = bounds
+    _, height = doc.page_dimensions(page_index)
+    try:
+        image_boxes = doc.raster_image_boxes(page_index)
+    except (RuntimeError, ValueError):
+        logger.warning("PPT_PDF_CONTINUATION_IMAGE_GEOMETRY_FAILED page=%d", page_index)
+        return bounds
+    image_tops = [
+        y0 for x0, y0, x1, y1 in image_boxes
+        if left <= x0 < x1 <= right and height * .06 <= y0 < top < y1 < bottom
+        and y1 - y0 >= height * .02
+    ]
+    if not image_tops:
+        return bounds
+    return left, max(0, min(image_tops) - 2), right, bottom
 
 
 def _join_native_question_parts(first, page_image, bounds, page_width, page_height):

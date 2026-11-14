@@ -90,6 +90,12 @@ def test_workbook_joins_only_verified_leading_continuation(tmp_path, layout):
             fitz.Rect(lead_x + 8, 122, lead_x + 128, 147),
             color=(0, 0, 1), fill=(0, 0, 1),
         )
+        figure = io.BytesIO()
+        Image.new("RGB", (100, 50), (230, 20, 20)).save(figure, format="PNG")
+        following.insert_image(fitz.Rect(lead_x + 8, 57, lead_x + 108, 107), stream=figure.getvalue())
+        header = io.BytesIO()
+        Image.new("RGB", (450, 50), (20, 205, 20)).save(header, format="PNG")
+        following.insert_image(fitz.Rect(42, 10, 535, 52), stream=header.getvalue())
         doc.save(source)
 
     with PdfDocument(str(source)) as doc:
@@ -105,6 +111,11 @@ def test_workbook_joins_only_verified_leading_continuation(tmp_path, layout):
             pixels = np.asarray(image.convert("RGB"))
         blue = np.count_nonzero((pixels[:, :, 2] > 170) & (pixels[:, :, 0] < 90))
         assert bool(blue) == (matched and number == 65)
+        if matched and number == 65:
+            red = (pixels[:, :, 0] > 170) & (pixels[:, :, 1] < 70)
+            assert np.count_nonzero(red) > 28_000
+            green = (pixels[:, :, 1] > 150) & (pixels[:, :, 0] < 90)
+            assert np.count_nonzero(green) == 0
 
 
 @pytest.mark.parametrize("middle_content", ["blank", "image", "vector", "annotation"])
