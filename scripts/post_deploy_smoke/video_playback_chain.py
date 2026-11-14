@@ -9,10 +9,10 @@ master.m3u8 200 만 보고 "fix 완료" 보고한 게 학원장 신뢰 파괴 �
   1. student login → access token
   2. /student/video/me/ → enrolled lecture / session / video
   3. /student/video/videos/{id}/playback/ → response.play_url
-  4. master.m3u8 fetch (iPhone UA) → body 안 variant URL 마다 ?sig= 박혔나
-  5. variant.m3u8 fetch → 200
-  6. first segment .ts fetch → 200
-  7. (있으면) thumbnail.jpg fetch → 200
+  4. master.m3u8 fetch with browser Origin → 200 and CORS
+  5. variant URL carries exp and sig
+  6. variant.m3u8 fetch with browser Origin → 200 and CORS
+  7. first signed segment byte range → 206 and browser-readable Content-Range
 
 FAIL → exit 1 → workflow notify-on-failure SNS 발화. AI/사람 같은 사고 차단.
 
@@ -21,6 +21,7 @@ FAIL → exit 1 → workflow notify-on-failure SNS 발화. AI/사람 같은 사�
   E2E_API_URL                       — default https://api.hakwonplus.com
   E2E_CDN_URL                       — default https://cdn.hakwonplus.com
   E2E_TENANT_CODE                   — default hakwonplus
+  E2E_MEDIA_ORIGIN                  — default https://hakwonplus.com
   E2E_VIDEO_ID                      — optional explicit public/enrolled video id
 """
 
@@ -37,6 +38,7 @@ import urllib.request
 API_URL = os.environ.get("E2E_API_URL", "https://api.hakwonplus.com").rstrip("/")
 CDN_URL = os.environ.get("E2E_CDN_URL", "https://cdn.hakwonplus.com").rstrip("/")
 TENANT_CODE = os.environ.get("E2E_TENANT_CODE", "hakwonplus")
+MEDIA_ORIGIN = os.environ.get("E2E_MEDIA_ORIGIN", "https://hakwonplus.com")
 STUDENT_USER = os.environ.get("E2E_STUDENT_USER", "")
 STUDENT_PASS = os.environ.get("E2E_STUDENT_PASS", "")
 EXPLICIT_VIDEO_ID = os.environ.get("E2E_VIDEO_ID", "").strip()
@@ -46,6 +48,7 @@ IPHONE_UA = (
     "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 )
 DEFAULT_TIMEOUT = 20
+MEDIA_RANGE = "bytes=0-1023"
 
 
 class SmokeFail(SystemExit):
@@ -61,7 +64,8 @@ def _req(method: str, url: str, *, headers: dict | None = None, body: bytes | No
     req = urllib.request.Request(url, method=method, headers=h, data=body)
     try:
         with urllib.request.urlopen(req, timeout=DEFAULT_TIMEOUT) as r:
-            return r.status, r.read(), dict(r.headers)
+            data = r.read(1025) if headers and headers.get("Range") == MEDIA_RANGE else r.read()
+            return r.status, data, dict(r.headers)
     except urllib.error.HTTPError as e:
         return e.code, e.read(), dict(e.headers or {})
 
@@ -87,6 +91,36 @@ def _get_json(url: str, *, token: str | None = None) -> tuple[int, dict]:
         return status, json.loads(data.decode("utf-8"))
     except Exception:
         return status, {"_raw": data[:300].decode("utf-8", errors="replace")}
+
+
+def assert_media_cors(headers, *, origin: str, segment: bytes | None = None) -> None:
+    headers = {name.lower(): value.strip() for name, value in headers.items()}
+    if headers.get("access-control-allow-origin") not in ("*", origin):
+        raise ValueError("media response does not allow the browser origin")
+    if segment is None:
+        return
+    exposed = {name.strip().lower() for name in headers.get("access-control-expose-headers", "").split(",")}
+    content_range = re.fullmatch(r"bytes 0-(\d+)/(\d+)", headers.get("content-range", ""))
+    if "content-range" not in exposed and "*" not in exposed:
+        raise ValueError("media response does not expose Content-Range")
+    if not content_range or int(content_range[1]) + 1 != len(segment) or not 100 <= len(segment) <= 1024:
+        raise ValueError("media response does not match the requested byte range")
+    if min(1024, int(content_range[2])) != len(segment):
+        raise ValueError("media response reports an unexpected object size or range length")
+
+
+def _get_browser_media(url: str, label: str, *, ranged: bool = False) -> bytes:
+    headers = {"Origin": MEDIA_ORIGIN}
+    if ranged:
+        headers["Range"] = MEDIA_RANGE
+    status, data, response_headers = _req("GET", url, headers=headers)
+    if status != (206 if ranged else 200):
+        raise SmokeFail(f"{label} returned HTTP {status}")
+    try:
+        assert_media_cors(response_headers, origin=MEDIA_ORIGIN, segment=data if ranged else None)
+    except ValueError as exc:
+        raise SmokeFail(f"{label}: {exc}") from None
+    return data
 
 
 def login_student() -> str:
@@ -171,12 +205,10 @@ def fetch_play_url(token: str, video_id: int, enrollment_id: int | None) -> str:
 
 def fetch_master(play_url: str) -> tuple[str, str]:
     """Returns (body_text, base_url_for_relative). HLS spec: master query 안 propagate."""
-    status, data, _ = _req("GET", play_url)
-    if status != 200:
-        raise SmokeFail(f"master.m3u8 {status} (play_url={play_url})")
+    data = _get_browser_media(play_url, "master.m3u8")
     body = data.decode("utf-8", errors="replace")
     if "#EXTM3U" not in body:
-        raise SmokeFail(f"master.m3u8 body invalid (no #EXTM3U): {body[:200]}")
+        raise SmokeFail("master.m3u8 body invalid (no #EXTM3U)")
     print(f"[4/7] master.m3u8 200 ({len(body)} bytes)")
     return body, play_url
 
@@ -202,35 +234,26 @@ def _resolve_hls_relative(manifest_url: str, line: str) -> str:
     return urllib.parse.urljoin(base, line)
 
 
-def assert_variant_chain(variants: list[str]) -> str:
-    """Each variant URL must include ?sig= (Worker m3u8 rewrite gate). Returns first variant body."""
+def assert_variant_chain(variants: list[str]) -> tuple[str, str]:
+    """Verify signed variant links and fetch the first variant with the tenant Origin."""
     if not variants:
         raise SmokeFail("master manifest has no variant URLs")
+    for variant in variants:
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(variant).query)
+        if not {"sig", "exp"} <= query.keys():
+            raise SmokeFail("variant URL missing sig/exp - master.m3u8 body rewrite failure")
     first = variants[0]
-    qs = urllib.parse.urlparse(first).query
-    qs_keys = set(urllib.parse.parse_qs(qs).keys())
-    if "sig" not in qs_keys or "exp" not in qs_keys:
-        # 🚨 5/13 사고 root cause 그 자체
-        raise SmokeFail(
-            f"variant URL missing sig/exp - master.m3u8 body rewrite failure\n"
-            f"  variant: {first}\n"
-            f"  query keys: {qs_keys}\n"
-            f"  Worker m3u8 body rewrite logic is not deployed or regressed"
-        )
     print(f"[5/7] variant URL sig/exp OK ({len(variants)} variants)")
-    # variant fetch
-    status, data, _ = _req("GET", first)
-    if status != 200:
-        raise SmokeFail(f"variant fetch {status} (url={first})")
+    data = _get_browser_media(first, "variant.m3u8")
     body = data.decode("utf-8", errors="replace")
     if "#EXTM3U" not in body:
-        raise SmokeFail(f"variant body invalid: {body[:200]}")
+        raise SmokeFail("variant.m3u8 body invalid (no #EXTM3U)")
     print(f"[6/7] variant fetch 200 ({len(body)} bytes)")
     return body, first
 
 
 def assert_segment(variant_body: str, variant_url: str) -> None:
-    """First .ts segment fetch 200."""
+    """Read the first signed segment using a browser single-range request."""
     segs = []
     for raw in variant_body.splitlines():
         line = raw.strip()
@@ -248,14 +271,10 @@ def assert_segment(variant_body: str, variant_url: str) -> None:
         seg_url = _resolve_hls_relative(variant_url, seg)
     # variant rewrite 가 segment URL 에도 sig inject 했어야
     qs_keys = set(urllib.parse.parse_qs(urllib.parse.urlparse(seg_url).query).keys())
-    if "sig" not in qs_keys:
-        raise SmokeFail(f"segment URL missing sig: {seg_url}")
-    status, data, _ = _req("GET", seg_url)
-    if status != 200:
-        raise SmokeFail(f"segment fetch {status} (url={seg_url})")
-    if len(data) < 100:
-        raise SmokeFail(f"segment body too small ({len(data)} bytes): invalid")
-    print(f"[7/7] segment fetch 200 ({len(data)} bytes)")
+    if not {"sig", "exp"} <= qs_keys:
+        raise SmokeFail("segment URL missing sig/exp")
+    data = _get_browser_media(seg_url, "segment", ranged=True)
+    print(f"[7/7] browser segment range 206 ({len(data)} bytes)")
 
 
 def main() -> None:

@@ -22,6 +22,11 @@ before reading R2, including when the browser sends an Origin header. Verify the
 browser can load the master, variant and ranged segment with its tenant Origin,
 then verify the same path rejects a missing or changed signature.
 
+The backend API pre-production and post-deploy checks also send the browser
+Origin and require browser-readable CORS across the master, variant and a 206
+byte-range response. The check takes one short media range and uses the existing
+release stages.
+
 The signing key is imported once per request and reused for the incoming URL
 and every child URL. This removes repeated WebCrypto setup for long playlists
 without storing keys across requests or changing issued URLs, existing objects,

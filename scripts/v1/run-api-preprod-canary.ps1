@@ -369,6 +369,7 @@ import boto3
 from django.conf import settings
 
 from apps.domains.video.cdn.cloudflare_signing import CloudflareSignedURL
+from scripts.post_deploy_smoke.video_playback_chain import assert_media_cors, MEDIA_ORIGIN
 
 required = (
     "R2_ENDPOINT",
@@ -415,11 +416,13 @@ signer = CloudflareSignedURL(
 
 
 def fetch(url, *, range_request=False):
-    headers = {"User-Agent": "Academy-API-Preprod-Canary/1.0"}
+    headers = {"User-Agent": "Academy-API-Preprod-Canary/1.0", "Origin": MEDIA_ORIGIN}
     if range_request:
         headers["Range"] = "bytes=0-1023"
     with urlopen(Request(url, headers=headers), timeout=15) as response:
-        return response.status, response.read()
+        body = response.read(1025) if range_request else response.read()
+        assert_media_cors(response.headers, origin=MEDIA_ORIGIN, segment=body if range_request else None)
+        return response.status, body
 
 
 def first_media_url(body, parent_url):
@@ -456,7 +459,7 @@ for master_key in master_keys:
         segment_url = first_media_url(variant_body, variant_url)
         assert_signed(segment_url)
         segment_status, segment_body = fetch(segment_url, range_request=True)
-        if segment_status not in (200, 206) or not segment_body:
+        if segment_status != 206 or not segment_body:
             raise ValueError(f"segment status={segment_status}")
         print(
             "CDN_PLAYBACK_CHAIN_PASS "
