@@ -83,6 +83,10 @@ export default {
     headers.set("ETag", obj.httpEtag);
     headers.set("Cache-Control", obj.httpMetadata?.cacheControl || cacheControlFor(r2Key));
     headers.set("Accept-Ranges", "bytes");
+    // Browser HLS clients fetch from tenant domains without cookies. The signed
+    // URL already authorizes this object independently of the request origin.
+    headers.set("Access-Control-Allow-Origin", "*");
+    headers.set("Access-Control-Expose-Headers", "Accept-Ranges, Content-Range");
 
     if (m3u8Body !== null) {
       const buf = new TextEncoder().encode(m3u8Body);

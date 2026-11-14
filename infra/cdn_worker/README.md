@@ -15,6 +15,13 @@ reuse a signature. Binary ranges retain 206/Content-Range; playlists are fetched
 in full before rewriting. Missing/expired signatures return 401, invalid
 signatures 403, missing storage objects 404 and missing signing configuration 500.
 
+Student and staff browsers load signed playlists and segments from their academy
+domains without cookies. Successful Worker responses allow these cross-origin
+reads and expose byte-range headers. The Worker still checks each signed URL
+before reading R2, including when the browser sends an Origin header. Verify the
+browser can load the master, variant and ranged segment with its tenant Origin,
+then verify the same path rejects a missing or changed signature.
+
 The signing key is imported once per request and reused for the incoming URL
 and every child URL. This removes repeated WebCrypto setup for long playlists
 without storing keys across requests or changing issued URLs, existing objects,
