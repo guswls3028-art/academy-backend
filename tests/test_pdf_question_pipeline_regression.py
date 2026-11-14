@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -29,7 +29,8 @@ def _page(page_index: int, number: int | None, bbox: tuple[int, int, int, int]):
 
 
 @pytest.mark.parametrize("layout", ["two_columns", "single_column", "marked_divider"])
-def test_raster_exam_proposals_keep_stems_charts_and_choices_in_printed_order(tmp_path, monkeypatch, layout):
+@pytest.mark.parametrize("engine", ["opencv", "auto", "ocr"])
+def test_raster_exam_proposals_keep_stems_charts_and_choices_in_printed_order(tmp_path, monkeypatch, layout, engine):
     import fitz
     from PIL import Image
 
@@ -56,10 +57,25 @@ def test_raster_exam_proposals_keep_stems_charts_and_choices_in_printed_order(tm
         if layout == "marked_divider":
             page.draw_line((235, 380), (355, 380), color=(0.5, 0.5, 0.5), width=3)
         page.get_pixmap(matrix=fitz.Matrix(2, 2)).pil_save(source, format="JPEG", quality=85)
-    monkeypatch.setattr(segment_dispatcher, "is_ocr_available", lambda: False)
-    monkeypatch.setenv("QUESTION_SEGMENTATION_ENGINE", "opencv")
+    bad_ocr_boxes = [(0, 194, 1190, 328), *([(0, 522, 1190, 1162)] * 3)]
+    plausible_ocr_boxes = [(61, 200, 605, 340), (61, 940, 605, 340)]
+    ocr_boxes = bad_ocr_boxes if layout == "two_columns" else plausible_ocr_boxes
+    ocr = Mock(return_value=ocr_boxes)
+    monkeypatch.setattr(segment_dispatcher, "is_ocr_available", lambda: True)
+    monkeypatch.setattr(segment_dispatcher, "segment_questions_ocr", ocr)
+    monkeypatch.setenv("QUESTION_SEGMENTATION_ENGINE", engine)
+    if engine == "ocr":
+        result = segment_dispatcher.segment_questions_multipage(str(source), prefer_exam_raster=True)
+        assert result["pages"][0]["boxes"] == ocr_boxes
+        ocr.assert_called_once_with(str(source))
+        return
     if layout != "two_columns":
         assert segment_exam_raster_gutters(str(source)) == []
+        if engine == "auto":
+            result = segment_dispatcher.segment_questions_multipage(str(source), prefer_exam_raster=True)
+            assert result["pages"][0]["boxes"] == plausible_ocr_boxes
+            ocr.assert_called_once_with(str(source))
+            return
         expected = segment_dispatcher.segment_questions_multipage(str(source))
         actual = segment_dispatcher.segment_questions_multipage(str(source), prefer_exam_raster=True)
         assert actual["pages"][0]["boxes"] == expected["pages"][0]["boxes"]
@@ -79,7 +95,9 @@ def test_raster_exam_proposals_keep_stems_charts_and_choices_in_printed_order(tm
     )
     payload = json.loads(json.dumps(result.result))
     assert result.status == "DONE"
+    ocr.assert_not_called()
     assert [question["number"] for question in payload["questions"]] == list(range(1, columns * 2 + 1))
+    assert len({tuple(question["bbox"]) for question in payload["questions"]}) == 4
     for index, question in enumerate(payload["questions"]):
         x, y, width, height = question["bbox"]
         col, row = divmod(index, 2)
