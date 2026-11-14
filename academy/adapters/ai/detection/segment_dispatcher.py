@@ -1605,7 +1605,8 @@ def _segment_single_image(
     """
     단일 이미지에 대한 세그멘테이션 (엔진 자동 선택).
 
-    auto 모드 우선순위: YOLO(모델+PDF페이지) → OCR(크레덴셜 있을 때, skip_ocr=False) → OpenCV.
+    자동 모드에서는 중앙 여백과 문항 간 여백이 확인된 단일 시험지 이미지를 먼저 분리한다.
+    그 외에는 YOLO(PDF 페이지) → OCR(사용 가능할 때) → OpenCV 순서다.
     OCR 경로는 스캔본 시험지에서 문항 번호 감지를 통해 페이지당 여러 문항을 분할.
 
     skip_ocr: PDF 페이지에 embedded text가 존재할 때 True. OCR 비용을 아낀다
@@ -1626,15 +1627,15 @@ def _segment_single_image(
         has_embedded_text=has_embedded_text, source_type=source_type,
     )
 
-    def opencv_boxes():
-        if prefer_exam_raster:
-            boxes = segment_exam_raster_gutters(image_path)
-            if boxes:
-                return boxes
-        return segment_questions_opencv(image_path, apply_clahe=apply_clahe)
+    # OCR can return repeated full-width boxes even when the source has two
+    # clearly separated printed columns. Verify their geometry before auto OCR.
+    if prefer_exam_raster and engine not in {"yolo", "ocr"}:
+        boxes = segment_exam_raster_gutters(image_path)
+        if boxes:
+            return boxes
 
     if engine == "opencv":
-        return opencv_boxes()
+        return segment_questions_opencv(image_path, apply_clahe=apply_clahe)
     if engine == "yolo":
         return segment_questions_yolo(image_path, source_type=source_type)
     if engine == "ocr":
@@ -1657,7 +1658,7 @@ def _segment_single_image(
         except Exception as e:
             logger.warning("OCR_SEGMENT_AUTO_FAIL | path=%s | error=%s", image_path, e)
 
-    return opencv_boxes()
+    return segment_questions_opencv(image_path, apply_clahe=apply_clahe)
 
 
 def _boxes_and_regions_for_pdf_page(
