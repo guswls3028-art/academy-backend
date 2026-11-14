@@ -1132,6 +1132,12 @@ def _validated_booking_range(
     interval = int(session.booking_interval_minutes)
     start_offset = booking_start - session_start
     end_offset = booking_end - session_start
+    if session.start_time.second or session.start_time.microsecond:
+        # Legacy sessions can contain subminute starts. Preserve their existing
+        # accepted booking inputs until the minute-only availability contract is
+        # migrated; tightening these offsets would reject historical clients.
+        start_offset = datetime.timedelta(minutes=int(start_offset.total_seconds() // 60))
+        end_offset = datetime.timedelta(minutes=int(end_offset.total_seconds() // 60))
     interval_delta = datetime.timedelta(minutes=interval)
     if (
         interval not in (30, 60)

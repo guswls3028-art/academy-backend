@@ -103,6 +103,21 @@ class ClinicTimeRangePolicyAPITest(APITestCase, ClinicAPITestMixin):
         valid = self._book(self.students[0], start="10:00:00", end="13:00:00")
         self.assertEqual(valid.status_code, 201, valid.data)
 
+    def test_legacy_subminute_session_preserves_accepted_booking_inputs(self):
+        cases = (
+            (datetime.time(9, 0, 30), "10:00:45", "11:00:45"),
+            (datetime.time(9, 0, 0, 1), "10:00:00.000002", "11:00:00.000002"),
+        )
+        for index, (session_start, start, end) in enumerate(cases):
+            with self.subTest(session_start=session_start):
+                self.session.start_time = session_start
+                self.session.save(update_fields=["start_time"])
+                response = self._book(self.students[index], start=start, end=end)
+                self.assertEqual(response.status_code, 201, response.data)
+                participant = SessionParticipant.objects.get(id=response.data["participants"][0]["id"])
+                self.assertEqual(participant.booking_start_time, datetime.time.fromisoformat(start))
+                self.assertEqual(participant.booking_end_time, datetime.time.fromisoformat(end))
+
     def test_time_range_capacity_is_concurrent_per_interval_not_whole_window(self):
         first = self._book(self.students[0], start="10:00", end="11:00")
         second = self._book(self.students[1], start="11:00", end="12:00")
