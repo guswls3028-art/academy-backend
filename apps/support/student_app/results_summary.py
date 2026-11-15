@@ -485,9 +485,9 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         enrollment_ids=enrollment_ids,
         homework_ids=homework_ids,
     )
-    resolved_homework_links = {}
+    current_homework_resolutions = {}
     if homework_ids and enrollment_ids:
-        for link in ClinicLink.objects.filter(
+        for homework_id, session_id, enrollment_id, resolved_at, resolution_type in ClinicLink.objects.filter(
             tenant=tenant,
             enrollment_id__in=enrollment_ids,
             source_type="homework",
@@ -495,13 +495,22 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         ).order_by(
             "enrollment_id",
             "source_id",
+            "session_id",
             "-cycle_no",
             "-id",
-        ).values("enrollment_id", "source_id", "resolved_at", "resolution_type"):
-            key = (link["enrollment_id"], link["source_id"])
-            if key not in resolved_homework_links:
-                # A reopened current cycle supersedes every historical pass.
-                resolved_homework_links[key] = link["resolution_type"] if link["resolved_at"] else None
+        ).values_list("source_id", "session_id", "enrollment_id", "resolved_at", "resolution_type"):
+            # A reopened current cycle supersedes every historical pass for this exact assignment.
+            current_homework_resolutions.setdefault(
+                (homework_id, session_id, enrollment_id), resolution_type if resolved_at else None,
+            )
+    teacher_completed_homework_keys.update(
+        key for key, resolution in current_homework_resolutions.items()
+        if resolution == ClinicLink.ResolutionType.MANUAL_OVERRIDE
+    )
+    remediated_homework_keys = teacher_completed_homework_keys | {
+        key for key, resolution in current_homework_resolutions.items()
+        if resolution in (ClinicLink.ResolutionType.HOMEWORK_PASS, ClinicLink.ResolutionType.EXAM_PASS)
+    }
 
     homework_retake_counts = {}
     if homework_ids and enrollment_ids:
@@ -542,14 +551,12 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         session_title, lecture_title = _session_titles(score.session)
 
         is_pass_1st = bool(score.passed)
-        resolution = resolved_homework_links.get((score.enrollment_id, score.homework_id))
-        teacher_resolved = key in teacher_completed_homework_keys or resolution == "MANUAL_OVERRIDE"
-        remediation_passed = resolution in ("EXAM_PASS", "HOMEWORK_PASS")
+        remediated = key in remediated_homework_keys
         max_attempt = homework_retake_counts.get((score.enrollment_id, score.homework_id), 1)
 
         if is_pass_1st:
             achievement = "PASS"
-        elif teacher_resolved or remediation_passed:
+        elif remediated:
             achievement = "REMEDIATED"
         else:
             achievement = "FAIL"
@@ -557,7 +564,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         submitted_revision = submitted_revisions.get((score.enrollment_id, score.homework_id))
         submission_state = (
             "reviewed"
-            if teacher_resolved or remediation_passed
+            if remediated
             or (score.enrollment_id, score.homework_id) in submission_media_lock_keys
             else "awaiting_review"
             if submitted_revision and submitted_revision != score.reviewed_submission_revision
@@ -578,7 +585,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "passed": is_pass_1st,
             "achievement": achievement,
             "submission_state": submission_state,
-            "teacher_resolved": teacher_resolved,
+            "teacher_resolved": key in teacher_completed_homework_keys,
             "submission_media_locked": (
                 score.enrollment_id,
                 score.homework_id,
@@ -611,12 +618,8 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             key not in unscored_reviewed_revisions
             or submitted_revision != unscored_reviewed_revisions[key]
         )
-        resolution = resolved_homework_links.get((
-            assignment.enrollment_id,
-            assignment.homework_id,
-        ))
-        teacher_resolved = key in teacher_completed_homework_keys or resolution == "MANUAL_OVERRIDE"
-        video_makeup = key in video_makeup_keys and not teacher_resolved
+        remediated = key in remediated_homework_keys
+        video_makeup = key in video_makeup_keys and not remediated
         if (
             (int(assignment.enrollment_id), int(assignment.session_id)) in absent_learning_pairs
             and (assignment.enrollment_id, assignment.homework_id) not in submitted_revisions
@@ -624,7 +627,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             and (assignment.enrollment_id, assignment.homework_id) not in homework_retake_counts
             and key not in unscored_reviewed_revisions
             and not video_makeup
-            and not teacher_resolved
+            and not remediated
         ):
             continue
         session_metadata = _homework_session_metadata(session)
@@ -638,15 +641,15 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "passed": None if awaiting_review or video_makeup else False,
             "achievement": (
                 "REMEDIATED"
-                if teacher_resolved
+                if remediated
                 else None if awaiting_review or video_makeup else "NOT_SUBMITTED"
             ),
             "inspection_status": HomeworkScore.MetaStatus.VIDEO_MAKEUP if video_makeup else None,
             "submission_state": (
-                "reviewed" if teacher_resolved else
+                "reviewed" if remediated else
                 "awaiting_review" if awaiting_review else "needs_submission"
             ),
-            "teacher_resolved": teacher_resolved,
+            "teacher_resolved": key in teacher_completed_homework_keys,
             "submission_media_locked": (
                 assignment.enrollment_id,
                 assignment.homework_id,
