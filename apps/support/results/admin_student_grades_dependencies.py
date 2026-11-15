@@ -223,8 +223,7 @@ def prior_analysis_exam_sessions(*, tenant: Any, exam: Any, current_sessions: di
     sessions = Session.objects.filter(
         lecture__tenant=tenant,
         lecture_id__in=current,
-        session_type=Session.SessionType.REGULAR,
-    ).only("id", "lecture_id", "section_id", "regular_order").prefetch_related(
+    ).only("id", "lecture_id", "section_id", "regular_order", "session_type").prefetch_related(
         Prefetch("exams", queryset=matching_exams, to_attr="_analysis_exams")
     )
     previous_by_lecture = {}
@@ -233,17 +232,20 @@ def prior_analysis_exam_sessions(*, tenant: Any, exam: Any, current_sessions: di
     for session in sessions:
         lecture_id = session.lecture_id
         anchor = current[lecture_id]
-        if session.section_id != anchor.section_id:
-            continue
-        is_prior = session.regular_order < anchor.regular_order
+        is_prior = (
+            session.section_id == anchor.section_id
+            and session.session_type == Session.SessionType.REGULAR
+            and session.regular_order < anchor.regular_order
+        )
         if is_prior and session.regular_order > previous_by_lecture.get(lecture_id, -1):
             previous_by_lecture[lecture_id] = session.regular_order
-        for earlier_exam in session._analysis_exams:
-            key = (earlier_exam.id, lecture_id)
+        for linked_exam in session._analysis_exams:
+            key = (linked_exam.id, lecture_id)
+            # A saved exam result does not identify which linked session produced it.
             if key in session_by_exam_lecture or not is_prior:
                 ambiguous_pairs.add(key)
             else:
-                session_by_exam_lecture[key] = (session.regular_order, earlier_exam.max_score)
+                session_by_exam_lecture[key] = (session.regular_order, linked_exam.max_score)
     return previous_by_lecture, {
         key: value for key, value in session_by_exam_lecture.items() if key not in ambiguous_pairs
     }
