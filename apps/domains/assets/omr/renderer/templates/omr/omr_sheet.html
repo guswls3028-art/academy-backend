@@ -163,6 +163,8 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
   border-right:0.15mm solid #ccc;
 }
 .dr-bx{flex:1}
+.essay-score-cell{width:var(--essay-score-width);flex-shrink:0;border-left:0.15mm solid #ccc;display:flex;align-items:center;justify-content:center;font-size:5.5pt;font-weight:700}
+.essay-score-bubble{position:absolute;z-index:16}
 /* 서술형 교사 채점란 — meta_generator 좌표를 절대 위치로 그대로 사용 */
 .es{position:absolute;z-index:15;background:#f5f6f8;border:0.25pt solid #aaa;border-radius:0.8mm}
 .es-t{position:absolute;z-index:16;font-size:5.5pt;font-weight:700;line-height:1.15;color:#222}
@@ -189,6 +191,13 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
   {% for bubble in mark.bubbles %}<div class="es-b" style="left:{{ bubble.left }}mm;top:{{ bubble.top }}mm;width:{{ bubble.w }}mm;height:{{ bubble.h }}mm">{{ bubble.text }}</div>{% endfor %}
   {% for anchor in mark.anchors %}<div class="es-a" style="left:{{ anchor.left }}mm;top:{{ anchor.top }}mm;width:{{ anchor.size }}mm;height:{{ anchor.size }}mm"></div>{% endfor %}
   {% endfor %}
+
+  {% for question in essay_score_questions %}
+  <div data-essay-score-question="{{ question.number }}">
+    {% for bubble in question.bubbles %}<span class="bu essay-score-bubble" style="left:{{ bubble.left }}mm;top:{{ bubble.top }}mm">{{ bubble.label }}</span>{% endfor %}
+  </div>
+  {% endfor %}
+  {% for mark in essay_score_layout_marks %}<div class="es-a" aria-hidden="true" style="left:{{ mark.left }}mm;top:{{ mark.top }}mm;width:{{ mark.size }}mm;height:{{ mark.size }}mm"></div>{% endfor %}
 
   <div class="omr-c">
     <!-- 왼쪽 패널 -->
@@ -265,22 +274,24 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
       </div>
       {% endfor %}
 
-      {% if essay_count > 0 %}
-      <div class="dc">
+      {% for rows in essay_columns %}
+      <div class="dc"{% if essay_score_questions %} style="--essay-score-width:{{ essay_score_grid_width }}mm"{% endif %}>
         <div class="dc-h">
           <div class="dc-h-n">번호</div>
           <div class="dc-h-a">{{ essay_label }}</div>
+          {% if essay_score_questions %}<div class="essay-score-cell">배점</div>{% endif %}
         </div>
         <div class="dc-b">
-          {% for row in essay_rows %}
+          {% for row in rows %}
           <div class="dr{% if row.is_g10 %} dr-g10{% elif row.is_g5 %} dr-g5{% endif %}{% if row.is_zebra %} dr-zebra{% endif %}">
             <div class="dr-n">{{ row.number }}</div>
             <div class="dr-bx"></div>
+            {% if essay_score_questions %}<div class="essay-score-cell"></div>{% endif %}
           </div>
           {% endfor %}
         </div>
       </div>
-      {% endif %}
+      {% endfor %}
     </div>
   </div>
 </div>

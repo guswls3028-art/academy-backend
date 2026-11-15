@@ -18,8 +18,9 @@ class EssayNumberingTests(SimpleTestCase):
         )
         self.assertEqual(doc.resolved_essay_question_numbers, (19, 20))
         self.assertEqual(doc.display_essay_question_numbers, (1, 2))
+        (rows,) = OMRHtmlRenderer()._build_essay_columns(doc)
         self.assertEqual(
-            [row["number"] for row in OMRHtmlRenderer()._build_essay_rows(doc)],
+            [row["number"] for row in rows],
             [1, 2],
         )
 
