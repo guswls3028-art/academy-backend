@@ -100,7 +100,9 @@ inactive entitlement 회귀를 함께 실행한다. 운영 모양의 로그인·
 
 테넌트 스태프의 `/api/v1/media/videos/{video_id}/review-watch/report/`는 현재 영상 수강·개별
 권한으로 시청 가능한 학생과 기존 집계 학생의 사용량·한도·남은 시간을 조회한다. 사용량이
-0인 현재 대상도 포함한다. `PATCH /api/v1/media/videos/{video_id}/review-watch/students/{student_id}/allowance/`
+0인 현재 대상도 포함한다. 공개 영상도 해당 강의 수강에 저장된 영상 차단 규칙을 반영한다.
+차단 후에도 기존 시청 기록은 조회할 수 있으며 권한이 회복되면 한도를 다시 조정할 수 있다.
+`PATCH /api/v1/media/videos/{video_id}/review-watch/students/{student_id}/allowance/`
 는 동일 테넌트의 현재 시청권한과 활성 한도를 다시 확인한다. `limit_ms`는 적용할 총 허용
 밀리초, `null`은 기본 1.4배 복원이다. 영상에서 한도를 끄면 복습은 무제한으로 유지한다.
 요청의 `expected_revision`은 조회에서 받은 불투명 문자열이다. 변경이 겹치거나 적용한도

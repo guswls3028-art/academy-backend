@@ -729,6 +729,89 @@ class DirectVideoEntitlementTests(TestCase):
         self.assertEqual(history.count(), 3)
         self.assertTrue(all(event.actor_user == self.staff and event.target_user == self.student_user for event in history))
 
+    def test_public_video_allowance_refuses_blocked_learner_and_retains_usage(self):
+        from apps.domains.video.views.permission_views import VideoPermissionViewSet
+        from apps.domains.video.views.review_watch_views import ReviewWatchAllowanceView, ReviewWatchReportView
+
+        enrollment = create_enrollment_fixture(
+            tenant=self.tenant, student=self.student, lecture=self.lecture, status="ACTIVE",
+        )
+        SessionEnrollment.objects.create(session=self.session, enrollment=enrollment, tenant=self.tenant)
+        self.video.visibility = Video.Visibility.PUBLIC
+        self.video.review_watch_limit_enabled = True
+        self.video.save(update_fields=["visibility", "review_watch_limit_enabled"])
+        usage = VideoReviewWatchUsage.objects.create(
+            video=self.video, student=self.student, used_ms=12_000, limit_ms_override=60_000,
+        )
+        blocked = VideoPermissionViewSet.as_view({"post": "bulk_set"})(self._request(
+            "post", "/permissions/bulk_set/", user=self.staff,
+            data={"video_id": self.video.pk, "enrollments": [enrollment.pk], "access_mode": "BLOCKED"},
+        ))
+        self.assertEqual(blocked.status_code, 200, blocked.data)
+        unassigned_user = self._user(tenant=self.tenant, username="public-review-unassigned", role="student")
+        unassigned = create_student_fixture(
+            tenant=self.tenant, user=unassigned_user, name="Public learner", ps_number="PUBLIC-002",
+            omr_code="21345678", parent_phone="01011114444", school_type="HIGH",
+        )
+
+        access = StudentVideoPlaybackView.as_view()(self._request(
+            "get", "/playback/?access_check=true", user=self.student_user,
+        ), video_id=self.video.pk)
+        self.assertEqual(access.status_code, 403)
+        report = ReviewWatchReportView.as_view()(
+            self._request("get", "/report/", user=self.staff), video_id=self.video.pk,
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        rows = {row["student_id"]: row for row in report.data["students"]}
+        prior = rows[self.student.pk]
+        revised = ReviewWatchAllowanceView.as_view()(self._request(
+            "patch", "/allowance/", user=self.staff,
+            data={"limit_ms": 90_000, "expected_revision": prior["revision"]},
+        ), video_id=self.video.pk, student_id=self.student.pk)
+        usage.refresh_from_db()
+        with self.subTest("historical blocked learner"):
+            self.assertEqual((prior["used_ms"], prior["limit_ms"]), (12_000, 60_000))
+            self.assertFalse(prior["applicable"])
+            self.assertFalse(prior["can_adjust"])
+        with self.subTest("blocked update"):
+            self.assertEqual(revised.status_code, 404, revised.data)
+            self.assertEqual(revised.data["code"], "video_student_unavailable")
+        with self.subTest("blocked update preserves ledger"):
+            self.assertEqual((usage.used_ms, usage.limit_ms_override, usage.allowance_revision), (12_000, 60_000, 0))
+        with self.subTest("blocked update records no adjustment"):
+            self.assertFalse(OpsAuditLog.objects.filter(
+                action="video.review_watch.allowance.update", target_user=self.student_user,
+            ).exists())
+        with self.subTest("unassigned public learner"):
+            current = rows[unassigned.pk]
+            self.assertTrue(current["applicable"])
+            self.assertTrue(current["can_adjust"])
+            permitted = ReviewWatchAllowanceView.as_view()(self._request(
+                "patch", "/allowance/", user=self.staff,
+                data={"limit_ms": 90_000, "expected_revision": current["revision"]},
+            ), video_id=self.video.pk, student_id=unassigned.pk)
+            self.assertEqual(permitted.status_code, 200, permitted.data)
+            self.assertEqual(permitted.data["limit_ms"], 90_000)
+            self.assertFalse(Enrollment.objects.filter(student=unassigned, lecture=self.lecture).exists())
+
+        unblocked = VideoPermissionViewSet.as_view({"post": "bulk_set"})(self._request(
+            "post", "/permissions/bulk_set/", user=self.staff,
+            data={"video_id": self.video.pk, "enrollments": [enrollment.pk], "access_mode": "FREE_REVIEW"},
+        ))
+        self.assertEqual(unblocked.status_code, 200, unblocked.data)
+        refreshed = ReviewWatchReportView.as_view()(
+            self._request("get", "/report/", user=self.staff), video_id=self.video.pk,
+        )
+        current = next(row for row in refreshed.data["students"] if row["student_id"] == self.student.pk)
+        self.assertTrue(current["can_adjust"])
+        self.assertEqual((current["used_ms"], current["limit_ms"]), (12_000, 60_000))
+        reset = ReviewWatchAllowanceView.as_view()(self._request(
+            "patch", "/allowance/", user=self.staff,
+            data={"limit_ms": None, "expected_revision": current["revision"]},
+        ), video_id=self.video.pk, student_id=self.student.pk)
+        self.assertEqual(reset.status_code, 200, reset.data)
+        self.assertEqual((reset.data["used_ms"], reset.data["limit_ms"]), (12_000, self.video.duration * 1400))
+
     @override_settings(
         CDN_HLS_BASE_URL="https://cdn.example.test",
         CDN_HLS_SIGNING_SECRET="direct-video-test-secret",

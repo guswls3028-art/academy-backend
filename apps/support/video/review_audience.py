@@ -23,7 +23,14 @@ def review_report_recipients(video, now):
     if video.status != Video.Status.READY or (session and not lecture_allows_student_learning(session.lecture)):
         return students.none()
     if video.visibility == Video.Visibility.PUBLIC:
-        return students
+        if not session:
+            return students
+        # Public playback reuses the lecture enrollment and enforces its legacy video rule.
+        blocked_students = VideoAccess.objects.filter(
+            video=video, rule="blocked", enrollment__tenant_id=video.tenant_id,
+            enrollment__lecture_id=session.lecture_id,
+        ).values("enrollment__student_id")
+        return students.exclude(pk__in=blocked_students)
     if not session:
         return students.none()
 

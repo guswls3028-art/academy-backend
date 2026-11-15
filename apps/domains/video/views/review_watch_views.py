@@ -101,7 +101,13 @@ class ReviewWatchAllowanceView(APIView):
             Video.objects.select_related("session__lecture").select_for_update(of=("self",)),
             pk=video_id, tenant=request.tenant, status=Video.Status.READY,
         )
-        student = get_object_or_404(active_review_students(video).select_related("user"), pk=student_id)
+        students = (
+            review_report_recipients(video, timezone.now())
+            if video.visibility == Video.Visibility.PUBLIC else active_review_students(video)
+        )
+        student = students.select_related("user").filter(pk=student_id).first()
+        if student is None:
+            return Response({"code": "video_student_unavailable"}, status=status.HTTP_404_NOT_FOUND)
         principal = SimpleNamespace(tenant=request.tenant, user=student.user, META={})
         try:
             context = resolve_student_video_access_context(principal, video, allow_public_enrollment_write=False)
