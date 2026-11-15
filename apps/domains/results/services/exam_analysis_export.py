@@ -351,6 +351,7 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
                 if has_pass_criterion and criterion_count == len(scores)
                 else f"{pass_count}/{criterion_count}명 · {pass_rate * 100:.0f}%"
                 if has_pass_criterion
+                else "—" if not scores and any(candidate_pass_score(candidate) > 0 for candidate in candidates)
                 else "기준 미설정"
             ),
         ),
