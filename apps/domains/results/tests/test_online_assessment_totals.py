@@ -13,6 +13,7 @@ from apps.core.models import Tenant, TenantMembership
 from apps.domains.results.models import ExamResult, Result, ResultItem
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement
 from apps.domains.results.views.session_scores_view import SessionScoresView
+from apps.support.omr.score_shape_batch import load_exam_scoring_details
 
 
 class OnlineAssessmentTotalsTests(TestCase):
@@ -314,6 +315,16 @@ class OnlineAssessmentTotalsTests(TestCase):
         self.assertEqual(student, self._published_grades(parent=True))
         self.assertLessEqual(len(long_history), len(short_history) + 1,
                              (len(short_history), len(long_history)))
+        with (
+            patch(
+                "apps.support.results.student_grade_history.request_exam_scoring_details_loader",
+                return_value=load_exam_scoring_details,
+            ),
+            CaptureQueriesContext(connection) as uncached_queries,
+        ):
+            uncached = self._published_grades()
+        self.assertEqual(student, uncached)
+        self.assertGreaterEqual(len(uncached_queries) - len(long_history), 6)
 
     def test_later_online_attempt_does_not_replace_initial_total(self):
         self.exam.allow_retake = True
