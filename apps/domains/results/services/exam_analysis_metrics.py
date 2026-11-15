@@ -93,7 +93,9 @@ def _load_scores(*, results, exam_maxima, tenant, candidate_policy=None):
             "pass_score": pass_score,
             "session": session,
         })
-    achievements = compute_exam_achievement_bulk(items=items, tenant=tenant)
+    achievements = compute_exam_achievement_bulk(
+        items=items, tenant=tenant, include_first_attempt_readiness=True,
+    )
     rows = {}
     for result in results:
         exam_id, enrollment_id = result.target_id, result.enrollment_id
@@ -108,7 +110,7 @@ def _load_scores(*, results, exam_maxima, tenant, candidate_policy=None):
             status = "PROCESSING"
         elif attempt_status == "failed":
             status = "FAILED"
-        elif score.total_score is None or score.max_score is None or achievement.get("is_provisional"):
+        elif score.total_score is None or score.max_score is None or achievement.get("first_attempt_provisional"):
             status = "PARTIAL"
         else:
             status = "DONE"
