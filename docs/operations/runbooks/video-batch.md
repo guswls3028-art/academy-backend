@@ -59,6 +59,20 @@ in `/academy/api`, filter `extra.event = "video_encoding_progress_poll"` and sum
 `extra.progress_requests`, `extra.redis_miss` and `extra.db_hit`. Domain job
 and failure metrics still use their existing CloudWatch publishing path.
 
+### HLS encoding
+
+`academy/adapters/video/transcoder.py` uses separate H.264 profile and rate-control
+options for the high and middle variants. Both keep YUV 4:2:0, square pixels,
+the source frame rate and the existing GOP settings. x264 selects a level for
+each output's frame size, rate and buffer limits. The high variant limits x264 to
+four reference frames so the slow preset stays within the 1080p H.264 Level 4
+decoded-picture-buffer limits. The same applies to single-variant output.
+Repeated unscoped options previously applied the middle profile, CRF and forced
+level to the high variant, which could signal a level too low for the encoded
+frames. This change applies to new encodes. Already
+published HLS objects retain their original bitstreams until re-encoded through
+the owning video workflow.
+
 ## 2. Deploy Path
 
 Normal production deployment is the backend GitHub Actions workflow:
