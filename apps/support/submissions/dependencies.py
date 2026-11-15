@@ -816,14 +816,23 @@ def validate_exam_enrollment_candidate(
     tenant,
     exam_id: int,
     enrollment_id: int,
+    session_id: int | None = None,
 ) -> ExamEnrollmentCandidate:
-    from apps.domains.enrollment.models import Enrollment, SessionEnrollment
     from apps.domains.exams.models import ExamEnrollment
+    from apps.support.submissions.candidate_dependencies import (
+        active_exam_review_enrollments,
+        exam_review_roster_filter,
+        exam_review_session_is_linked,
+    )
 
-    if not Enrollment.objects.filter(
-        id=enrollment_id, tenant=tenant, student__tenant=tenant,
-        status="ACTIVE", student__deleted_at__isnull=True,
-    ).exists():
+    if session_id is not None and (
+        not exam_id
+        or not exam_review_session_is_linked(tenant=tenant, exam_id=exam_id, session_id=session_id)
+    ):
+        return ExamEnrollmentCandidate(ok=False, detail="해당 시험에 연결된 차시가 아닙니다.")
+
+    enrollments = active_exam_review_enrollments(tenant=tenant).filter(id=enrollment_id)
+    if not enrollments.exists():
         return ExamEnrollmentCandidate(
             ok=False,
             detail=f"enrollment_id={enrollment_id}는 현재 학원의 학생이 아닙니다.",
@@ -832,35 +841,22 @@ def validate_exam_enrollment_candidate(
     if not exam_id:
         return ExamEnrollmentCandidate(ok=True)
 
-    in_exam = ExamEnrollment.objects.filter(
-        exam_id=exam_id,
-        enrollment_id=enrollment_id,
-    ).exists()
-    if in_exam:
-        return ExamEnrollmentCandidate(ok=True)
+    targets = ExamEnrollment.objects.filter(exam_id=exam_id, exam__tenant=tenant)
+    has_exam_targets = targets.exists()
+    if has_exam_targets and not targets.filter(enrollment_id=enrollment_id).exists():
+        return ExamEnrollmentCandidate(ok=False, detail="해당 시험의 대상 학생이 아닙니다.")
 
-    if ExamEnrollment.objects.filter(
-        exam_id=exam_id,
-        exam__tenant=tenant,
+    if (not has_exam_targets or session_id is not None) and not enrollments.filter(
+        exam_review_roster_filter(
+            tenant=tenant, exam_id=exam_id, session_id=session_id, include_attendance=has_exam_targets,
+        ),
     ).exists():
         return ExamEnrollmentCandidate(
             ok=False,
-            detail="해당 시험의 대상 학생이 아닙니다.",
+            detail=("해당 차시에 등록되지 않은 학생입니다." if session_id is not None
+                    else "해당 시험에 등록되지 않은 학생입니다."),
         )
-
-    in_session = SessionEnrollment.objects.filter(
-        tenant=tenant,
-        session__exams__id=exam_id,
-        enrollment_id=enrollment_id,
-        enrollment__status="ACTIVE",
-        enrollment__student__deleted_at__isnull=True,
-    ).exists()
-    if not in_session:
-        return ExamEnrollmentCandidate(
-            ok=False,
-            detail="해당 시험에 등록되지 않은 학생입니다.",
-        )
-    return ExamEnrollmentCandidate(ok=True, should_create=True)
+    return ExamEnrollmentCandidate(ok=True, should_create=not has_exam_targets)
 
 
 def create_exam_enrollment_assignment(*, tenant, exam_id: int, enrollment_id: int) -> bool:
