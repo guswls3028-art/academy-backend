@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from apps.domains.video.contracts import ReviewWatchSummarySerializer
+
 
 class StudentVideoListItemSerializer(serializers.Serializer):
     id = serializers.IntegerField()
@@ -13,6 +15,7 @@ class StudentVideoListItemSerializer(serializers.Serializer):
     youtube_url = serializers.CharField(required=False, allow_blank=True, default="")
     thumbnail_url = serializers.CharField(allow_null=True, required=False)
     duration = serializers.IntegerField(allow_null=True, required=False)
+    review_watch_summary = ReviewWatchSummarySerializer(required=False)
 
     # 진행률 (0-100)
     progress = serializers.FloatField(required=False, default=0)
@@ -76,6 +79,7 @@ class ReviewStateSerializer(serializers.Serializer):
     stream = serializers.UUIDField()
     used_ms = serializers.IntegerField()
     remaining_ms = serializers.IntegerField(allow_null=True)
+    review_watch_summary = ReviewWatchSummarySerializer(required=False)
     retry_after_ms = serializers.IntegerField(required=False)
 
 
@@ -90,6 +94,7 @@ class StudentVideoPlaybackSerializer(serializers.Serializer):
     """
     video = StudentVideoListItemSerializer()
     progress_revision = serializers.CharField(allow_null=True, required=False)
+    support_preview = serializers.BooleanField(required=False)
     hls_url = serializers.CharField(allow_null=True, required=False)
     mp4_url = serializers.CharField(allow_null=True, required=False)
     play_url = serializers.CharField(allow_null=True, required=False)  # ✅ 재생 URL 추가
@@ -102,6 +107,7 @@ class StudentVideoPlaybackSerializer(serializers.Serializer):
     event_protocol_version = serializers.ChoiceField(choices=[1, 2], default=1)
 
     review_watch = serializers.DictField(required=False, allow_null=True)
+    review_watch_summary = ReviewWatchSummarySerializer(required=False)
     policy = serializers.DictField()
 
 

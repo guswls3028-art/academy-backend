@@ -5,6 +5,7 @@ from rest_framework.routers import DefaultRouter
 from apps.domains.results.views.student_exam_result_view import MyExamResultView
 from apps.domains.results.views.student_exam_attempts_view import MyExamAttemptsView
 
+from apps.domains.results.views.admin_exam_analysis_insights_view import AdminExamAnalysisInsightsView
 from apps.domains.results.views.admin_exam_results_view import AdminExamResultsView
 from apps.domains.results.views.admin_exam_summary_view import AdminExamSummaryView
 from apps.domains.results.views.admin_exam_result_detail_view import AdminExamResultDetailView
@@ -96,6 +97,11 @@ urlpatterns = [
         "admin/exams/<int:exam_id>/result-import/",
         AdminExamResultExcelImportView.as_view(),
         name="admin-exam-result-import",
+    ),
+    path(
+        "admin/exams/<int:exam_id>/analysis-insights/",
+        AdminExamAnalysisInsightsView.as_view(),
+        name="admin-exam-analysis-insights",
     ),
     path(
         "admin/exams/<int:exam_id>/analysis-export/",

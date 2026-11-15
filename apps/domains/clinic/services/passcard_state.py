@@ -109,10 +109,7 @@ def passcard_confirmed_student_ids(
         return set()
     from apps.support.clinic.idcard_dependencies import passcard_required_dates_by_student
 
-    required_dates = passcard_required_dates_by_student(
-        tenant=tenant, student_ids=normalized_ids,
-    )
-    participants = (
+    participants = list(
         SessionParticipant.objects.filter(
             tenant=tenant,
             student_id__in=normalized_ids,
@@ -120,6 +117,12 @@ def passcard_confirmed_student_ids(
         .filter(passcard_tenant_booking_q(tenant=tenant))
         .filter(passcard_confirming_booking_q(local_date=local_date))
         .select_related("session")
+    )
+    if not participants:
+        return set()
+    required_dates = passcard_required_dates_by_student(
+        tenant=tenant,
+        student_ids={participant.student_id for participant in participants},
     )
     return {
         participant.student_id

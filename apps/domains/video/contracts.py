@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TypeVar
 
+from .review_serializers import ReviewWatchSummarySerializer as ReviewWatchSummarySerializer
+
 T = TypeVar("T")
 
 
@@ -40,6 +42,12 @@ def record_review_state(*, video, student, user_id, context, stream_key, sequenc
 
     return _impl(video=video, student=student, user_id=user_id, context=context, stream_key=stream_key, sequence=sequence,
                  playing=playing, prepare=prepare, position_ms=position_ms)
+
+
+def student_review_watch_summaries(*, tenant, student, videos, applicable_video_ids):
+    from .services.review_watch import student_review_watch_summaries as _impl
+
+    return _impl(tenant=tenant, student=student, videos=videos, applicable_video_ids=applicable_video_ids)
 
 
 def youtube_embed_url(video_id: str) -> str:

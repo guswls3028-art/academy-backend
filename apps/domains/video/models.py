@@ -714,6 +714,8 @@ class VideoReviewWatchUsage(models.Model):
     video = models.ForeignKey(Video, on_delete=models.CASCADE)
     student = models.ForeignKey("students.Student", on_delete=models.CASCADE)
     used_ms = models.PositiveBigIntegerField(default=0)
+    limit_ms_override = models.PositiveBigIntegerField(null=True)
+    allowance_revision = models.PositiveBigIntegerField(default=0, db_default=0)
     # Prefetch is a transport allowance. Only elapsed playing replenishes it.
     prefetch_credit_ms = models.PositiveIntegerField(default=96_000)
     last_prepare_at = models.DateTimeField(null=True)

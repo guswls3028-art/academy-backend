@@ -16,7 +16,7 @@ from .views import (
 
 from .views.achievement_views import VideoAchievementView
 from .views.review_media_view import ReviewMediaView
-from .views.review_watch_views import ReviewWatchReportView
+from .views.review_watch_views import ReviewWatchAllowanceView, ReviewWatchReportView
 from .views.playback_views import (
     PlaybackStartView,
     PlaybackRefreshView,
@@ -95,6 +95,7 @@ urlpatterns += [
     path("review-stream/<uuid:key>/<path:asset>", ReviewMediaView.as_view(), name="review-watch-media"),
 
     path("videos/<int:video_id>/review-watch/report/", ReviewWatchReportView.as_view()),
+    path("videos/<int:video_id>/review-watch/students/<int:student_id>/allowance/", ReviewWatchAllowanceView.as_view()),
     path("playback/start/", PlaybackStartView.as_view()),
     path("playback/refresh/", PlaybackRefreshView.as_view()),
     path("playback/renew/", PlaybackRenewView.as_view()),
