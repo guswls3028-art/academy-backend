@@ -13,12 +13,12 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolved
 from apps.domains.clinic.color_utils import get_effective_clinic_colors
+from apps.domains.clinic.contracts import participant_booking_window, participant_tenant_scope
 from apps.domains.clinic.models import SessionParticipant
 from apps.domains.clinic.services.passcard_state import (
     passcard_booking_covers_requirements,
     passcard_booking_is_scheduled,
     passcard_required_booking_date,
-    passcard_tenant_booking_q,
     passcard_visible_booking_q,
 )
 from apps.support.clinic.idcard_dependencies import (
@@ -28,7 +28,6 @@ from apps.support.clinic.idcard_dependencies import (
     unresolved_auto_clinic_links,
 )
 from apps.support.clinic.session_dependencies import get_student_for_clinic_request
-from apps.domains.clinic.time_ranges import booking_window
 
 
 BOOKING_STATUS_LABELS = {
@@ -43,16 +42,14 @@ BOOKING_STATUS_LABELS = {
 
 def _participant_schedule(participant):
     session = getattr(participant, "session", None)
-    if session and participant.booking_start_time is not None and participant.booking_end_time is not None:
-        start, _ = booking_window(
-            session=session, start_time=participant.booking_start_time, end_time=participant.booking_end_time,
-        )
+    if session:
+        start, _ = participant_booking_window(participant)
         return start.date(), start.time(), session.location, session.title or ""
     return (
-        getattr(session, "date", None) or participant.requested_date,
-        getattr(session, "start_time", None) or participant.requested_start_time,
-        getattr(session, "location", None),
-        getattr(session, "title", "") or "",
+        participant.requested_date,
+        participant.requested_start_time,
+        None,
+        "",
     )
 
 
@@ -63,7 +60,7 @@ def _valid_booking_projection(*, tenant, student, local_date, required_date=None
             tenant=tenant,
             student=student,
         )
-        .filter(passcard_tenant_booking_q(tenant=tenant))
+        .filter(participant_tenant_scope(tenant=tenant))
         .filter(passcard_visible_booking_q(local_date=local_date))
         .select_related("session")
         .order_by("id")

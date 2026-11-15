@@ -70,12 +70,12 @@ def get_student_lecture_sessions(
 
 
 def _owned_clinic_participants(*, student: Any, tenant: Any):
+    from apps.domains.clinic.contracts import participant_tenant_scope
     from apps.domains.clinic.models import SessionParticipant
 
     return SessionParticipant.objects.filter(
-        Q(session__isnull=True) | Q(session__tenant=tenant),
+        participant_tenant_scope(tenant=tenant),
         student=student,
-        student__tenant=tenant,
         tenant=tenant,
     )
 

@@ -2465,6 +2465,38 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertIsNone(attended.completed_at)
         self.assertIsNone(link.resolved_at)
 
+    def test_passcard_and_teacher_highlight_use_the_actual_overnight_booking_date(self):
+        from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
+
+        enrollment = self.data["enrollments"][0]
+        assessment_session = self.data["lec_session"]
+        assessment_date = timezone.localdate() + datetime.timedelta(days=2)
+        assessment_session.date = assessment_date
+        assessment_session.save(update_fields=["date", "updated_at"])
+        self._make_live_exam_clinic_link(enrollment, assessment_session)
+        opening = ClinicSession.objects.create(
+            tenant=self.tenant, date=assessment_date - datetime.timedelta(days=1),
+            start_time=datetime.time(23, 0), duration_minutes=240, max_participants=10,
+            booking_mode="time_range",
+        )
+        booked = self.make_participant(
+            self.tenant, opening, self.student, enrollment=enrollment,
+            status=SessionParticipant.Status.BOOKED,
+        )
+        booked.booking_start_time = datetime.time(1, 0)
+        booked.booking_end_time = datetime.time(2, 0)
+        booked.save(update_fields=["booking_start_time", "booking_end_time"])
+
+        response = self.client.get("/api/v1/clinic/idcard/", **self._headers(self.tenant))
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["passcard_state"], "BOOKING_CONFIRMED")
+        self.assertEqual(response.data["current_booking"]["participant_id"], booked.id)
+        self.assertEqual(response.data["current_booking"]["date"], assessment_date.isoformat())
+        self.assertEqual(response.data["current_booking"]["start_time"], "01:00:00")
+        self.assertFalse(compute_clinic_highlight_map(
+            tenant=self.tenant, enrollment_ids={enrollment.id},
+        )[enrollment.id])
+
     @timezone.override("Asia/Seoul")
     def test_undated_assessment_uses_local_requirement_date_not_utc_date(self):
         from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map

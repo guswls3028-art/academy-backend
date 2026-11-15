@@ -8,7 +8,7 @@ from rest_framework import serializers
 from .models import Session, SessionParticipant, Test, Submission
 from .services.lifecycle import booking_availability_for_session
 from .time_ranges import (
-    booking_window,
+    participant_booking_window,
     session_window,
     ends_after_next_day_midnight_values,
     ends_at_next_day_midnight_values,
@@ -421,7 +421,7 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
     def _booking_dates(self, obj):
         if obj.session is None or obj.booking_start_time is None or obj.booking_end_time is None:
             return None, None
-        start, end = booking_window(session=obj.session, start_time=obj.booking_start_time, end_time=obj.booking_end_time)
+        start, end = participant_booking_window(obj)
         return start.date(), end.date()
 
     @extend_schema_field(serializers.DateField(allow_null=True))
