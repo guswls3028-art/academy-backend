@@ -202,6 +202,53 @@ def primary_session_metadata_by_exam_and_lecture(
     return metadata
 
 
+def prior_analysis_exam_sessions(*, tenant: Any, exam: Any, current_sessions: dict):
+    """Return the previous regular lesson and unambiguous earlier exam lessons."""
+    from apps.domains.exams.models import Exam
+    from apps.domains.lectures.models import Session
+
+    current = {
+        lecture_id: session
+        for lecture_id, session in current_sessions.items()
+        if session is not None and session.regular_order is not None
+    }
+    if not current:
+        return {}, {}
+
+    matching_exams = Exam.objects.filter(
+        tenant=tenant,
+        exam_type=Exam.ExamType.REGULAR,
+        subject__iexact=exam.subject,
+    ).exclude(id=exam.id).only("id", "max_score")
+    sessions = Session.objects.filter(
+        lecture__tenant=tenant,
+        lecture_id__in=current,
+        session_type=Session.SessionType.REGULAR,
+    ).only("id", "lecture_id", "section_id", "regular_order").prefetch_related(
+        Prefetch("exams", queryset=matching_exams, to_attr="_analysis_exams")
+    )
+    previous_by_lecture = {}
+    session_by_exam_lecture = {}
+    ambiguous_pairs = set()
+    for session in sessions:
+        lecture_id = session.lecture_id
+        anchor = current[lecture_id]
+        if session.section_id != anchor.section_id:
+            continue
+        is_prior = session.regular_order < anchor.regular_order
+        if is_prior and session.regular_order > previous_by_lecture.get(lecture_id, -1):
+            previous_by_lecture[lecture_id] = session.regular_order
+        for earlier_exam in session._analysis_exams:
+            key = (earlier_exam.id, lecture_id)
+            if key in session_by_exam_lecture or not is_prior:
+                ambiguous_pairs.add(key)
+            else:
+                session_by_exam_lecture[key] = (session.regular_order, earlier_exam.max_score)
+    return previous_by_lecture, {
+        key: value for key, value in session_by_exam_lecture.items() if key not in ambiguous_pairs
+    }
+
+
 def enrollment_lecture_metadata_by_id(*, tenant: Any, enrollment_ids: list[int]) -> dict[int, dict[str, Any]]:
     from apps.domains.enrollment.models import Enrollment
 
