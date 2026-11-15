@@ -34,6 +34,7 @@ from .services.schedules import (
     create_initial_schedules, replay_initial_schedule_create, session_create_payload_digest,
 )
 from .serializers import (
+    LectureScheduleSettingsSerializer,
     LectureSerializer,
     SessionCreateSerializer,
     SessionSerializer,
@@ -128,6 +129,20 @@ class LectureViewSet(ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ["is_active", "subject"]
     search_fields = ["title", "name", "subject"]
+
+    @extend_schema(responses={201: LectureSerializer})
+    @action(detail=False, methods=["post"], url_path="with-schedule-settings", serializer_class=LectureScheduleSettingsSerializer)
+    def create_with_schedule_settings(self, request, *args, **kwargs):
+        return self.create(request, *args, **kwargs)
+
+    @extend_schema(
+        description="일반 강의 필드는 생략할 수 있지만 schedule_mode와 schedule_defaults는 모두 필요합니다.",
+        parameters=[OpenApiParameter("id", OpenApiTypes.INT, OpenApiParameter.PATH)],
+        responses={200: LectureSerializer},
+    )
+    @action(detail=True, methods=["patch"], url_path="schedule-settings", serializer_class=LectureScheduleSettingsSerializer)
+    def update_schedule_settings(self, request, *args, **kwargs):
+        return self.partial_update(request, *args, **kwargs)
 
     def get_queryset(self):
         """

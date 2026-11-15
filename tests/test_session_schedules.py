@@ -124,6 +124,46 @@ class TestSessionSchedules(LectureTestBase):
         self.assertEqual(self.lecture_detail("patch", {"schedule_defaults": [good]}, lecture=lecture).status_code, 404)
         self.assertEqual(Lecture.objects.get(pk=lecture.pk).schedule_defaults, [])
 
+    def test_explicit_lecture_schedule_routes_require_both_settings_and_reuse_staff_boundary(self):
+        create = resolve("/api/v1/lectures/lectures/with-schedule-settings/")
+        lecture_data = {"title": "새 강의", "name": "담당", "subject": "수학"}
+        settings = {"schedule_mode": "SPLIT", "schedule_defaults": [
+            {"label": "A반", "weekday": 3}, {"label": "B반", "weekday": 4},
+        ]}
+        denied_create = self.factory.post("/", {**lecture_data, **settings}, format="json")
+        denied_create.tenant = self.tenant
+        force_authenticate(denied_create, user=self.students[0].user)
+        self.assertEqual(create.func(denied_create).status_code, 403)
+        self.assertEqual(self.request("post", create.func, {**lecture_data, "schedule_mode": "SPLIT"}).status_code, 400)
+        self.assertFalse(Lecture.objects.filter(tenant=self.tenant, title=lecture_data["title"]).exists())
+        created = self.request("post", create.func, {**lecture_data, **settings})
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["tenant"], self.tenant.pk)
+        self.assertEqual(created.data["schedule_defaults"], settings["schedule_defaults"])
+
+        patch = resolve(f"/api/v1/lectures/lectures/{created.data['id']}/schedule-settings/")
+        rejected = self.request("patch", patch.func, {"description": "저장하지 않음", "schedule_defaults": []}, **patch.kwargs)
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        lecture = Lecture.objects.get(pk=created.data["id"])
+        self.assertEqual(lecture.description, "")
+        self.assertEqual(lecture.schedule_mode, "SPLIT")
+
+        single = {"schedule_mode": "SINGLE", "schedule_defaults": [], "description": "새 기본값"}
+        denied = self.factory.patch("/", single, format="json")
+        denied.tenant = self.tenant
+        force_authenticate(denied, user=self.students[0].user)
+        self.assertEqual(patch.func(denied, **patch.kwargs).status_code, 403)
+        updated = self.request("patch", patch.func, single, **patch.kwargs)
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["schedule_mode"], "SINGLE")
+        self.assertEqual(updated.data["schedule_defaults"], [])
+        self.assertEqual(updated.data["description"], "새 기본값")
+
+        other = Tenant.objects.create(name="Other", code="other-schedule-settings")
+        foreign = Lecture.objects.create(tenant=other, name="Other", title="Other")
+        foreign_patch = resolve(f"/api/v1/lectures/lectures/{foreign.pk}/schedule-settings/")
+        self.assertEqual(self.request("patch", foreign_patch.func, single, **foreign_patch.kwargs).status_code, 404)
+
     def create_payload(self, **changes):
         return {
             "lecture": self.lecture.pk, "regular_order": 2, "date": "2026-04-15",

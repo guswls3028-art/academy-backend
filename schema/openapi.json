@@ -5766,6 +5766,78 @@
         ],
         "type": "object"
       },
+      "LectureScheduleSettingsRequest": {
+        "properties": {
+          "chip_label": {
+            "description": "강의딱지 2글자 (미입력 시 제목 앞 2자 사용)",
+            "maxLength": 2,
+            "type": "string"
+          },
+          "color": {
+            "description": "아이콘/라벨 색상",
+            "maxLength": 20,
+            "minLength": 1,
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "end_date": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "is_system": {
+            "description": "시스템용 강의 (전체공개영상 컨테이너 등). 강의 목록·성적 등에서 자동 제외.",
+            "type": "boolean"
+          },
+          "lecture_time": {
+            "description": "강의 시간 (예: 토 12:00 ~ 13:00)",
+            "maxLength": 100,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schedule_defaults": {
+            "items": {
+              "$ref": "#/components/schemas/LectureScheduleDefaultRequest"
+            },
+            "type": "array"
+          },
+          "schedule_mode": {
+            "$ref": "#/components/schemas/ScheduleModeEnum"
+          },
+          "start_date": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 50,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "schedule_defaults",
+          "schedule_mode",
+          "subject",
+          "title"
+        ],
+        "type": "object"
+      },
       "LectureSection": {
         "properties": {
           "assignment_count": {
@@ -10343,6 +10415,71 @@
               }
             ],
             "description": "새 차시의 기본 수업일 구성\n\n* `SINGLE` - 한 날짜\n* `SPLIT` - 여러 날짜"
+          },
+          "start_date": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 50,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedLectureScheduleSettingsRequest": {
+        "properties": {
+          "chip_label": {
+            "description": "강의딱지 2글자 (미입력 시 제목 앞 2자 사용)",
+            "maxLength": 2,
+            "type": "string"
+          },
+          "color": {
+            "description": "아이콘/라벨 색상",
+            "maxLength": 20,
+            "minLength": 1,
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "end_date": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "is_system": {
+            "description": "시스템용 강의 (전체공개영상 컨테이너 등). 강의 목록·성적 등에서 자동 제외.",
+            "type": "boolean"
+          },
+          "lecture_time": {
+            "description": "강의 시간 (예: 토 12:00 ~ 13:00)",
+            "maxLength": 100,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schedule_defaults": {
+            "items": {
+              "$ref": "#/components/schemas/LectureScheduleDefaultRequest"
+            },
+            "type": "array"
+          },
+          "schedule_mode": {
+            "$ref": "#/components/schemas/ScheduleModeEnum"
           },
           "start_date": {
             "format": "date",
@@ -39649,6 +39786,54 @@
         ]
       }
     },
+    "/api/v1/lectures/lectures/with-schedule-settings/": {
+      "post": {
+        "operationId": "lectures_lectures_with_schedule_settings_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureScheduleSettingsRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureScheduleSettingsRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureScheduleSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Lecture"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "lectures"
+        ]
+      }
+    },
     "/api/v1/lectures/lectures/{id}/": {
       "delete": {
         "operationId": "lectures_lectures_destroy",
@@ -39841,6 +40026,64 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Lecture"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "lectures"
+        ]
+      }
+    },
+    "/api/v1/lectures/lectures/{id}/schedule-settings/": {
+      "patch": {
+        "description": "일반 강의 필드는 생략할 수 있지만 schedule_mode와 schedule_defaults는 모두 필요합니다.",
+        "operationId": "lectures_lectures_schedule_settings_partial_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedLectureScheduleSettingsRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedLectureScheduleSettingsRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedLectureScheduleSettingsRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {

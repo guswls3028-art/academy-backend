@@ -27,7 +27,11 @@
 설정하지 않으면 `Session.date`를 그대로 사용한다. 기존 반(`Section`) 설정과 독립적이다.
 
 강의의 `schedule_mode`와 `schedule_defaults`는 직원이 새 차시를 만드는 화면의 기본값이다.
-`GET /lectures/lectures/{id}/`에서 조회하며 기존 강의 생성·수정 API로 저장한다.
+`GET /lectures/lectures/{id}/`에서 조회한다. 화면에서 운영 방식을 명시적으로 저장할 때는
+`POST /lectures/lectures/with-schedule-settings/` 또는
+`PATCH /lectures/lectures/{id}/schedule-settings/`에 두 필드를 함께 보낸다. 이 경로도
+기존 강의 생성·수정 권한과 트랜잭션을 사용한다. 구 API가 경로를 거부하면 운영 방식이
+누락된 채 저장하지 않도록 일반 경로로 재시도하지 않는다. 기존 일반 강의 API는 호환을 유지한다.
 `schedule_mode`는 `SINGLE`(0~1개 기본 수업일) 또는 `SPLIT`(2~20개 기본 수업일)이다.
 각 항목은 `label`(공백을 제거한 1~40자, 대소문자 구분 없이 고유) 및 `weekday`
 (ISO 정수 1=월요일, 7=일요일)로 구성한다. 같은 요일에 다른 이름의 반을 둘 수 있다.

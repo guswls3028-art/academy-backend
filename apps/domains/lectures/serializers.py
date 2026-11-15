@@ -69,6 +69,21 @@ class LectureSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class LectureScheduleSettingsSerializer(LectureSerializer):
+    schedule_mode = serializers.ChoiceField(choices=Lecture.ScheduleMode.choices)
+    schedule_defaults = LectureScheduleDefaultSerializer(many=True, max_length=20)
+
+    class Meta(LectureSerializer.Meta):
+        ref_name = "LectureScheduleSettings"
+
+    def validate(self, attrs):
+        # `partial_update` permits omitting ordinary lecture fields, but not either setting.
+        required = {field: "이 필드는 필수입니다." for field in ("schedule_mode", "schedule_defaults") if field not in attrs}
+        if required:
+            raise serializers.ValidationError(required)
+        return super().validate(attrs)
+
+
 class SessionScheduleSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = SessionSchedule
