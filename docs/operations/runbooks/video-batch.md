@@ -69,9 +69,13 @@ four reference frames so the slow preset stays within the 1080p H.264 Level 4
 decoded-picture-buffer limits. The same applies to single-variant output.
 Repeated unscoped options previously applied the middle profile, CRF and forced
 level to the high variant, which could signal a level too low for the encoded
-frames. This change applies to new encodes. Already
-published HLS objects retain their original bitstreams until re-encoded through
-the owning video workflow.
+frames. Existing HLS requires a re-encode through the owning video workflow to
+adopt the corrected bitstream.
+
+`tests/video/test_transcoder.py` verifies distinct options, original frame rate
+and automatic level selection. The synthetic FFmpeg checks inspect both
+variants' codec parameters and master playlist at 30 and 60 fps, including
+single-variant 1080p60 output.
 
 ## 2. Deploy Path
 
