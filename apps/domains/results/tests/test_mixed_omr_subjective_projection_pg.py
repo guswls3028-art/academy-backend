@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import timedelta
-from io import StringIO
+from io import BytesIO, StringIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -13,6 +13,7 @@ from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
+from openpyxl import load_workbook
 from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -24,6 +25,7 @@ from apps.domains.results.models import (
     ResultItem,
     ScoreEditDraft,
 )
+from apps.domains.results.services.exam_analysis_export import build_exam_analysis_export
 from apps.domains.results.services.grading_service import grade_submission
 from apps.domains.results.services.sync_result_from_submission import (
     sync_result_from_exam_submission,
@@ -64,6 +66,7 @@ from apps.support.results.enterprise_analytics import (
     build_teacher_enterprise_analytics,
 )
 from apps.support.student_app.results_summary import build_student_grades_summary
+from apps.domains.results.views.admin_exam_analysis_insights_view import AdminExamAnalysisInsightsView
 from apps.domains.results.views.admin_exam_result_detail_view import (
     AdminExamResultDetailView,
 )
@@ -1275,8 +1278,36 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
         self.assertIsNone(detail_response.data["clinic_retake"])
         self.assertTrue(detail_response.data["is_provisional"])
 
+        def report():
+            request = self.factory.get(f"/results/admin/exams/{self.exam.id}/analysis-insights/")
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.staff)
+            response = AdminExamAnalysisInsightsView.as_view()(request, exam_id=self.exam.id)
+            self.assertEqual(response.status_code, 200, response.data)
+            return response.data
+
+        self.assertEqual(report()["scored_count"], 1)
+        self.assertEqual(report()["recommended_cutoff"], 100)
+        workbook = load_workbook(BytesIO(build_exam_analysis_export(exam=self.exam, tenant=self.tenant)))
+        ranked = workbook["학생별 등수"]
+        self.assertEqual((ranked["A6"].value, ranked["E6"].value, ranked["K6"].value), (1, 100, "완료"))
+
+        # A worker still processing the first attempt must not enter analysis.
+        first_attempt.status = "grading"
+        first_attempt.save(update_fields=["status"])
+        self.assertEqual(report()["scored_count"], 0)
+        self.assertIsNone(report()["recommended_cutoff"])
+
     def test_admin_list_and_detail_keep_pending_score_out_of_rank_and_clinic(self):
         self._grade_objective_only()
+        request = self.factory.get(f"/results/admin/exams/{self.exam.id}/analysis-insights/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.staff)
+        analysis = AdminExamAnalysisInsightsView.as_view()(request, exam_id=self.exam.id)
+        self.assertEqual(analysis.status_code, 200, analysis.data)
+        self.assertEqual(analysis.data["scored_count"], 0)
+        self.assertIsNone(analysis.data["recommended_cutoff"])
+
         ClinicLink.objects.create(
             tenant=self.tenant,
             enrollment=self.enrollment,

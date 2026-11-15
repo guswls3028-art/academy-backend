@@ -20,6 +20,7 @@ from apps.domains.results.services.exam_analysis_export import (
 from apps.domains.results.services.assessment_correction_status import (
     exam_correction_fingerprint,
 )
+from apps.domains.results.views.admin_exam_analysis_insights_view import AdminExamAnalysisInsightsView
 from apps.domains.results.views.admin_exam_results_view import (
     AdminExamResultsView,
     _result_display_status,
@@ -440,6 +441,131 @@ class AdminExamResultsScopeTest(TestCase):
         response = self._get(exam.id)
         self.assertEqual(response.data["results"][0]["result_status"], "FAILED")
         self.assertIsNone(response.data["results"][0]["rank"])
+
+    def test_analysis_uses_comparable_first_attempts_in_web_and_workbook(self):
+        prior = self._make_exam("Earlier exam")
+        previous_session = self.Session.objects.create(
+            lecture=self.lecture, order=2, title="2회차",
+        )
+        current_session = self.Session.objects.create(
+            lecture=self.lecture, order=3, title="3회차",
+        )
+
+        def exam_at(title, session):
+            exam = self.Exam.objects.create(
+                tenant=self.tenant, title=title, pass_score=60, max_score=100,
+            )
+            exam.sessions.add(session)
+            return exam
+
+        previous = exam_at("Previous exam", previous_session)
+        current = exam_at("Current exam", current_session)
+        future = exam_at("Later exam", self.Session.objects.create(
+            lecture=self.lecture, order=4, title="4회차",
+        ))
+        unrelated = exam_at("Another subject", previous_session)
+        unrelated.subject = "PHYSICS"
+        unrelated.save(update_fields=["subject"])
+        ambiguous = exam_at("Shared across days", previous_session)
+        ambiguous.sessions.add(self.Session.objects.create(
+            lecture=self.lecture, order=5, title="보강", session_type="SUPPLEMENT",
+        ))
+
+        ExamEnrollment = django_apps.get_model("exams", "ExamEnrollment")
+        ExamEnrollment.objects.create(exam=current, enrollment=self.enrollment)
+        ExamAttempt.objects.create(
+            exam=previous, enrollment=self.enrollment, attempt_index=1, status="done",
+            is_representative=False,
+            meta={"initial_snapshot": {"total_score": 50, "max_score": 100}},
+        )
+        retake = ExamAttempt.objects.create(
+            exam=previous, enrollment=self.enrollment, attempt_index=2, status="done",
+            is_retake=True,
+        )
+        for exam, score, maximum, attempt in (
+            (prior, 30, 50, None),
+            (previous, 100, 100, retake),
+            (current, 63.5, 100, None),
+            (future, 100, 100, None),
+            (unrelated, 100, 100, None),
+            (ambiguous, 100, 100, None),
+        ):
+            Result.objects.create(
+                target_type="exam", target_id=exam.id, enrollment=self.enrollment,
+                attempt=attempt, total_score=score, max_score=maximum,
+            )
+
+        request = self.factory.get("/analysis-insights/", {"lecture_id": self.lecture.id})
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin_user)
+        response = AdminExamAnalysisInsightsView.as_view()(request, exam_id=current.id)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response["Cache-Control"], "private, no-store")
+        self.assertEqual(response.data["recommended_cutoff"], 65)
+        self.assertEqual(response.data["below_recommended_count"], 1)
+        self.assertEqual(response.data["scored_count"], 1)
+        summary = response.data["score_summary"]
+        self.assertEqual(summary["average"], 63.5)
+        self.assertEqual(summary["unscored_count"], 0)
+        self.assertEqual(summary["pass_criterion_count"], 1)
+        self.assertEqual(summary["pass_count"], 1)
+        self.assertEqual(summary["distribution_counts"], [0, 0, 0, 1, 0])
+        self.assertEqual(response.data["trends"], [{
+            "enrollment_id": self.enrollment.id,
+            "student_name": self.enrollment.student.name,
+            "lecture_title": self.lecture.title,
+            "current_rate": 63.5,
+            "previous_session_rate": 50.0,
+            "cumulative_rate": 55.0,
+            "prior_exam_count": 2,
+            "previous_delta_pp": 13.5,
+            "cumulative_delta_pp": 8.5,
+            "signal": None,
+        }])
+
+        workbook = load_workbook(BytesIO(build_exam_analysis_export(exam=current, tenant=self.tenant)))
+        overview = workbook["시험 요약"]
+        self.assertEqual(overview["A11"].value, "65점")
+        self.assertEqual(overview["C11"].value, "1/1명")
+        self.assertEqual(
+            [overview.cell(row, 2).value for row in range(15, 20)],
+            summary["distribution_counts"],
+        )
+        chart = overview._charts[0]
+        self.assertTrue(chart.dLbls.showVal)
+        self.assertFalse(chart.dLbls.showCatName)
+        self.assertEqual(chart.y_axis.majorGridlines.spPr.ln.solidFill.srgbClr, "E2E8F0")
+        self.assertEqual(workbook["성적 추이"]["E6"].value, 55)
+        self.assertEqual(workbook["성적 추이"]["H6"].value, 8.5)
+        current.refresh_from_db()
+        self.assertEqual(current.pass_score, 60)
+
+        Result.objects.filter(target_type="exam", target_id=current.id).update(total_score=70)
+        request = self.factory.get("/analysis-insights/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin_user)
+        changed = AdminExamAnalysisInsightsView.as_view()(request, exam_id=current.id)
+        self.assertEqual(changed.data["trends"][0]["signal"], "up")
+
+        foreign_tenant = Tenant.objects.create(name="Foreign report", code="foreign-report")
+        foreign_exam = self.Exam.objects.create(tenant=foreign_tenant, title="Foreign")
+        request = self.factory.get("/analysis-insights/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin_user)
+        denied = AdminExamAnalysisInsightsView.as_view()(request, exam_id=foreign_exam.id)
+        self.assertEqual(denied.status_code, 404)
+
+        request = self.factory.get("/analysis-insights/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.enrollment.student.user)
+        denied = AdminExamAnalysisInsightsView.as_view()(request, exam_id=current.id)
+        self.assertEqual(denied.status_code, 403)
+
+        request = self.factory.get("/analysis-insights/", {"lecture_id": 999999})
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin_user)
+        denied = AdminExamAnalysisInsightsView.as_view()(request, exam_id=current.id)
+        self.assertEqual(denied.status_code, 400)
 
     def test_shared_exam_filters_results_and_applies_each_lecture_cutoff(self):
         exam = self._make_exam()

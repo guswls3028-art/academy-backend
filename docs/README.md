@@ -81,6 +81,7 @@ backend/docs/
 | 보강·클리닉 등원 예정 운영 | [domain/arrival-operations.md](domain/arrival-operations.md) |
 | 현재 클리닉 대상·강의 종료·학생 예약 자격 | [domain/clinic-targets.md](domain/clinic-targets.md) |
 | 알림톡 발송 기록의 역할별 조회·상태·개인정보 경계 | [domain/messaging-delivery-log.md](domain/messaging-delivery-log.md) |
+| 임근혁 영어 학원별 운영 정책 | [operations/tenants/limglish.md](operations/tenants/limglish.md) |
 | 시험 원본→회차 범위 HWPX 오답노트 계획 | [refactor/exam-wrong-note-hwpx-plan.md](refactor/exam-wrong-note-hwpx-plan.md) |
 | OMR 출력·인식 | [domain/omr.md](domain/omr.md) |
 | OpenAI 공급자·용도별 모델·키 전환·복구 | [operations/openai-provider.md](operations/openai-provider.md) |

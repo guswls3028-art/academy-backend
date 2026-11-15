@@ -72,9 +72,15 @@ class GradesSummaryQueryBudgetTests(TestCase):
             self.assertEqual(len(response.data["exams"]), order)
             self.assertTrue(all(row["total_score"] == 80 for row in response.data["exams"]))
             counts.append(len(queries))
-            with patch(
-                "apps.domains.results.services.omr_subjective_completion.load_exam_scoring_details",
-                side_effect=_single_exam_details,
+            with (
+                patch(
+                    "apps.support.results.student_grade_history.request_exam_scoring_details_loader",
+                    return_value=_single_exam_details,
+                ),
+                patch(
+                    "apps.domains.results.services.omr_subjective_completion.load_exam_scoring_details",
+                    side_effect=_single_exam_details,
+                ),
             ):
                 original = self._call()
             self.assertEqual(response.data, original.data)

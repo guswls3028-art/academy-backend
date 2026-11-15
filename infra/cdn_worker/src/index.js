@@ -59,9 +59,18 @@ export default {
     const isM3u8 = r2Key.endsWith(".m3u8");
     const rangeHeader = request.headers.get("Range");
     const getOpts = {};
-    let parsedRange = (!isM3u8 && rangeHeader) ? parseRangeHeader(rangeHeader) : null;
+    const parsedRange = (!isM3u8 && rangeHeader) ? parseRangeHeader(rangeHeader) : null;
     if (parsedRange) getOpts.range = parsedRange;
-    const obj = await env.R2_VIDEO.get(r2Key, getOpts);
+    let obj;
+    try {
+      obj = await env.R2_VIDEO.get(r2Key, getOpts);
+    } catch (error) {
+      if (!parsedRange || !String(error?.message ?? "").endsWith("(10039)")) throw error;
+      // InvalidRange does not return object metadata. Read size only on this path.
+      const metadata = await env.R2_VIDEO.head(r2Key);
+      if (!metadata) return new Response("not found", { status: 404 });
+      return unsatisfiableRange(metadata.size);
+    }
     if (!obj || !obj.body) {
       return new Response("not found", { status: 404 });
     }
@@ -103,7 +112,7 @@ export default {
         length = obj.size - start;
       } else if (Number.isFinite(parsedRange.offset) && Number.isFinite(parsedRange.length)) {
         start = parsedRange.offset;
-        length = parsedRange.length;
+        length = Math.min(parsedRange.length, obj.size - start);
       } else if (Number.isFinite(parsedRange.offset)) {
         start = parsedRange.offset;
         length = obj.size - start;
@@ -114,7 +123,7 @@ export default {
         headers.set("Content-Length", String(length));
         status = 206;
       } else {
-        headers.set("Content-Length", String(obj.size));
+        return unsatisfiableRange(obj.size);
       }
     } else {
       headers.set("Content-Length", String(obj.size));
@@ -122,6 +131,16 @@ export default {
     return new Response(obj.body, { headers, status });
   },
 };
+
+function unsatisfiableRange(size) {
+  return new Response(null, { status: 416, headers: {
+    "Accept-Ranges": "bytes",
+    "Content-Length": "0",
+    "Content-Range": `bytes */${size}`,
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Expose-Headers": "Accept-Ranges, Content-Range",
+  } });
+}
 
 // Parse RFC 7233 single-range header. Returns {offset, length} or null.
 function parseRangeHeader(value) {

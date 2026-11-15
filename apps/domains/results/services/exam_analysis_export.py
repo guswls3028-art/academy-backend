@@ -2,39 +2,25 @@ from __future__ import annotations
 
 import io
 import math
-from dataclasses import dataclass
-from statistics import median, pstdev
 from typing import Any
 
 from django.utils import timezone
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, Reference
+from openpyxl.chart.axis import ChartLines
+from openpyxl.chart.data_source import AxDataSource, NumData, NumVal, StrData, StrRef, StrVal
+from openpyxl.chart.label import DataLabelList
+from openpyxl.chart.shapes import GraphicalProperties
+from openpyxl.drawing.line import LineProperties
 from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from apps.support.results.exam_policy_dependencies import (
-    effective_exam_pass_scores,
-    sessions_by_id_for_tenant,
-)
-from apps.domains.results.models import ExamAttempt, ResultFact
-from apps.domains.results.services.exam_result_excel_import import (
-    ExamResultWorkbookError,
-)
+from apps.domains.results.models import ResultFact
+from apps.domains.results.services.exam_analysis_metrics import load_exam_analysis
+from apps.domains.results.services.exam_result_excel_import import ExamResultWorkbookError
 from apps.domains.results.services.question_stats_service import QuestionStatsService
-from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
-from apps.domains.results.utils.initial_exam_score import (
-    load_initial_exam_scores,
-    project_initial_exam_score,
-)
-from apps.domains.results.utils.result_queries import latest_results_per_enrollment
-from apps.support.results.admin_student_grades_dependencies import (
-    primary_session_metadata_by_exam_and_lecture,
-)
-from apps.support.results.exam_result_excel_import_dependencies import (
-    get_result_import_candidates,
-    get_result_import_questions,
-)
+from apps.support.results.exam_result_excel_import_dependencies import get_result_import_questions
 from apps.support.omr.sheet_resolver import resolve_omr_sheet_for_exam
 
 
@@ -42,7 +28,6 @@ _NAVY = "172554"
 _BLUE = "2563EB"
 _BLUE_SOFT = "E8F0FF"
 _SLATE = "334155"
-_SLATE_SOFT = "F1F5F9"
 _MUTED = "64748B"
 _BORDER = "CBD5E1"
 _GREEN = "15803D"
@@ -61,114 +46,11 @@ _THIN_BORDER = Border(
 )
 
 
-@dataclass(frozen=True)
-class ExamBriefing:
-    direction: str
-    direction_detail: str
-    cut_review: str
-    cut_review_detail: str
-    next_action: str
-    next_action_detail: str
-
-
 def _safe_excel_text(value: Any) -> str:
     text = str(value or "")
     if text.startswith(("=", "+", "-", "@")):
         return f"'{text}"
     return text
-
-
-def _mean(values: list[float]) -> float:
-    return sum(values) / len(values) if values else 0.0
-
-
-def _top_ten_mean(values: list[float]) -> float:
-    if not values:
-        return 0.0
-    count = max(1, math.ceil(len(values) * 0.1))
-    return _mean(sorted(values, reverse=True)[:count])
-
-
-def _score_rate(score: float, max_score: float) -> float:
-    return max(0.0, min(100.0, (score / max_score) * 100.0)) if max_score > 0 else 0.0
-
-
-def _briefing(
-    *,
-    scored_count: int,
-    pass_rate: float,
-    std_rate: float,
-    question_stats: list[dict[str, Any]],
-    fail_count: int,
-    pass_score_label: str,
-    has_pass_criterion: bool,
-) -> ExamBriefing:
-    weak = [row for row in question_stats if float(row.get("accuracy") or 0.0) < 0.5]
-    critical = [row for row in question_stats if float(row.get("accuracy") or 0.0) < 0.3]
-
-    if scored_count < 5:
-        direction = "표본 확인 후 판단"
-        direction_detail = "응시 인원이 5명 미만입니다. 개인 결과를 함께 보고 수업 방향을 확정하세요."
-    elif (has_pass_criterion and pass_rate < 0.4) or len(critical) >= 2:
-        direction = "전체 재설명 우선"
-        direction_detail = "미달 비율 또는 최저 정답률 문항이 높아 공통 개념부터 다시 설명하는 편이 안전합니다."
-    elif std_rate >= 20.0:
-        direction = "수준별 보충 권장"
-        direction_detail = "점수 편차가 커서 공통 설명 뒤 상·중·하 난이도로 재풀이를 나누는 편이 효율적입니다."
-    elif weak:
-        direction = "취약 문항 재풀이"
-        direction_detail = "전체 흐름은 유지하고 정답률 50% 미만 문항을 중심으로 보충하세요."
-    else:
-        direction = "현재 수업 흐름 유지"
-        direction_detail = "합격률과 문항별 정답률이 안정적입니다. 오답 확인 중심으로 마무리할 수 있습니다."
-
-    fail_rate = 1.0 - pass_rate if scored_count else 0.0
-    if not has_pass_criterion:
-        cut_review = "합격 기준 설정 필요"
-        cut_review_detail = "합격 컷이 설정되지 않아 합격·미달 인원을 계산하지 않았습니다. 시험 설정에서 기준 점수를 먼저 확인하세요."
-    elif scored_count < 5:
-        cut_review = "컷 판단 보류"
-        cut_review_detail = f"현재 {pass_score_label} 기준을 유지하고 표본이 쌓인 뒤 검토하세요."
-    elif fail_rate >= 0.6:
-        cut_review = "난이도·문항 오류 먼저 확인"
-        cut_review_detail = f"현재 {pass_score_label}에서 {fail_count}명이 미달입니다. 컷 변경 전 시험 난이도와 문항 오류를 확인하세요."
-    elif fail_rate <= 0.1:
-        cut_review = "현재 컷 유지 또는 상향 검토"
-        cut_review_detail = f"현재 {pass_score_label}의 미달 비율이 10% 이하입니다. 수업 목표에 따라 다음 시험부터 조정할 수 있습니다."
-    else:
-        cut_review = "현재 컷으로 운영 가능"
-        cut_review_detail = f"현재 {pass_score_label}에서 {fail_count}명이 미달입니다. 이번 시험은 현 기준으로 보충 대상을 운영하세요."
-
-    if critical:
-        numbers = ", ".join(f"{int(row['question_number'])}번" for row in critical[:3])
-        next_action = f"{numbers} 공통 해설"
-        next_action_detail = "정답률 30% 미만 문항입니다. 개념 확인 → 대표 풀이 → 유사 문항 순서로 보충하세요."
-    elif weak:
-        numbers = ", ".join(f"{int(row['question_number'])}번" for row in weak[:3])
-        next_action = f"{numbers} 재풀이"
-        next_action_detail = "정답률이 낮은 순서입니다. 학생별 오답표와 함께 대상자를 나누어 전달하세요."
-    else:
-        next_action = "학생별 오답 확인"
-        next_action_detail = "공통 취약 문항이 뚜렷하지 않습니다. 개인 오답과 복습 지정 문항을 확인하세요."
-
-    return ExamBriefing(
-        direction=direction,
-        direction_detail=direction_detail,
-        cut_review=cut_review,
-        cut_review_detail=cut_review_detail,
-        next_action=next_action,
-        next_action_detail=next_action_detail,
-    )
-
-
-def _question_action(accuracy: float) -> tuple[str, str]:
-    if accuracy < 0.3:
-        return "최우선", "공통 개념 재설명"
-    if accuracy < 0.5:
-        return "우선", "풀이 시범 후 재시험"
-    if accuracy < 0.7:
-        return "보충", "유사 문항 추가"
-    return "확인", "개별 오답 확인"
 
 
 def _set_title(sheet, title: str, subtitle: str, *, last_column: int) -> None:
@@ -231,9 +113,88 @@ def _finalize_sheet(sheet, widths: list[float], *, freeze: str | None = None) ->
     sheet.sheet_properties.outlinePr.summaryBelow = True
 
 
+def _add_distribution_chart(sheet, header, labels, counts):
+    chart = BarChart()
+    chart.type = "bar"
+    chart.title = "구간별 응시 인원"
+    chart.legend = None
+    chart.width = 13.2
+    chart.height = 5.8
+    chart.gapWidth = 55
+    largest = max(counts)
+    major_unit = max(1, math.ceil(largest / 5))
+    chart.y_axis.scaling.min = 0
+    chart.y_axis.scaling.max = (math.ceil(largest / major_unit) + 1) * major_unit
+    chart.y_axis.majorUnit = major_unit
+    chart.y_axis.majorGridlines = ChartLines(spPr=GraphicalProperties(ln=LineProperties(solidFill="E2E8F0")))
+    chart.x_axis.scaling.orientation = "maxMin"
+    chart.y_axis.crosses = "max"
+    chart.add_data(Reference(sheet, min_col=2, min_row=header, max_row=header + len(labels)), titles_from_data=True)
+    categories = Reference(sheet, min_col=1, min_row=header + 1, max_row=header + len(labels))
+    series = chart.series[0]
+    series.val.numRef.numCache = NumData(
+        ptCount=len(counts), pt=[NumVal(idx=i, v=value) for i, value in enumerate(counts)],
+    )
+    series.cat = AxDataSource(strRef=StrRef(
+        f=str(categories),
+        strCache=StrData(ptCount=len(labels), pt=[StrVal(idx=i, v=label) for i, label in enumerate(labels)]),
+    ))
+    series.graphicalProperties.solidFill = _BLUE
+    series.graphicalProperties.line.noFill = True
+    chart.dLbls = DataLabelList(
+        showVal=True, showCatName=False, showSerName=False, showLegendKey=False,
+        showPercent=False, showBubbleSize=False, dLblPos="outEnd", numFmt='0"명"',
+    )
+    sheet.add_chart(chart, "D14")
+
+
+def _add_trends_sheet(workbook, exam_title, insights):
+    sheet = workbook.create_sheet("성적 추이")
+    threshold = insights["trend_threshold_pp"]
+    _set_title(
+        sheet, f"{exam_title} · 성적 추이",
+        f"같은 강의·반·과목의 1차 득점률 · 두 비교값이 같은 방향으로 {threshold}%p 이상이면 표시",
+        last_column=9,
+    )
+    _table_header(sheet, 5, [
+        "학생", "강의", "이번 시험", "직전 차시", "이전 평균", "비교 시험", "직전 대비", "평균 대비", "변화",
+    ])
+    trends = insights["trends"]
+    for row, trend in enumerate(trends, start=6):
+        values = [
+            _safe_excel_text(trend["student_name"]), _safe_excel_text(trend["lecture_title"]),
+            trend["current_rate"], trend["previous_session_rate"], trend["cumulative_rate"],
+            trend["prior_exam_count"], trend["previous_delta_pp"], trend["cumulative_delta_pp"],
+            {"up": "상승", "down": "하락"}.get(trend["signal"]),
+        ]
+        for column, value in enumerate(values, start=1):
+            sheet.cell(row, column, value)
+        for column in (3, 4, 5):
+            sheet.cell(row, column).number_format = '0.0"%"'
+        for column in (7, 8):
+            sheet.cell(row, column).number_format = '+0.0"%p";-0.0"%p";0.0"%p"'
+        if trend["signal"]:
+            up = trend["signal"] == "up"
+            sheet.cell(row, 9).fill = PatternFill("solid", fgColor=_GREEN_SOFT if up else _RED_SOFT)
+            sheet.cell(row, 9).font = Font(bold=True, color=_GREEN if up else _RED)
+    if trends:
+        _style_data_table(sheet, start_row=6, end_row=5 + len(trends), end_column=9)
+        sheet.auto_filter.ref = f"A5:I{5 + len(trends)}"
+    else:
+        sheet.merge_cells("A6:I6")
+        sheet["A6"] = "비교할 수 있는 이전 시험 성적이 없습니다."
+    sheet.merge_cells("A4:I4")
+    sheet["A4"] = "직전 차시 점수가 없으면 이전 평균만 비교합니다."
+    sheet["A4"].font = Font(size=10, color=_MUTED)
+    sheet.row_dimensions[4].height = 19
+    _finalize_sheet(sheet, [15, 26, 13, 13, 13, 12, 14, 14, 11], freeze="C6")
+
+
 def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
     """Build a teacher-facing workbook from the current representative exam state."""
-    candidates = get_result_import_candidates(exam_id=int(exam.id), tenant=tenant)
+    analysis = load_exam_analysis(exam=exam, tenant=tenant, include_items=True)
+    candidate_by_id = analysis.candidates
+    candidates = list(candidate_by_id.values())
     if not candidates:
         raise ExamResultWorkbookError("이 시험에 등록된 학생이 없습니다.")
 
@@ -248,37 +209,12 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
     questions = get_result_import_questions(sheet=sheet) if sheet is not None else []
     question_by_id = {int(question.question_id): question for question in questions}
 
-    candidate_by_id = {int(candidate.enrollment_id): candidate for candidate in candidates}
-    results = list(
-        latest_results_per_enrollment(target_type="exam", target_id=int(exam.id))
-        .filter(enrollment__tenant=tenant, enrollment_id__in=candidate_by_id)
-        .select_related("attempt")
-        .prefetch_related("items")
-    )
-    result_by_id = {int(result.enrollment_id): result for result in results}
-    initial_states = load_initial_exam_scores(
-        exam_ids=[int(exam.id)],
-        enrollment_ids=candidate_by_id,
-    )
-    initial_scores = {
-        int(result.enrollment_id): project_initial_exam_score(
-            state=initial_states.get((int(exam.id), int(result.enrollment_id))),
-            fallback_score=result.total_score,
-            fallback_max_score=result.max_score,
-            fallback_recorded_at=result.submitted_at or result.created_at,
-        )
-        for result in results
-    }
+    result_by_id = analysis.results
+    results = list(result_by_id.values())
+    analysis_rows = analysis.score_by_enrollment
+    initial_scores = {enrollment_id: row.initial for enrollment_id, row in analysis_rows.items()}
     initial_attempt_ids = {
-        int(state.attempt_id)
-        for state in initial_states.values()
-        if state.attempt_id is not None
-    }
-    initial_attempts = {
-        int(attempt.id): attempt
-        for attempt in ExamAttempt.objects.filter(id__in=initial_attempt_ids).only(
-            "id", "status", "meta",
-        )
+        score.attempt_id for score in initial_scores.values() if score.attempt_id is not None
     }
     fact_items_by_enrollment: dict[int, dict[int, Any]] = {}
     for fact in ResultFact.objects.current().filter(
@@ -294,113 +230,24 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
         if result is None:
             return []
         enrollment_id = int(result.enrollment_id)
-        state = initial_states.get((int(exam.id), enrollment_id))
-        if state is None:
-            return list(result.items.all()) if result.attempt_id is None else []
-        if result.attempt_id == state.attempt_id:
+        initial_score = initial_scores[enrollment_id]
+        if result.attempt_id == initial_score.attempt_id:
             return list(result.items.all())
         return list(fact_items_by_enrollment.get(enrollment_id, {}).values())
 
-    lecture_ids = {
-        int(candidate.lecture_id)
-        for candidate in candidates
-        if candidate.lecture_id is not None
-    }
-    pass_scores_by_lecture = effective_exam_pass_scores(
-        exam=exam,
-        lecture_ids=lecture_ids,
-    )
-    default_pass_score = float(exam.pass_score or 0.0)
-    session_meta = primary_session_metadata_by_exam_and_lecture(
-        tenant=tenant,
-        exam_lecture_pairs={
-            (int(exam.id), lecture_id) for lecture_id in lecture_ids
-        },
-    )
-    session_ids_by_lecture = {
-        lecture_id: int(meta["session_id"])
-        for (_exam_id, lecture_id), meta in session_meta.items()
-        if meta.get("session_id") is not None
-    }
-    sessions_by_id = sessions_by_id_for_tenant(
-        session_ids=set(session_ids_by_lecture.values()),
-        tenant=tenant,
-    )
-    sessions_by_lecture = {
-        lecture_id: sessions_by_id.get(session_id)
-        for lecture_id, session_id in session_ids_by_lecture.items()
-    }
+    max_score = float(exam.max_score or 100.0)
 
     def candidate_pass_score(candidate: Any) -> float:
-        lecture_id = getattr(candidate, "lecture_id", None)
-        if lecture_id is None:
-            return default_pass_score
-        return pass_scores_by_lecture.get(int(lecture_id), default_pass_score)
-
-    achievement_map = compute_exam_achievement_bulk(
-        items=[
-            {
-                "enrollment_id": int(result.enrollment_id),
-                "exam_id": int(exam.id),
-                "total_score": initial_scores[int(result.enrollment_id)].total_score,
-                "pass_score": candidate_pass_score(
-                    candidate_by_id[int(result.enrollment_id)]
-                ),
-                "attempt_id": initial_scores[int(result.enrollment_id)].attempt_id,
-                "session_id": getattr(
-                    sessions_by_lecture.get(candidate_by_id[int(result.enrollment_id)].lecture_id),
-                    "id",
-                    None,
-                ),
-            }
-            for result in results
-        ],
-        tenant=tenant,
-    )
-
-    def result_status(result: Any | None) -> str:
-        if result is None:
-            return "MISSING"
-        achievement = achievement_map.get(
-            (int(result.enrollment_id), int(exam.id)),
-            {},
-        )
-        if achievement.get("meta_status") == "NOT_SUBMITTED":
-            return "NOT_SUBMITTED"
-        initial_score = initial_scores[int(result.enrollment_id)]
-        attempt = initial_attempts.get(int(initial_score.attempt_id or 0))
-        if attempt is None and initial_score.attempt_id is None:
-            attempt = getattr(result, "attempt", None)
-        attempt_status = str(getattr(attempt, "status", "") or "").lower()
-        if attempt_status in {"pending", "grading"}:
-            return "PROCESSING"
-        if attempt_status == "failed":
-            return "FAILED"
-        if bool(achievement.get("is_provisional")):
-            return "PARTIAL"
-        return "DONE"
-
-    def is_scored(result: Any | None) -> bool:
-        return result_status(result) == "DONE"
+        return analysis.pass_scores_by_lecture.get(candidate.lecture_id, float(exam.pass_score or 0.0))
 
     def analysis_score(result: Any) -> float:
-        initial_score = initial_scores[int(result.enrollment_id)]
-        if result.attempt_id == initial_score.attempt_id:
-            return float(result.total_score or 0.0)
-        return float(initial_score.total_score or 0.0)
+        return initial_scores[result.enrollment_id].total_score
 
-    def analysis_max_score(result: Any) -> float:
-        initial_score = initial_scores[int(result.enrollment_id)]
-        if result.attempt_id == initial_score.attempt_id:
-            return float(result.max_score or exam.max_score or 100.0)
-        return float(initial_score.max_score or exam.max_score or 100.0)
-
-    scored_results = [result for result in results if is_scored(result)]
+    scored_results = [result for result in results if analysis_rows[result.enrollment_id].status == "DONE"]
     score_by_enrollment = {
         int(result.enrollment_id): analysis_score(result)
         for result in scored_results
     }
-    scores = list(score_by_enrollment.values())
     analysis_rankings: dict[int, dict[str, float | int]] = {}
     previous_score: float | None = None
     current_rank = 0
@@ -423,8 +270,7 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
     legacy_scored_enrollment_ids = [
         int(result.enrollment_id)
         for result in scored_results
-        if initial_states.get((int(exam.id), int(result.enrollment_id))) is None
-        and getattr(result, "attempt_id", None) is None
+        if initial_scores[result.enrollment_id].attempt_id is None and result.attempt_id is None
     ]
     question_stats = QuestionStatsService.per_question_stats(
         exam_id=int(exam.id),
@@ -438,112 +284,57 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
             int(row.get("question_number") or 0),
         )
     )
-    max_score = float(exam.max_score or 100.0)
-    scored_with_criterion = [
-        (analysis_score(result), candidate_pass_score(candidate_by_id[int(result.enrollment_id)]))
-        for result in scored_results
-        if candidate_pass_score(candidate_by_id[int(result.enrollment_id)]) > 0
-    ]
-    criterion_count = len(scored_with_criterion)
-    has_pass_criterion = criterion_count > 0
-    pass_count = sum(
-        1 for score, criterion in scored_with_criterion if score >= criterion
-    )
-    fail_count = max(criterion_count - pass_count, 0)
-    pass_rate = (
-        pass_count / criterion_count
-        if has_pass_criterion
-        else 0.0
-    )
-    criterion_scores = sorted({
-        candidate_pass_score(candidate)
-        for candidate in candidates
-        if candidate_pass_score(candidate) > 0
-    })
-    if len(criterion_scores) == 1:
-        pass_score_label = f"컷 {criterion_scores[0]:g}점"
-    elif criterion_scores:
-        joined = "/".join(f"{score:g}" for score in criterion_scores)
-        pass_score_label = f"강의별 컷 {joined}점"
+    insights = analysis.insights
+    summary = insights["score_summary"]
+    scored_count = insights["scored_count"]
+    criterion_count = summary["pass_criterion_count"]
+    pass_count = summary["pass_count"]
+    if criterion_count:
+        pass_label = f"{pass_count}명" if criterion_count == scored_count else f"{pass_count}/{criterion_count}명"
+        pass_label = f"{pass_label} · {pass_count / criterion_count:.0%}"
+    elif not scored_count and any(candidate_pass_score(candidate) > 0 for candidate in candidates):
+        pass_label = "—"
     else:
-        pass_score_label = "합격 컷 미설정"
-    score_rates = [_score_rate(score, max_score) for score in scores]
-    std_rate = pstdev(score_rates) if score_rates else 0.0
-    briefing = _briefing(
-        scored_count=len(scores),
-        pass_rate=pass_rate,
-        std_rate=std_rate,
-        question_stats=question_stats,
-        fail_count=fail_count,
-        pass_score_label=pass_score_label,
-        has_pass_criterion=has_pass_criterion,
-    )
+        pass_label = "기준 미설정"
+    cutoff = insights["recommended_cutoff"]
+    below_cutoff = insights["below_recommended_count"]
+    average_score = summary["average"]
 
     generated_at = timezone.localtime().strftime("%Y-%m-%d %H:%M")
     workbook = Workbook()
     workbook.properties.title = f"{exam.title} 수업 분석 리포트"
-    workbook.properties.subject = "시험 결과 기반 수업 방향·보충·재시험 검토"
+    workbook.properties.subject = "1차 확정 성적과 문항 통계"
     workbook.properties.creator = "학원플러스"
 
     overview = workbook.active
-    overview.title = "수업 브리핑"
+    overview.title = "시험 요약"
     _set_title(
         overview,
         f"{exam.title} · 수업 분석 리포트",
-        f"{getattr(exam, 'subject', '') or '과목 미지정'} · 사이트 최종 저장 기준 · {generated_at} · 제안은 자동으로 시험 정책을 변경하지 않습니다.",
+        f"{getattr(exam, 'subject', '') or '과목 미지정'} · 생성 {generated_at}",
         last_column=8,
     )
-    _section_heading(overview, 5, "60초 수업 브리핑", last_column=8)
-    cards = [
-        (1, 3, "수업 방향", briefing.direction, briefing.direction_detail),
-        (4, 6, "컷 검토", briefing.cut_review, briefing.cut_review_detail),
-        (7, 8, "바로 할 일", briefing.next_action, briefing.next_action_detail),
-    ]
-    for start_column, end_column, label, value, detail in cards:
-        overview.merge_cells(start_row=6, start_column=start_column, end_row=6, end_column=end_column)
-        overview.merge_cells(start_row=7, start_column=start_column, end_row=7, end_column=end_column)
-        overview.merge_cells(start_row=8, start_column=start_column, end_row=9, end_column=end_column)
-        label_cell = overview.cell(6, start_column, label)
-        label_cell.font = Font(size=9, bold=True, color=_BLUE)
-        label_cell.fill = PatternFill("solid", fgColor=_SLATE_SOFT)
-        label_cell.alignment = Alignment(vertical="center")
-        value_cell = overview.cell(7, start_column, value)
-        value_cell.font = Font(size=13, bold=True, color=_NAVY)
-        value_cell.fill = PatternFill("solid", fgColor=_SLATE_SOFT)
-        value_cell.alignment = Alignment(vertical="center", wrap_text=True)
-        detail_cell = overview.cell(8, start_column, detail)
-        detail_cell.font = Font(size=9, color=_MUTED)
-        detail_cell.fill = PatternFill("solid", fgColor=_SLATE_SOFT)
-        detail_cell.alignment = Alignment(vertical="top", wrap_text=True)
-        for row_index in range(6, 10):
-            for column in range(start_column, end_column + 1):
-                overview.cell(row_index, column).border = _THIN_BORDER
-    overview.row_dimensions[8].height = 28
-    overview.row_dimensions[9].height = 16
-
-    _section_heading(overview, 11, "핵심 지표", last_column=8)
+    _section_heading(overview, 5, "핵심 지표", last_column=8)
     metrics = [
-        ("응시", f"{len(scores)}명"),
-        ("미응시·미채점", f"{len(candidates) - len(scores)}명"),
-        ("평균", f"{_mean(scores):.1f}/{max_score:g}"),
-        ("상위 10% 평균", f"{_top_ten_mean(scores):.1f}/{max_score:g}"),
-        ("최고점", f"{max(scores) if scores else 0:g}/{max_score:g}"),
-        ("중앙값", f"{median(scores) if scores else 0:.1f}"),
-        ("표준편차", f"{pstdev(scores) if scores else 0:.1f}"),
+        ("응시", f"{scored_count}명"),
+        ("미응시·미채점", f"{summary['unscored_count']}명"),
+        ("평균", f"{average_score:.1f}/{max_score:g}" if scored_count else "—"),
+        ("상위 10% 평균", f"{summary['top_ten_average']:.1f}/{max_score:g}" if scored_count else "—"),
+        ("최고점", f"{summary['highest']:g}/{max_score:g}" if scored_count else "—"),
+        ("중앙값", f"{summary['median']:.1f}점" if scored_count else "—"),
+        ("표준편차", f"{summary['std_dev']:.1f}점" if scored_count else "—"),
+        ("1차 합격", pass_label),
+        ("추천 커트라인", f"{cutoff}점" if cutoff is not None else "—"),
+        ("추천선 미만", f"{below_cutoff}/{scored_count}명" if below_cutoff is not None else "—"),
         (
-            "1차 합격",
-            (
-                f"{pass_count}명 · {pass_rate * 100:.0f}%"
-                if has_pass_criterion and criterion_count == len(scores)
-                else f"{pass_count}/{criterion_count}명 · {pass_rate * 100:.0f}%"
-                if has_pass_criterion
-                else "기준 미설정"
-            ),
+            "중간 50% 점수",
+            f"{summary['p25']:.1f}–{summary['p75']:.1f}점" if summary["p25"] is not None else "—",
         ),
+        ("성적 추이 비교 가능", f"{len(insights['trends'])}명"),
     ]
     for index, (label, value) in enumerate(metrics):
         column = (index % 4) * 2 + 1
-        row = 12 + (index // 4) * 2
+        row = 6 + (index // 4) * 2
         overview.merge_cells(start_row=row, start_column=column, end_row=row, end_column=column + 1)
         overview.merge_cells(start_row=row + 1, start_column=column, end_row=row + 1, end_column=column + 1)
         overview.cell(row, column, label).font = Font(size=9, bold=True, color=_MUTED)
@@ -555,97 +346,73 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
                 cell.border = _THIN_BORDER
                 cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    _section_heading(overview, 17, "점수 분포 · 만점 대비 구간", last_column=8)
-    distribution_header = 18
-    _table_header(overview, distribution_header, ["구간", "원점수 범위", "인원", "비율"])
-    bands = [(0, 20), (20, 40), (40, 60), (60, 80), (80, 100)]
-    for offset, (lower, upper) in enumerate(bands, start=1):
-        count = sum(
-            1
-            for rate in score_rates
-            if (rate >= lower if lower == 0 else rate > lower) and rate <= upper
-        )
-        row = distribution_header + offset
-        overview.cell(row, 1, f"{lower}–{upper}%" if lower == 0 else f">{lower}–{upper}%")
-        raw_lower = max_score * lower / 100
-        raw_upper = max_score * upper / 100
-        overview.cell(
-            row,
-            2,
-            f"{raw_lower:.1f}–{raw_upper:.1f}점"
-            if lower == 0
-            else f">{raw_lower:.1f}–{raw_upper:.1f}점",
-        )
-        overview.cell(row, 3, count)
-        overview.cell(row, 4, count / len(scores) if scores else 0.0)
-        overview.cell(row, 4).number_format = "0.0%"
-    _style_data_table(overview, start_row=19, end_row=23, end_column=4)
-    chart = BarChart()
-    chart.type = "col"
-    chart.style = 10
-    chart.title = "점수 구간별 인원"
-    chart.y_axis.title = "인원"
-    chart.y_axis.scaling.min = 0
-    chart.y_axis.majorUnit = 1
-    chart.x_axis.title = "만점 대비 구간"
-    chart.add_data(Reference(overview, min_col=3, min_row=18, max_row=23), titles_from_data=True)
-    chart.set_categories(Reference(overview, min_col=1, min_row=19, max_row=23))
-    chart.height = 6.6
-    chart.width = 11.5
-    chart.legend = None
-    overview.add_chart(chart, "F18")
-
-    _section_heading(overview, 26, "보충 우선 문항", last_column=8)
-    _table_header(overview, 27, ["우선순위", "문항", "정답률", "정답/응시", "권장 수업 행동"])
-    weakest = question_stats[:5]
-    if weakest:
-        for offset, row_data in enumerate(weakest, start=1):
-            accuracy = float(row_data.get("accuracy") or 0.0)
-            priority, action = _question_action(accuracy)
-            row = 27 + offset
-            overview.cell(row, 1, priority)
-            overview.cell(row, 2, f"{int(row_data['question_number'])}번")
-            overview.cell(row, 3, accuracy)
-            overview.cell(row, 3).number_format = "0.0%"
-            overview.cell(row, 4, f"{int(row_data.get('correct') or 0)}/{int(row_data.get('attempts') or 0)}")
-            overview.cell(row, 5, action)
-        _style_data_table(overview, start_row=28, end_row=27 + len(weakest), end_column=5)
+    _section_heading(overview, 13, "점수 분포 · 만점 대비 구간", last_column=8)
+    distribution_header = 14
+    _table_header(overview, distribution_header, ["만점 대비", "인원", "비율"])
+    labels = ["0–20%", ">20–40%", ">40–60%", ">60–80%", ">80–100%"]
+    counts = summary["distribution_counts"]
+    for row, (label, count) in enumerate(zip(labels, counts, strict=True), start=distribution_header + 1):
+        overview.cell(row, 1, label)
+        overview.cell(row, 2, count)
+        overview.cell(row, 3, count / scored_count if scored_count else None).number_format = "0.0%"
+        overview.row_dimensions[row].height = 23
+    _style_data_table(overview, start_row=15, end_row=19, end_column=3)
+    if scored_count:
+        _add_distribution_chart(overview, distribution_header, labels, counts)
     else:
-        overview.merge_cells(start_row=28, start_column=1, end_row=29, end_column=5)
-        overview.cell(28, 1, "문항별 채점 데이터가 쌓이면 정답률이 낮은 문항부터 표시됩니다.")
-        overview.cell(28, 1).alignment = Alignment(vertical="center", horizontal="center")
-        overview.cell(28, 1).font = Font(color=_MUTED)
+        overview.merge_cells("D15:H19")
+        overview["D15"] = "확정된 1차 점수가 없습니다."
+        overview["D15"].alignment = Alignment(horizontal="center", vertical="center")
 
-    _finalize_sheet(overview, [15, 18, 14, 16, 18, 16, 18, 18], freeze="A5")
-    overview.print_area = "A1:H34"
+    _section_heading(overview, 23, "정답률이 낮은 문항", last_column=8)
+    _table_header(overview, 24, ["문항", "정답률", "정답 수", "응시 수"])
+    weakest = question_stats[:5]
+    for offset, row_data in enumerate(weakest, start=1):
+        row = 24 + offset
+        overview.cell(row, 1, f"{int(row_data['question_number'])}번")
+        overview.cell(row, 2, float(row_data.get("accuracy") or 0.0)).number_format = "0.0%"
+        overview.cell(row, 3, int(row_data.get("correct") or 0))
+        overview.cell(row, 4, int(row_data.get("attempts") or 0))
+    if weakest:
+        _style_data_table(overview, start_row=25, end_row=24 + len(weakest), end_column=4)
+    else:
+        overview.merge_cells("A25:D26")
+        overview["A25"] = "집계할 문항별 채점 기록이 없습니다."
+        overview["A25"].alignment = Alignment(vertical="center")
+
+    _finalize_sheet(overview, [16, 15, 14, 15, 16, 16, 16, 16], freeze="A5")
+    overview.print_area = "A1:H29"
+    overview.page_setup.orientation = overview.ORIENTATION_LANDSCAPE
+    overview.page_setup.paperSize = overview.PAPERSIZE_A4
+    overview.page_setup.fitToHeight = 1
+    overview.print_options.horizontalCentered = True
+    overview.page_margins.top = overview.page_margins.bottom = 0.45
 
     priority_sheet = workbook.create_sheet("문항 우선순위")
     _set_title(
         priority_sheet,
         f"{exam.title} · 문항 우선순위",
-        "정답률이 낮은 순서입니다. 권장 행동은 수업 검토용이며 점수·컷·재시험 정책을 자동 변경하지 않습니다.",
-        last_column=8,
+        "확정된 1차 문항 기록 · 정답률 오름차순",
+        last_column=7,
     )
-    headers = ["우선순위", "문항", "정답률", "정답 수", "응시 수", "평균 점수", "문항 배점", "권장 행동"]
+    headers = ["순서", "문항", "정답률", "정답 수", "응시 수", "평균 점수", "문항 배점"]
     _table_header(priority_sheet, 5, headers)
     for offset, row_data in enumerate(question_stats, start=1):
         accuracy = float(row_data.get("accuracy") or 0.0)
-        priority, action = _question_action(accuracy)
         values = [
-            priority,
+            offset,
             int(row_data["question_number"]),
             accuracy,
             int(row_data.get("correct") or 0),
             int(row_data.get("attempts") or 0),
             float(row_data.get("avg_score") or 0.0),
             float(row_data.get("max_possible_score") or 0.0),
-            action,
         ]
         for column, value in enumerate(values, start=1):
             priority_sheet.cell(5 + offset, column, value)
         priority_sheet.cell(5 + offset, 3).number_format = "0.0%"
     if question_stats:
-        _style_data_table(priority_sheet, start_row=6, end_row=5 + len(question_stats), end_column=8)
+        _style_data_table(priority_sheet, start_row=6, end_row=5 + len(question_stats), end_column=7)
         priority_sheet.conditional_formatting.add(
             f"C6:C{5 + len(question_stats)}",
             ColorScaleRule(
@@ -654,8 +421,10 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
                 end_type="num", end_value=1, end_color=_GREEN_SOFT,
             ),
         )
-        priority_sheet.auto_filter.ref = f"A5:H{5 + len(question_stats)}"
-    _finalize_sheet(priority_sheet, [12, 10, 12, 11, 11, 13, 12, 24], freeze="A6")
+        priority_sheet.auto_filter.ref = f"A5:G{5 + len(question_stats)}"
+    _finalize_sheet(priority_sheet, [12, 10, 12, 11, 11, 13, 12], freeze="A6")
+
+    _add_trends_sheet(workbook, exam.title, analysis.insights)
 
     ranked_sheet = workbook.create_sheet("학생별 등수")
     _set_title(
@@ -673,11 +442,12 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
     for candidate in candidates:
         enrollment_id = int(candidate.enrollment_id)
         result = result_by_id.get(enrollment_id)
-        analysis_status = result_status(result)
+        analysis_row = analysis_rows.get(enrollment_id)
+        analysis_status = analysis_row.status if analysis_row else "MISSING"
         scored = analysis_status == "DONE"
         rank_info = analysis_rankings.get(enrollment_id, {}) if scored else {}
         score = analysis_score(result) if scored else None
-        result_max = analysis_max_score(result) if result is not None else max_score
+        result_max = (analysis_row.initial.max_score or max_score) if analysis_row else max_score
         items = initial_items(result)
         wrong_numbers = sorted(
             question_by_id[int(item.question_id)].number
@@ -692,7 +462,7 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
             "FAILED": "채점 실패",
             "DONE": "완료",
         }[analysis_status]
-        achievement = achievement_map.get((enrollment_id, int(exam.id)), {})
+        achievement = analysis_row.achievement if analysis_row else {}
         pass_score = candidate_pass_score(candidate)
         candidate_has_pass_criterion = pass_score > 0
         if score is None:
@@ -711,7 +481,7 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
             score,
             result_max,
             (score / result_max) if score is not None and result_max > 0 else None,
-            (score - _mean(scores)) if score is not None and scores else None,
+            (score - average_score) if score is not None and average_score is not None else None,
             pass_score,
             verdict,
             status,

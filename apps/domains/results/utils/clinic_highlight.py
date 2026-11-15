@@ -30,6 +30,7 @@ def compute_clinic_highlight_map(
     tenant: Any,
     enrollment_ids: Set[int],
     session=None,
+    current_target_enrollment_ids: Set[int] | None = None,
 ) -> Dict[int, bool]:
     """
     enrollment_id → name_highlight_clinic_target 매핑 반환.
@@ -38,6 +39,7 @@ def compute_clinic_highlight_map(
         tenant: 테넌트 (필수 — 격리)
         enrollment_ids: 검사 대상 enrollment ID 집합
         session: 특정 세션으로 스코프 (None이면 글로벌)
+        current_target_enrollment_ids: 동일 범위에서 이미 검증한 미해결 대상
 
     Returns:
         {enrollment_id: True/False}
@@ -47,22 +49,16 @@ def compute_clinic_highlight_map(
 
     # 1) 클리닉 대상 enrollment (미해결 자동 ClinicLink)
     # tenant 격리: ClinicLink.tenant FK로 직접 필터 (cross-tenant 누출 방어)
-    clinic_qs = unresolved_auto_clinic_links_for_enrollments(
-        tenant=tenant,
-        enrollment_ids=enrollment_ids,
-        session=session,
-    )
-    clinic_links = filter_current_clinic_links(
-        clinic_qs.order_by("id"),
-        tenant=tenant,
-    )
-    if not clinic_links:
-        return {eid: False for eid in enrollment_ids}
-
-    clinic_ids = {
-        int(link.enrollment_id)
-        for link in clinic_links
-    }
+    if current_target_enrollment_ids is None:
+        clinic_qs = unresolved_auto_clinic_links_for_enrollments(
+            tenant=tenant,
+            enrollment_ids=enrollment_ids,
+            session=session,
+        )
+        clinic_links = filter_current_clinic_links(clinic_qs.order_by("id"), tenant=tenant)
+        clinic_ids = {int(link.enrollment_id) for link in clinic_links}
+    else:
+        clinic_ids = enrollment_ids & current_target_enrollment_ids
 
     if not clinic_ids:
         return {eid: False for eid in enrollment_ids}

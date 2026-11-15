@@ -76,6 +76,10 @@ SCENARIO_ACTIVITY_AUDIT_ACTIONS = (
     "student_activity.login",
     "student_activity.screen_view",
     "student_activity.target_open",
+    "student_support_view.start",
+    "student_support_view.end",
+    "student_support.action",
+    "video.review_watch.allowance.update",
 )
 SCENARIO_PROVENANCE_ACTION = "development.qa.scenario"
 SYNTHETIC_LONG_VIDEO_DURATION_SECONDS = 900

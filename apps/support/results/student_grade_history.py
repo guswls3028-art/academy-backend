@@ -18,6 +18,7 @@ from apps.domains.results.utils.initial_exam_score import (
     project_initial_exam_score,
 )
 from apps.domains.results.utils.result_queries import exam_history_results
+from apps.support.omr.score_shape_batch import request_exam_scoring_details_loader
 from apps.support.results.admin_student_grades_dependencies import (
     enrollment_lecture_metadata_by_id,
     exam_metadata_by_id,
@@ -166,8 +167,9 @@ def build_student_exam_history(
         if int(row["target_id"]) not in explicit_exam_ids
         or (int(row["enrollment_id"]), int(row["target_id"])) in explicit_target_pairs
     ]
+    load_scoring_details = request_exam_scoring_details_loader()
     pending_result_ids = pending_omr_result_ids_for_ids(
-        row["id"] for row in results
+        (row["id"] for row in results), scoring_details_loader=load_scoring_details,
     )
     exam_ids = list({row["target_id"] for row in results})
     initial_scores = load_initial_exam_scores(
@@ -283,6 +285,7 @@ def build_student_exam_history(
             if not row["subjective_pending"]
         ],
         tenant=tenant,
+        scoring_details_loader=load_scoring_details,
     )
 
     exam_list: list[dict[str, Any]] = []
