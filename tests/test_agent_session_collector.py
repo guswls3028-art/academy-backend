@@ -1,0 +1,104 @@
+from datetime import datetime, timezone
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import sqlite3
+import tempfile
+import unittest
+from unittest.mock import patch
+
+SOURCE = Path(__file__).resolve().parents[1] / "scripts/operations/agent_session_snapshot.py"
+spec = importlib.util.spec_from_file_location("agent_snapshot", SOURCE)
+collector = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(collector)
+
+
+class CollectorTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.workspace = self.root / "academy"
+        self.workspace.mkdir()
+        self.codex = self.root / ".codex"
+        (self.codex / "sessions").mkdir(parents=True)
+        self.claude = self.root / ".claude"
+        self.claude.mkdir()
+        collector._TAIL_CACHE.clear()
+
+    def log(self, path, event):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"type": "event_msg", "timestamp": datetime.now(timezone.utc).isoformat(), "payload": {"type": event, "last_agent_message": "PRIVATE BODY"}}) + "\n", encoding="utf-8")
+
+    def database(self):
+        db = sqlite3.connect(self.codex / "state_5.sqlite")
+        db.executescript("CREATE TABLE threads(id TEXT,name TEXT,agent_nickname TEXT,agent_role TEXT,rollout_path TEXT,cwd TEXT,updated_at INTEGER,archived INTEGER,first_user_message TEXT); CREATE TABLE thread_spawn_edges(parent_thread_id TEXT,child_thread_id TEXT,status TEXT);")
+        return db
+
+    def test_scoped_names_and_real_edges_without_prompt_export(self):
+        db = self.database()
+        for node_id, cwd in [("root", self.workspace), ("child", self.workspace), ("forbidden", self.workspace / "dnfm"), ("sibling", self.root / "academy-other")]:
+            log = self.codex / "sessions" / f"{node_id}.jsonl"
+            self.log(log, "task_complete" if node_id == "child" else "task_started")
+            db.execute("INSERT INTO threads VALUES(?,?,?,?,?,?,?,?,?)", (node_id, node_id, "", "reviewer", str(log), str(cwd), 1794729000, 0, "PRIVATE PROMPT"))
+        db.execute("INSERT INTO thread_spawn_edges VALUES('root','child','open')")
+        db.commit()
+        db.close()
+        nodes = collector.codex_nodes(self.codex, self.workspace)
+        self.assertEqual({node["id"] for node in nodes}, {"codex:root", "codex:child"})
+        child = next(node for node in nodes if node["id"] == "codex:child")
+        self.assertEqual(child["parent_id"], "codex:root")
+        self.assertEqual(child["status"], "completed")
+        self.assertNotIn("PRIVATE", json.dumps(nodes))
+
+    def test_arbitrary_rollout_path_is_not_read(self):
+        db = self.database()
+        outside = self.root / "outside.jsonl"
+        self.log(outside, "task_complete")
+        db.execute("INSERT INTO threads VALUES(?,?,?,?,?,?,?,?,?)", ("root", "title", "", "", str(outside), str(self.workspace), 1794729000, 0, ""))
+        db.commit()
+        db.close()
+        self.assertEqual(collector.codex_nodes(self.codex, self.workspace)[0]["status"], "unknown")
+
+    def test_partial_writes_and_cached_old_running_event_are_not_false_success(self):
+        path = self.codex / "sessions" / "live.jsonl"
+        self.log(path, "task_started")
+        with path.open("ab") as stream:
+            stream.write(b'{"type":"event_msg","payload":')
+        self.assertEqual(collector.metadata_tail(path, "codex")["status"], "running")
+        with patch.object(collector.time, "time", return_value=path.stat().st_mtime + 1801):
+            self.assertEqual(collector.metadata_tail(path, "codex")["status"], "unknown")
+
+    def test_claude_live_identity_overrides_old_transcript_and_dead_peer_is_unknown(self):
+        project = self.claude / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(self.workspace.resolve()))
+        project.mkdir(parents=True)
+        (project / "session.jsonl").write_text(json.dumps({"type": "assistant", "message": {"stop_reason": "end_turn", "content": "PRIVATE BODY"}}) + "\n", encoding="utf-8")
+        peers = self.claude / "sessions"
+        peers.mkdir()
+        peer = peers / "123.json"
+        peer.write_text(json.dumps({"sessionId": "session", "cwd": str(self.workspace), "name": "Claude review", "status": "idle", "pid": 123, "procStart": "1", "updatedAt": 1794729000000}), encoding="utf-8")
+        os.utime(peer, (1, 1))
+        with patch.object(collector, "peer_is_alive", return_value=True):
+            self.assertEqual(collector.claude_nodes(self.claude, self.workspace)[0]["status"], "waiting")
+        with patch.object(collector, "peer_is_alive", return_value=False):
+            self.assertEqual(collector.claude_nodes(self.claude, self.workspace)[0]["status"], "unknown")
+
+    def test_unavailable_source_is_distinguished_from_zero_sessions(self):
+        data = collector.collect(self.root / "missing-codex", self.root / "missing-claude", self.workspace)
+        self.assertEqual(data["nodes"], [])
+        self.assertEqual(data["source_errors"], ["codex", "claude"])
+
+    def test_hidden_publisher_writes_only_sanitized_atomic_health_receipt(self):
+        receipt = self.root / "state.json"
+        with patch.object(collector.sys, "stdout", None):
+            collector.report({"status": "unavailable", "error_class": "ClientError"}, receipt)
+        result = json.loads(receipt.read_text(encoding="utf-8"))
+        self.assertEqual(result["status"], "unavailable")
+        self.assertNotIn("nodes", result)
+        self.assertFalse(receipt.with_suffix(".tmp").exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
