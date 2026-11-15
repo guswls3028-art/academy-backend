@@ -289,27 +289,6 @@ def submitted_homework_keys_for_grades(
     ))
 
 
-def resolved_homework_link_types(
-    *,
-    tenant: Any,
-    enrollment_ids: list[int],
-    homework_ids: list[int],
-) -> dict[tuple[int, int], str]:
-    from apps.domains.progress.models import ClinicLink
-
-    links = {}
-    for link in ClinicLink.objects.filter(
-        tenant=tenant,
-        enrollment_id__in=enrollment_ids,
-        source_type="homework",
-        source_id__in=homework_ids,
-        resolved_at__isnull=False,
-        resolution_type__in=["EXAM_PASS", "HOMEWORK_PASS", "MANUAL_OVERRIDE"],
-    ).values("enrollment_id", "source_id", "resolution_type"):
-        links[(link["enrollment_id"], link["source_id"])] = link["resolution_type"]
-    return links
-
-
 def homework_retake_counts_by_key(
     *,
     tenant: Any,

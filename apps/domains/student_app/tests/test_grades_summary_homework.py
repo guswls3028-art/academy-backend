@@ -7,6 +7,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.apps import apps as django_apps
 from django.test import TestCase
+from django.urls import resolve
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -1052,7 +1053,10 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.student.save(update_fields=["parent", "updated_at"])
         return homework, score, history
 
-    def _assert_homework_cycle_summary(self, *, passed, achievement, teacher_resolved=False, score=92):
+    def _assert_homework_cycle_summary(
+        self, *, passed, achievement, teacher_resolved=False, score=92,
+        submission_state=None, media_locked=None,
+    ):
         before = list(self.ClinicLink.objects.order_by("id").values())
         for user in (self.user, self.cycle_parent_user):
             with self.subTest(role="student" if user == self.user else "parent"):
@@ -1069,6 +1073,10 @@ class MyGradesSummaryHomeworkTests(TestCase):
                 self.assertEqual(row["passed"], passed)
                 self.assertEqual(row["achievement"], achievement)
                 self.assertEqual(row["teacher_resolved"], teacher_resolved)
+                if submission_state is not None:
+                    self.assertEqual(row["submission_state"], submission_state)
+                if media_locked is not None:
+                    self.assertEqual(row["submission_media_locked"], media_locked)
         self.assertEqual(list(self.ClinicLink.objects.order_by("id").values()), before)
 
     def test_homework_current_cycle_reopens_after_cutline_increase_and_passes_after_decrease(self):
@@ -1165,6 +1173,76 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertIsNotNone(current.resolved_at)
         self._assert_homework_cycle_summary(passed=False, achievement="REMEDIATED")
 
+    def test_homework_current_cycle_retake_pass_recovers_original_not_submitted(self):
+        homework, first_score, link = self._homework_cycle_fixture()
+        first_score.score = None
+        first_score.passed = False
+        first_score.meta = {"status": HomeworkScore.MetaStatus.NOT_SUBMITTED}
+        first_score.save(update_fields=["score", "passed", "meta"])
+        link.resolved_at = None
+        link.resolution_type = None
+        link.resolution_evidence = None
+        link.save(update_fields=["resolved_at", "resolution_type", "resolution_evidence"])
+
+        teacher = User.objects.create_user(username="homework-clinic-teacher", tenant=self.tenant)
+        TenantMembership.ensure_active(tenant=self.tenant, user=teacher, role="teacher")
+
+        def assert_teacher_summary(achievement):
+            path = "/api/v1/results/admin/student-grades/"
+            match = resolve(path)
+            request = self.factory.get(path, {"student_id": self.student.pk})
+            request.tenant = self.tenant
+            force_authenticate(request, user=teacher)
+            response = match.func(request, **match.kwargs)
+            self.assertEqual(response.status_code, 200, response.data)
+            row, = response.data["homeworks"]
+            self.assertIsNone(row["score"])
+            self.assertEqual(row["meta_status"], "NOT_SUBMITTED")
+            self.assertEqual(row["achievement"], achievement)
+
+        self._assert_homework_cycle_summary(
+            passed=False, achievement="NOT_SUBMITTED", score=None,
+            submission_state="needs_submission", media_locked=False,
+        )
+        assert_teacher_summary("NOT_SUBMITTED")
+
+        path = f"/api/v1/progress/clinic-links/{link.pk}/submit-retake/"
+        match = resolve(path)
+        request = self.factory.post(
+            path,
+            {"score": 98, "max_score": 100},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=teacher)
+        response = match.func(request, **match.kwargs)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["passed"])
+        link.refresh_from_db()
+        self.assertEqual(link.resolution_type, "HOMEWORK_PASS")
+        self.assertIsNotNone(link.resolved_at)
+        self.assertTrue(HomeworkScore.objects.filter(clinic_link=link, attempt_index=2, passed=True).exists())
+
+        self._assert_homework_cycle_summary(
+            passed=False, achievement="REMEDIATED", score=None,
+            submission_state="reviewed", media_locked=True,
+        )
+        assert_teacher_summary("REMEDIATED")
+
+        self.ClinicLink.objects.create(
+            tenant=self.tenant, enrollment=self.enrollment, session=self.session,
+            source_type="homework", source_id=homework.pk, cycle_no=2, reason="AUTO_FAILED",
+        )
+        self._assert_homework_cycle_summary(
+            passed=False, achievement="NOT_SUBMITTED", score=None,
+            submission_state="reviewed", media_locked=True,
+        )
+        assert_teacher_summary("NOT_SUBMITTED")
+        first_score.refresh_from_db()
+        self.assertIsNone(first_score.score)
+        self.assertFalse(first_score.passed)
+        self.assertEqual(first_score.meta, {"status": HomeworkScore.MetaStatus.NOT_SUBMITTED})
+
     def test_homework_current_cycle_ignores_foreign_tenant_and_other_sources(self):
         homework, score, _ = self._homework_cycle_fixture()
         score.passed = False
@@ -1174,8 +1252,10 @@ class MyGradesSummaryHomeworkTests(TestCase):
             source_type="homework", source_id=homework.id, cycle_no=2, reason="AUTO_FAILED",
         )
         foreign_tenant = Tenant.objects.create(code="foreign-homework-cycle", name="Foreign")
+        other_session = Session.objects.create(lecture=self.lecture, order=2, title="2회")
         for overrides in (
             {"tenant": foreign_tenant}, {"source_type": "exam"}, {"source_id": homework.id + 1000},
+            {"session": other_session},
         ):
             fields = dict(
                 tenant=self.tenant, enrollment=self.enrollment, session=self.session,
