@@ -39,6 +39,8 @@ from apps.domains.submissions.services.omr_submission_guards import (
     duplicate_conflict_payload,
     ensure_exam_enrollment_candidate,
     find_conflicting_exam_submission,
+    omr_admissions_in_other_sessions,
+    omr_replacement_crosses_sessions,
     omr_submission_is_archived,
 )
 from apps.domains.submissions.services.lifecycle import (
@@ -86,6 +88,20 @@ def _review_session_id(data) -> int | None:
     if type(raw) is not int or not 1 <= raw <= 2**63 - 1:
         raise ValidationError({"session_id": "유효한 차시 ID를 입력해 주세요."})
     return raw
+
+
+def _review_session_conflict() -> Response:
+    return Response({
+        "code": "OMR_REVIEW_SESSION_CONFLICT",
+        "detail": "다른 차시에서 등록한 답안지가 포함되어 있습니다. 원래 차시 또는 시험 전체의 OMR 검토에서 확인해 주세요.",
+    }, status=status.HTTP_409_CONFLICT)
+
+
+def _scan_is_from_another_review_session(submission: Submission, session_id: int) -> bool:
+    return submission.source == Submission.Source.OMR_SCAN and omr_admissions_in_other_sessions(
+        tenant=submission.tenant, exam_id=submission.target_id, session_id=session_id,
+        submission_id=submission.id,
+    ).exists()
 
 
 def _answer_review_version(submission: Submission) -> str | None:
@@ -783,6 +799,8 @@ class SubmissionViewSet(ModelViewSet):
                     return Response({"detail": candidate.detail}, status=400)
             elif not exam_id or not exam_review_session_is_linked(tenant=tenant, exam_id=exam_id, session_id=session_id):
                 return Response({"detail": "해당 시험에 연결된 차시가 아닙니다."}, status=400)
+            if _scan_is_from_another_review_session(submission, session_id):
+                return _review_session_conflict()
         confirming_answers = "answer_review_version" in request.data
         # Explicit teacher decision from the absence prompt; identification
         # alone never cancels an absence.
@@ -837,6 +855,14 @@ class SubmissionViewSet(ModelViewSet):
             # ✅ 중복 매칭 차단 (기본): 같은 시험의 다른 submission이 이미 같은 enrollment로 active면 409.
             #    allow_duplicate=1은 운영자가 중복 덮어쓰기를 확인한 경우다.
             allow_duplicate = allow_duplicate_requested(request)
+            if session_id is not None and (
+                _scan_is_from_another_review_session(submission, session_id)
+                or omr_replacement_crosses_sessions(
+                    tenant=tenant, exam_id=exam_id, session_id=session_id,
+                    enrollment_id=candidate_eid, submission_id=submission.id,
+                )
+            ):
+                return _review_session_conflict()
             if exam_id and not allow_duplicate:
                 dup_qs = (
                     Submission.objects
@@ -1240,6 +1266,11 @@ class SubmissionViewSet(ModelViewSet):
                 )
                 if not candidate.ok:
                     return Response({"detail": candidate.detail}, status=400)
+                if _scan_is_from_another_review_session(submission, session_id) or omr_replacement_crosses_sessions(
+                    tenant=tenant, exam_id=submission.target_id, session_id=session_id,
+                    enrollment_id=submission.enrollment_id, submission_id=submission.id,
+                ):
+                    return _review_session_conflict()
 
             now = timezone.now()
             actor = f"admin.accept_from_duplicates.user_{getattr(request.user, 'id', '?')}"

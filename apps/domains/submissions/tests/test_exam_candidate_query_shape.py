@@ -12,7 +12,7 @@ from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.lectures.models import Session
 from apps.domains.lectures.test_support import create_lecture_fixture
 from apps.domains.students.tests.test_student_domain_stabilization import _make_admin, _make_student, _make_tenant
-from apps.domains.submissions.models import Submission
+from apps.domains.submissions.models import OmrUploadBatch, OmrUploadBatchItem, Submission
 from apps.domains.submissions.views.exam_candidates_view import ExamCandidatesView
 from apps.support.submissions.candidate_dependencies import CandidateRows
 
@@ -121,6 +121,23 @@ class ExamCandidateSessionScopeTests(TestCase):
             for enrollment in (self.first, self.second, self.inactive, self.attendance_only)
         ])
 
+    def make_scan(self, session=None, enrollment=None):
+        submission = Submission.objects.create(
+            tenant=self.tenant, user=self.admin, target_type="exam", target_id=self.exam.id,
+            source="omr_scan", status=Submission.Status.NEEDS_IDENTIFICATION,
+            enrollment_id=enrollment.id if enrollment else None,
+        )
+        if session:
+            batch = OmrUploadBatch.objects.create(
+                tenant=self.tenant, created_by=self.admin, exam_id=self.exam.id, total_count=2,
+                session_id=session.id, lecture_id=session.lecture_id,
+            )
+            OmrUploadBatchItem.objects.create(
+                batch=batch, tenant=self.tenant, exam_id=self.exam.id, ordinal=1,
+                admission_status=OmrUploadBatchItem.AdmissionStatus.RECEIVED, submission=submission,
+            )
+        return submission
+
     def test_explicit_roster_is_intersected_with_active_session_membership(self):
         self.set_explicit_roster()
         response = self.candidates(session_id=self.session.id)
@@ -177,3 +194,59 @@ class ExamCandidateSessionScopeTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         submission.refresh_from_db()
         self.assertEqual(submission.enrollment_id, self.attendance_only.id)
+
+    def test_queue_and_focus_use_original_scan_session_not_duplicate_or_latest_batch(self):
+        local = self.make_scan(self.session)
+        other = self.make_scan(self.other_session)
+        historical = self.make_scan()
+        OmrUploadBatchItem.objects.create(
+            batch=local.omr_upload_batch_item.batch, tenant=self.tenant, exam_id=self.exam.id, ordinal=2,
+            admission_status=OmrUploadBatchItem.AdmissionStatus.DUPLICATE, duplicate_of_submission=other,
+        )
+        endpoint = f"/api/v1/submissions/submissions/exams/{self.exam.id}/"
+
+        def request(**query):
+            response = self.call(self.factory.get(endpoint, query))
+            self.assertEqual(response.status_code, 200, response.data)
+            return response.data
+
+        self.assertCountEqual([row["id"] for row in request()], [local.id, other.id, historical.id])
+        self.assertCountEqual([row["id"] for row in request(session_id=self.session.id)], [local.id, historical.id])
+        issues = request(session_id=self.session.id, review_issues=1)
+        self.assertEqual(issues["total"], 2)
+        self.assertCountEqual([row["id"] for row in issues["items"]], [local.id, historical.id])
+        self.assertEqual(request(session_id=self.session.id, review_issues=1, focus_id=other.id)["total"], 0)
+        self.assertEqual(request(session_id=self.session.id, review_issues=1, focus_id=local.id)["total"], 1)
+        invalid = self.call(self.factory.get(endpoint, {"session_id": self.unlinked_session.id}))
+        self.assertEqual(invalid.status_code, 400)
+
+    def test_scoped_write_rejects_known_foreign_scan_and_prevents_cross_session_replacement(self):
+        self.set_explicit_roster()
+        other = self.make_scan(self.other_session, self.first)
+        local = self.make_scan(self.session, self.first)
+
+        def post(scanned, action, **body):
+            return self.call(self.factory.post(f"/api/v1/submissions/submissions/{scanned.id}/{action}", {
+                "session_id": self.session.id, **body,
+            }, format="json"))
+
+        for response in (
+            post(other, "manual-edit/", identifier={"enrollment_id": self.first.id}),
+            post(other, "accept-from-duplicates/"),
+            post(local, "accept-from-duplicates/"),
+            post(local, "manual-edit/", identifier={"enrollment_id": self.first.id}),
+            post(local, "manual-edit/?allow_duplicate=1", identifier={"enrollment_id": self.first.id}),
+        ):
+            self.assertEqual(response.status_code, 409, response.data)
+            self.assertEqual(response.data["code"], "OMR_REVIEW_SESSION_CONFLICT")
+        for scanned in (local, other):
+            original_updated_at = scanned.updated_at
+            scanned.refresh_from_db()
+            self.assertEqual(scanned.updated_at, original_updated_at)
+            self.assertEqual(scanned.status, Submission.Status.NEEDS_IDENTIFICATION)
+
+        unassigned = self.make_scan(self.session)
+        response = post(unassigned, "manual-edit/", identifier={"enrollment_id": self.attendance_only.id})
+        self.assertEqual(response.status_code, 200, response.data)
+        unassigned.refresh_from_db()
+        self.assertEqual(unassigned.enrollment_id, self.attendance_only.id)

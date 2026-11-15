@@ -3,13 +3,17 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
+from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from apps.api.common.query_params import parse_query_int
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.submissions.models import Submission
+from apps.domains.submissions.services.omr_submission_guards import omr_admissions_in_other_sessions
+from apps.support.submissions.candidate_dependencies import exam_review_session_is_linked
 from apps.support.submissions.dependencies import (
     enrollment_map_for_submission_list,
     exam_submission_list_allowed,
@@ -41,6 +45,14 @@ class ExamSubmissionsListView(APIView):
         if not tenant:
             return Response({"items": [], "total": 0, "next_cursor": None} if issues_only else [], status=200)
 
+        session_id = parse_query_int(request.query_params, "session_id", min_value=1, max_value=2**63 - 1)
+        if "session_id" in request.query_params and (
+            session_id is None or len(request.query_params.getlist("session_id")) != 1
+        ):
+            raise ValidationError({"session_id": "차시 ID를 하나 입력해 주세요."})
+        if session_id is not None and not exam_review_session_is_linked(tenant=tenant, exam_id=exam_id, session_id=session_id):
+            raise ValidationError({"session_id": "해당 시험에 연결된 차시가 아닙니다."})
+
         # 테넌트 격리: exam이 해당 테넌트 소속이거나, 혹은 tenant 소속 submission이
         # 최소 1건 있으면 노출. 세션 연결만으로 필터링할 경우 session에서 떼어진(고아)
         # exam은 submission이 있어도 리스트가 비어 운영자가 존재 자체를 모름.
@@ -53,6 +65,13 @@ class ExamSubmissionsListView(APIView):
             target_type=Submission.TargetType.EXAM,
             target_id=int(exam_id),
         )
+        if session_id is not None:
+            base = base.exclude(
+                Exists(omr_admissions_in_other_sessions(
+                    tenant=tenant, exam_id=exam_id, session_id=session_id, submission_id=OuterRef("pk"),
+                )),
+                source=Submission.Source.OMR_SCAN,
+            )
         total = None
         next_cursor = None
         if issues_only:
