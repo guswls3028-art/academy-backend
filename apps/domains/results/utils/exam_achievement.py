@@ -158,6 +158,7 @@ def compute_exam_achievement_bulk(
     items: list[dict[str, Any]],
     use_session_filter: bool = True,
     tenant: Any,
+    scoring_details_loader=None,
 ) -> dict[tuple[int, int], dict[str, Any]]:
     """
     여러 (enrollment, exam) 쌍의 성취를 한 번에 계산 (N+1 방지).
@@ -266,7 +267,7 @@ def compute_exam_achievement_bulk(
             enrollment__tenant_id=int(tenant.id),
         )
     )
-    pending_result_ids = pending_omr_result_ids(result_rows)
+    pending_result_ids = pending_omr_result_ids(result_rows, scoring_details_loader=scoring_details_loader)
     pending_result_pairs = {
         (int(result.enrollment_id), int(result.target_id))
         for result in result_rows
@@ -300,6 +301,7 @@ def compute_exam_achievement_bulk(
             completed_attempt_pairs=completed_attempt_pairs,
             canonical_pairs={(int(row.enrollment_id), int(row.target_id)) for row in result_rows},
             tenant_id=int(tenant.id),
+            scoring_details_loader=scoring_details_loader,
         )
         for er in legacy_rows:
             enrollment_id = er["submission__enrollment_id"]
