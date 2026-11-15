@@ -296,6 +296,46 @@ class AchievementContractTest(TestCase, ClinicTestMixin):
         self._resolve_link(exam, resolution_type=ClinicLink.ResolutionType.MANUAL_OVERRIDE)
         self._assert_consistent(exam, result, expected="REMEDIATED")
 
+    def test_new_unresolved_cycle_supersedes_old_exam_retake_pass(self):
+        from apps.support.results.student_grade_history import build_student_exam_history
+
+        exam = self._make_exam("reopened_exam")
+        _, result = self._make_attempt_and_result(exam, score=40)
+        historical = self._resolve_link(exam, resolution_type=ClinicLink.ResolutionType.EXAM_PASS)
+        self._assert_consistent(exam, result, expected="REMEDIATED")
+
+        current = ClinicLink.objects.create(
+            tenant=self.tenant, enrollment=self.enrollment, session=self.lec_session,
+            reason="AUTO_FAILED", source_type="exam", source_id=exam.id, cycle_no=2,
+        )
+        self._assert_consistent(exam, result, expected="FAIL")
+        history, _, _ = build_student_exam_history(
+            tenant=self.tenant, enrollment_ids=[self.enrollment.id], published_results_only=False,
+        )
+        self.assertEqual(history[0]["achievement"], "FAIL")
+        historical.refresh_from_db()
+        current.refresh_from_db()
+        self.assertEqual(historical.resolution_type, ClinicLink.ResolutionType.EXAM_PASS)
+        self.assertIsNone(current.resolved_at)
+
+    def test_exam_summaries_do_not_infer_clinic_pass_from_an_ambiguous_session(self):
+        from apps.support.results.student_grade_history import build_student_exam_history
+
+        exam = self._make_exam("shared_session_exam")
+        self._make_attempt_and_result(exam, score=40)
+        other_session = self.lec_session.__class__.objects.create(
+            lecture=self.lec_session.lecture, order=self.lec_session.order + 1, title="Second session",
+        )
+        exam.sessions.add(other_session)
+        self._resolve_link(exam, resolution_type=ClinicLink.ResolutionType.EXAM_PASS)
+
+        self.assertEqual(self._view_achievement_for(exam.id), "FAIL")
+        history, _, _ = build_student_exam_history(
+            tenant=self.tenant, enrollment_ids=[self.enrollment.id], published_results_only=False,
+        )
+        self.assertIsNone(history[0]["session_id"])
+        self.assertEqual(history[0]["achievement"], "FAIL")
+
     def test_fail_unresolved(self):
         exam = self._make_exam("fail", pass_score=60.0)
         _, result = self._make_attempt_and_result(exam, score=30)
@@ -484,9 +524,8 @@ class AchievementContractTest(TestCase, ClinicTestMixin):
                 "total_score": result.total_score,
                 "pass_score": exam.pass_score,
                 "attempt_id": attempt.id,
-                "session": None,
+                "session_id": self.lec_session.id,
             }],
-            use_session_filter=False,
             tenant=self.tenant,
         )[(self.enrollment.id, exam.id)]
 
@@ -524,7 +563,7 @@ class AchievementContractTest(TestCase, ClinicTestMixin):
                 "total_score": result.total_score,
                 "pass_score": exam.pass_score,
                 "attempt_id": attempt.id,
-                "session": self.lec_session,
+                "session_id": self.lec_session.id,
             }],
             tenant=self.tenant,
         )[(self.enrollment.id, exam.id)]

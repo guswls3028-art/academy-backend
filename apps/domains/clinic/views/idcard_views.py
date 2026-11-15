@@ -262,12 +262,21 @@ class StudentClinicIdcardView(APIView):
                     "clinic_required": clinic_required,
                 })
 
+        from apps.support.student_app.learning_todo_policy import lecture_is_ongoing
+        from apps.support.submissions.dependencies import homework_submission_media_lock_keys
+
+        homework_links = [link for link in clinic_links if link.source_type == "homework" and link.source_id]
+        media_locks = homework_submission_media_lock_keys(
+            tenant=tenant,
+            enrollment_ids={link.enrollment_id for link in homework_links},
+            homework_ids={link.source_id for link in homework_links},
+        )
         current_targets = []
         for link in clinic_links:
             sess = link.session
             lecture = sess.lecture
             source = source_projection.get(int(link.id), {})
-            current_targets.append({
+            target = {
                 "clinic_link_id": int(link.id),
                 "enrollment_id": int(link.enrollment_id),
                 "lecture_id": int(lecture.id),
@@ -282,7 +291,14 @@ class StudentClinicIdcardView(APIView):
                 "source_title": source.get("source_title"),
                 "source_scope": source.get("source_scope"),
                 "created_at": getattr(link, "created_at", None),
-            })
+            }
+            if link.source_type == "homework":
+                target["can_submit_homework_files"] = (
+                    bool(link.source_id)
+                    and lecture_is_ongoing(lecture, today=local_now.date())
+                    and (link.enrollment_id, link.source_id) not in media_locks
+                )
+            current_targets.append(target)
 
         # 프로필 사진 URL (신원 확인용) - 기존 방식 사용
         return Response(

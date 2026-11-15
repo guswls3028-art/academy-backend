@@ -705,6 +705,68 @@ def target_enrollment_assignment_exists(
     return False
 
 
+def _latest_homework_scores(*, tenant, enrollment_ids, homework_ids):
+    from django.db.models import F, Window
+    from django.db.models.functions import RowNumber
+    from apps.domains.homework_results.models import HomeworkScore
+
+    return (
+        HomeworkScore.objects.filter(
+            enrollment_id__in=enrollment_ids,
+            enrollment__tenant=tenant,
+            homework_id__in=homework_ids,
+            homework__tenant=tenant,
+        )
+        .order_by()
+        .annotate(
+            attempt_rank=Window(
+                expression=RowNumber(),
+                partition_by=[F("enrollment_id"), F("homework_id")],
+                order_by=[F("attempt_index").desc(), F("updated_at").desc(), F("id").desc()],
+            ),
+        )
+        .filter(attempt_rank=1)
+    )
+
+
+def _homework_review_source(score_passed: bool | None, manual_completed: bool) -> str | None:
+    if score_passed is not None:
+        return "score" if score_passed else None
+    return "manual" if manual_completed else None
+
+
+def homework_submission_media_lock_keys(*, tenant, enrollment_ids, homework_ids) -> set[tuple[int, int]]:
+    """Current upload locks for the write API and learner read models."""
+    enrollment_ids = set(enrollment_ids)
+    homework_ids = set(homework_ids)
+    if not enrollment_ids or not homework_ids:
+        return set()
+
+    latest_scores = {
+        (enrollment_id, homework_id): passed
+        for enrollment_id, homework_id, passed in _latest_homework_scores(
+            tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=homework_ids,
+        ).values_list("enrollment_id", "homework_id", "passed")
+    }
+    manual_completed = set()
+    if len(latest_scores) < len(enrollment_ids) * len(homework_ids):
+        from apps.domains.progress.models import AssessmentCorrection
+
+        manual_completed = set(
+            AssessmentCorrection.objects.filter(
+                tenant=tenant,
+                enrollment_id__in=enrollment_ids,
+                source_type=AssessmentCorrection.SourceType.HOMEWORK,
+                source_id__in=homework_ids,
+                completed=True,
+            ).values_list("enrollment_id", "source_id")
+        )
+    return {
+        key for key in latest_scores.keys() | manual_completed
+        if _homework_review_source(latest_scores.get(key), key in manual_completed)
+    }
+
+
 def homework_submission_is_teacher_reviewed(
     *,
     tenant,
@@ -712,31 +774,9 @@ def homework_submission_is_teacher_reviewed(
     homework_id: int,
 ) -> bool:
     """Return whether the current passing/completed result locks media changes."""
-    from apps.domains.homework_results.models import HomeworkScore
-
-    latest_score = (
-        HomeworkScore.objects.filter(
-            enrollment_id=enrollment_id,
-            enrollment__tenant=tenant,
-            homework_id=homework_id,
-            homework__tenant=tenant,
-        )
-        .only("passed", "attempt_index", "updated_at")
-        .order_by("-attempt_index", "-updated_at", "-id")
-        .first()
+    return (enrollment_id, homework_id) in homework_submission_media_lock_keys(
+        tenant=tenant, enrollment_ids=[enrollment_id], homework_ids=[homework_id],
     )
-    if latest_score is not None:
-        return bool(latest_score.passed)
-
-    from apps.domains.progress.models import AssessmentCorrection
-
-    return AssessmentCorrection.objects.filter(
-        tenant=tenant,
-        enrollment_id=enrollment_id,
-        source_type=AssessmentCorrection.SourceType.HOMEWORK,
-        source_id=homework_id,
-        completed=True,
-    ).exists()
 
 
 def homework_submission_review_map(
@@ -750,7 +790,6 @@ def homework_submission_review_map(
         return {}
 
     normalized_ids = {int(enrollment_id) for enrollment_id in enrollment_ids}
-    from apps.domains.homework_results.models import HomeworkScore
     from apps.domains.progress.models import AssessmentCorrection
 
     correction_map = {
@@ -762,46 +801,33 @@ def homework_submission_review_map(
             source_id=int(homework_id),
         )
     }
-    score_map = {}
-    for score in (
-        HomeworkScore.objects.filter(
-            enrollment_id__in=normalized_ids,
-            enrollment__tenant=tenant,
-            homework_id=int(homework_id),
-            homework__tenant=tenant,
-        )
-        .only("enrollment_id", "updated_at", "attempt_index", "passed")
-        .order_by("enrollment_id", "-attempt_index", "-updated_at", "-id")
-    ):
-        score_map.setdefault(int(score.enrollment_id), score)
+    score_map = {
+        int(score.enrollment_id): score
+        for score in _latest_homework_scores(
+            tenant=tenant, enrollment_ids=normalized_ids, homework_ids=[int(homework_id)],
+        ).only("enrollment_id", "updated_at", "passed")
+    }
 
     review_map: dict[int, dict[str, Any]] = {}
     for enrollment_id in normalized_ids:
         score = score_map.get(enrollment_id)
         correction = correction_map.get(enrollment_id)
-        manual_completed = bool(correction and correction.completed)
-        score_passed = bool(score and score.passed)
-        manual_completed_without_score = manual_completed and score is None
-        teacher_reviewed = score_passed or manual_completed_without_score
-        review_source = (
-            "score"
-            if score_passed
-            else "manual"
-            if manual_completed_without_score
-            else None
+        review_source = _homework_review_source(
+            bool(score.passed) if score is not None else None,
+            bool(correction and correction.completed),
         )
         reviewed_at = (
             score.updated_at
-            if score_passed
+            if review_source == "score"
             else correction.completed_at
-            if manual_completed_without_score
+            if review_source == "manual"
             else None
         )
         review_map[enrollment_id] = {
-            "teacher_reviewed": teacher_reviewed,
+            "teacher_reviewed": review_source is not None,
             "teacher_review_source": review_source,
             "teacher_review_note": (
-                correction.note if manual_completed_without_score else ""
+                correction.note if review_source == "manual" else ""
             ),
             "teacher_reviewed_at": reviewed_at.isoformat() if reviewed_at else None,
             "teacher_review_updated_at": (

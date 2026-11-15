@@ -282,12 +282,11 @@ def build_student_exam_history(
                     row["info"]["pass_score"],
                 ),
                 "attempt_id": row["result"].get("attempt_id"),
-                "session": None,
+                "session_id": row["session_id"],
             }
             for row in canonical_rows
             if not row["subjective_pending"]
         ],
-        use_session_filter=False,
         tenant=tenant,
     )
 

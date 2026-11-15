@@ -347,8 +347,10 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
                     candidate_by_id[int(result.enrollment_id)]
                 ),
                 "attempt_id": initial_scores[int(result.enrollment_id)].attempt_id,
-                "session": sessions_by_lecture.get(
-                    candidate_by_id[int(result.enrollment_id)].lecture_id
+                "session_id": getattr(
+                    sessions_by_lecture.get(candidate_by_id[int(result.enrollment_id)].lecture_id),
+                    "id",
+                    None,
                 ),
             }
             for result in results

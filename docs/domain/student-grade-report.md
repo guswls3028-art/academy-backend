@@ -72,6 +72,11 @@ Ymath는 `Program.feature_flags.assessment_status_display=wrong_completion`을
 시험은 원점수의 `is_pass=false`를 보존해도 현재 교사 완료가 유효하면 최종 성취를
 `REMEDIATED`로 읽어 재시험 필요 카드와 실패 통계에서 제외한다. 실제 점수·답안이
 바뀌면 지문 검증이 이 최종 처리를 무효화해 다시 확인 대상으로 돌린다.
+교직원 개인 성적표, 학생·학부모 성적 이력, 차시 성적표와 시험 상세는 같은 수강·시험·
+차시의 최신 클리닉 회차를 먼저 찾는다. 현재 회차가 미해결이면 과거 보강 통과를
+다시 적용하지 않는다. 공유 시험의 차시를 하나로 확정할 수 없으면 조회 화면의 성적
+이력은 원점수 판정을 유지한다. 최초 미응시 기록과 현재 유효한 보강 통과가 함께
+있으면 성취는 `REMEDIATED`이며 최초 미응시 기록은 보존한다.
 
 과제는 `teacher_resolved=true`를 별도로 반환한다. 점수 없는 미제출 과제를 교사가
 현장에서 확인해 완료한 경우에도 `score=null`과 원래 `passed`/제출 사실은 바꾸지
@@ -146,6 +151,8 @@ Ymath는 `Program.feature_flags.assessment_status_display=wrong_completion`을
 `passed`는 계속 1차 성적을 나타낸다. 최신 클리닉 회차가 다시 열려 성취 판정이
 `FAIL`이나 `NOT_SUBMITTED`로 돌아가도 파일 변경 잠금이 유효하면 `submission_state`는
 `reviewed`를 유지한다. 홈에서 실행할 수 없는 파일 제출 할 일을 만들지 않기 위해서다.
+성적 요약, 과제 파일 편집 권한 및 클리닉의 온라인 제출 액션은 같은 저장 판정에서
+파일 잠금을 읽는다. 클리닉 액션의 표시 계약은 [클리닉 예약](clinic-booking.md)이 소유한다.
 
 ## 성장 그래프 구성
 

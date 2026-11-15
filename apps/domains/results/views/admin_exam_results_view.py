@@ -392,7 +392,7 @@ class AdminExamResultsView(ListAPIView):
                     float(getattr(exam, "pass_score", 0.0) or 0.0),
                 ),
                 "attempt_id": getattr(r, "attempt_id", None),
-                "session": sessions_by_lecture.get(lecture_id),
+                "session_id": getattr(sessions_by_lecture.get(lecture_id), "id", None),
             })
         achievement_map = compute_exam_achievement_bulk(
             items=achievement_items,

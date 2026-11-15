@@ -2147,6 +2147,23 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(required["current_result"], "FAIL")
         self.assertFalse(required["can_leave"])
         self.assertEqual({row["clinic_link_id"] for row in required["current_targets"]}, {link.id for link in links})
+        self.assertTrue(all(row["can_submit_homework_files"] for row in required["current_targets"]))
+
+        # Reopened remediation stays visible, but a saved passing retake still locks files.
+        Score = django_apps.get_model("homework_results", "HomeworkScore")
+        Score.objects.create(
+            enrollment=enrollment, session=session, homework_id=links[0].source_id,
+            attempt_index=1, score=None, passed=False, meta={"status": "NOT_SUBMITTED"},
+        )
+        Score.objects.create(
+            enrollment=enrollment, session=session, homework_id=links[0].source_id,
+            attempt_index=2, score=100, max_score=100, passed=True,
+        )
+        reopened = assert_same_projection("CLINIC_REQUIRED")
+        self.assertEqual(
+            {row["clinic_link_id"]: row["can_submit_homework_files"] for row in reopened["current_targets"]},
+            {links[0].id: False, links[1].id: True},
+        )
         self.make_participant(
             self.tenant, self.data["clinic_session"], self.student,
             enrollment=enrollment, status="booked",

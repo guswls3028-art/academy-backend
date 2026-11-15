@@ -24,14 +24,17 @@ from apps.domains.results.services.assessment_correction_status import (
 )
 from apps.domains.results.utils.ranking import compute_exam_rankings_batch
 from apps.domains.results.services.student_rank_visibility import student_rank_visibility_payload
-from apps.support.results.homework_clinic_status import homework_remediation_keys
+from apps.support.results.assessment_clinic_status import homework_remediation_keys
 from apps.support.results.student_grade_history import (
     build_exam_progression,
     build_student_exam_history,
     empty_exam_summary,
 )
 from apps.support.results.score_total_dependencies import student_exam_session_pairs, student_session_totals
-from apps.support.submissions.dependencies import homework_submission_revisions
+from apps.support.submissions.dependencies import (
+    homework_submission_media_lock_keys,
+    homework_submission_revisions,
+)
 from apps.support.attendance.learning_todo_eligibility import actual_absent_learning_todo_pairs
 from apps.support.student_app.learning_todo_policy import (
     lecture_has_current_learning_todos,
@@ -121,53 +124,6 @@ def _homework_session_metadata(session: Any) -> dict[str, Any]:
         "lecture_color": getattr(lecture, "color", None) if lecture else None,
         "lecture_chip_label": getattr(lecture, "chip_label", None) if lecture else None,
     }
-
-
-def _homework_submission_media_lock_keys(
-    *,
-    tenant: Any,
-    enrollment_ids: list[int],
-    homework_ids: list[int],
-) -> set[tuple[int, int]]:
-    """Bulk-project the same latest-result lock enforced by the media API."""
-    if not enrollment_ids or not homework_ids:
-        return set()
-
-    latest_scores: dict[tuple[int, int], bool] = {}
-    for score in (
-        HomeworkScore.objects.filter(
-            enrollment_id__in=enrollment_ids,
-            enrollment__tenant=tenant,
-            homework_id__in=homework_ids,
-            homework__tenant=tenant,
-        )
-        .only("enrollment_id", "homework_id", "passed", "attempt_index", "updated_at")
-        .order_by(
-            "enrollment_id",
-            "homework_id",
-            "-attempt_index",
-            "-updated_at",
-            "-id",
-        )
-    ):
-        latest_scores.setdefault(
-            (int(score.enrollment_id), int(score.homework_id)),
-            bool(score.passed),
-        )
-
-    locked = {key for key, passed in latest_scores.items() if passed}
-    locked.update(
-        (int(enrollment_id), int(homework_id))
-        for enrollment_id, homework_id in AssessmentCorrection.objects.filter(
-            tenant=tenant,
-            enrollment_id__in=enrollment_ids,
-            source_type=AssessmentCorrection.SourceType.HOMEWORK,
-            source_id__in=homework_ids,
-            completed=True,
-        ).values_list("enrollment_id", "source_id")
-        if (int(enrollment_id), int(homework_id)) not in latest_scores
-    )
-    return locked
 
 
 def _homework_history_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
@@ -475,7 +431,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         enrollment_ids=enrollment_ids,
         homework_ids=homework_ids,
     )
-    submission_media_lock_keys = _homework_submission_media_lock_keys(
+    submission_media_lock_keys = homework_submission_media_lock_keys(
         tenant=tenant,
         enrollment_ids=enrollment_ids,
         homework_ids=homework_ids,

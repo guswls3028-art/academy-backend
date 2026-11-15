@@ -1,9 +1,11 @@
-from datetime import timedelta
+from datetime import time, timedelta
 from types import SimpleNamespace
 
 from django.apps import apps as django_apps
 from django.test import TestCase
+from django.urls import resolve
 from django.utils import timezone
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership, User
 from apps.core.models.user import user_internal_username
@@ -97,6 +99,90 @@ class StudentSessionTenantIsolationTests(TestCase):
             lecture=self.lecture_a,
             status="ACTIVE",
         )
+
+    def _parent_request(self):
+        user = _create_user(self.tenant_a, "selected-parent")
+        parent = django_apps.get_model("parents", "Parent").objects.create(
+            tenant=self.tenant_a, user=user, name="Selected parent", phone="01022223333",
+        )
+        TenantMembership.ensure_active(tenant=self.tenant_a, user=user, role="parent")
+        self.student_a.parent = parent
+        self.student_a.save(update_fields=["parent"])
+        request = _request(user, self.tenant_a)
+        request.META["HTTP_X_STUDENT_ID"] = str(self.student_a.id)
+        return request
+
+    def test_clinic_schedule_uses_actual_overnight_booking_and_recorded_presence(self):
+        ClinicSession = django_apps.get_model("clinic", "Session")
+        Participant = django_apps.get_model("clinic", "SessionParticipant")
+        opening_day = timezone.localdate()
+        local = ClinicSession.objects.create(
+            tenant=self.tenant_a, date=opening_day, start_time=time(23, 0),
+            duration_minutes=240, max_participants=10, title="Own clinic", booking_mode="time_range",
+        )
+        foreign = ClinicSession.objects.create(
+            tenant=self.tenant_b, date=opening_day, start_time=time(19, 0),
+            duration_minutes=120, max_participants=10, title="Foreign clinic",
+        )
+        participant = Participant.objects.create(
+            tenant=self.tenant_a, student=self.student_a, session=local, status="booked",
+            booking_start_time=time(1, 0), booking_end_time=time(2, 0),
+        )
+        Participant.objects.create(
+            tenant=self.tenant_a, student=self.student_a, session=foreign, status="booked",
+        )
+        learner_requests = (_request(self.user_a, self.tenant_a), self._parent_request())
+        for fields, expected in (
+            ({}, "예약됨"),
+            ({"status": "attended", "checked_in_at": timezone.now(), "is_late": True}, "지각 등원"),
+            ({"completed_at": timezone.now()}, "학습 완료"),
+            ({"checked_out_at": timezone.now()}, "하원"),
+        ):
+            if fields:
+                Participant.objects.filter(pk=participant.pk).update(**fields)
+            for request in learner_requests:
+                with self.subTest(state=expected, user_id=request.user.id):
+                    response = StudentSessionListView().get(request)
+                    self.assertEqual(response.status_code, 200)
+                    item, = response.data
+                    self.assertEqual(item["id"], -participant.pk)
+                    self.assertEqual(item["date"], (opening_day + timedelta(days=1)).isoformat())
+                    self.assertEqual(item["start_time"], "01:00:00")
+                    self.assertEqual(item["status"], expected)
+
+    def test_teacher_attendance_status_is_read_by_student_and_selected_parent(self):
+        Attendance = django_apps.get_model("attendance", "Attendance")
+        enrollment = self._enroll_student_a()
+        session = _create_session(self.lecture_a)
+        attendance = Attendance.objects.create(
+            tenant=self.tenant_a, enrollment=enrollment, session=session, status="UNSET",
+        )
+        teacher = _create_user(self.tenant_a, "attendance-owner")
+        TenantMembership.ensure_active(tenant=self.tenant_a, user=teacher, role="owner")
+        learner_requests = (_request(self.user_a, self.tenant_a), self._parent_request())
+        path = f"/api/v1/lectures/attendance/{attendance.pk}/"
+        match = resolve(path)
+        factory = APIRequestFactory()
+        for status, counts in (
+            ("ABSENT", (0, 1, 0)), ("ONLINE", (1, 0, 0)),
+            ("SUPPLEMENT", (1, 0, 0)), ("LATE", (0, 0, 1)),
+        ):
+            with self.subTest(status=status):
+                request = factory.patch(path, {"status": status}, format="json")
+                request.tenant = self.tenant_a
+                force_authenticate(request, user=teacher)
+                response = match.func(request, **match.kwargs)
+                self.assertEqual(response.status_code, 200, response.data)
+                attendance.refresh_from_db()
+                self.assertEqual(attendance.status, status)
+                for learner_request in learner_requests:
+                    report = StudentAttendanceSummaryView().get(learner_request)
+                    self.assertEqual(report.status_code, 200)
+                    row, = report.data["recent"]
+                    self.assertEqual(row["status"], status)
+                    summary = report.data["summary"]
+                    self.assertEqual(summary["total"], 1)
+                    self.assertEqual(tuple(summary[key] for key in ("present", "absent", "late")), counts)
 
     def test_student_permission_requires_matching_request_tenant(self):
         matching_request = _request(self.user_a, self.tenant_a)
