@@ -56,26 +56,36 @@ or a chat turn ending is not delivery completion. Documentation-only work ends
 with applicable validation, required CI and publication; it does not require a
 product deployment. Respect explicit read-only, local-only and PR-only scope.
 
-- At the start of release-bound work, inspect existing Academy deployment chats
-  and the official workflow and deployment status for the affected repositories.
-  Check queued, running, approval-waiting and rollback states. Recheck before a
-  release-triggering merge or dispatch. Confirm the owner and exact candidate or
-  run, then coordinate what goes into the active rollout or the next slot.
+- At the start of release-bound work, take one compact snapshot of existing
+  Academy deployment chats and a bounded official run listing for each affected
+  release workflow. Use chat status and shared coordination evidence first.
+  Filter for queued, running, approval-waiting and rollback work. Expand the
+  lookup if the owner or queue state is unclear. Recheck before a merge or
+  dispatch that triggers release. Confirm the owner and exact candidate or run,
+  then coordinate what goes into the active rollout or the next slot.
 - The task accepting the user's request owns its outcome until completion or an
   acknowledged transfer of that responsibility. A handoff names the receiving
   owner, exact PR/SHA, remaining acceptance criteria and next action. Confirm
   receipt and tracking in the existing coordination record; sending a message
   or naming a busy release owner alone does not transfer responsibility.
-- Keep one release executor for each coordinated rollout. Feature owners hand
-  over their candidate and continue assigned fixes and affected-flow verification.
-  The coordinator tracks every requested item through candidate inclusion,
-  required checks, deployment run, exact live revision, verification and cleanup.
-  Reconcile squash/cherry-pick inclusion; retain omitted items for the next run.
-  Use existing task artifacts/monitor state, not another registry or new chats.
+- Keep one release executor for each coordinated rollout. That executor owns
+  repeated status checks for the exact run. Use existing coordination records
+  to share candidate inclusion, gate and rollout results, the next check,
+  and evidence of the live revision and cleanup as each becomes available.
+  Feature owners hand over their candidate, reuse shared status and continue
+  assigned fixes and affected-flow verification. Read official state directly
+  when a decision or verification requires it. Reconcile squash/cherry-pick
+  inclusion and retain omitted items for the next run.
+- Prefer a bounded event wait or a single watcher. Batch independent status
+  reads and back off when state is unchanged. The existing recovery monitor
+  checks the coordinator's compact status and handles confirmed interruption or
+  missing handoff. Resume the owner where possible. Transfer repeated checks
+  through the recorded handoff after the new owner acknowledges responsibility.
 - Use the current chat to follow checks, rollout and production verification
-  under standing authorization. A failed gate triggers diagnosis, an in-scope
-  correction and relevant revalidation. Continue independent work while another
-  owner or CI runs. An active run, handoff or local repair is not an external
+  under standing authorization, using the executor's evidence when another chat
+  owns the run. A failed gate triggers diagnosis, an in-scope correction and
+  relevant revalidation. Continue independent work while another owner or CI
+  runs. An active run, handoff or local repair is not an external
   blocker. A shared provider failure does not suspend unrelated repairs or other
   work that has met its own release gates. Never omit a required gate or
   manufacture a passing result to claim delivery.
