@@ -16,7 +16,7 @@ from apps.domains.submissions.models import Submission
 from apps.core.services.student_grade_report_layout import (
     get_student_grade_report_layout,
 )
-from apps.domains.progress.models import AssessmentCorrection, ClinicLink
+from apps.domains.progress.models import AssessmentCorrection
 from apps.domains.results.services.student_result_service import get_my_exam_result_data
 from apps.domains.results.services.assessment_correction_status import (
     assessment_correction_payload,
@@ -24,6 +24,7 @@ from apps.domains.results.services.assessment_correction_status import (
 )
 from apps.domains.results.utils.ranking import compute_exam_rankings_batch
 from apps.domains.results.services.student_rank_visibility import student_rank_visibility_payload
+from apps.support.results.homework_clinic_status import homework_remediation_keys
 from apps.support.results.student_grade_history import (
     build_exam_progression,
     build_student_exam_history,
@@ -466,14 +467,8 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
     homework_ids = list(
         {score.homework_id for score in homework_scores} | assigned_homework_ids
     )
-    teacher_completed_homework_keys = set(
-        AssessmentCorrection.objects.filter(
-            tenant=tenant,
-            enrollment_id__in=enrollment_ids,
-            source_type=AssessmentCorrection.SourceType.HOMEWORK,
-            source_id__in=homework_ids,
-            completed=True,
-        ).values_list("source_id", "session_id", "enrollment_id")
+    remediated_homework_keys, teacher_completed_homework_keys = homework_remediation_keys(
+        tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=homework_ids,
     )
     submitted_revisions = homework_submission_revisions(
         tenant=tenant,
@@ -485,33 +480,6 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         enrollment_ids=enrollment_ids,
         homework_ids=homework_ids,
     )
-    current_homework_resolutions = {}
-    if homework_ids and enrollment_ids:
-        for homework_id, session_id, enrollment_id, resolved_at, resolution_type in ClinicLink.objects.filter(
-            tenant=tenant,
-            enrollment_id__in=enrollment_ids,
-            source_type="homework",
-            source_id__in=homework_ids,
-        ).order_by(
-            "enrollment_id",
-            "source_id",
-            "session_id",
-            "-cycle_no",
-            "-id",
-        ).values_list("source_id", "session_id", "enrollment_id", "resolved_at", "resolution_type"):
-            # A reopened current cycle supersedes every historical pass for this exact assignment.
-            current_homework_resolutions.setdefault(
-                (homework_id, session_id, enrollment_id), resolution_type if resolved_at else None,
-            )
-    teacher_completed_homework_keys.update(
-        key for key, resolution in current_homework_resolutions.items()
-        if resolution == ClinicLink.ResolutionType.MANUAL_OVERRIDE
-    )
-    remediated_homework_keys = teacher_completed_homework_keys | {
-        key for key, resolution in current_homework_resolutions.items()
-        if resolution in (ClinicLink.ResolutionType.HOMEWORK_PASS, ClinicLink.ResolutionType.EXAM_PASS)
-    }
-
     homework_retake_counts = {}
     if homework_ids and enrollment_ids:
         for row in (
