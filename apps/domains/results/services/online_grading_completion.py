@@ -7,7 +7,9 @@ from apps.support.omr.score_shape_batch import load_exam_scoring_details
 from apps.support.results.omr_subjective_completion_dependencies import exams_by_id, math_exam_ids
 
 
-def completed_online_result_pairs(*, legacy_rows, completed_attempt_pairs, canonical_pairs, tenant_id):
+def completed_online_result_pairs(
+    *, legacy_rows, completed_attempt_pairs, canonical_pairs, tenant_id, scoring_details_loader=None,
+):
     """Recognize completed automatic grading without rewriting historical scores.
 
     ONLINE has no separate teacher publication action. Its compatibility row
@@ -40,7 +42,8 @@ def completed_online_result_pairs(*, legacy_rows, completed_attempt_pairs, canon
     }
     automatic_questions = {}
     essay_candidates = {}
-    for exam_id, details in load_exam_scoring_details(scoped_exams.values()).items():
+    load_details = scoring_details_loader or load_exam_scoring_details
+    for exam_id, details in load_details(scoped_exams.values()).items():
         shape = details.shape
         question_ids = set(shape.question_kind_by_id)
         if (

@@ -292,6 +292,42 @@
         ],
         "type": "string"
       },
+      "AdminExamAnalysisInsights": {
+        "properties": {
+          "below_recommended_count": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "recommended_cutoff": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "score_summary": {
+            "$ref": "#/components/schemas/ExamScoreSummary"
+          },
+          "scored_count": {
+            "type": "integer"
+          },
+          "trend_threshold_pp": {
+            "type": "integer"
+          },
+          "trends": {
+            "items": {
+              "$ref": "#/components/schemas/ExamScoreTrend"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "below_recommended_count",
+          "recommended_cutoff",
+          "score_summary",
+          "scored_count",
+          "trend_threshold_pp",
+          "trends"
+        ],
+        "type": "object"
+      },
       "AdminExamResultRow": {
         "properties": {
           "achievement": {
@@ -3580,6 +3616,149 @@
           "second"
         ],
         "type": "string"
+      },
+      "ExamScoreSummary": {
+        "properties": {
+          "average": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "distribution_counts": {
+            "items": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 5,
+            "minItems": 5,
+            "type": "array"
+          },
+          "highest": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "median": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "p25": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "p75": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "pass_count": {
+            "type": "integer"
+          },
+          "pass_criterion_count": {
+            "type": "integer"
+          },
+          "remediated_count": {
+            "type": "integer"
+          },
+          "std_dev": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "std_rate": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "top_ten_average": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "unscored_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "average",
+          "distribution_counts",
+          "highest",
+          "median",
+          "p25",
+          "p75",
+          "pass_count",
+          "pass_criterion_count",
+          "remediated_count",
+          "std_dev",
+          "std_rate",
+          "top_ten_average",
+          "unscored_count"
+        ],
+        "type": "object"
+      },
+      "ExamScoreTrend": {
+        "properties": {
+          "cumulative_delta_pp": {
+            "format": "double",
+            "type": "number"
+          },
+          "cumulative_rate": {
+            "format": "double",
+            "type": "number"
+          },
+          "current_rate": {
+            "format": "double",
+            "type": "number"
+          },
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "lecture_title": {
+            "type": "string"
+          },
+          "previous_delta_pp": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "previous_session_rate": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "prior_exam_count": {
+            "type": "integer"
+          },
+          "signal": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SignalEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "student_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cumulative_delta_pp",
+          "cumulative_rate",
+          "current_rate",
+          "enrollment_id",
+          "lecture_title",
+          "previous_delta_pp",
+          "previous_session_rate",
+          "prior_exam_count",
+          "signal",
+          "student_name"
+        ],
+        "type": "object"
       },
       "ExamTypeEnum": {
         "description": "* `template` - Template\n* `regular` - Regular",
@@ -17313,6 +17492,14 @@
           }
         },
         "type": "object"
+      },
+      "SignalEnum": {
+        "description": "* `up` - up\n* `down` - down",
+        "enum": [
+          "up",
+          "down"
+        ],
+        "type": "string"
       },
       "SolapiStatusEnum": {
         "description": "* `` - 미신청\n* `PENDING` - 검수 대기\n* `APPROVED` - 승인\n* `REJECTED` - 반려",
@@ -47387,6 +47574,52 @@
                 "schema": {
                   "format": "binary",
                   "type": "string"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/exams/{exam_id}/analysis-insights/": {
+      "get": {
+        "operationId": "results_admin_exams_analysis_insights_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exam_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "An exam-linked lecture in the current tenant.",
+            "in": "query",
+            "name": "lecture_id",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminExamAnalysisInsights"
                 }
               }
             },

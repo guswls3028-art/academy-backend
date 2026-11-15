@@ -122,6 +122,8 @@ def _attempt_has_aggregate_subjective_score(attempt: ExamAttempt) -> bool:
 
 def omr_subjective_completion_states(
     results: Iterable[Result],
+    *,
+    scoring_details_loader=None,
 ) -> dict[int, OmrSubjectiveCompletionState]:
     """Read grading readiness for paper OMR and ONLINE teacher-owned essays.
 
@@ -177,7 +179,7 @@ def omr_subjective_completion_states(
 
     required_by_exam: dict[int, frozenset[int]] = {}
     numeric_by_exam: dict[int, set[int]] = {}
-    scoring_details = load_exam_scoring_details(exams.values())
+    scoring_details = (scoring_details_loader or load_exam_scoring_details)(exams.values())
     math_ids = math_exam_ids(exams)
     for exam_id, exam in exams.items():
         details = scoring_details[exam_id]
@@ -280,22 +282,25 @@ def pending_omr_result_reasons(results: Iterable[Result]) -> dict[int, str]:
     }
 
 
-def pending_omr_result_ids(results: Iterable[Result]) -> set[int]:
+def pending_omr_result_ids(results: Iterable[Result], *, scoring_details_loader=None) -> set[int]:
     return {
         result_id
-        for result_id, state in omr_subjective_completion_states(results).items()
+        for result_id, state in omr_subjective_completion_states(
+            results, scoring_details_loader=scoring_details_loader,
+        ).items()
         if state.pending
     }
 
 
-def pending_omr_result_ids_for_ids(result_ids: Iterable[int]) -> set[int]:
+def pending_omr_result_ids_for_ids(result_ids: Iterable[int], *, scoring_details_loader=None) -> set[int]:
     """Batch-load result rows and return mixed OMR snapshots not safe to publish."""
 
     normalized_ids = {int(result_id) for result_id in result_ids if result_id}
     if not normalized_ids:
         return set()
     return pending_omr_result_ids(
-        Result.objects.filter(id__in=normalized_ids, target_type="exam")
+        Result.objects.filter(id__in=normalized_ids, target_type="exam"),
+        scoring_details_loader=scoring_details_loader,
     )
 
 

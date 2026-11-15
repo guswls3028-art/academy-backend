@@ -158,6 +158,8 @@ def compute_exam_achievement_bulk(
     items: list[dict[str, Any]],
     use_session_filter: bool = True,
     tenant: Any,
+    scoring_details_loader=None,
+    include_first_attempt_readiness: bool = False,
 ) -> dict[tuple[int, int], dict[str, Any]]:
     """
     여러 (enrollment, exam) 쌍의 성취를 한 번에 계산 (N+1 방지).
@@ -266,13 +268,14 @@ def compute_exam_achievement_bulk(
             enrollment__tenant_id=int(tenant.id),
         )
     )
-    pending_result_ids = pending_omr_result_ids(result_rows)
-    pending_result_pairs = {
-        (int(result.enrollment_id), int(result.target_id))
+    pending_result_ids = pending_omr_result_ids(result_rows, scoring_details_loader=scoring_details_loader)
+    pending_result_attempts = {
+        (int(result.enrollment_id), int(result.target_id), result.attempt_id)
         for result in result_rows
         if result.enrollment_id is not None
         and int(result.id) in pending_result_ids
     }
+    pending_result_pairs = {(enrollment_id, exam_id) for enrollment_id, exam_id, _ in pending_result_attempts}
 
     # 3) ExamResult.status bulk (is_provisional 판정)
     er_status_by_pair: dict[tuple[int, int, int], str] = {}
@@ -300,6 +303,7 @@ def compute_exam_achievement_bulk(
             completed_attempt_pairs=completed_attempt_pairs,
             canonical_pairs={(int(row.enrollment_id), int(row.target_id)) for row in result_rows},
             tenant_id=int(tenant.id),
+            scoring_details_loader=scoring_details_loader,
         )
         for er in legacy_rows:
             enrollment_id = er["submission__enrollment_id"]
@@ -386,6 +390,13 @@ def compute_exam_achievement_bulk(
                 and (submission_by_attempt[a_id], e_id, x_id) not in completed_online_pairs
             )
 
+        if include_first_attempt_readiness:
+            # Preserve the separate latest-result hold on achievement labels.
+            first_attempt_provisional = is_provisional or (
+                (e_id, x_id, a_id) in pending_result_attempts
+                if a_id is not None else (e_id, x_id) in pending_result_pairs
+            )
+
         # First-attempt scoring remains the achievement SSOT, but a newer
         # representative OMR result can still be awaiting essay grading. In
         # that state no final pass/remediation label may be projected yet.
@@ -406,5 +417,7 @@ def compute_exam_achievement_bulk(
             "is_provisional": is_provisional,
             "meta_status": meta_status,
         }
+        if include_first_attempt_readiness:
+            out[(e_id, x_id)]["first_attempt_provisional"] = first_attempt_provisional
 
     return out

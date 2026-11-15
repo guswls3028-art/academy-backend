@@ -186,17 +186,24 @@ class ClinicTargetService:
                 section_id=int(section_id),
             )
 
+        current_target_enrollment_ids = None if section_id else set()
         links_list = list(links)
         if links_list:
-            links_list = filter_tenant_consistent_source_links(
-                links_list,
-                tenant=tenant,
-            )
+            consistent_links = filter_tenant_consistent_source_links(links_list, tenant=tenant)
+            if len(consistent_links) != len(links_list):
+                # The listing prefilter can reject a secondary legacy source ID
+                # that the global highlight's primary-source rule does not use.
+                current_target_enrollment_ids = None
+            links_list = consistent_links
         if links_list:
             current_links = filter_current_clinic_links(
                 (link for link in links_list if link.resolved_at is None),
                 tenant=tenant,
             )
+            # The global highlight includes a valid unresolved target even if
+            # actual absence hides that particular row from this listing.
+            if current_target_enrollment_ids is not None:
+                current_target_enrollment_ids.update(int(link.enrollment_id) for link in current_links)
             absent_pairs = actual_absent_learning_todo_pairs(
                 tenant=tenant,
                 enrollment_session_pairs={
@@ -305,6 +312,7 @@ class ClinicTargetService:
         highlight_map = compute_clinic_highlight_map(
             tenant=tenant,
             enrollment_ids=set(all_enrollment_ids),
+            current_target_enrollment_ids=current_target_enrollment_ids,
         ) if tenant else {}
 
         out: List[Dict[str, Any]] = []

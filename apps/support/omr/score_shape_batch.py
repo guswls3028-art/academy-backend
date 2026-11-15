@@ -20,6 +20,20 @@ class ExamScoringDetails:
     answers: dict
 
 
+def request_exam_scoring_details_loader():
+    """Share scoring structure for exact exam IDs within one grades read."""
+    details: dict[int, ExamScoringDetails] = {}
+
+    def load(exams) -> dict[int, ExamScoringDetails]:
+        exam_by_id = {int(exam.id): exam for exam in exams}
+        missing = [exam for exam_id, exam in exam_by_id.items() if exam_id not in details]
+        if missing:
+            details.update(load_exam_scoring_details(missing))
+        return {exam_id: details[exam_id] for exam_id in exam_by_id}
+
+    return load
+
+
 def load_exam_scoring_details(exams) -> dict[int, ExamScoringDetails]:
     exams = {int(exam.id): exam for exam in exams}
     if not exams:
