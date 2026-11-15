@@ -444,6 +444,7 @@ def plan_manual_grading(
         question.question_id: question.number for question in questions
     }
     seen: set[int] = set()
+    exam_scoring_totals: tuple[float, float] | None = None
 
     for row_index, raw_row in enumerate(raw_rows, start=1):
         if not isinstance(raw_row, dict):
@@ -547,18 +548,19 @@ def plan_manual_grading(
                 for question_id, mark in marks.items()
             }
         )
-        _, max_score = _score_row(
-            exam=exam,
-            questions=questions,
-            correctness={
-                question.number: CorrectnessMark(is_correct=False)
-                for question in questions
-            },
-        )
-        _, total_adjustment = _score_adjustments(
-            exam=exam,
-            questions=questions,
-        )
+        if exam_scoring_totals is None:
+            # All admitted rows use the same exam and overridden question specs.
+            _, max_score = _score_row(
+                exam=exam,
+                questions=questions,
+                correctness={
+                    question.number: CorrectnessMark(is_correct=False)
+                    for question in questions
+                },
+            )
+            _, total_adjustment = _score_adjustments(exam=exam, questions=questions)
+            exam_scoring_totals = max_score, total_adjustment
+        max_score, total_adjustment = exam_scoring_totals
         total_score = (
             0.0
             if is_not_submitted
