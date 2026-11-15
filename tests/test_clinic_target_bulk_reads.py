@@ -175,6 +175,25 @@ class ClinicTargetBulkReadTests(TestCase, ClinicTestMixin):
         self.assertEqual(len(resolved_only), 2)
         self.assertTrue(all(not row["name_highlight_clinic_target"] for row in resolved_only))
 
+    def test_highlight_keeps_legacy_exam_precedence_when_listing_filters_a_link(self):
+        session, exam, _, _ = self.add_sources(0)
+        ClinicLink.objects.filter(tenant=self.tenant, session=session).update(resolved_at=timezone.now())
+        foreign_tenant = self.make_tenant("target-bulk-legacy-foreign")
+        foreign_lecture = self.make_lecture(foreign_tenant)
+        foreign_homework = Homework.objects.create(
+            tenant=foreign_tenant, session=self.make_lecture_session(foreign_lecture), title="Legacy homework",
+        )
+        legacy = self.make_clinic_link(self.enrollment, session, source_type=None, source_id=None)
+        legacy.meta = {"exam_id": exam.id, "homework_id": foreign_homework.id}
+        legacy.save(update_fields=["meta"])
+
+        self.assertEqual(self.targets(), [])
+        baseline = self.targets_with_fresh_highlight(include_resolved=True)
+        self.assertEqual(len(baseline), 2)
+        self.assertNotIn(legacy.id, {row["clinic_link_id"] for row in baseline})
+        self.assertTrue(all(row["name_highlight_clinic_target"] for row in baseline))
+        self.assertEqual(self.targets(include_resolved=True), baseline)
+
     def test_confidence_uses_initial_attempt_and_latest_200_non_null_facts(self):
         _, exam, attempt, link = self.add_sources(0)
         def fact(meta):
