@@ -39,6 +39,16 @@ if ($gitProcess.ExitCode -ne 0 -or -not $source) { throw 'Cannot read the commit
 $gitProcess.Dispose()
 New-Item -ItemType Directory -Path $runtime -Force | Out-Null
 if ($task) { Stop-ScheduledTask -TaskName $taskName }
+# Task termination and the Python redirector's child exit are asynchronous.
+# Wait for this publisher's mutex before replacing/restarting the pinned copy.
+$guard = [Threading.Mutex]::new($false, 'Local\AcademyAgentSessions-admin97')
+$acquired = $false
+try {
+    try { $acquired = $guard.WaitOne([TimeSpan]::FromSeconds(15)) }
+    catch [Threading.AbandonedMutexException] { $acquired = $true }
+    if (-not $acquired) { throw 'The existing publisher has not stopped; no replacement started.' }
+    $guard.ReleaseMutex()
+} finally { $guard.Dispose() }
 [IO.File]::WriteAllText($scriptPath, $source, [Text.UTF8Encoding]::new($false))
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $arguments = '"' + $scriptPath + '" --publish --codex-home "C:\Users\heon7\.codex" --claude-home "C:\Users\heon7\.claude" --workspace "C:\academy" --state-path "' + $statePath + '"'
