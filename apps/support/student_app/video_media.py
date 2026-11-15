@@ -153,6 +153,7 @@ def pick_video_urls(
     request=None,
     *,
     expires_at: int | None = None,
+    support_operator_id: int | None = None,
 ) -> tuple[str | None, str | None]:
     """Return the public HLS URL and optional MP4 URL for student playback."""
     from apps.domains.video.views.playback_mixin import VideoPlaybackMixin
@@ -169,6 +170,10 @@ def pick_video_urls(
         expires_at = bounded_ordinary_media_expiry(video)
     user = getattr(request, "user", None) if request else None
     user_id = getattr(user, "id", 0) if user and getattr(user, "is_authenticated", False) else 0
+    if support_operator_id is not None:
+        if not getattr(settings, "CDN_HLS_SIGNING_SECRET", None):
+            return None, None
+        user_id = support_operator_id
 
     try:
         tenant_id: Any = None

@@ -61,17 +61,15 @@ def get_request_student(request):
     if not tenant:
         return None
     role = get_active_membership_role(user, tenant)
-    student = student_for_tenant_user(tenant, user, deleted="active")
-    if student and role == "student":
-        return student
-    has_explicit_child = "HTTP_X_STUDENT_ID" in request.META
+    if role == "student":
+        return student_for_tenant_user(tenant, user, deleted="active")
     if role != "parent":
         return None
     parent = getattr(user, "parent_profile", None)
     if not parent or getattr(parent, "tenant_id", None) != tenant.id:
         raise PermissionDenied("선택한 자녀 정보를 확인할 수 없습니다.")
     active_students = active_students_for_parent(tenant, parent)
-    if not has_explicit_child:
+    if "HTTP_X_STUDENT_ID" not in request.META:
         raise PermissionDenied("자녀를 선택한 뒤 다시 시도해 주세요.")
     header_id = request.META.get("HTTP_X_STUDENT_ID")
     try:

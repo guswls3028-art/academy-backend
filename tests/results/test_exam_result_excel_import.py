@@ -20,6 +20,7 @@ from apps.core.models import Tenant, TenantMembership
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
+from apps.domains.progress.models import ClinicLink
 from apps.domains.results.guards.score_edit_lease_guard import ScoreEditLeaseConflict
 from apps.domains.results.models import (
     ExamAttempt,
@@ -1511,7 +1512,7 @@ class ExamResultExcelImportTests(TestCase):
         self.assertEqual(sheet.cell(8, 13).value, "2")
         self.assertEqual(sheet.cell(8, 14).value, 2)
 
-    def test_analysis_export_combines_briefing_questions_rank_and_answers(self):
+    def test_analysis_export_combines_summary_questions_trends_rank_and_answers(self):
         second_enrollment = self._create_enrollment(
             name="박학생",
             username="excel-student-analysis-2",
@@ -1549,16 +1550,20 @@ class ExamResultExcelImportTests(TestCase):
 
         self.assertEqual(
             workbook.sheetnames,
-            ["수업 브리핑", "문항 우선순위", "학생별 등수", "학생별 답안"],
+            ["시험 요약", "문항 우선순위", "성적 추이", "학생별 등수", "학생별 답안"],
         )
-        briefing = workbook["수업 브리핑"]
-        self.assertIn("수업 분석 리포트", briefing.cell(1, 1).value)
-        self.assertEqual(briefing.cell(7, 1).value, "표본 확인 후 판단")
-        self.assertEqual(briefing.cell(13, 1).value, "2명")
-        self.assertEqual(briefing.cell(13, 3).value, "0명")
+        overview = workbook["시험 요약"]
+        self.assertIn("수업 분석 리포트", overview["A1"].value)
+        self.assertEqual(overview["A7"].value, "2명")
+        self.assertEqual(overview["C7"].value, "0명")
+        self.assertEqual(overview["G9"].value, "1명 · 50%")
+        self.assertEqual(overview["A11"].value, "70점")
+        self.assertEqual(overview["C11"].value, "1/2명")
+        self.assertEqual([overview.cell(row, 2).value for row in range(15, 20)], [0, 1, 0, 0, 1])
+        self.assertEqual(len(overview._charts), 1)
 
         questions = workbook["문항 우선순위"]
-        self.assertEqual(questions.cell(5, 1).value, "우선순위")
+        self.assertEqual(questions.cell(5, 1).value, "순서")
         self.assertEqual(questions.cell(6, 2).value, 2)
         self.assertEqual(questions.cell(6, 3).value, 0.5)
 
@@ -1668,8 +1673,8 @@ class ExamResultExcelImportTests(TestCase):
         exported = build_exam_analysis_export(exam=self.exam, tenant=self.tenant)
         workbook = load_workbook(io.BytesIO(exported), data_only=True)
 
-        briefing = workbook["수업 브리핑"]
-        self.assertEqual(briefing.cell(15, 1).value, "100/100")
+        overview = workbook["시험 요약"]
+        self.assertEqual(overview["A9"].value, "100/100")
         ranked = workbook["학생별 등수"]
         self.assertEqual(ranked.cell(6, 1).value, 1)
         self.assertEqual(ranked.cell(6, 3).value, "김학생")
@@ -1698,9 +1703,9 @@ class ExamResultExcelImportTests(TestCase):
         exported = build_exam_analysis_export(exam=self.exam, tenant=self.tenant)
         workbook = load_workbook(io.BytesIO(exported), data_only=True)
 
-        briefing = workbook["수업 브리핑"]
-        self.assertEqual(briefing.cell(7, 4).value, "합격 기준 설정 필요")
-        self.assertEqual(briefing.cell(15, 7).value, "기준 미설정")
+        overview = workbook["시험 요약"]
+        self.assertEqual(overview["G9"].value, "기준 미설정")
+        self.assertEqual(overview["A11"].value, "40점")
         ranked = workbook["학생별 등수"]
         self.assertEqual(ranked.cell(6, 10).value, "기준 미설정")
 
@@ -1773,23 +1778,19 @@ class ExamResultExcelImportTests(TestCase):
                 ),
             )
         )
-        achievement = {
-            (self.enrollment.id, self.exam.id): {
-                "is_pass": False,
-                "remediated": True,
-                "final_pass": True,
-                "clinic_retake": None,
-                "achievement": "REMEDIATED",
-                "is_provisional": False,
-                "meta_status": None,
-            }
-        }
+        link = ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=self.session,
+            reason="AUTO_FAILED",
+            source_type="exam",
+            source_id=self.exam.id,
+        )
+        link.resolved_at = link.created_at
+        link.resolution_type = ClinicLink.ResolutionType.MANUAL_OVERRIDE
+        link.save(update_fields=["resolved_at", "resolution_type"])
 
-        with patch(
-            "apps.domains.results.services.exam_analysis_export.compute_exam_achievement_bulk",
-            return_value=achievement,
-        ):
-            exported = build_exam_analysis_export(exam=self.exam, tenant=self.tenant)
+        exported = build_exam_analysis_export(exam=self.exam, tenant=self.tenant)
         workbook = load_workbook(io.BytesIO(exported), data_only=True)
 
         ranked = workbook["학생별 등수"]

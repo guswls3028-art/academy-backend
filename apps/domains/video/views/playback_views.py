@@ -21,8 +21,10 @@ from apps.support.student_app.video_media import (
     issue_playback_access_grant,
     pick_video_urls,
 )
+from apps.support.student_app.video_support_preview import issue_support_preview, support_preview_binding
 from academy.application.use_cases.student_video_access_context import (
     StudentVideoAccessError,
+    ensure_student_video_watch_allowed,
     resolve_student_video_access_context,
 )
 
@@ -177,6 +179,8 @@ def _deny(detail: str, *, code=status.HTTP_403_FORBIDDEN):
 
 
 def _playback_token_request_error(payload: dict, request) -> str | None:
+    if payload.get("support_preview") or getattr(request, "student_support_session", None) is not None:
+        return "support_preview_token_mismatch"
     try:
         if int(payload.get("user_id")) != int(request.user.id):
             return "token_user_mismatch"
@@ -212,6 +216,38 @@ def _playback_token_request_error(payload: dict, request) -> str | None:
         return None if int(video_tenant_id) == int(tenant.id) else "token_tenant_mismatch"
     except (TypeError, ValueError):
         return "token_tenant_mismatch"
+
+
+def _resolve_support_preview_playback(request, payload):
+    binding = support_preview_binding(request)
+    if not binding or any(payload.get(key) != value for key, value in binding.items()):
+        raise StudentVideoAccessError("support_preview_token_mismatch")
+    video = Video.objects.filter(
+        pk=payload["video_id"],
+        tenant_id=binding["tenant_id"],
+        deleted_at__isnull=True,
+        status=Video.Status.READY,
+    ).select_related("tenant", "session__lecture__tenant").first()
+    if video is None:
+        raise StudentVideoAccessError("video_not_ready", status_code=404)
+    context = resolve_student_video_access_context(
+        request, video, explicit_enrollment_id=payload.get("enrollment_id"),
+        allow_public_enrollment_write=False,
+    )
+    ensure_student_video_watch_allowed(context)
+    enrollment = context.enrollment
+    if (enrollment.pk if enrollment else None) != payload.get("enrollment_id"):
+        raise StudentVideoAccessError("support_preview_enrollment_changed")
+    if (
+        getattr(context.inactive_entitlement, "pk", None) != payload.get("inactive_entitlement_id")
+        or getattr(context.direct_entitlement, "pk", None) != payload.get("direct_entitlement_id")
+    ):
+        raise StudentVideoAccessError("support_preview_entitlement_changed")
+    if context.is_public_video and enrollment is not None:
+        permission = video_repo.video_access_get(video, enrollment)
+        if getattr(permission, "rule", None) == "blocked":
+            raise StudentVideoAccessError("access_blocked")
+    return video, context
 
 
 def _session_db_status(session_id: str):
@@ -266,6 +302,8 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
 
     def post(self, request):
         request_id = _req_id()
+        if getattr(request, "student_support_session", None) is not None:
+            return _deny("support_preview_bootstrap_required", code=403)
 
         serializer = PlaybackStartRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -423,6 +461,12 @@ class PlaybackRefreshView(APIView):
         ok, payload, err = verify_playback_token(serializer.validated_data["token"])
         if not ok:
             return _deny(err, code=403)
+        if payload.get("support_preview"):
+            try:
+                _resolve_support_preview_playback(request, payload)
+            except StudentVideoAccessError as exc:
+                return _deny(exc.detail, code=exc.status_code)
+            return Response({"ok": True})
         binding_error = _playback_token_request_error(payload, request)
         if binding_error:
             return _deny(binding_error, code=403)
@@ -466,6 +510,8 @@ class PlaybackRenewView(APIView):
         ok, payload, err = verify_playback_token(serializer.validated_data["token"])
         if not ok:
             return _deny(err, code=403)
+        if payload.get("support_preview"):
+            return self._renew_support_preview(request, payload)
         binding_error = _playback_token_request_error(payload, request)
         if binding_error:
             return _deny(binding_error, code=403)
@@ -744,6 +790,42 @@ class PlaybackRenewView(APIView):
         }
         if renewed_play_url:
             response_payload["play_url"] = renewed_play_url
+        return Response(PlaybackRenewResponseSerializer(response_payload).data)
+
+    def _renew_support_preview(self, request, payload):
+        try:
+            video, context = _resolve_support_preview_playback(request, payload)
+        except StudentVideoAccessError as exc:
+            return _deny(exc.detail, code=exc.status_code)
+
+        media_expires_at = None
+        if context.inactive_entitlement is not None:
+            media_expires_at = bounded_inactive_media_expiry(context.inactive_entitlement)
+        elif context.direct_entitlement is not None:
+            media_expires_at = bounded_direct_media_expiry(context.direct_entitlement)
+        token, expires_at = issue_support_preview(
+            request, video, context, media_expires_at=media_expires_at,
+        )
+        response_payload = {
+            "ok": True,
+            "playback_token": token,
+            "playback_session_id": None,
+            "playback_expires_at": expires_at,
+            "access_mode": context.access_mode_value or AccessMode.FREE_REVIEW.value,
+            "monitoring_enabled": False,
+            "policy_version": _policy_version_of(video),
+            "event_protocol_version": 1,
+        }
+        if video.source_type != Video.SourceType.YOUTUBE:
+            hls_url, mp4_url = pick_video_urls(
+                video, request, expires_at=expires_at,
+                support_operator_id=request.student_support_session.operator_id,
+            )
+            if not (hls_url or mp4_url):
+                return _deny("video_unavailable", code=503)
+            response_payload["play_url"] = hls_url or mp4_url
+        elif media_expires_at is not None:
+            return _deny("video_unavailable", code=403)
         return Response(PlaybackRenewResponseSerializer(response_payload).data)
 
 

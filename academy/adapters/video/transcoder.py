@@ -33,7 +33,8 @@ HI_CRF = 18
 HI_MAXRATE = "12000k"
 HI_BUFSIZE = "18000k"
 HI_PROFILE = "high"
-HI_LEVEL = "4.1"
+# The slow preset otherwise uses five references, which pushes 1080p to Level 5.
+HI_REFERENCE_FRAMES = 4
 HI_AUDIO_BITRATE = "128k"
 
 # v1 = 중화질 (720p, 저속 네트워크 fallback)
@@ -42,7 +43,6 @@ MID_CRF = 21
 MID_MAXRATE = "5000k"
 MID_BUFSIZE = "7500k"
 MID_PROFILE = "main"
-MID_LEVEL = "3.1"
 MID_AUDIO_BITRATE = "128k"
 
 ENCODING_PRESET = "slow"
@@ -228,26 +228,23 @@ def build_ffmpeg_command(
         if with_audio:
             cmd += ["-map", "0:a?"]
         cmd += [
-            "-c:v:0", "libx264", "-profile:v", HI_PROFILE, "-level", HI_LEVEL,
-            "-pix_fmt", "yuv420p",
-            "-crf", str(HI_CRF), "-maxrate:v:0", HI_MAXRATE, "-bufsize:v:0", HI_BUFSIZE,
-            "-preset", ENCODING_PRESET, "-g", "48", "-keyint_min", "48", "-sc_threshold", "0",
+            "-profile:v:0", HI_PROFILE, "-refs:v:0", str(HI_REFERENCE_FRAMES),
+            "-crf:v:0", str(HI_CRF),
+            "-maxrate:v:0", HI_MAXRATE, "-bufsize:v:0", HI_BUFSIZE,
         ]
         if with_audio:
-            cmd += ["-c:a:0", "aac", "-ac", "2", "-b:a:0", HI_AUDIO_BITRATE]
+            cmd += ["-b:a:0", HI_AUDIO_BITRATE]
 
         # v1 = 중화질
         cmd += ["-map", "[vmidout]"]
         if with_audio:
             cmd += ["-map", "0:a?"]
         cmd += [
-            "-c:v:1", "libx264", "-profile:v", MID_PROFILE, "-level", MID_LEVEL,
-            "-pix_fmt", "yuv420p",
-            "-crf", str(MID_CRF), "-maxrate:v:1", MID_MAXRATE, "-bufsize:v:1", MID_BUFSIZE,
-            "-preset", ENCODING_PRESET, "-g", "48", "-keyint_min", "48", "-sc_threshold", "0",
+            "-profile:v:1", MID_PROFILE, "-crf:v:1", str(MID_CRF),
+            "-maxrate:v:1", MID_MAXRATE, "-bufsize:v:1", MID_BUFSIZE,
         ]
         if with_audio:
-            cmd += ["-c:a:1", "aac", "-ac", "2", "-b:a:1", MID_AUDIO_BITRATE]
+            cmd += ["-b:a:1", MID_AUDIO_BITRATE]
 
         if with_audio:
             var_map = "v:0,a:0,name:2 v:1,a:1,name:1"
@@ -259,18 +256,25 @@ def build_ffmpeg_command(
         cmd += ["-vf", hi_scale]
         cmd += [
             "-map", "0:v:0",
-            "-c:v", "libx264", "-profile:v", HI_PROFILE, "-level", HI_LEVEL,
-            "-pix_fmt", "yuv420p",
-            "-crf", str(HI_CRF), "-maxrate", HI_MAXRATE, "-bufsize", HI_BUFSIZE,
-            "-preset", ENCODING_PRESET, "-g", "48", "-keyint_min", "48", "-sc_threshold", "0",
+            "-profile:v", HI_PROFILE, "-refs:v", str(HI_REFERENCE_FRAMES),
+            "-crf", str(HI_CRF),
+            "-maxrate", HI_MAXRATE, "-bufsize", HI_BUFSIZE,
         ]
         if with_audio:
-            cmd += ["-map", "0:a?", "-c:a", "aac", "-ac", "2", "-b:a", HI_AUDIO_BITRATE]
+            cmd += ["-map", "0:a?", "-b:a", HI_AUDIO_BITRATE]
 
         if with_audio:
             var_map = "v:0,a:0,name:1"
         else:
             var_map = "v:0,name:1"
+
+    # Let x264 choose a level for the actual frame size, rate and VBV limits.
+    cmd += [
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", ENCODING_PRESET,
+        "-g", "48", "-keyint_min", "48", "-sc_threshold", "0",
+    ]
+    if with_audio:
+        cmd += ["-c:a", "aac", "-ac", "2"]
 
     cmd += [
         "-progress", "pipe:1",

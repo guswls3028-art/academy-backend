@@ -957,10 +957,25 @@ class SetupYmathRealuseScenarioTests(TestCase):
                 strict=True,
             )
         ]
+        owned_activity_ids += [
+            OpsAuditLog.objects.create(
+                actor_user=owned_users[1],
+                actor_username=owned_users[1].username,
+                action=action,
+                target_tenant=tenant,
+                target_user=owned_users[0],
+            ).id
+            for action in (
+                "student_support_view.start",
+                "student_support_view.end",
+                "student_support.action",
+                "video.review_watch.allowance.update",
+            )
+        ]
         foreign_actor_audit = OpsAuditLog.objects.create(
             actor_user=other_user,
             actor_username=other_user.username,
-            action="student_activity.screen_view",
+            action="video.review_watch.allowance.update",
             target_tenant=tenant,
             target_user=owned_users[0],
         )

@@ -112,6 +112,8 @@
 
 ### 3.1 Encoding Strategy: 2-Tier ABR with Aspect Ratio Preservation **[IMPLEMENTED 2026-03-16]**
 
+현재 인코딩 설정과 검증은 [Video Batch 운영 문서](../operations/runbooks/video-batch.md#hls-encoding)를 따른다. 아래 표는 초기 구현 당시 설정이다.
+
 **구현 완료.** CRF 기반 2단계 ABR. 원본 비율 정확 보존.
 
 | Variant | 해상도 | CRF | maxrate | bufsize | Profile | Audio |

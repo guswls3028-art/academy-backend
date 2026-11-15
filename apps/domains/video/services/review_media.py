@@ -8,6 +8,7 @@ from uuid import UUID
 
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
 
 from academy.application.use_cases.student_video_access_context import (
@@ -15,7 +16,7 @@ from academy.application.use_cases.student_video_access_context import (
     resolve_student_video_access_context,
 )
 from apps.domains.video.models import VideoReviewWatchStream, VideoReviewWatchUsage
-from apps.domains.video.services.review_watch import threshold_ms
+from apps.domains.video.services.review_watch import elapsed_ms, review_watch_limit_ms
 
 
 def review_stream_url(video, stream, tenant_code):
@@ -57,7 +58,7 @@ def renew_review_stream(video, student_id, user_id, key, expires_at, tenant_code
     except ValueError:
         return None
     usage = VideoReviewWatchUsage.objects.select_for_update().filter(video=video, student_id=student_id).first()
-    if not usage or (video.review_watch_limit_enabled and usage.used_ms >= threshold_ms(video)):
+    if not usage:
         return None
     stream = VideoReviewWatchStream.objects.filter(
         key=key,
@@ -67,6 +68,9 @@ def renew_review_stream(video, student_id, user_id, key, expires_at, tenant_code
         closed=False,
     ).first()
     if not stream:
+        return None
+    limit = review_watch_limit_ms(video, usage)
+    if limit is not None and usage.used_ms + elapsed_ms(stream, timezone.now()) >= limit:
         return None
     stream.access_until = datetime.fromtimestamp(expires_at, tz=dt_timezone.utc)
     stream.save(update_fields=["access_until"])
