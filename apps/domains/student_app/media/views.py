@@ -975,7 +975,8 @@ class StudentReviewWatchView(APIView):
         form = ReviewSignalSerializer(data=request.data)
         form.is_valid(raise_exception=True)
         data = form.validated_data
-        video = get_object_or_404(get_video_model(), pk=video_id, tenant=request.tenant)
+        videos = get_video_model().objects.select_related("session")
+        video = get_object_or_404(videos, pk=video_id, tenant=request.tenant)
         student = get_request_student(request)
         try:
             context = resolve_student_video_access_context(
