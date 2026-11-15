@@ -83,7 +83,7 @@ class OMRSheetContract:
     @property
     def essay_score_marks(self) -> list[dict[str, Any]]:
         """Teacher score strips printed on this sheet (empty when not enabled)."""
-        marks = self.template_meta.get("essay_score_marks") if isinstance(self.template_meta, dict) else None
+        marks = self.template_meta.get("essay_score_questions")
         return list(marks) if isinstance(marks, list) else []
 
     def worker_shape(self) -> dict[str, Any]:

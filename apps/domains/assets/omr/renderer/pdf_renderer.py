@@ -68,6 +68,7 @@ from apps.domains.assets.omr.services.meta_generator import (
     ANS_X,
     MC_COL_W, MC_COL_GAP, MC_HEADER_H, MC_NUM_W, MC_BUB_PAD,
     BUB_W, BUB_H,
+    ESSAY_GRID_WIDTH,
     ID_DIGITS, ID_VALUES, ID_BUB_GAP, ID_BUB_H, ID_BUB_W,
     ID_DIGIT_W, ID_SEP_W,
     MARGIN_R,
@@ -323,6 +324,7 @@ class OMRPdfRenderer:
         self._left(cv, doc)
         self._answer_area(cv, doc)
         self._essay_score_marks(cv, doc)
+        self._essay_score_grid(cv, doc)
         cv.save()
         return buf.getvalue()
 
@@ -668,14 +670,12 @@ class OMRPdfRenderer:
             question_numbers_by_section[col_x] = doc.resolved_choice_question_numbers[s - 1:e]
         if has_essay:
             ex = frame_x + nmc * (MC_COL_W + MC_COL_GAP)
-            ew = frame_x + frame_w - ex
-            essay_start = doc.mc_count + 1 if doc.essay_count > 0 else 1
-            sections.append(('essay', ex, ew, ew, essay_start, essay_start + ec - 1))
-            question_numbers_by_section[ex] = (
-                doc.display_essay_question_numbers
-                if doc.essay_count > 0
-                else tuple(range(1, ec + 1))
-            )
+            essay_columns = doc.essay_columns
+            ew = (frame_x + frame_w - ex) / len(essay_columns)
+            for index, numbers in enumerate(essay_columns):
+                x = ex + index * ew
+                sections.append(('essay', x, ew, ew, numbers[0], numbers[-1]))
+                question_numbers_by_section[x] = numbers
 
         # ═══ ① 배경 (fill) — 모든 stroke보다 먼저 ═══
         for typ, sx, vw, dw, ss, se in sections:
@@ -721,8 +721,11 @@ class OMRPdfRenderer:
 
         # 번호 세로선 (가는선)
         c.setStrokeColor(C4); c.setLineWidth(S4)
-        for _, sx, *_rest in sections:
+        for typ, sx, vw, *_rest in sections:
             c.line(_mm(sx) + nw, ft - hh, _mm(sx) + nw, fb)
+            if typ == 'essay' and doc.essay_score_questions:
+                score_left = _mm(sx + vw - ESSAY_GRID_WIDTH)
+                c.line(score_left, ft, score_left, fb)
 
         # 헤더 가로 구분선 (전체 폭)
         c.setStrokeColor(C2); c.setLineWidth(S2)
@@ -766,8 +769,12 @@ class OMRPdfRenderer:
             else:
                 c.setFont(_FB, 6); c.setFillColor(CT2)
                 essay_header = doc.render_essay_label
-                c.drawCentredString(sxp + nw + (vwp - nw) / 2,
+                score_width = _mm(ESSAY_GRID_WIDTH) if doc.essay_score_questions else 0
+                c.drawCentredString(sxp + nw + (vwp - nw - score_width) / 2,
                                     ft - hh + _mm(1.5), essay_header)
+                if score_width:
+                    c.drawCentredString(sxp + vwp - score_width / 2,
+                                        ft - hh + _mm(1.5), "배점")
 
             for qi in range(cnt):
                 qn = question_numbers_by_section[sx][qi]
@@ -792,14 +799,7 @@ class OMRPdfRenderer:
             for qi in range(cnt):
                 rc = bt + (qi + 0.5) * rh
                 for bi, bx_mm in enumerate(bxs):
-                    bx = _mm(bx_mm); by = _y(rc)
-                    c.setStrokeColor(C5); c.setLineWidth(S5)
-                    c.setFillColor(C_BUB_FILL)
-                    c.ellipse(bx - _mm(BUB_W / 2), by - _mm(BUB_H / 2),
-                              bx + _mm(BUB_W / 2), by + _mm(BUB_H / 2),
-                              stroke=1, fill=1)
-                    c.setFont(_FB, 6.5); c.setFillColor(CT4)
-                    c.drawCentredString(bx, by - _mm(1.0), str(bi + 1))
+                    self._answer_bubble(c, bx_mm, rc, str(bi + 1))
 
         # ═══ ⑥ 컬럼 로컬 앵커 (MC 컬럼만) — 답안 프레임 외부 상/하단 ═══
         # engine._compute_column_transforms가 검출해 컬럼별 local affine 잔차 보정.
@@ -818,6 +818,31 @@ class OMRPdfRenderer:
             # bottom anchor (프레임 아래)
             c.rect(_mm(ax_cx - half), _y(ax_bot_cy + half),
                    _mm(COL_ANCHOR_SZ), _mm(COL_ANCHOR_SZ), fill=1, stroke=0)
+
+    @staticmethod
+    def _answer_bubble(c, x, y, label):
+        bx, by = _mm(x), _y(y)
+        rx, ry = _mm(BUB_W / 2), _mm(BUB_H / 2)
+        c.setStrokeColor(C5)
+        c.setLineWidth(S5)
+        c.setFillColor(C_BUB_FILL)
+        c.ellipse(bx - rx, by - ry, bx + rx, by + ry, stroke=1, fill=1)
+        c.setFont(_FB, 6.5)
+        c.setFillColor(CT4)
+        c.drawCentredString(bx, by - _mm(1.0), label)
+
+    def _essay_score_grid(self, c, doc):
+        for question in doc.essay_score_questions:
+            for bubble in question["choices"]:
+                center = bubble["center"]
+                self._answer_bubble(c, center["x"], center["y"], bubble["label"])
+
+        c.setFillColor(black)
+        for mark in doc.essay_score_layout_marks:
+            if mark["filled"]:
+                half = mark["size"] / 2
+                c.rect(_mm(mark["x"] - half), _y(mark["y"] + half),
+                       _mm(mark["size"]), _mm(mark["size"]), fill=1, stroke=0)
 
     # ══════════════════════════════════════════
     # 서술형 교사 채점란 — meta_generator.build_essay_score_marks 좌표 그대로
