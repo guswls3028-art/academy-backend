@@ -1,6 +1,17 @@
-from unittest import TestCase
+import json
+import os
+from pathlib import Path
+from shutil import which
+import subprocess
+from tempfile import TemporaryDirectory
+from unittest import TestCase, skipUnless
+from unittest.mock import patch
 
-from academy.adapters.video.transcoder import build_ffmpeg_command
+from academy.adapters.video.transcoder import (
+    _probe_audio_stream_index,
+    build_ffmpeg_command,
+    transcode_to_hls,
+)
 
 
 class TranscoderCommandTests(TestCase):
@@ -12,7 +23,7 @@ class TranscoderCommandTests(TestCase):
             mid_w=1280,
             mid_h=720,
             two_variants=dual,
-            with_audio=audio,
+            audio_stream_index=2 if audio else None,
             ffmpeg_bin="ffmpeg",
             hls_time=4,
         )
@@ -52,3 +63,66 @@ class TranscoderCommandTests(TestCase):
                     self.assertEqual(command[command.index("-profile:v") + 1], "high")
                     self.assertEqual(command[command.index("-crf") + 1], "18")
                     self.assertEqual(command[command.index("-refs:v") + 1], "4")
+
+    def test_maps_only_the_selected_audio_stream_once_per_variant(self):
+        for dual in (False, True):
+            with self.subTest(dual=dual):
+                command = self.command(dual=dual, audio=True)
+                maps = [command[i + 1] for i, arg in enumerate(command) if arg == "-map"]
+                expected = ["[vhiout]", "0:2", "[vmidout]", "0:2"] if dual else ["0:v:0", "0:2"]
+                self.assertEqual(maps, expected)
+
+    def test_probe_prefers_default_audio_and_falls_back_to_first_stream(self):
+        first = {"codec_type": "audio", "index": 2, "disposition": {"default": 0}}
+        second = {"codec_type": "audio", "index": 5, "disposition": {"default": 1}}
+        with patch("academy.adapters.video.transcoder.subprocess.run") as run:
+            for streams, expected in (
+                ([first, second], 5),
+                ([first, {**second, "disposition": {"default": 0}}], 2),
+                ([{"codec_type": "video", "index": 0}], None),
+            ):
+                with self.subTest(expected=expected):
+                    run.return_value.returncode = 0
+                    run.return_value.stdout = json.dumps({"streams": streams})
+                    self.assertEqual(
+                        _probe_audio_stream_index(input_path="source.mp4", ffprobe_bin="ffprobe", timeout=5),
+                        expected,
+                    )
+
+    @skipUnless(which("ffmpeg") and which("ffprobe"), "requires FFmpeg and ffprobe")
+    def test_short_360p_sources_decode_without_upscaling_or_extra_audio(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            for track_count in (0, 1, 2):
+                with self.subTest(track_count=track_count):
+                    source = root / f"source-{track_count}.mp4"
+                    command = ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=12"]
+                    for frequency in (440, 550)[:track_count]:
+                        command += ["-f", "lavfi", "-i", f"sine=frequency={frequency}"]
+                    command += ["-map", "0:v:0"]
+                    for audio_input in range(1, track_count + 1):
+                        command += ["-map", f"{audio_input}:a:0"]
+                    if track_count == 2:
+                        command += ["-disposition:a:0", "0", "-disposition:a:1", "default"]
+                    subprocess.run(
+                        [*command, "-t", "1", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(source)],
+                        check=True, capture_output=True, timeout=30,
+                    )
+                    output = transcode_to_hls(
+                        video_id=1, input_path=str(source), output_root=root / f"hls-{track_count}",
+                        ffmpeg_bin="ffmpeg", ffprobe_bin="ffprobe", hls_time=4, timeout=45, duration_sec=1,
+                    )
+                    variants = [line for line in output.read_text().splitlines() if line and not line.startswith("#")]
+                    self.assertEqual(variants, ["v1/index.m3u8"])
+                    playlist = str(output.parent / variants[0])
+                    probe = subprocess.run(
+                        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,width,height", "-of", "json", playlist],
+                        check=True, capture_output=True, timeout=15,
+                    )
+                    streams = json.loads(probe.stdout)["streams"]
+                    self.assertEqual(streams[0], {"codec_name": "h264", "width": 640, "height": 360})
+                    self.assertEqual([item["codec_name"] for item in streams[1:]], ["aac"] if track_count else [])
+                    subprocess.run(
+                        ["ffmpeg", "-v", "error", "-i", playlist, "-f", "null", os.devnull],
+                        check=True, capture_output=True, timeout=15,
+                    )

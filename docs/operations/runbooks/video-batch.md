@@ -72,8 +72,16 @@ level to the high variant, which could signal a level too low for the encoded
 frames. Existing HLS requires a re-encode through the owning video workflow to
 adopt the corrected bitstream.
 
+A source with multiple audio tracks uses its first default-disposition audio
+stream, or its first audio stream when no default is marked. Every HLS variant
+maps that one input stream as stereo AAC. Silent sources remain video-only.
+The middle variant is emitted only when it is smaller than the high variant
+and at least 100 pixels shorter. For example, a 640×360 source produces a single
+640×360 variant rather than an upscaled fallback.
+
 `tests/video/test_transcoder.py` verifies distinct options, original frame rate
-and automatic level selection. The synthetic FFmpeg checks inspect both
+and automatic level selection, audio selection, and synthetic 360p decoding for
+sources with zero, one, and two audio tracks. The synthetic FFmpeg checks inspect both
 variants' codec parameters and master playlist at 30 and 60 fps, including
 single-variant 1080p60 output.
 
