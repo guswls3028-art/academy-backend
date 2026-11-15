@@ -143,7 +143,9 @@ Ymath는 `Program.feature_flags.assessment_status_display=wrong_completion`을
 과제의 1차 성적·성취 이력과 파일 변경 가능성은 서로 다른 계약이다. 응답의
 `submission_media_locked=true`는 최신 재시도 통과 또는 점수 행 없는 교사 완료로
 과제 파일 POST/DELETE가 잠겼음을 뜻한다. 제출 화면은 이 값을 사용해 대상을 제외하며,
-`passed`는 계속 1차 성적을 나타낸다.
+`passed`는 계속 1차 성적을 나타낸다. 최신 클리닉 회차가 다시 열려 성취 판정이
+`FAIL`이나 `NOT_SUBMITTED`로 돌아가도 파일 변경 잠금이 유효하면 `submission_state`는
+`reviewed`를 유지한다. 홈에서 실행할 수 없는 파일 제출 할 일을 만들지 않기 위해서다.
 
 ## 성장 그래프 구성
 

@@ -520,7 +520,9 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
 
         is_pass_1st = bool(score.passed)
         remediated = key in remediated_homework_keys
-        max_attempt = homework_retake_counts.get((score.enrollment_id, score.homework_id), 1)
+        submission_key = (score.enrollment_id, score.homework_id)
+        media_locked = submission_key in submission_media_lock_keys
+        max_attempt = homework_retake_counts.get(submission_key, 1)
 
         if is_pass_1st:
             achievement = "PASS"
@@ -529,11 +531,10 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         else:
             achievement = "FAIL"
 
-        submitted_revision = submitted_revisions.get((score.enrollment_id, score.homework_id))
+        submitted_revision = submitted_revisions.get(submission_key)
         submission_state = (
             "reviewed"
-            if remediated
-            or (score.enrollment_id, score.homework_id) in submission_media_lock_keys
+            if remediated or media_locked
             else "awaiting_review"
             if submitted_revision and submitted_revision != score.reviewed_submission_revision
             else "needs_submission"
@@ -554,10 +555,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "achievement": achievement,
             "submission_state": submission_state,
             "teacher_resolved": key in teacher_completed_homework_keys,
-            "submission_media_locked": (
-                score.enrollment_id,
-                score.homework_id,
-            ) in submission_media_lock_keys,
+            "submission_media_locked": media_locked,
             "retake_count": max_attempt,
             "grading_mode": score.homework.grading_mode,
             "display_order": score.homework.display_order,
@@ -578,10 +576,9 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
 
         effective_max = _default_homework_max_score(homework)
         assignment_session_title, assignment_lecture_title = _session_titles(session)
-        submitted_revision = submitted_revisions.get((
-            assignment.enrollment_id,
-            assignment.homework_id,
-        ))
+        submission_key = (assignment.enrollment_id, assignment.homework_id)
+        submitted_revision = submitted_revisions.get(submission_key)
+        media_locked = submission_key in submission_media_lock_keys
         awaiting_review = bool(submitted_revision) and (
             key not in unscored_reviewed_revisions
             or submitted_revision != unscored_reviewed_revisions[key]
@@ -590,9 +587,9 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         video_makeup = key in video_makeup_keys and not remediated
         if (
             (int(assignment.enrollment_id), int(assignment.session_id)) in absent_learning_pairs
-            and (assignment.enrollment_id, assignment.homework_id) not in submitted_revisions
-            and (assignment.enrollment_id, assignment.homework_id) not in submission_media_lock_keys
-            and (assignment.enrollment_id, assignment.homework_id) not in homework_retake_counts
+            and submission_key not in submitted_revisions
+            and not media_locked
+            and submission_key not in homework_retake_counts
             and key not in unscored_reviewed_revisions
             and not video_makeup
             and not remediated
@@ -614,14 +611,11 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             ),
             "inspection_status": HomeworkScore.MetaStatus.VIDEO_MAKEUP if video_makeup else None,
             "submission_state": (
-                "reviewed" if remediated else
+                "reviewed" if remediated or media_locked else
                 "awaiting_review" if awaiting_review else "needs_submission"
             ),
             "teacher_resolved": key in teacher_completed_homework_keys,
-            "submission_media_locked": (
-                assignment.enrollment_id,
-                assignment.homework_id,
-            ) in submission_media_lock_keys,
+            "submission_media_locked": media_locked,
             "retake_count": 0,
             "grading_mode": homework.grading_mode,
             "display_order": homework.display_order,

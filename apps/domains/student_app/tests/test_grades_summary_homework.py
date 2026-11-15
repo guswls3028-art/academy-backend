@@ -1054,7 +1054,8 @@ class MyGradesSummaryHomeworkTests(TestCase):
         return homework, score, history
 
     def _assert_homework_cycle_summary(
-        self, *, passed, achievement, teacher_resolved=False, score=92, submission_state=None,
+        self, *, passed, achievement, teacher_resolved=False, score=92,
+        submission_state=None, media_locked=None,
     ):
         before = list(self.ClinicLink.objects.order_by("id").values())
         for user in (self.user, self.cycle_parent_user):
@@ -1074,6 +1075,8 @@ class MyGradesSummaryHomeworkTests(TestCase):
                 self.assertEqual(row["teacher_resolved"], teacher_resolved)
                 if submission_state is not None:
                     self.assertEqual(row["submission_state"], submission_state)
+                if media_locked is not None:
+                    self.assertEqual(row["submission_media_locked"], media_locked)
         self.assertEqual(list(self.ClinicLink.objects.order_by("id").values()), before)
 
     def test_homework_current_cycle_reopens_after_cutline_increase_and_passes_after_decrease(self):
@@ -1198,7 +1201,8 @@ class MyGradesSummaryHomeworkTests(TestCase):
             self.assertEqual(row["achievement"], achievement)
 
         self._assert_homework_cycle_summary(
-            passed=False, achievement="NOT_SUBMITTED", score=None, submission_state="needs_submission",
+            passed=False, achievement="NOT_SUBMITTED", score=None,
+            submission_state="needs_submission", media_locked=False,
         )
         assert_teacher_summary("NOT_SUBMITTED")
 
@@ -1220,7 +1224,8 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertTrue(HomeworkScore.objects.filter(clinic_link=link, attempt_index=2, passed=True).exists())
 
         self._assert_homework_cycle_summary(
-            passed=False, achievement="REMEDIATED", score=None, submission_state="reviewed",
+            passed=False, achievement="REMEDIATED", score=None,
+            submission_state="reviewed", media_locked=True,
         )
         assert_teacher_summary("REMEDIATED")
 
@@ -1229,7 +1234,8 @@ class MyGradesSummaryHomeworkTests(TestCase):
             source_type="homework", source_id=homework.pk, cycle_no=2, reason="AUTO_FAILED",
         )
         self._assert_homework_cycle_summary(
-            passed=False, achievement="NOT_SUBMITTED", score=None, submission_state="needs_submission",
+            passed=False, achievement="NOT_SUBMITTED", score=None,
+            submission_state="reviewed", media_locked=True,
         )
         assert_teacher_summary("NOT_SUBMITTED")
         first_score.refresh_from_db()
