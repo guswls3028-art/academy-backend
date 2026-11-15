@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -320,6 +322,50 @@ class ManualExamGradingTests(TestCase):
         scores = load_initial_exam_scores(exam_ids=[exam.id], enrollment_ids=[self.enrollment.id])
         self.assertEqual(scores[(exam.id, self.enrollment.id)].total_score, 90)
         self.assertEqual(compute_exam_rankings(exam_id=exam.id, tenant=self.tenant)[self.enrollment.id]["cohort_avg"], 90)
+
+    def test_score_preview_reuses_exam_maximum_and_adjustment_across_rows(self):
+        exam, first, second = self._exam(
+            grading_mode=Exam.GradingMode.WRITTEN,
+            manual_method=Exam.ManualGradingMethod.SCORE,
+        )
+        AnswerKey.objects.create(exam=exam, answers={
+            "__score_adjustment__": {"subjective": 5},
+        })
+        enrollments = [self.enrollment]
+        for index in range(2, 16):
+            user = User.objects.create_user(username=f"manual-preview-{index}", tenant=self.tenant)
+            student = Student.objects.create(
+                tenant=self.tenant, user=user, name=f"Preview {index}",
+                ps_number=f"MG-{index:03d}", omr_code=f"{index:08d}",
+            )
+            enrollment = Enrollment.objects.create(
+                tenant=self.tenant, lecture=self.lecture, student=student, status="ACTIVE",
+            )
+            ExamEnrollment.objects.create(exam=exam, enrollment=enrollment)
+            enrollments.append(enrollment)
+        rows = [
+            {
+                "enrollment_id": enrollment.id,
+                "expected_version": None,
+                "attendance": "present",
+                "cells": {str(first.id): {"score": index + 10}, str(second.id): {"score": 50}},
+            }
+            for index, enrollment in enumerate(enrollments)
+        ]
+
+        with CaptureQueriesContext(connection) as single_queries:
+            single = plan_manual_grading(exam=exam, tenant=self.tenant, payload={"rows": rows[:1]})
+        with CaptureQueriesContext(connection) as batch_queries:
+            batch = plan_manual_grading(exam=exam, tenant=self.tenant, payload={"rows": rows})
+
+        self.assertTrue(single.can_apply, single.errors)
+        self.assertTrue(batch.can_apply, batch.errors)
+        self.assertEqual(single.as_payload()["rows"], batch.as_payload()["rows"][:1])
+        self.assertEqual([(row.total_score, row.max_score) for row in batch.rows], [
+            (65 + index, 105) for index in range(15)
+        ])
+        self.assertEqual(len(single_queries), len(batch_queries))
+        self.assertFalse(Result.objects.filter(target_id=exam.id).exists())
 
     def test_staff_score_preview_publish_reload_and_invalid_score_recovery(self):
         exam, first, second = self._exam(
