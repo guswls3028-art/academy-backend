@@ -336,6 +336,56 @@ class AchievementContractTest(TestCase, ClinicTestMixin):
         self.assertIsNone(history[0]["session_id"])
         self.assertEqual(history[0]["achievement"], "FAIL")
 
+    def test_exam_detail_uses_the_same_latest_enrollment_as_grade_history(self):
+        from apps.support.results.student_grade_history import build_student_exam_history
+
+        exam = self._make_exam("exam_shared_between_lectures")
+        self._make_attempt_and_result(exam, score=30)
+        lecture = self.make_lecture(self.tenant, title="Second lecture")
+        session = self.make_lecture_session(lecture)
+        enrollment = self.make_enrollment(self.tenant, self.student, lecture)
+        exam.sessions.add(session)
+        ExamEnrollment.objects.bulk_create([
+            ExamEnrollment(exam=exam, enrollment=self.enrollment),
+            ExamEnrollment(exam=exam, enrollment=enrollment),
+        ])
+        latest_result = Result.objects.create(
+            target_type="exam", target_id=exam.id, enrollment=enrollment,
+            total_score=40, max_score=100,
+        )
+        ClinicLink.objects.create(
+            tenant=self.tenant, enrollment=enrollment, session=session,
+            reason="AUTO_FAILED", source_type="exam", source_id=exam.id,
+            resolution_type=ClinicLink.ResolutionType.EXAM_PASS, resolved_at=latest_result.created_at,
+        )
+        self.assertEqual(self._view_achievement_for(exam.id), "REMEDIATED")
+        history, _, _ = build_student_exam_history(
+            tenant=self.tenant, enrollment_ids=[self.enrollment.id, enrollment.id],
+            published_results_only=False,
+        )
+        self.assertEqual([(row["enrollment_id"], row["achievement"]) for row in history], [
+            (enrollment.id, "REMEDIATED"),
+        ])
+
+        parent_user = self.make_user("contract_exam_parent")
+        parent = django_apps.get_model("parents", "Parent").objects.create(
+            tenant=self.tenant, user=parent_user, name="Parent", phone="01088882222",
+        )
+        self.student.parent = parent
+        self.student.save(update_fields=["parent"])
+        for role, user in (("student", self.student.user), ("parent", parent_user)):
+            with self.subTest(role=role):
+                TenantMembership.ensure_active(tenant=self.tenant, user=user, role=role)
+                request = APIRequestFactory().get(
+                    f"/student/results/me/exams/{exam.id}/",
+                    **({"HTTP_X_STUDENT_ID": str(self.student.id)} if role == "parent" else {}),
+                )
+                request.user = user
+                request.tenant = self.tenant
+                detail = get_my_exam_result_data(request, exam.id, tenant=self.tenant)
+                self.assertEqual(detail["total_score"], 40)
+                self.assertEqual(detail["achievement"], "REMEDIATED")
+
     def test_fail_unresolved(self):
         exam = self._make_exam("fail", pass_score=60.0)
         _, result = self._make_attempt_and_result(exam, score=30)

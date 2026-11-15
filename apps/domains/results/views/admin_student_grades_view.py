@@ -5,18 +5,17 @@ GET /results/admin/student-grades/?student_id=<int>
 Admin/Teacher용 학생 개인 성적 요약과 전체 기간 시험 추이.
 시험 결과가 추가될 때마다 별도 집계 작업 없이 회차가 자동 누적된다.
 """
-from django.db.models.functions import Coalesce
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
-from apps.domains.results.models import Result
 from apps.domains.results.services.omr_subjective_completion import (
     pending_omr_result_ids_for_ids,
 )
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 from apps.domains.results.utils.ranking import compute_exam_rankings_batch
+from apps.domains.results.utils.result_queries import exam_history_results
 from apps.domains.results.utils.initial_exam_score import (
     load_initial_exam_scores,
     project_initial_exam_score,
@@ -80,12 +79,7 @@ class AdminStudentGradesView(APIView):
 
         # ── 시험 결과 ──
         results = list(
-            Result.objects.filter(
-                enrollment_id__in=enrollment_ids,
-                target_type="exam",
-            )
-            .annotate(recorded_at=Coalesce("submitted_at", "created_at"))
-            .order_by("-recorded_at", "-id")
+            exam_history_results(enrollment_ids=enrollment_ids)
             .values(
                 "id",
                 "target_id",

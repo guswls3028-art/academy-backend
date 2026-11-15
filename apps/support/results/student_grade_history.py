@@ -7,9 +7,8 @@ from statistics import fmean
 from typing import Any
 
 from django.db.models import Count
-from django.db.models.functions import Coalesce
 
-from apps.domains.results.models import ExamAttempt, Result
+from apps.domains.results.models import ExamAttempt
 from apps.domains.results.services.omr_subjective_completion import (
     pending_omr_result_ids_for_ids,
 )
@@ -18,6 +17,7 @@ from apps.domains.results.utils.initial_exam_score import (
     load_initial_exam_scores,
     project_initial_exam_score,
 )
+from apps.domains.results.utils.result_queries import exam_history_results
 from apps.support.results.admin_student_grades_dependencies import (
     enrollment_lecture_metadata_by_id,
     exam_metadata_by_id,
@@ -142,12 +142,7 @@ def build_student_exam_history(
         return [], [], empty_exam_summary()
 
     results = list(
-        Result.objects.filter(
-            enrollment_id__in=enrollment_ids,
-            target_type="exam",
-        )
-        .annotate(recorded_at=Coalesce("submitted_at", "created_at"))
-        .order_by("-recorded_at", "-id")
+        exam_history_results(enrollment_ids=enrollment_ids)
         .values(
             "id",
             "target_id",
