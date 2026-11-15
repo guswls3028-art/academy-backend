@@ -30,9 +30,9 @@ from apps.support.results.admin_student_grades_dependencies import (
     homework_retake_counts_by_key,
     homework_scores_for_grades,
     primary_session_metadata_by_exam_and_lecture,
-    resolved_homework_link_types,
     submitted_homework_keys_for_grades,
 )
+from apps.support.results.homework_clinic_status import homework_remediation_keys
 from apps.support.results.student_grade_history import (
     build_exam_progression as _build_exam_progression,
     empty_exam_summary as _empty_exam_summary,
@@ -337,13 +337,9 @@ class AdminStudentGradesView(APIView):
                 enrollment_ids=enrollment_ids,
                 homework_ids=hw_ids,
             )
-        resolved_hw_links = {}
-        if hw_ids and enrollment_ids:
-            resolved_hw_links = resolved_homework_link_types(
-                tenant=tenant,
-                enrollment_ids=enrollment_ids,
-                homework_ids=hw_ids,
-            )
+        remediated_homework_keys, _ = homework_remediation_keys(
+            tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=hw_ids,
+        )
 
         hw_retake_counts = {}
         if hw_ids and enrollment_ids:
@@ -395,17 +391,16 @@ class AdminStudentGradesView(APIView):
             ):
                 meta_status = "NOT_SUBMITTED"
             is_pass_1st = bool(hs.passed) if hs is not None else None
-            resolution = resolved_hw_links.get((enrollment_id, homework.id))
             max_attempt = hw_retake_counts.get((enrollment_id, homework.id), 0)
 
-            if meta_status == "NOT_SUBMITTED":
+            if score is not None and is_pass_1st and meta_status != "NOT_SUBMITTED":
+                achievement = "PASS"
+            elif (homework.id, session_id_hw, enrollment_id) in remediated_homework_keys:
+                achievement = "REMEDIATED"
+            elif meta_status == "NOT_SUBMITTED":
                 achievement = "NOT_SUBMITTED"
             elif hs is None or score is None:
                 achievement = None
-            elif is_pass_1st:
-                achievement = "PASS"
-            elif resolution in ("EXAM_PASS", "HOMEWORK_PASS", "MANUAL_OVERRIDE"):
-                achievement = "REMEDIATED"
             else:
                 achievement = "FAIL"
 
