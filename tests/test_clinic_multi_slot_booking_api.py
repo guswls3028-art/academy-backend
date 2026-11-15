@@ -1,15 +1,19 @@
 import datetime
 import importlib
 import threading
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.apps import apps as django_apps
-from django.db import close_old_connections, connection
+from django.db import close_old_connections, connection, transaction
 from django.test import TestCase, TransactionTestCase
+from django.test.utils import CaptureQueriesContext
+from rest_framework.renderers import JSONRenderer
 from rest_framework.test import APITestCase
 
 from apps.core.models import Tenant
 from apps.domains.clinic.models import Session, SessionParticipant
+from apps.domains.clinic.serializers import ClinicSessionParticipantSerializer
 from apps.domains.clinic.services import create_participant
 from apps.domains.clinic.tests import ClinicAPITestMixin
 from apps.domains.students.models import Student
@@ -85,6 +89,54 @@ class ClinicMultiSlotBookingAPITest(APITestCase, ClinicAPITestMixin):
             {participant.student_request_memo for participant in participants},
             {"17시부터 19시까지 참여"},
         )
+
+    def test_bulk_response_batches_active_plan_queries_and_preserves_participants(self):
+        admin = self.data["admin_user"]
+        self.client.force_authenticate(user=admin)
+        sessions = [
+            self.make_clinic_session(
+                self.tenant, date=self.tomorrow, start_time=datetime.time(10 + index, 0),
+            )
+            for index in range(6)
+        ]
+        self._allow_multiple(*sessions)
+        enrollments = self.data["enrollments"]
+        plan_table = django_apps.get_model("clinic", "SessionParticipantPlanItem")._meta.db_table
+        target_table = Session.target_lectures.through._meta.db_table
+
+        for session_count, enrollment_count in ((1, 1), (6, 2)):
+            with self.subTest(rows=session_count * enrollment_count), transaction.atomic():
+                with CaptureQueriesContext(connection) as capture:
+                    response = self.client.post(
+                        "/api/v1/clinic/participants/bulk-create/",
+                        {
+                            "session_ids": [session.id for session in sessions[:session_count]],
+                            "enrollment_ids": [enrollment.id for enrollment in enrollments[:enrollment_count]],
+                        },
+                        format="json",
+                        **self._headers(),
+                    )
+                self.assertEqual(response.status_code, 201, response.data)
+                self.assertEqual(response.data["count"], session_count * enrollment_count)
+                participant_ids = [row["id"] for row in response.data["participants"]]
+                persisted = SessionParticipant.objects.filter(tenant=self.tenant).in_bulk(participant_ids)
+                reference = ClinicSessionParticipantSerializer(
+                    [persisted[pk] for pk in participant_ids],
+                    many=True,
+                    context={"request": SimpleNamespace(tenant=self.tenant, user=admin)},
+                ).data
+                self.assertEqual(response.content, JSONRenderer().render({
+                    "count": len(reference), "participants": reference,
+                }))
+                plan_queries = [
+                    query["sql"] for query in capture if f'FROM "{plan_table}"' in query["sql"]
+                ]
+                target_queries = [
+                    query["sql"] for query in capture if f'JOIN "{target_table}"' in query["sql"]
+                ]
+                self.assertEqual(len(plan_queries), 1)
+                self.assertLessEqual(len(target_queries), 2)
+                transaction.set_rollback(True)
 
     def test_student_bulk_booking_rolls_back_every_slot_when_one_is_full(self):
         self._allow_multiple(self.first_session, self.second_session)
