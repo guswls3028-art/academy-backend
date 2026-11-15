@@ -186,6 +186,7 @@ class ClinicTargetService:
                 section_id=int(section_id),
             )
 
+        current_target_enrollment_ids = set()
         links_list = list(links)
         if links_list:
             links_list = filter_tenant_consistent_source_links(
@@ -197,6 +198,9 @@ class ClinicTargetService:
                 (link for link in links_list if link.resolved_at is None),
                 tenant=tenant,
             )
+            # The global highlight includes a valid unresolved target even if
+            # actual absence hides that particular row from this listing.
+            current_target_enrollment_ids = {int(link.enrollment_id) for link in current_links}
             absent_pairs = actual_absent_learning_todo_pairs(
                 tenant=tenant,
                 enrollment_session_pairs={
@@ -305,6 +309,7 @@ class ClinicTargetService:
         highlight_map = compute_clinic_highlight_map(
             tenant=tenant,
             enrollment_ids=set(all_enrollment_ids),
+            current_target_enrollment_ids=None if section_id else current_target_enrollment_ids,
         ) if tenant else {}
 
         out: List[Dict[str, Any]] = []

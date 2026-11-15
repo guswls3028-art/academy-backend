@@ -1,4 +1,5 @@
 """Clinic target projection stays bounded without changing score/source semantics."""
+from datetime import time, timedelta
 from unittest.mock import patch
 
 from django.db import connection
@@ -6,15 +7,18 @@ from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
+from apps.domains.attendance.models import Attendance
 from apps.domains.clinic.tests import ClinicTestMixin
 from apps.domains.enrollment.models import SessionEnrollment
 from apps.domains.exams.models import Exam, ExamLecturePolicy
 from apps.domains.homework.models import HomeworkAssignment, HomeworkPolicy
 from apps.domains.homework_results.models import Homework, HomeworkScore
+from apps.domains.lectures.models import Section, SectionAssignment
 from apps.domains.progress.models import ClinicLink
 from apps.domains.results.models import ExamAttempt, Result, ResultFact
 from apps.domains.results.services.clinic_target_service import ClinicTargetService
 from apps.domains.results.utils.clinic import filter_live_source_links
+from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
 
 
 class ClinicTargetBulkReadTests(TestCase, ClinicTestMixin):
@@ -53,6 +57,16 @@ class ClinicTargetBulkReadTests(TestCase, ClinicTestMixin):
     def targets(self, **kwargs):
         return ClinicTargetService.list_admin_targets(tenant=self.tenant, **kwargs)
 
+    def targets_with_fresh_highlight(self, **kwargs):
+        def read_highlight(*, current_target_enrollment_ids, **context):
+            return compute_clinic_highlight_map(**context)
+
+        with patch(
+            "apps.domains.results.utils.clinic_highlight.compute_clinic_highlight_map",
+            side_effect=read_highlight,
+        ):
+            return self.targets(**kwargs)
+
     def test_readiness_checks_only_results_for_the_linked_exam_and_enrollment(self):
         other_student = self.make_student(self.tenant, "2")
         other_enrollment = self.make_enrollment(self.tenant, other_student, self.data["lecture"])
@@ -81,7 +95,10 @@ class ClinicTargetBulkReadTests(TestCase, ClinicTestMixin):
     def test_700_mixed_targets_do_not_add_queries_per_source_or_student(self):
         self.add_sources(0)
         with CaptureQueriesContext(connection) as small:
-            self.assertEqual(len(self.targets()), 2)
+            small_rows = self.targets()
+        with CaptureQueriesContext(connection) as small_before:
+            self.assertEqual(small_rows, self.targets_with_fresh_highlight())
+        self.assertEqual(len(small_rows), 2)
         enrollment = self.enrollment
         for index in range(1, 350):
             if index % 10 == 0:
@@ -91,8 +108,13 @@ class ClinicTargetBulkReadTests(TestCase, ClinicTestMixin):
         before_links = list(ClinicLink.objects.values())
         with CaptureQueriesContext(connection) as large:
             rows = self.targets()
+        with CaptureQueriesContext(connection) as large_before:
+            self.assertEqual(rows, self.targets_with_fresh_highlight())
         self.assertEqual(len(rows), 700)
-        print(f"Clinic targets: 2 rows={len(small)} queries; 700 rows={len(large)} queries")
+        print(f"Clinic targets: 2 rows={len(small_before)}->{len(small)} queries; "
+              f"700 rows={len(large_before)}->{len(large)} queries")
+        self.assertGreaterEqual(len(small_before) - len(small), 6)
+        self.assertEqual(len(small_before) - len(small), len(large_before) - len(large))
         self.assertEqual(len(large), len(small), f"2 rows={len(small)} queries; 700 rows={len(large)} queries")
         self.assertLessEqual(len(large), 45)
         self.assertEqual(list(ClinicLink.objects.values()), before_links)
@@ -101,6 +123,57 @@ class ClinicTargetBulkReadTests(TestCase, ClinicTestMixin):
             if row["source_type"] == "homework":
                 self.assertEqual(row["homework_score"], 5)
                 self.assertEqual(row["homework_cutline"], 15 if row["homework_cutline_mode"] == "COUNT" else 12)
+
+    def test_highlights_preserve_absence_resolved_and_cross_course_booking(self):
+        session, _, _, exam_link = self.add_sources(0)
+        session.date = timezone.localdate() - timedelta(days=2)
+        session.save(update_fields=["date", "updated_at"])
+        section = Section.objects.create(
+            tenant=self.tenant, lecture=self.data["lecture"], label="A", day_of_week=0,
+            start_time=time(17),
+        )
+        SectionAssignment.objects.create(
+            tenant=self.tenant, enrollment=self.enrollment, class_section=section,
+        )
+        exam_link.resolved_at = timezone.now()
+        exam_link.save(update_fields=["resolved_at"])
+        Attendance.objects.create(
+            tenant=self.tenant, session=session, enrollment=self.enrollment, status="ABSENT",
+        )
+
+        def assert_highlight(expected):
+            self.assertEqual(self.targets(), [])
+            unfiltered = self.targets(include_resolved=True)
+            self.assertEqual(unfiltered, self.targets_with_fresh_highlight(include_resolved=True))
+            self.assertEqual(unfiltered, self.targets(include_resolved=True, section_id=section.id))
+            row, = unfiltered
+            self.assertEqual(row["clinic_link_id"], exam_link.id)
+            self.assertEqual(row["name_highlight_clinic_target"], expected)
+
+        # The absent unresolved homework is hidden as a row, but still contributes
+        # to the enrollment's highlight on the resolved exam row.
+        assert_highlight(True)
+        second_course = self.make_lecture(self.tenant, title="English")
+        second_enrollment = self.make_enrollment(
+            self.tenant, self.enrollment.student, second_course,
+        )
+        booking = self.make_clinic_session(
+            self.tenant, date=timezone.localdate() + timedelta(days=7),
+        )
+        participant = self.make_participant(
+            self.tenant, booking, self.enrollment.student, enrollment=second_enrollment,
+        )
+        assert_highlight(False)
+        participant.delete()
+        assert_highlight(True)
+
+        ClinicLink.objects.filter(tenant=self.tenant, session=session, resolved_at__isnull=True).update(
+            resolved_at=timezone.now(),
+        )
+        resolved_only = self.targets(include_resolved=True)
+        self.assertEqual(resolved_only, self.targets_with_fresh_highlight(include_resolved=True))
+        self.assertEqual(len(resolved_only), 2)
+        self.assertTrue(all(not row["name_highlight_clinic_target"] for row in resolved_only))
 
     def test_confidence_uses_initial_attempt_and_latest_200_non_null_facts(self):
         _, exam, attempt, link = self.add_sources(0)
