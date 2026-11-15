@@ -97,6 +97,130 @@ def _result(number: int, status: str, **extra: Any) -> Dict[str, Any]:
     }
 
 
+ADDITIVE_SCORE_READ_VERSION = "essay_score_marks.v2"
+
+
+def _center_sample(
+    gray: np.ndarray, scale: PageScale, x: float, y: float, rx: float, ry: float,
+    *, ellipse: bool = False, exclude_glyph: bool = False,
+) -> np.ndarray:
+    cx, cy = int(round(x * scale.sx)), int(round(y * scale.sy))
+    dx, dy = int(rx * scale.sx), int(ry * scale.sy)
+    if min(dx, dy) < 2 or cx - dx < 0 or cy - dy < 0 or cx + dx >= scale.img_w or cy + dy >= scale.img_h:
+        raise ValueError("invalid essay score sample")
+    sample = gray[cy - dy:cy + dy + 1, cx - dx:cx + dx + 1]
+    if ellipse:
+        yy, xx = np.ogrid[-dy:dy + 1, -dx:dx + 1]
+        mask = (xx / dx) ** 2 + (yy / dy) ** 2 <= 1
+        if exclude_glyph:
+            mask &= np.abs(xx) >= (0.66 * dx)
+        sample = sample[mask]
+    return sample
+
+
+def _layout_paper_level(gray: np.ndarray, scale: PageScale, marks: list) -> float | None:
+    """Every digest pair must match both its black square and its white position."""
+    if len(marks) < 24 or len(marks) % 2:
+        return None
+    levels: dict[float, list[tuple[bool, float]]] = {}
+    try:
+        for mark in marks:
+            x, y, size = float(mark["x"]), float(mark["y"]), float(mark["size"])
+            filled = mark["filled"]
+            if not isinstance(filled, bool):
+                return None
+            sample = _center_sample(gray, scale, x, y, size * 0.28, size * 0.28)
+            # Require dark coverage, not a single stray dark pixel.
+            level = float(np.percentile(sample, 75 if filled else 25))
+            levels.setdefault(x, []).append((filled, level))
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    whites = []
+    for pair in levels.values():
+        if len(pair) != 2 or pair[0][0] == pair[1][0]:
+            return None
+        (_, white_level), (_, black_level) = sorted(pair)
+        if white_level < 145 or white_level - black_level < 65:
+            return None
+        whites.append(white_level)
+    return float(np.median(whites))
+
+
+def detect_additive_essay_score_marks(
+    *, meta: Dict[str, Any], prepared_images: PreparedOmrImages,
+    alignment_confirmed: bool = True,
+) -> List[Dict[str, Any]]:
+    """Read independently filled values; uncertain evidence invalidates the row."""
+    questions, marks = meta.get("essay_score_questions"), meta.get("essay_score_layout_marks")
+    if not isinstance(questions, list) or not questions:
+        return []
+    scale, gray_raw, _, _ = prepared_images
+    paper_level = (
+        _layout_paper_level(gray_raw, scale, marks) if alignment_confirmed and isinstance(marks, list) else None
+    )
+
+    results = []
+    seen = set()
+    for question in questions:
+        if not isinstance(question, dict):
+            return []
+        number = question.get("question_number")
+        if not isinstance(number, int) or isinstance(number, bool) or number <= 0 or number in seen:
+            return []
+        seen.add(number)
+        result = _result(number, STATUS_NO_SCORE_AREA, version=ADDITIVE_SCORE_READ_VERSION)
+        if paper_level is None:
+            results.append(result)
+            continue
+        try:
+            choices = question["choices"]
+            values = [choice["label"] for choice in choices]
+            if sorted(values) != list("012345678"):
+                raise ValueError("invalid essay score values")
+            marked = []
+            uncertain = False
+            fill_levels = []
+            for value, choice in zip(values, choices):
+                x, y = float(choice["center"]["x"]), float(choice["center"]["y"])
+                rx, ry = float(choice["radius_x"]), float(choice["radius_y"])
+                # Judge the interior only: the printed rim is not a score mark.
+                core = _center_sample(gray_raw, scale, x, y, rx * 0.66, ry * 0.66, ellipse=True)
+                # Printed digits are grey and centered. Judge additional ink away from
+                # the glyph so the empty paper does not look faintly marked.
+                flanks = _center_sample(
+                    gray_raw, scale, x, y, rx * 0.66, ry * 0.66, ellipse=True, exclude_glyph=True,
+                )
+                support = _center_sample(gray_raw, scale, x, y, rx * 1.1, ry * 1.1)
+                local_paper = float(np.percentile(support, 90))
+                if local_paper < paper_level - 45:
+                    uncertain = True
+                    break
+                strong = float(np.mean(core < local_paper - 44))
+                flank_strong = float(np.mean(flanks < local_paper - 44))
+                flank_weak = float(np.mean(flanks < local_paper - 18))
+                if strong >= 0.54 and flank_strong >= 0.40:
+                    marked.append(int(value))
+                    fill_levels.append(strong)
+                elif strong >= 0.42 or flank_strong >= 0.15 or flank_weak >= 0.24:
+                    uncertain = True
+            if uncertain or (0 in marked and len(marked) > 1):
+                results.append({**result, "status": STATUS_AMBIGUOUS})
+                continue
+            if not marked:
+                results.append({**result, "status": STATUS_BLANK})
+                continue
+            results.append({
+                **result,
+                "status": STATUS_OK,
+                "score": sum(marked),
+                "confidence": round(min(fill_levels), 4),
+                "marked_values": sorted(marked),
+            })
+        except (KeyError, TypeError, ValueError, OverflowError):
+            results.append({**result, "status": STATUS_ERROR})
+    return results
+
+
 def _anchor_offsets(
     *, mark: Dict[str, Any], scale: PageScale, gray: np.ndarray, read_config: EssayScoreReadConfig,
 ) -> Optional[Tuple[Tuple[float, float, float], Tuple[float, float, float]]]:

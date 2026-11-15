@@ -131,11 +131,13 @@ class OmrEssayScoreProposalTests(TestCase):
             payload={"sheet_id": self.sheet.id},
         )
         self.assertNotIn("essay_score_marks", build_omr_payload(scan)["template_meta"])
+        self.assertNotIn("essay_score_questions", build_omr_payload(scan)["template_meta"])
 
         response = self._api("patch", "essay-score-marks/", {"enabled": True})
         self.assertEqual(response.status_code, 200, response.content)
         self.assertTrue(response.data["enabled"])
         self.assertTrue(response.data["printed"])
+        self.assertEqual(response.data["max_score"], 36)
         self.sheet.refresh_from_db()
         self.assertTrue(self.sheet.essay_score_marks)
 
@@ -149,7 +151,8 @@ class OmrEssayScoreProposalTests(TestCase):
         # shape would not match the scanning contract, so it prints without strips.
         same = self._api("post", "preview/", {"mc_count": 1, "essay_count": 1})
         self.assertEqual(same.status_code, 200)
-        self.assertIn('class="es-a"', same.content.decode("utf-8"))
+        self.assertIn('data-essay-score-question="2"', same.content.decode("utf-8"))
+        self.assertEqual(same.content.count(b'class="bu essay-score-bubble"'), 9)
         changed = self._api("post", "preview/", {"mc_count": 1, "essay_count": 2})
         self.assertEqual(changed.status_code, 200)
         self.assertNotIn('class="es-a"', changed.content.decode("utf-8"))
@@ -160,6 +163,10 @@ class OmrEssayScoreProposalTests(TestCase):
         payload = build_omr_payload(scan)
         printed_marks = payload["template_meta"]["essay_score_marks"]
         self.assertEqual([mark["question_number"] for mark in printed_marks], [2])
+        grid = payload["template_meta"]["essay_score_questions"]
+        self.assertEqual(grid, contract.essay_score_marks)
+        self.assertEqual([bubble["label"] for bubble in grid[0]["choices"]], list("012345678"))
+        self.assertEqual(payload["omr_contract"]["auto_detect_count"], 1)
 
         response = self._api("patch", "essay-score-marks/", {"enabled": False})
         self.assertEqual(response.status_code, 200, response.content)
@@ -173,6 +180,11 @@ class OmrEssayScoreProposalTests(TestCase):
         off_payload = build_omr_payload(scan)
         self.assertEqual(off_payload["omr"]["contract_fingerprint"], before)
         self.assertEqual(off_payload["template_meta"]["essay_score_marks"], printed_marks)
+        self.assertEqual(off_payload["template_meta"]["essay_score_questions"], grid)
+        self.assertEqual(
+            off_payload["template_meta"]["essay_score_layout_marks"],
+            payload["template_meta"]["essay_score_layout_marks"],
+        )
 
         self.essay.score = 8
         self.essay.save(update_fields=["score"])
@@ -181,6 +193,7 @@ class OmrEssayScoreProposalTests(TestCase):
         self.exam.manual_grading_method = Exam.ManualGradingMethod.CORRECTNESS
         self.exam.save(update_fields=["manual_grading_method"])
         self.assertNotIn("essay_score_marks", build_omr_payload(scan)["template_meta"])
+        self.assertNotIn("essay_score_questions", build_omr_payload(scan)["template_meta"])
         self.exam.manual_grading_method = Exam.ManualGradingMethod.SCORE
         self.exam.save(update_fields=["manual_grading_method"])
         self.assertEqual(build_omr_payload(scan)["template_meta"]["essay_score_marks"], printed_marks)
@@ -241,11 +254,11 @@ class OmrEssayScoreProposalTests(TestCase):
         self.assertIn("essay_score_marks", build_omr_payload(scan)["template_meta"])
 
     def test_enabling_an_unfit_sheet_is_rejected_with_reason(self):
-        self.essay.score = 60
+        self.essay.score = 0
         self.essay.save(update_fields=["score"])
         response = self._api("patch", "essay-score-marks/", {"enabled": True})
         self.assertEqual(response.status_code, 400, response.content)
-        self.assertIn("49.9점", str(response.data["enabled"]))
+        self.assertIn("배점이 없는", str(response.data["enabled"]))
         self.sheet.refresh_from_db()
         self.assertFalse(self.sheet.essay_score_marks)
         missing = self._api("patch", "essay-score-marks/", {})

@@ -504,19 +504,36 @@ def handle_ai_job(job: AIJob) -> AIResult:
             answers = [a.to_dict() for a in answer_results]
             # Teacher score strips (Beta) are read only when the contract printed them.
             essay_scores: list = []
-            if meta.get("essay_score_marks"):
-                from academy.adapters.ai.omr.essay_scores import detect_essay_score_marks
+            try:
+                if "essay_score_questions" in meta or "essay_score_layout_marks" in meta:
+                    from academy.adapters.ai.omr.essay_scores import detect_additive_essay_score_marks
 
-                try:
-                    essay_scores = detect_essay_score_marks(
-                        image_bgr=aligned,
+                    essay_scores = detect_additive_essay_score_marks(
                         meta=meta,
-                        config=answer_config,
                         prepared_images=prepared_images,
+                        alignment_confirmed=align_result.success and align_result.method != "rotation_only",
                     )
-                except Exception:  # noqa: BLE001 — never block objective grading
-                    logger.exception("OMR essay score read failed job=%s", job.id)
-                    essay_scores = []
+                if meta.get("essay_score_marks"):
+                    from academy.adapters.ai.omr.essay_scores import (
+                        STATUS_ERROR,
+                        STATUS_NO_SCORE_AREA,
+                        detect_essay_score_marks,
+                    )
+
+                    if not essay_scores or all(row["status"] == STATUS_NO_SCORE_AREA for row in essay_scores):
+                        legacy_scores = detect_essay_score_marks(
+                            image_bgr=aligned,
+                            meta=meta,
+                            config=answer_config,
+                            prepared_images=prepared_images,
+                        )
+                        if not essay_scores or any(
+                            row["status"] not in (STATUS_ERROR, STATUS_NO_SCORE_AREA) for row in legacy_scores
+                        ):
+                            essay_scores = legacy_scores
+            except Exception:  # noqa: BLE001 — never block objective grading
+                logger.exception("OMR essay score read failed job=%s", job.id)
+                essay_scores = []
             _record_progress(job.id, "detecting_answers", 95, step_index=5, step_total=6, step_name_display="답안감지", step_percent=100, tenant_id=tenant_id)
 
             _record_progress(job.id, "done", 100, step_index=6, step_total=6, step_name_display="완료", step_percent=100, tenant_id=tenant_id)

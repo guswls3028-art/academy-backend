@@ -10,7 +10,11 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any, Optional
 
-from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS, validate_layout
+from apps.domains.assets.omr.services.meta_generator import (
+    MAX_MC_QUESTIONS,
+    essay_score_column_ranges,
+    validate_layout,
+)
 
 
 DECORATIVE_ESSAY_COUNT = 5
@@ -39,6 +43,8 @@ class OMRDocument:
     # Teacher score strips from the exam's OMR contract (meta_generator SSOT).
     # Only exam-bound documents whose shape equals the contract carry them.
     essay_score_marks: tuple[dict[str, Any], ...] = ()
+    essay_score_questions: tuple[dict[str, Any], ...] = ()
+    essay_score_layout_marks: tuple[dict[str, Any], ...] = ()
 
     # -- 테넌트 브랜딩 --
     logo_url: Optional[str] = None  # presigned URL (HTML preview용)
@@ -98,9 +104,23 @@ class OMRDocument:
 
     @property
     def essay_instruction(self) -> str:
+        if self.essay_score_questions:
+            return "서술형은 작성칸에 적고 배점 칸은 비워 두세요."
         if self.essay_score_marks:
             return "서술형은 작성칸에 적고, 아래 교사 채점란은 비워 두세요."
         return "서술형 답안은 해당 번호의 작성칸에 깔끔하게 적어주세요."
+
+    @property
+    def essay_columns(self) -> tuple[tuple[int, ...], ...]:
+        if not self.render_essay_count:
+            return ()
+        numbers = (
+            self.display_essay_question_numbers if self.essay_count
+            else tuple(range(1, self.render_essay_count + 1))
+        )
+        if self.essay_score_questions:
+            return tuple(numbers[indices.start:indices.stop] for indices in essay_score_column_ranges(len(numbers)))
+        return (numbers,)
 
     @property
     def render_essay_label(self) -> str:
@@ -154,7 +174,7 @@ class OMRDocument:
             "mc_count": self.mc_count,
             "essay_count": self.essay_count,
             "essay_numbering": self.essay_numbering,
-            "essay_score_marks": bool(self.essay_score_marks),
+            "essay_score_marks": bool(self.essay_score_marks or self.essay_score_questions),
             "include_optional_essay_area": self.include_optional_essay_area,
             "can_include_optional_essay_area": self.can_include_optional_essay_area,
             "render_essay_count": self.render_essay_count,

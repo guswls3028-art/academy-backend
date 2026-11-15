@@ -6,6 +6,7 @@ from typing import Any
 
 from academy.domain.omr import OMRQuestionContract, OMRSheetContract
 from apps.domains.assets.omr.services.meta_generator import (
+    build_essay_score_grid_metadata,
     build_objective_template_meta,
     essay_score_mark_availability,
 )
@@ -50,13 +51,17 @@ def _build_contract(sheet, template_exam, questions, counts, n_choices, requeste
         question_count=choice_count,
         n_choices=n_choices,
         choice_question_numbers=choice_numbers,
-        essay_score_mark_numbers=_essay_score_mark_numbers(
-            sheet=sheet,
-            exam=requested_exam,
-            question_contracts=question_contracts,
-            choice_count=choice_count,
-        ),
     )
+    essay_marks = _essay_score_mark_numbers(
+        sheet=sheet,
+        exam=requested_exam,
+        question_contracts=question_contracts,
+        choice_count=choice_count,
+    )
+    if essay_marks:
+        template_meta.update(build_essay_score_grid_metadata(
+            choice_numbers=choice_numbers, essay_numbers=essay_marks,
+        ))
     return OMRSheetContract(
         sheet_id=getattr(sheet, "id", None),
         exam_id=getattr(getattr(sheet, "exam", None), "id", None),

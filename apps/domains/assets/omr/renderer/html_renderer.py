@@ -13,6 +13,7 @@ from django.template.loader import render_to_string
 
 from apps.domains.assets.omr.dto.omr_document import OMRDocument
 from apps.domains.assets.omr.services.meta_generator import (
+    ESSAY_GRID_WIDTH,
     MARKER_OFF, MARKER_SZ, MARKER_TH, build_mc_column_ranges,
 )
 
@@ -28,7 +29,6 @@ class OMRHtmlRenderer:
 
     def _build_context(self, doc: OMRDocument) -> dict[str, Any]:
         mc_columns = self._build_mc_columns(doc)
-        essay_rows = self._build_essay_rows(doc)
         render_essay_count = doc.render_essay_count
         instructions = [
             "전화번호는 본인 휴대폰 번호 뒤 8자리를 적어주세요. "
@@ -72,8 +72,28 @@ class OMRHtmlRenderer:
             "brand_color": doc.brand_color,
             "title_font_pt": title_font_pt,
             "mc_columns": mc_columns,
-            "essay_rows": essay_rows,
+            "essay_columns": self._build_essay_columns(doc),
             "essay_score_marks": self._build_essay_score_marks(doc),
+            "essay_score_grid_width": ESSAY_GRID_WIDTH,
+            "essay_score_questions": [
+                {
+                    "number": question["question_number"],
+                    "bubbles": [{
+                        "label": bubble["label"],
+                        "left": round(bubble["center"]["x"] - bubble["radius_x"], 2),
+                        "top": round(bubble["center"]["y"] - bubble["radius_y"], 2),
+                    } for bubble in question["choices"]],
+                }
+                for question in doc.essay_score_questions
+            ],
+            "essay_score_layout_marks": [
+                {
+                    "left": round(mark["x"] - mark["size"] / 2, 2),
+                    "top": round(mark["y"] - mark["size"] / 2, 2),
+                    "size": mark["size"],
+                }
+                for mark in doc.essay_score_layout_marks if mark["filled"]
+            ],
             "instructions": instructions,
             "marking_instruction_number": len(instructions) + 1,
             "choices_labels": [str(i + 1) for i in range(doc.n_choices)],
@@ -123,22 +143,16 @@ class OMRHtmlRenderer:
 
         return columns
 
-    def _build_essay_rows(self, doc: OMRDocument) -> list[dict]:
-        render_essay_count = doc.render_essay_count
-        if render_essay_count <= 0:
-            return []
-
-        rows = []
-        for i in range(1, render_essay_count + 1):
-            group_idx = (i - 1) // 5
-            number = doc.display_essay_question_numbers[i - 1] if doc.essay_count > 0 else i
-            rows.append({
+    def _build_essay_columns(self, doc: OMRDocument) -> list[list[dict]]:
+        return [
+            [{
                 "number": number,
-                "is_g5": (i % 5 == 0 and i != render_essay_count),
-                "is_g10": (i % 10 == 0 and i != render_essay_count),
-                "is_zebra": (group_idx % 2 == 1),
-            })
-        return rows
+                "is_g5": row % 5 == 0 and row != len(numbers),
+                "is_g10": row % 10 == 0 and row != len(numbers),
+                "is_zebra": ((row - 1) // 5) % 2 == 1,
+            } for row, number in enumerate(numbers, start=1)]
+            for numbers in doc.essay_columns
+        ]
 
     def _build_essay_score_marks(self, doc: OMRDocument) -> list[dict]:
         """Absolute mm boxes for the teacher score strips (same SSOT as the PDF)."""

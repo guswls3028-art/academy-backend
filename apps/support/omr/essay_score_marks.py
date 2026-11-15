@@ -12,7 +12,7 @@ from django.db import transaction
 from rest_framework.exceptions import ValidationError
 
 from apps.domains.assets.omr.services.meta_generator import (
-    ESSAY_SCORE_MAX,
+    ESSAY_SCORE_GRID_MAX,
     essay_score_mark_availability,
 )
 from apps.support.omr.contract_builder import (
@@ -33,7 +33,7 @@ def _state(*, sheet, exam, contract=None) -> dict[str, Any]:
             "printed": False,
             "reason": "시험 문항을 먼저 등록해 주세요.",
             "essay_count": 0,
-            "max_score": ESSAY_SCORE_MAX,
+            "max_score": ESSAY_SCORE_GRID_MAX,
             "beta": True,
         }
     contract = contract or build_omr_sheet_contract(sheet=sheet, exam=exam)
@@ -50,7 +50,7 @@ def _state(*, sheet, exam, contract=None) -> dict[str, Any]:
         "printed": bool(contract.essay_score_marks),
         "reason": availability["reason"],
         "essay_count": len(essays),
-        "max_score": ESSAY_SCORE_MAX,
+        "max_score": ESSAY_SCORE_GRID_MAX,
         "beta": True,
     }
 
