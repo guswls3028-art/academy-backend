@@ -10,8 +10,9 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from apps.core.models import Tenant, TenantMembership, WorkerHeartbeatModel
+from apps.core.models import Tenant, TenantDomain, TenantMembership, WorkerHeartbeatModel
 from apps.core.models.user import user_internal_username
+from apps.domains.messaging.alimtalk_content_builders import render_alimtalk_preview_text
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, NotificationLog, ScheduledNotification
 from apps.domains.messaging.views.operations_views import MessagingOperationsStatusView, SendMessagePreflightView
 from apps.domains.messaging.views.send_views import SendMessageView
@@ -102,6 +103,9 @@ class SendMessagePreflightViewTests(MessagingOperationsBase):
             "client_request_id": str(uuid4()),
         }
         preflight = SendMessagePreflightView.as_view()
+        domain, _ = TenantDomain.objects.update_or_create(
+            tenant=self.tenant, is_primary=True, defaults={"host": "msg-ops.example.test"},
+        )
         preview = preflight(self._request("post", "/preflight/", data))
         self.assertEqual(preview.status_code, 200, preview.data)
         self.assertTrue(preview.data["can_send"], preview.data)
@@ -114,8 +118,49 @@ class SendMessagePreflightViewTests(MessagingOperationsBase):
             {"student_id": students[2].pk, "reason": "not_video"},
         ])
         self.assertIn(title, preview.data["preview_recipients"][0]["full_message_body"])
+        self.assertIn(
+            f"[출석 안내]\n이번 차시는 영상으로 보강합니다. 아래 과제를 확인해 주세요.\n• {title}\nhttps://msg-ops.example.test",
+            preview.data["preview_recipients"][0]["full_message_body"],
+        )
         self.assertNotIn("미제출", preview.data["preview_recipients"][0]["full_message_body"])
         data["video_makeup_homework_fingerprint"] = details["fingerprint"]
+        parent_preview = preview.data["preview_recipients"][0]
+        student_preview = preflight(self._request("post", "/preflight/", {**data, "send_to": "student"}))
+        self.assertEqual(student_preview.data["preview_recipients"][0]["full_message_body"], parent_preview["full_message_body"])
+        self.assertNotEqual(student_preview.data["preview_recipients"][0]["phone"], parent_preview["phone"])
+        self.assertNotEqual(student_preview.data["video_makeup_homework_preview"]["fingerprint"], details["fingerprint"])
+
+        other = Tenant.objects.create(code="other-msg-ops", name="Other academy", is_active=True)
+        TenantDomain.objects.update_or_create(
+            tenant=other, is_primary=True, defaults={"host": "other-msg-ops.example.test"},
+        )
+        foreign_session = Session.objects.create(
+            lecture=Lecture.objects.create(tenant=other, title="외부 강의", name="외부 강의"),
+            title="외부 차시", order=1,
+        )
+        foreign = preflight(self._request("post", "/preflight/", {**data, "session_id": foreign_session.pk}))
+        self.assertFalse(foreign.data["can_send"])
+        self.assertEqual(foreign.data["preview_recipients"], [])
+        self.assertNotIn("video_makeup_homework_preview", foreign.data)
+        unchanged = preflight(self._request("post", "/preflight/", data))
+        self.assertEqual(unchanged.data["video_makeup_homework_preview"]["fingerprint"], details["fingerprint"])
+
+        domain.host = "updated-msg-ops.example.test"
+        domain.save(update_fields=["host"])
+        response = SendMessageView.as_view()(self._request("post", "/send/", data))
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["code"], "video_makeup_homework_changed")
+        new_domain = preflight(self._request("post", "/preflight/", data))
+        self.assertIn("https://updated-msg-ops.example.test", new_domain.data["preview_recipients"][0]["full_message_body"])
+        data["video_makeup_homework_fingerprint"] = new_domain.data["video_makeup_homework_preview"]["fingerprint"]
+
+        self.tenant.name = "Renamed academy"
+        self.tenant.save(update_fields=["name"])
+        response = SendMessageView.as_view()(self._request("post", "/send/", data))
+        self.assertEqual(response.status_code, 409, response.data)
+        renamed = preflight(self._request("post", "/preflight/", data))
+        self.assertIn("Renamed academy", renamed.data["preview_recipients"][0]["full_message_body"])
+        data["video_makeup_homework_fingerprint"] = renamed.data["video_makeup_homework_preview"]["fingerprint"]
 
         Student.objects.filter(pk=students[0].pk).update(parent_phone="01088881111")
         response = SendMessageView.as_view()(self._request("post", "/send/", data))
@@ -134,6 +179,29 @@ class SendMessagePreflightViewTests(MessagingOperationsBase):
         HomeworkAssignment.objects.create(
             tenant=self.tenant, session=session, homework=homework, enrollment=enrollments[0],
         )
+        long_titles = [f"{index}-" + "가" * 253 for index in range(4)]
+        extra_homeworks = [
+            Homework.objects.create(tenant=self.tenant, session=session, title=long_title)
+            for long_title in long_titles
+        ]
+        for extra_homework in extra_homeworks:
+            HomeworkAssignment.objects.create(
+                tenant=self.tenant, session=session, homework=extra_homework, enrollment=enrollments[0],
+            )
+        oversized = preflight(self._request("post", "/preflight/", data))
+        self.assertFalse(oversized.data["can_send"])
+        self.assertIn("video_makeup_homework_message_too_long", {issue["code"] for issue in oversized.data["blockers"]})
+        for long_title in long_titles:
+            self.assertIn(long_title, oversized.data["preview_recipients"][0]["full_message_body"])
+        oversize_send = SendMessageView.as_view()(self._request("post", "/send/", {
+            **data,
+            "video_makeup_homework_fingerprint": oversized.data["video_makeup_homework_preview"]["fingerprint"],
+        }))
+        self.assertEqual(oversize_send.status_code, 400, oversize_send.data)
+        self.assertEqual(oversize_send.data["code"], "video_makeup_homework_message_too_long")
+        self.assertFalse(ScheduledNotification.objects.filter(tenant=self.tenant).exists())
+        Homework.objects.filter(pk__in=[item.pk for item in extra_homeworks]).delete()
+
         refreshed = preflight(self._request("post", "/preflight/", data))
         data["video_makeup_homework_fingerprint"] = refreshed.data["video_makeup_homework_preview"]["fingerprint"]
         accepted = SendMessageView.as_view()(self._request("post", "/send/", data))
@@ -142,6 +210,11 @@ class SendMessagePreflightViewTests(MessagingOperationsBase):
         self.assertEqual(ScheduledNotification.objects.filter(tenant=self.tenant).count(), 1)
         outbox = ScheduledNotification.objects.get(tenant=self.tenant)
         replacements = outbox.payload["alimtalk_replacements"]
+        self.assertEqual(outbox.payload["template_id"], refreshed.data["template"]["solapi_template_id"])
+        self.assertEqual(
+            render_alimtalk_preview_text("attendance", replacements),
+            refreshed.data["preview_recipients"][0]["full_message_body"],
+        )
         self.assertIn(title, {item["key"]: item["value"] for item in replacements}["선생님메모"])
         HomeworkAssignment.objects.filter(homework=homework).delete()
         replay = SendMessageView.as_view()(self._request("post", "/send/", data))
