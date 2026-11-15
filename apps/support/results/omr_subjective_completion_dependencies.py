@@ -46,4 +46,6 @@ def submissions_by_id(submission_ids: Iterable[int]):
 
     from apps.domains.submissions.models import Submission
 
-    return Submission.objects.filter(id__in=ids).in_bulk()
+    return Submission.objects.filter(id__in=ids).only(
+        "id", "source", "target_type", "target_id", "enrollment_id", "tenant_id", "meta",
+    ).in_bulk()
