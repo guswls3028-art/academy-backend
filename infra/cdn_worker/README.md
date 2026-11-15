@@ -11,8 +11,11 @@ source configuration. The backend issues HMAC URLs through
 The Worker checks expiry and the signature over `path|exp|kid|uid` before every
 R2 read. It rewrites relative HLS playlist URLs with independently signed child
 paths, retaining the same expiry and user. A changed tenant/video path cannot
-reuse a signature. Binary ranges retain 206/Content-Range; playlists are fetched
-in full before rewriting. Missing/expired signatures return 401, invalid
+reuse a signature. Satisfiable binary ranges return 206 with Content-Range and
+Content-Length matching the returned bytes, including when the requested end
+exceeds the object size. An unsatisfiable range returns an empty 416 with
+`Content-Range: bytes */<size>`. Playlists are fetched in full before rewriting.
+Missing/expired signatures return 401, invalid
 signatures 403, missing storage objects 404 and missing signing configuration 500.
 
 Student and staff browsers load signed playlists and segments from their academy
