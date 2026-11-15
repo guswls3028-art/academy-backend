@@ -7216,8 +7216,23 @@
         ],
         "type": "object"
       },
+      "OmrUploadBatchInitializeConflict": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "type": "object"
+      },
       "OmrUploadBatchInitializeRequestRequest": {
         "properties": {
+          "client_request_id": {
+            "format": "uuid",
+            "type": "string"
+          },
           "session_id": {
             "nullable": true,
             "type": "integer"
@@ -56737,6 +56752,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OmrUploadBatchSummary"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OmrUploadBatchInitializeConflict"
                 }
               }
             },

@@ -6,7 +6,7 @@ import threading
 import time
 import unittest
 from unittest.mock import patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -136,15 +136,16 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
         view = ExamOMRBatchUploadView.as_view()
         return view(request, exam_id=self.exam.id)
 
-    def _initialize(self, total_count: int):
+    def _initialize(self, total_count: int, *, exam=None, user=None, tenant=None, **fields):
+        exam = exam or self.exam
         request = self.factory.post(
-            f"/api/v1/submissions/submissions/exams/{self.exam.id}/omr/batches/",
-            data={"total_count": total_count},
+            f"/api/v1/submissions/submissions/exams/{exam.id}/omr/batches/",
+            data={"total_count": total_count, **fields},
             format="json",
         )
-        force_authenticate(request, user=self.user)
-        request.tenant = self.tenant
-        return ExamOMRBatchInitializeView.as_view()(request, exam_id=self.exam.id)
+        force_authenticate(request, user=user or self.user)
+        request.tenant = tenant or self.tenant
+        return ExamOMRBatchInitializeView.as_view()(request, exam_id=exam.id)
 
     def _upload_to_batch(self, batch_id: UUID | str, uploads, ordinals):
         request = self.factory.post(
@@ -246,6 +247,54 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
         self.assertEqual(response.data["total_count"], 22)
         self.assertEqual(response.data["counts"]["pending_admission"], 22)
         self.assertEqual(response.data["pending_admission_ordinals"], list(range(1, 23)))
+
+    def test_initialize_retry_after_lost_response_preserves_batch_and_item_ids(self):
+        request_id = str(uuid4())
+        self._initialize(2, client_request_id=request_id)
+        batch = OmrUploadBatch.objects.get()
+        item_ids = list(batch.items.order_by("ordinal").values_list("id", flat=True))
+
+        replay = self._initialize(2, client_request_id=request_id)
+
+        self.assertEqual(replay.status_code, 201)
+        self.assertEqual(replay.data["id"], str(batch.pk))
+        self.assertEqual(replay.data["pending_admission_ordinals"], [1, 2])
+        self.assertEqual(list(batch.items.order_by("ordinal").values_list("id", flat=True)), item_ids)
+        self.assertEqual(OmrUploadBatch.objects.count(), 1)
+        self.assertEqual(OmrUploadBatchItem.objects.count(), 2)
+        self.assertNotEqual(self._initialize(2, client_request_id=str(uuid4())).data["id"], replay.data["id"])
+        self.assertNotEqual(self._initialize(2).data["id"], self._initialize(2).data["id"])
+
+    def test_initialize_retry_rejects_mismatched_exam_session_and_count(self):
+        request_id = str(uuid4())
+        self.assertEqual(self._initialize(2, client_request_id=request_id).status_code, 201)
+        other_exam = Exam.objects.create(
+            tenant=self.tenant, title="Other exam", exam_type=Exam.ExamType.TEMPLATE,
+        )
+        for count, fields in ((3, {}), (2, {"exam": other_exam}), (2, {"session_id": 999999})):
+            with self.subTest(count=count, fields=fields):
+                response = self._initialize(count, client_request_id=request_id, **fields)
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(set(response.data), {"detail"})
+        self.assertEqual(self._initialize(2, client_request_id="invalid").status_code, 400)
+        self.assertEqual(OmrUploadBatch.objects.count(), 1)
+        self.assertEqual(OmrUploadBatchItem.objects.count(), 2)
+
+    def test_initialize_request_id_is_scoped_to_creator_and_tenant(self):
+        request_id = str(uuid4())
+        initial = self._initialize(2, client_request_id=request_id)
+        other_staff = User.objects.create_user(username="second-staff", tenant=self.tenant, is_staff=True)
+        TenantMembership.ensure_active(tenant=self.tenant, user=other_staff, role="admin")
+        other_tenant = Tenant.objects.create(code="omr-replay-other", name="OMR Replay Other")
+        TenantMembership.ensure_active(tenant=other_tenant, user=self.user, role="admin")
+        other_exam = Exam.objects.create(
+            tenant=other_tenant, title="Other tenant exam", exam_type=Exam.ExamType.TEMPLATE,
+        )
+        creator = self._initialize(2, user=other_staff, client_request_id=request_id)
+        tenant = self._initialize(2, tenant=other_tenant, exam=other_exam, client_request_id=request_id)
+        self.assertEqual([initial.status_code, creator.status_code, tenant.status_code], [201, 201, 201])
+        self.assertEqual(len({initial.data["id"], creator.data["id"], tenant.data["id"]}), 3)
+        self.assertEqual(OmrUploadBatch.objects.count(), 3)
 
     @patch("apps.domains.submissions.views.exam_omr_batch_upload_view.dispatch_submission")
     @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
@@ -914,6 +963,48 @@ class OmrUploadBatchMutationConcurrencyPostgresTests(TransactionTestCase):
         request.tenant = self.tenant
         response = ExamOMRBatchInitializeView.as_view()(request, exam_id=self.exam.id)
         return OmrUploadBatch.objects.get(id=response.data["id"])
+
+    def test_concurrent_initialization_replays_one_batch_and_ordinal_set(self):
+        request_id = str(uuid4())
+        before_insert = threading.Barrier(2, timeout=10)
+        outcomes = []
+        errors = []
+        table = connection.ops.quote_name(OmrUploadBatch._meta.db_table)
+
+        def wait_at_batch_insert(execute, sql, params, many, context):
+            if sql.startswith(f"INSERT INTO {table} "):
+                before_insert.wait()
+            return execute(sql, params, many, context)
+
+        def worker():
+            close_old_connections()
+            try:
+                request = APIRequestFactory().post(
+                    f"/api/v1/submissions/submissions/exams/{self.exam.id}/omr/batches/",
+                    data={"total_count": 2, "client_request_id": request_id},
+                    format="json",
+                )
+                force_authenticate(request, user=self.user)
+                request.tenant = self.tenant
+                with connection.execute_wrapper(wait_at_batch_insert):
+                    response = ExamOMRBatchInitializeView.as_view()(request, exam_id=self.exam.id)
+                outcomes.append((response.status_code, response.data.get("id")))
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                close_old_connections()
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        batch = OmrUploadBatch.objects.get()
+        self.assertEqual(outcomes, [(201, str(batch.pk)), (201, str(batch.pk))])
+        self.assertEqual(list(batch.items.order_by("ordinal").values_list("ordinal", flat=True)), [1, 2])
 
     @staticmethod
     def _thread_upload(*, batch_id, exam_id, user, tenant, upload_file):
