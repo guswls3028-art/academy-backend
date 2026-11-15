@@ -116,7 +116,7 @@ class ClinicTargetBulkReadTests(TestCase, ClinicTestMixin):
         self.assertGreaterEqual(len(small_before) - len(small), 6)
         self.assertEqual(len(small_before) - len(small), len(large_before) - len(large))
         self.assertEqual(len(large), len(small), f"2 rows={len(small)} queries; 700 rows={len(large)} queries")
-        self.assertLessEqual(len(large), 45)
+        self.assertLessEqual(len(large), 30, "Without confirming bookings, skip the global passcard requirement lookup")
         self.assertEqual(list(ClinicLink.objects.values()), before_links)
         self.assertTrue(all(row["exam_score"] == 20 and row["cutline_score"] == 70 for row in rows if row["source_type"] == "exam"))
         for row in rows:
