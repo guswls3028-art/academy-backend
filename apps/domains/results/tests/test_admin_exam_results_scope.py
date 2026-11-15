@@ -467,7 +467,9 @@ class AdminExamResultsScopeTest(TestCase):
         unrelated.subject = "PHYSICS"
         unrelated.save(update_fields=["subject"])
         ambiguous = exam_at("Shared across days", previous_session)
-        ambiguous.sessions.add(current_session)
+        ambiguous.sessions.add(self.Session.objects.create(
+            lecture=self.lecture, order=5, title="보강", session_type="SUPPLEMENT",
+        ))
 
         ExamEnrollment = django_apps.get_model("exams", "ExamEnrollment")
         ExamEnrollment.objects.create(exam=current, enrollment=self.enrollment)
