@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from django.db.models import F, Q, Value
 from django.db.models.functions import Replace
@@ -47,19 +47,19 @@ def _candidate_rows_from_enrollments(enrollments) -> list[dict[str, Any]]:
     return rows
 
 
-def _filter_enrollments_for_query(qs, *, q: str, exact_phone_tail: bool = False):
+def _filter_enrollments_for_query(qs, *, q: str, phone_search: Literal["legacy", "exam", "session"] = "legacy"):
     if q:
         digits = "".join(ch for ch in q if ch.isdigit())
         name_q = Q(student__name__icontains=q)
         phone_q = Q()
-        if exact_phone_tail and len(digits) == 8:
+        if phone_search != "legacy" and len(digits) == 8:
             qs = qs.alias(
                 student_phone_digits=Replace(Replace("student__phone", Value("-")), Value(" ")),
                 parent_phone_digits=Replace(Replace("student__parent_phone", Value("-")), Value(" ")),
             )
             phone_q = Q(student_phone_digits__endswith=digits) | Q(parent_phone_digits__endswith=digits)
-        elif len(digits) >= 3:
-            phone_q = (
+        if len(digits) >= 3 and not (phone_search == "session" and len(digits) == 8):
+            phone_q |= (
                 Q(student__phone__icontains=digits)
                 | Q(student__parent_phone__icontains=digits)
             )
@@ -128,7 +128,9 @@ def exam_candidate_rows(*, tenant, exam_id: int, q: str, session_id: int | None 
         enrollments = enrollments.filter(exam_review_roster_filter(
             tenant=tenant, exam_id=exam_id, session_id=session_id, include_attendance=has_exam_targets,
         ))
-    enrollments = _filter_enrollments_for_query(enrollments, q=q, exact_phone_tail=True)
+    enrollments = _filter_enrollments_for_query(
+        enrollments, q=q, phone_search="session" if session_id is not None else "exam",
+    )
     return CandidateRows(found=True, rows=_candidate_rows_from_enrollments(enrollments))
 
 

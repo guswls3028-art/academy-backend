@@ -95,8 +95,17 @@ class ExamCandidateSessionScopeTests(TestCase):
             response = self.candidates(session_id=self.session.id, q=q)
             self.assertEqual(response.status_code, 200, response.data)
             self.assertEqual([row["enrollment_id"] for row in response.data["candidates"]], [self.first.id])
-        self.assertEqual([row["enrollment_id"] for row in self.candidates(q="12345678").data], [self.first.id])
         self.assertEqual([row["enrollment_id"] for row in self.candidates(session_id=self.session.id).data["candidates"]], [self.first.id])
+
+        SessionEnrollment.objects.create(tenant=self.tenant, session=self.session, enrollment=self.second)
+        self.assertCountEqual(
+            [row["enrollment_id"] for row in self.candidates(q="12345678").data],
+            [self.first.id, self.second.id],
+        )
+        self.assertEqual(
+            [row["enrollment_id"] for row in self.candidates(session_id=self.session.id, q="12345678").data["candidates"]],
+            [self.first.id],
+        )
 
     def test_manual_matching_and_duplicate_adoption_reject_other_session(self):
         self.set_explicit_roster()
