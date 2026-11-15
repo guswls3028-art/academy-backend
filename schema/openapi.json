@@ -10647,6 +10647,23 @@
         },
         "type": "object"
       },
+      "PatchedReviewAllowanceRequest": {
+        "properties": {
+          "expected_revision": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "limit_ms": {
+            "format": "int64",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "PatchedSealedVideoAccessRequest": {
         "description": "API uses access_mode (SSOT). DB table kept as video_videopermission.",
         "properties": {
@@ -15038,6 +15055,9 @@
           "retry_after_ms": {
             "type": "integer"
           },
+          "review_watch_summary": {
+            "$ref": "#/components/schemas/ReviewWatchSummary"
+          },
           "stream": {
             "format": "uuid",
             "type": "string"
@@ -15055,8 +15075,32 @@
       },
       "ReviewStudent": {
         "properties": {
+          "applicable": {
+            "type": "boolean"
+          },
+          "can_adjust": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "exhausted": {
+            "type": "boolean"
+          },
+          "limit_ms": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "remaining_ms": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "revision": {
+            "type": "string"
+          },
           "started_at": {
             "format": "date-time",
+            "nullable": true,
             "type": "string"
           },
           "student_id": {
@@ -15070,9 +15114,53 @@
           }
         },
         "required": [
+          "applicable",
+          "can_adjust",
+          "enabled",
+          "exhausted",
+          "limit_ms",
+          "remaining_ms",
+          "revision",
           "started_at",
           "student_id",
           "student_name",
+          "used_ms"
+        ],
+        "type": "object"
+      },
+      "ReviewWatchSummary": {
+        "properties": {
+          "applicable": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "exhausted": {
+            "type": "boolean"
+          },
+          "limit_ms": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "remaining_ms": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "used_ms": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "applicable",
+          "enabled",
+          "exhausted",
+          "limit_ms",
+          "remaining_ms",
+          "revision",
           "used_ms"
         ],
         "type": "object"
@@ -20792,6 +20880,9 @@
             "format": "double",
             "type": "number"
           },
+          "review_watch_summary": {
+            "$ref": "#/components/schemas/ReviewWatchSummary"
+          },
           "session_id": {
             "nullable": true,
             "type": "integer"
@@ -20902,6 +20993,12 @@
             "additionalProperties": {},
             "nullable": true,
             "type": "object"
+          },
+          "review_watch_summary": {
+            "$ref": "#/components/schemas/ReviewWatchSummary"
+          },
+          "support_preview": {
+            "type": "boolean"
           },
           "video": {
             "$ref": "#/components/schemas/StudentVideoListItem"
@@ -44236,6 +44333,81 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ReviewReport"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/api/v1/media/videos/{video_id}/review-watch/students/{student_id}/allowance/": {
+      "patch": {
+        "operationId": "media_videos_review_watch_students_allowance_partial_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedReviewAllowanceRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedReviewAllowanceRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedReviewAllowanceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewWatchSummary"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewWatchSummary"
                 }
               }
             },

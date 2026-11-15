@@ -18,7 +18,7 @@ from apps.core.r2_paths import video_hls_master_path
 
 from apps.domains.video.models import VideoReviewWatchStream
 from apps.domains.video.services.review_media import stream_access_is_current
-from apps.domains.video.services.review_watch import elapsed_ms, prefetch_allows, threshold_ms
+from apps.domains.video.services.review_watch import elapsed_ms, prefetch_allows, review_watch_limit_ms
 
 
 def safe_asset(path):
@@ -83,11 +83,8 @@ class ReviewMediaView(View):
             return HttpResponse(status=404)
         usage = stream.usage
         video = usage.video
-        remaining = (
-            threshold_ms(video) - usage.used_ms - elapsed_ms(stream, now)
-            if video.review_watch_limit_enabled
-            else 15_000
-        )
+        limit = review_watch_limit_ms(video, usage)
+        remaining = 15_000 if limit is None else limit - usage.used_ms - elapsed_ms(stream, now)
         if remaining <= 0 or stream.policy_version != video.policy_version or not safe_asset(asset):
             return HttpResponse(status=403)
         if not stream_access_is_current(stream, request.tenant):

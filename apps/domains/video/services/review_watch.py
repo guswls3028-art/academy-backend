@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 from uuid import uuid4
 
 from django.db import transaction
+from django.db.models import Prefetch
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
@@ -28,26 +29,83 @@ def elapsed_ms(stream, now):
     return max(0, min(SIGNAL_TIMEOUT_MS, elapsed))
 
 
-def chargeable_ms(video, used_ms, elapsed):
-    if video.review_watch_limit_enabled:
-        return min(elapsed, max(0, threshold_ms(video) - used_ms))
+def review_watch_limit_ms(video, usage=None):
+    if not video.review_watch_limit_enabled:
+        return None
+    if usage is not None and usage.limit_ms_override is not None:
+        return usage.limit_ms_override
+    return threshold_ms(video)
+
+
+def chargeable_ms(video, usage, elapsed):
+    limit = review_watch_limit_ms(video, usage)
+    if limit is not None:
+        return min(elapsed, max(0, limit - usage.used_ms))
     return elapsed
 
 
 def settle(video, usage, stream, now):
-    elapsed = chargeable_ms(video, usage.used_ms, elapsed_ms(stream, now))
+    elapsed = chargeable_ms(video, usage, elapsed_ms(stream, now))
     usage.used_ms += elapsed
     usage.prefetch_credit_ms = min(PREFETCH_MAX_MS, usage.prefetch_credit_ms + elapsed)
     stream.active_since = None
 
 
+def review_watch_summary(video, usage=None, *, playing_ms=0, applicable=True):
+    limit = review_watch_limit_ms(video, usage) if video.duration else None
+    used = usage.used_ms + chargeable_ms(video, usage, playing_ms) if usage is not None else 0
+    remaining = None if limit is None else max(0, limit - used)
+    return {
+        "enabled": video.review_watch_limit_enabled,
+        "applicable": applicable,
+        "used_ms": used,
+        "limit_ms": limit,
+        "remaining_ms": remaining,
+        "exhausted": remaining == 0,
+        "revision": f"{int(video.review_watch_limit_enabled)}:{video.duration or 0}:{usage.allowance_revision if usage else 0}",
+    }
+
+
+def with_playing_review_streams(usages):
+    return usages.prefetch_related(Prefetch(
+        "streams",
+        queryset=VideoReviewWatchStream.objects.filter(active_since__isnull=False, closed=False),
+        to_attr="playing_streams",
+    ))
+
+
+def student_review_watch_summaries(*, tenant, student, videos, applicable_video_ids):
+    if student.tenant_id != tenant.pk:
+        return {}
+    usages = {
+        usage.video_id: usage
+        for usage in with_playing_review_streams(VideoReviewWatchUsage.objects.filter(
+            video_id__in=[video.pk for video in videos],
+            video__tenant=tenant,
+            student=student,
+        ))
+    }
+    now = timezone.now()
+    return {
+        video.pk: review_watch_summary_with_playing_streams(
+            video, usages.get(video.pk), now=now, applicable=video.pk in applicable_video_ids,
+        )
+        for video in videos
+    }
+
+
+def review_watch_summary_with_playing_streams(video, usage, *, now, applicable=True):
+    playing_ms = sum(elapsed_ms(stream, now) for stream in usage.playing_streams) if usage is not None else 0
+    return review_watch_summary(video, usage, playing_ms=playing_ms, applicable=applicable)
+
+
 def snapshot(video, usage, stream, now):
-    limit = threshold_ms(video) if video.review_watch_limit_enabled else None
-    used = usage.used_ms + chargeable_ms(video, usage.used_ms, elapsed_ms(stream, now))
+    summary = review_watch_summary(video, usage, playing_ms=elapsed_ms(stream, now))
     return {
         "stream": str(stream.key),
-        "used_ms": used,
-        "remaining_ms": max(0, limit - used) if limit is not None else None,
+        "used_ms": summary["used_ms"],
+        "remaining_ms": summary["remaining_ms"],
+        "review_watch_summary": summary,
     }
 
 
@@ -61,13 +119,17 @@ def open_review_stream(video, student, *, user_id, expires_at, context):
     now = timezone.now()
     # Reopening a capped video takes over the same allowance. A previous
     # browser cannot continue spending it or request further protected media.
-    for previous in usage.streams.all():
+    previous_streams = list(usage.streams.all())
+    if not usage.used_ms and not previous_streams:
+        usage.started_at = now
+    for previous in previous_streams:
         stale = previous.active_since and elapsed_ms(previous, now) == SIGNAL_TIMEOUT_MS
         if video.review_watch_limit_enabled or stale or previous.access_until <= now:
             settle(video, usage, previous, now)
             previous.delete()
-    usage.save(update_fields=["used_ms", "prefetch_credit_ms"])
-    if video.review_watch_limit_enabled and usage.used_ms >= threshold_ms(video):
+    usage.save(update_fields=["used_ms", "prefetch_credit_ms", "started_at"])
+    limit = review_watch_limit_ms(video, usage)
+    if limit is not None and usage.used_ms >= limit:
         return None
     stream = usage.streams.create(
         key=uuid4(),
@@ -127,11 +189,12 @@ def record_review_state(*, video, student, user_id, context, stream_key, sequenc
         enrollment_id=getattr(context.enrollment, "pk", None),
         entitlement_id=getattr(entitlement, "pk", None),
     ).first()
+    limit = review_watch_limit_ms(video, usage)
     if (
         not stream
         or stream.policy_version != video.policy_version
         or (video.review_watch_limit_enabled and stream.access_until <= timezone.now())
-        or (stream.closed and not (video.review_watch_limit_enabled and usage.used_ms >= threshold_ms(video)))
+        or (stream.closed and not (limit is not None and usage.used_ms >= limit))
     ):
         raise PermissionDenied("다른 기기에서 영상을 열었거나 재생이 만료되었습니다. 다시 열어 주세요.")
     now = timezone.now()
@@ -167,7 +230,7 @@ def record_review_state(*, video, student, user_id, context, stream_key, sequenc
         was_playing = stream.active_since is not None and elapsed_ms(stream, now) < SIGNAL_TIMEOUT_MS
         position_ms = observed_position(stream, position_ms, now)
         settle(video, usage, stream, now)
-        exhausted = video.review_watch_limit_enabled and usage.used_ms >= threshold_ms(video)
+        exhausted = limit is not None and usage.used_ms >= limit
         if exhausted:
             # Do not reduce historical usage if the teacher enabled a limit later.
             stream.closed = True

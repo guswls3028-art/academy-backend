@@ -40,6 +40,7 @@ from apps.support.student_app.video_media import (
     issue_playback_access_grant,
     pick_video_urls,
 )
+from apps.support.student_app.video_support_preview import issue_support_preview
 from apps.domains.video.contracts import (
     build_effective_playback_policy,
     bind_review_token,
@@ -47,6 +48,7 @@ from apps.domains.video.contracts import (
     open_review_stream,
     record_review_state,
     sort_videos_for_playlist,
+    student_review_watch_summaries,
     youtube_embed_url,
 )
 from academy.application.use_cases.student_video_access_context import (
@@ -877,6 +879,24 @@ class StudentSessionVideoListView(APIView):
                 for video_id in direct_entitlements
             }
 
+        review_summaries = {}
+        if videos and getattr(request, "student_support_session", None) is None:
+            if enrollment_obj:
+                student = enrollment_obj.student
+            elif direct_entitlements:
+                student = next(iter(direct_entitlements.values())).student
+            else:
+                student = get_request_student(request)
+            if student:
+                review_summaries = student_review_watch_summaries(
+                    tenant=tenant, student=student, videos=videos,
+                    applicable_video_ids={
+                        video.pk for video in videos if video.status == Video.Status.READY and (
+                            video.visibility == Video.Visibility.PUBLIC or access_mode_map.get(video.pk) == AccessMode.FREE_REVIEW
+                        )
+                    },
+                )
+
         items = []
         for v in videos:
             perm_obj = perm_map.get(v.id)
@@ -927,6 +947,7 @@ class StudentSessionVideoListView(APIView):
                 **({"source_type": _source_type_from_video(v)} if access_mode_value == "BLOCKED" or _effective_rule(perm_obj) == "blocked" else _video_source_payload(v)),
                 "thumbnail_url": thumb,
                 "duration": getattr(v, "duration", None),
+                **({"review_watch_summary": review_summaries[v.id]} if v.id in review_summaries else {}),
                 "progress": progress_percent,  # 0-100
                 "completed": completed,
                 "last_position": int(getattr(progress_obj, "last_position", 0) or 0) if progress_obj else 0,
@@ -972,6 +993,8 @@ class StudentReviewWatchView(APIView):
 
     @extend_schema(request=ReviewSignalSerializer, responses=ReviewStateSerializer)
     def post(self, request, video_id):
+        if getattr(request, "student_support_session", None) is not None:
+            raise PermissionDenied("지원 모드에서는 학생의 시청시간을 기록하지 않습니다.")
         form = ReviewSignalSerializer(data=request.data)
         form.is_valid(raise_exception=True)
         data = form.validated_data
@@ -1050,6 +1073,7 @@ class StudentVideoPlaybackView(APIView):
 
     def _resolve_playback(self, request, video_id: int, *, event_protocol_version=1, review_watch_supported=False):
         Video, VideoPermission = _import_media_models()
+        support_preview = getattr(request, "student_support_session", None) is not None
         explicit_enrollment_id = _get_explicit_enrollment_id(request)
         access_check = parse_query_bool(
             request.query_params,
@@ -1074,7 +1098,7 @@ class StudentVideoPlaybackView(APIView):
                 request,
                 video,
                 explicit_enrollment_id=explicit_enrollment_id,
-                allow_public_enrollment_write=not access_check,
+                allow_public_enrollment_write=not (access_check or support_preview),
             )
             ensure_student_video_watch_allowed(access_context)
         except StudentVideoAccessError as e:
@@ -1130,7 +1154,7 @@ class StudentVideoPlaybackView(APIView):
                     {
                         "ok": True,
                         "access_mode": current_policy["access_mode"],
-                        "monitoring_enabled": current_policy["monitoring_enabled"],
+                        "monitoring_enabled": current_policy["monitoring_enabled"] and not support_preview,
                         "policy_version": int(
                             getattr(video, "policy_version", 1) or 1
                         ),
@@ -1162,6 +1186,17 @@ class StudentVideoPlaybackView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         
+        playback_token = None
+        playback_session_id = None
+        playback_expires_at = None
+        playback_event_protocol_version = 1
+        if support_preview:
+            playback_token, playback_expires_at = issue_support_preview(
+                request, video, access_context,
+                media_expires_at=inactive_media_expires_at,
+            )
+            inactive_media_expires_at = playback_expires_at
+
         hls_url = None
         mp4_url = None
         play_url = None
@@ -1186,6 +1221,7 @@ class StudentVideoPlaybackView(APIView):
                 video,
                 request,
                 expires_at=inactive_media_expires_at,
+                support_operator_id=request.student_support_session.operator_id if support_preview else None,
             )
             play_url = hls_url or mp4_url
 
@@ -1223,12 +1259,8 @@ class StudentVideoPlaybackView(APIView):
             from academy.adapters.db.django import repositories_video as video_repo
 
             progress_obj = video_repo.video_progress_get(video, enrollment_obj)
-        playback_token = None
-        playback_session_id = None
-        playback_expires_at = None
         playback_policy_version = int(getattr(video, "policy_version", 1) or 1)
-        playback_event_protocol_version = 1
-        if enrollment_obj or direct_entitlement is not None:
+        if not support_preview and (enrollment_obj or direct_entitlement is not None):
             try:
                 if direct_entitlement is not None:
                     playback_grant = issue_direct_playback_access_grant(
@@ -1302,10 +1334,16 @@ class StudentVideoPlaybackView(APIView):
             permission=perm_obj,
             progress=progress_obj,
         )
+        if support_preview:
+            playback_policy["monitoring_enabled"] = False
+            if playback_policy["seek"]["mode"] == "budgeted_forward":
+                playback_policy["seek"] = {"mode": "free", "forward_limit": None, "grace_seconds": 3}
 
         student = get_request_student(request)
         review_watch = None
-        if playback_policy["access_mode"] == "FREE_REVIEW":
+        review_summary = None
+        is_review = playback_policy["access_mode"] == "FREE_REVIEW"
+        if not support_preview and is_review:
             if video.review_watch_limit_enabled and not review_watch_supported:
                 return Response({"detail": "복습 시청시간 확인을 위해 최신 학생 페이지에서 영상을 열어 주세요."}, status=409)
             if review_watch_supported:
@@ -1314,7 +1352,15 @@ class StudentVideoPlaybackView(APIView):
                     expires_at=playback_expires_at or int(timezone.now().timestamp()) + 600,
                 )
                 if review_watch is None:
-                    return Response({"code": "review_limit_exhausted", "detail": "이 영상의 복습 시청시간을 모두 사용했습니다."}, status=403)
+                    summary = student_review_watch_summaries(
+                        tenant=request.tenant, student=student, videos=[video], applicable_video_ids={video.pk},
+                    )[video.pk]
+                    return Response({
+                        "code": "review_limit_exhausted",
+                        "detail": "이 영상의 복습 시청시간을 모두 사용했습니다.",
+                        "review_watch_summary": summary,
+                    }, status=status.HTTP_403_FORBIDDEN)
+                review_summary = review_watch["review_watch_summary"]
                 if video.review_watch_limit_enabled and playback_token:
                     playback_token = bind_review_token(playback_token, review_watch["stream"], playback_expires_at)
                 if video.review_watch_limit_enabled and not is_youtube:
@@ -1322,7 +1368,12 @@ class StudentVideoPlaybackView(APIView):
 
                     hls_url = play_url = review_stream_url(video, review_watch["stream"], request.tenant.code)
                     mp4_url = None
-        if student and direct_entitlement is None:
+        if not support_preview and student and review_summary is None:
+            review_summary = student_review_watch_summaries(
+                tenant=request.tenant, student=student, videos=[video],
+                applicable_video_ids={video.pk} if is_review else set(),
+            ).get(video.pk)
+        if student and (support_preview or direct_entitlement is None):
             from apps.domains.students.activity import record_student_target_open
 
             record_student_target_open(
@@ -1339,7 +1390,7 @@ class StudentVideoPlaybackView(APIView):
         from django.db.models import F as _F
 
         _view_key = f"video_view:{video_id}:{request.user.id}"
-        if direct_entitlement is None and not _cache.get(_view_key):
+        if not support_preview and direct_entitlement is None and not _cache.get(_view_key):
             Video.objects.filter(id=video_id).update(view_count=_F("view_count") + 1)
             _cache.set(_view_key, 1, 300)
 
@@ -1398,11 +1449,13 @@ class StudentVideoPlaybackView(APIView):
                 "effective_rule": rule,
                 "access_mode": video_access_mode_value,
             },
-            "progress_revision": _progress_revision(progress_obj),
+            "progress_revision": None if support_preview else _progress_revision(progress_obj),
+            **({"support_preview": True} if support_preview else {}),
             "hls_url": hls_url,
             "mp4_url": mp4_url,
             "play_url": play_url,
             "review_watch": review_watch,
+            **({"review_watch_summary": review_summary} if review_summary is not None else {}),
             "playback_token": playback_token,
             "playback_session_id": playback_session_id,
             "playback_expires_at": playback_expires_at,
@@ -1436,6 +1489,8 @@ class StudentVideoForwardSkipView(APIView):
         responses={200: StudentVideoForwardSkipResponseSerializer},
     )
     def post(self, request, video_id: int):
+        if getattr(request, "student_support_session", None) is not None:
+            raise PermissionDenied("지원 모드에서는 학생의 건너뛰기 시간을 사용하지 않습니다.")
         Video, _VideoPermission = _import_media_models()
         explicit_enrollment_id = _get_explicit_enrollment_id(request, include_body=True)
 
@@ -1523,6 +1578,7 @@ class StudentVideoProgressView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def post(self, request, video_id: int):
+        support_preview = getattr(request, "student_support_session", None) is not None
         Video, _VideoPermission = _import_media_models()
         VideoProgress = get_video_progress_model()
         request_student = get_request_student(request)
@@ -1543,6 +1599,7 @@ class StudentVideoProgressView(APIView):
                 request,
                 video,
                 explicit_enrollment_id=explicit_enrollment_id,
+                allow_public_enrollment_write=not support_preview,
             )
             ensure_student_video_watch_allowed(access_context)
         except StudentVideoAccessError as e:
@@ -1556,6 +1613,8 @@ class StudentVideoProgressView(APIView):
                 {"detail": "선택한 자녀의 수강 정보가 아닙니다.", "code": "student_mismatch"},
                 status=status.HTTP_403_FORBIDDEN,
             )
+        if support_preview:
+            return _progress_echo_response(video_id=video.id, enrollment_id=enrollment.id, request=request)
 
         # 진행률 업데이트 또는 생성
         progress_value = request.data.get("progress", None)  # 0-1 또는 0-100
