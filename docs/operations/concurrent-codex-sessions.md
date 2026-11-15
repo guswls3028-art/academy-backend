@@ -56,6 +56,11 @@ or a chat turn ending is not delivery completion. Documentation-only work ends
 with applicable validation, required CI and publication; it does not require a
 product deployment. Respect explicit read-only, local-only and PR-only scope.
 
+- At the start of release-bound work, inspect existing Academy deployment chats
+  and the official workflow and deployment status for the affected repositories.
+  Check queued, running, approval-waiting and rollback states. Recheck before a
+  release-triggering merge or dispatch. Confirm the owner and exact candidate or
+  run, then coordinate what goes into the active rollout or the next slot.
 - The task accepting the user's request owns its outcome until completion or an
   acknowledged transfer of that responsibility. A handoff names the receiving
   owner, exact PR/SHA, remaining acceptance criteria and next action. Confirm
@@ -67,12 +72,13 @@ product deployment. Respect explicit read-only, local-only and PR-only scope.
   required checks, deployment run, exact live revision, verification and cleanup.
   Reconcile squash/cherry-pick inclusion; retain omitted items for the next run.
   Use existing task artifacts/monitor state, not another registry or new chats.
-- A failed gate triggers diagnosis, an in-scope correction and relevant
-  revalidation. Continue independent work while another owner or CI runs. An
-  active run, handoff or local repair is not an external blocker. A shared
-  provider failure does not suspend unrelated repairs or independently releasable
-  work that satisfies its own gates. Never omit a required gate or manufacture a
-  passing result to claim delivery.
+- Use the current chat to follow checks, rollout and production verification
+  under standing authorization. A failed gate triggers diagnosis, an in-scope
+  correction and relevant revalidation. Continue independent work while another
+  owner or CI runs. An active run, handoff or local repair is not an external
+  blocker. A shared provider failure does not suspend unrelated repairs or other
+  work that has met its own release gates. Never omit a required gate or
+  manufacture a passing result to claim delivery.
 - For a genuine external blocker, retain the exact failure, owner, release
   condition and next observable check in the existing authorized continuation.
   Verify that continuation is active before leaving work unattended. Resume
@@ -81,9 +87,10 @@ product deployment. Respect explicit read-only, local-only and PR-only scope.
   continuation is available, report that limitation and the necessary external
   action plainly; never imply background work is running. Do not ask the user
   to repeat deployment authorization. Managed denials and current HOLDs remain.
-- Before a final completion report, reconcile the original request with actual
-  included changes and live evidence. Name any unresolved item as incomplete,
-  with its owner and continuation; a blocker/status report must not retire it.
+- Before a final completion report, reconcile the original request with the
+  deployed revision and affected-flow evidence. Verify cleanup of owned
+  worktrees, test data and temporary release resources where applicable.
+  Name any unresolved item as incomplete with its owner and continuation.
   End an authorized completion monitor only when its entire tracked scope has
   delivery evidence or the user explicitly cancels/narrows that scope.
 
