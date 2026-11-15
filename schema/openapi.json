@@ -5348,6 +5348,20 @@
             "maxLength": 255,
             "type": "string"
           },
+          "schedule_defaults": {
+            "items": {
+              "$ref": "#/components/schemas/LectureScheduleDefault"
+            },
+            "type": "array"
+          },
+          "schedule_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScheduleModeEnum"
+              }
+            ],
+            "description": "새 차시의 기본 수업일 구성\n\n* `SINGLE` - 한 날짜\n* `SPLIT` - 여러 날짜"
+          },
           "start_date": {
             "format": "date",
             "nullable": true,
@@ -5676,6 +5690,20 @@
             "minLength": 1,
             "type": "string"
           },
+          "schedule_defaults": {
+            "items": {
+              "$ref": "#/components/schemas/LectureScheduleDefaultRequest"
+            },
+            "type": "array"
+          },
+          "schedule_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScheduleModeEnum"
+              }
+            ],
+            "description": "새 차시의 기본 수업일 구성\n\n* `SINGLE` - 한 날짜\n* `SPLIT` - 여러 날짜"
+          },
           "start_date": {
             "format": "date",
             "nullable": true,
@@ -5696,6 +5724,45 @@
           "name",
           "subject",
           "title"
+        ],
+        "type": "object"
+      },
+      "LectureScheduleDefault": {
+        "properties": {
+          "label": {
+            "maxLength": 40,
+            "type": "string"
+          },
+          "weekday": {
+            "description": "ISO 요일 (1=월요일, 7=일요일)",
+            "maximum": 7,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "label",
+          "weekday"
+        ],
+        "type": "object"
+      },
+      "LectureScheduleDefaultRequest": {
+        "properties": {
+          "label": {
+            "maxLength": 40,
+            "minLength": 1,
+            "type": "string"
+          },
+          "weekday": {
+            "description": "ISO 요일 (1=월요일, 7=일요일)",
+            "maximum": 7,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "label",
+          "weekday"
         ],
         "type": "object"
       },
@@ -10262,6 +10329,20 @@
             "maxLength": 255,
             "minLength": 1,
             "type": "string"
+          },
+          "schedule_defaults": {
+            "items": {
+              "$ref": "#/components/schemas/LectureScheduleDefaultRequest"
+            },
+            "type": "array"
+          },
+          "schedule_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScheduleModeEnum"
+              }
+            ],
+            "description": "새 차시의 기본 수업일 구성\n\n* `SINGLE` - 한 날짜\n* `SPLIT` - 여러 날짜"
           },
           "start_date": {
             "format": "date",
@@ -15291,6 +15372,14 @@
           "label"
         ],
         "type": "object"
+      },
+      "ScheduleModeEnum": {
+        "description": "* `SINGLE` - 한 날짜\n* `SPLIT` - 여러 날짜",
+        "enum": [
+          "SINGLE",
+          "SPLIT"
+        ],
+        "type": "string"
       },
       "ScheduleRosterEntry": {
         "properties": {

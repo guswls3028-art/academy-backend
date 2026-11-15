@@ -19,7 +19,7 @@ from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.lectures.models import Lecture, Section, Session, SessionScheduleChange, SessionScheduleMembership
 from apps.domains.lectures.services.schedules import ScheduleConflict, save_schedules, schedule_state
 from apps.domains.lectures.tests.test_lecture_stabilization import LectureTestBase, User
-from apps.domains.lectures.views import SessionViewSet
+from apps.domains.lectures.views import LectureViewSet, SessionViewSet
 from apps.domains.results.views.session_scores_view import SessionScoresView
 from apps.domains.students.models import Student
 from apps.domains.student_app.sessions.views import StudentSessionDetailView, StudentSessionListView
@@ -65,6 +65,64 @@ class TestSessionSchedules(LectureTestBase):
         ]})
         self.assertEqual(response.status_code, 200, response.data)
         return response.data
+
+    def lecture_detail(self, method="get", data=None, lecture=None):
+        action = {"get": "retrieve", "patch": "partial_update"}[method]
+        return self.request(method, LectureViewSet.as_view({method: action}), data, pk=(lecture or self.lecture).pk)
+
+    def test_lecture_schedule_defaults_persist_without_rewriting_existing_lesson(self):
+        saved = self.configure()
+        section = Section.objects.create(
+            tenant=self.tenant, lecture=self.lecture, label="기존 반", day_of_week=3, start_time="17:00",
+        )
+        independent = Session.objects.create(
+            lecture=self.lecture, section=section, order=1, title="반별 기존 차시", date=date(2026, 4, 9),
+        )
+        initial = self.lecture_detail()
+        self.assertEqual(initial.data["schedule_mode"], "SINGLE")
+        self.assertEqual(initial.data["schedule_defaults"], [])
+
+        defaults = [{"label": "  A반  ", "weekday": 3}, {"label": "B반", "weekday": 4}]
+        update = self.lecture_detail("patch", {"schedule_mode": "SPLIT", "schedule_defaults": defaults})
+        self.assertEqual(update.status_code, 200, update.data)
+        self.assertEqual(self.lecture_detail().data["schedule_defaults"], [
+            {"label": "A반", "weekday": 3}, {"label": "B반", "weekday": 4},
+        ])
+        defaults_only = self.lecture_detail("patch", {"schedule_defaults": [
+            {"label": "수요일반", "weekday": 3}, {"label": "목요일반", "weekday": 4},
+        ]})
+        self.assertEqual(defaults_only.status_code, 200, defaults_only.data)
+        self.assertEqual(defaults_only.data["schedule_mode"], "SPLIT")
+
+        self.assertEqual(self.lecture_detail("patch", {"schedule_mode": "SINGLE"}).status_code, 400)
+        archived = self.lecture_detail("patch", {"is_active": False, "description": "운영 기록"})
+        self.assertEqual(archived.status_code, 200, archived.data)
+        self.assertFalse(archived.data["is_active"])
+        self.assertEqual(archived.data["schedule_mode"], "SPLIT")
+        single = self.lecture_detail("patch", {"schedule_mode": "SINGLE", "schedule_defaults": []})
+        self.assertEqual(single.status_code, 200, single.data)
+        self.assertEqual(self.lecture_detail().data["schedule_mode"], "SINGLE")
+        self.assertEqual(self.schedules().data, saved)
+        independent.refresh_from_db()
+        self.assertEqual(independent.section_id, section.pk)
+        self.assertEqual(independent.date, date(2026, 4, 9))
+
+    def test_lecture_schedule_defaults_reject_invalid_rows_and_foreign_lecture(self):
+        good = {"label": "A반", "weekday": 3}
+        for row in (
+            {"label": "B반", "weekday": True}, {"label": "B반", "weekday": 3.5},
+            {"label": "B반", "weekday": 0}, {"label": "B반", "weekday": 8},
+            {"label": " a반 ", "weekday": 4}, {"label": 42, "weekday": 4},
+            {"label": "B반", "weekday": 4, "date": "2026-11-01"},
+        ):
+            with self.subTest(row=row):
+                response = self.lecture_detail("patch", {"schedule_mode": "SPLIT", "schedule_defaults": [good, row]})
+                self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(self.lecture_detail().data["schedule_defaults"], [])
+        other = Tenant.objects.create(name="Other", code="other-lecture-defaults")
+        lecture = Lecture.objects.create(tenant=other, name="Other", title="Other")
+        self.assertEqual(self.lecture_detail("patch", {"schedule_defaults": [good]}, lecture=lecture).status_code, 404)
+        self.assertEqual(Lecture.objects.get(pk=lecture.pk).schedule_defaults, [])
 
     def create_payload(self, **changes):
         return {
