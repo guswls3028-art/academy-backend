@@ -11,7 +11,10 @@ $statePath = Join-Path $runtime 'state.json'
 $receiptPath = Join-Path $runtime 'installation.json'
 $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($Action -eq 'Inspect') {
-    if ($task) { $task | Select-Object TaskName, State; Get-ScheduledTaskInfo -TaskName $taskName | Select-Object LastRunTime, LastTaskResult }
+    if ($task) {
+        $info = Get-ScheduledTaskInfo -TaskName $taskName
+        @{ task = $taskName; state = $task.State.ToString(); last_run = $info.LastRunTime.ToString('o'); last_result = $info.LastTaskResult } | ConvertTo-Json -Compress
+    }
     if (Test-Path -LiteralPath $receiptPath) { Get-Content -LiteralPath $receiptPath }
     if (Test-Path -LiteralPath $statePath) { Get-Content -LiteralPath $statePath }
     exit 0
@@ -22,11 +25,21 @@ if ($task -and ($task.Description -notlike 'Academy read-only agent metadata pub
     throw 'The task name belongs to another action; no changes made.'
 }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$source = & git -C $repo show "${Revision}:scripts/operations/agent_session_snapshot.py"
-if ($LASTEXITCODE -ne 0 -or -not $source) { throw 'Cannot read the committed collector.' }
+$start = [Diagnostics.ProcessStartInfo]::new()
+$start.FileName = 'git'
+$start.Arguments = '-C "' + $repo + '" show ' + $Revision + ':scripts/operations/agent_session_snapshot.py'
+$start.UseShellExecute = $false
+$start.CreateNoWindow = $true
+$start.RedirectStandardOutput = $true
+$start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+$gitProcess = [Diagnostics.Process]::Start($start)
+$source = $gitProcess.StandardOutput.ReadToEnd()
+$gitProcess.WaitForExit()
+if ($gitProcess.ExitCode -ne 0 -or -not $source) { throw 'Cannot read the committed collector.' }
+$gitProcess.Dispose()
 New-Item -ItemType Directory -Path $runtime -Force | Out-Null
 if ($task) { Stop-ScheduledTask -TaskName $taskName }
-[IO.File]::WriteAllText($scriptPath, ($source -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText($scriptPath, $source, [Text.UTF8Encoding]::new($false))
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $arguments = '"' + $scriptPath + '" --publish --codex-home "C:\Users\heon7\.codex" --claude-home "C:\Users\heon7\.claude" --workspace "C:\academy" --state-path "' + $statePath + '"'
 $taskAction = New-ScheduledTaskAction -Execute $Python -Argument $arguments -WorkingDirectory 'C:\academy'

@@ -7,7 +7,7 @@ import re
 import sqlite3
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 SOURCE = Path(__file__).resolve().parents[1] / "scripts/operations/agent_session_snapshot.py"
 spec = importlib.util.spec_from_file_location("agent_snapshot", SOURCE)
@@ -98,6 +98,19 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(result["status"], "unavailable")
         self.assertNotIn("nodes", result)
         self.assertFalse(receipt.with_suffix(".tmp").exists())
+
+    def test_publisher_uses_api_storage_default_but_refuses_other_targets(self):
+        values = {"R2_ENDPOINT": f"https://{collector.R2_ACCOUNT}.r2.cloudflarestorage.com", "R2_ACCESS_KEY": "test", "R2_SECRET_KEY": "test"}
+        sts, ssm = Mock(), Mock()
+        sts.get_caller_identity.return_value = {"Account": collector.AWS_ACCOUNT}
+        with patch("boto3.Session") as session, patch("boto3.client") as client:
+            session.return_value.client.side_effect = lambda name, **kwargs: {"sts": sts, "ssm": ssm}[name]
+            ssm.get_parameter.return_value = {"Parameter": {"Value": json.dumps(values)}}
+            self.assertIs(collector.publishing_client(), client.return_value)
+            values["R2_STORAGE_BUCKET"] = "another-bucket"
+            ssm.get_parameter.return_value = {"Parameter": {"Value": json.dumps(values)}}
+            with self.assertRaises(ValueError):
+                collector.publishing_client()
 
 
 if __name__ == "__main__":

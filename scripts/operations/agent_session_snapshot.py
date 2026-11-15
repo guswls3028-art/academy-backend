@@ -281,6 +281,9 @@ def publishing_client():
             if sep and key.strip() in R2_FIELDS:
                 values[key.strip()] = value.strip().strip('"').strip("'")
     config = {key: values.get(key, "") for key in R2_FIELDS}
+    # Match the API's explicit storage defaults when SSM omits optional fields.
+    config["R2_STORAGE_BUCKET"] = values.get("R2_STORAGE_BUCKET", R2_BUCKET)
+    config["R2_REGION"] = values.get("R2_REGION", "auto")
     del encoded, values
     if config["R2_STORAGE_BUCKET"] != R2_BUCKET or config["R2_ENDPOINT"].rstrip("/") != f"https://{R2_ACCOUNT}.r2.cloudflarestorage.com":
         raise ValueError("Unexpected private storage target")
