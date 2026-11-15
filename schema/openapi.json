@@ -5986,6 +5986,69 @@
         ],
         "type": "object"
       },
+      "LectureSessionCreateRequest": {
+        "properties": {
+          "create_request_id": {
+            "format": "uuid",
+            "type": "string",
+            "writeOnly": true
+          },
+          "date": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "initial_schedules": {
+            "items": {
+              "$ref": "#/components/schemas/SessionCreateScheduleInputRequest"
+            },
+            "type": "array",
+            "writeOnly": true
+          },
+          "insert_after_order": {
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer",
+            "writeOnly": true
+          },
+          "lecture": {
+            "type": "integer"
+          },
+          "order": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "regular_order": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "section": {
+            "description": "반별 차시 (section_mode=true). null이면 반 무관 공통 차시.",
+            "nullable": true,
+            "type": "integer"
+          },
+          "session_type": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SessionTypeEnum"
+              }
+            ],
+            "default": "REGULAR"
+          },
+          "title": {
+            "maxLength": 255,
+            "type": "string"
+          }
+        },
+        "required": [
+          "create_request_id",
+          "initial_schedules",
+          "lecture"
+        ],
+        "type": "object"
+      },
       "LectureSessionRequest": {
         "properties": {
           "date": {
@@ -16773,6 +16836,34 @@
           "SECESSION"
         ],
         "type": "string"
+      },
+      "SessionCreateScheduleInputRequest": {
+        "properties": {
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "end_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 40,
+            "minLength": 1,
+            "type": "string"
+          },
+          "start_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "label"
+        ],
+        "type": "object"
       },
       "SessionEnrollment": {
         "properties": {
@@ -40445,6 +40536,57 @@
               }
             },
             "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "lectures"
+        ]
+      }
+    },
+    "/api/v1/lectures/sessions/with-schedules/": {
+      "post": {
+        "operationId": "lectures_sessions_with_schedules_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureSessionCreateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureSessionCreateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureSessionCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LectureSession"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "description": "같은 생성 요청 ID에 이미 다른 입력이 저장되었습니다."
           }
         },
         "security": [

@@ -2,6 +2,7 @@
 
 from rest_framework import serializers
 from .models import Lecture, Session, Section, SectionAssignment, SessionSchedule
+from .services.schedules import SessionCreateScheduleInput
 from apps.support.lectures.filter_dependencies import active_enrollment_count_for_lecture
 
 
@@ -171,7 +172,8 @@ class SessionSerializer(serializers.ModelSerializer):
                     else self.instance.order
                 )
 
-        if candidate_regular_order is not None and lecture and session_type == Session.SessionType.REGULAR:
+        # Bundled creates check order under the lecture lock, after replay lookup.
+        if not attrs.get("create_request_id") and candidate_regular_order is not None and lecture and session_type == Session.SessionType.REGULAR:
             qs = Session.objects.filter(
                 lecture=lecture,
                 section=section,
@@ -208,6 +210,15 @@ class SessionSerializer(serializers.ModelSerializer):
                 pass
 
         return attrs
+
+
+class SessionCreateSerializer(SessionSerializer):
+    initial_schedules = SessionCreateScheduleInput(many=True, write_only=True, allow_empty=False, max_length=20)
+    create_request_id = serializers.UUIDField(write_only=True)
+
+    class Meta(SessionSerializer.Meta):
+        fields = [*SessionSerializer.Meta.fields, "initial_schedules", "create_request_id"]
+        ref_name = "LectureSessionCreate"
 
 
 class SectionSerializer(serializers.ModelSerializer):

@@ -4,9 +4,11 @@ from zoneinfo import ZoneInfo
 import threading
 import unittest
 from unittest.mock import patch
+from uuid import uuid4
 
 from django.db import OperationalError, close_old_connections, connection, transaction
 from django.test import TransactionTestCase
+from django.urls import resolve
 from rest_framework.test import force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -14,7 +16,7 @@ from apps.domains.attendance.models import Attendance, AttendanceQrPoint
 from apps.domains.attendance.services.qr import class_roster
 from apps.domains.attendance.views import AttendanceViewSet
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.lectures.models import Lecture, Session, SessionScheduleChange, SessionScheduleMembership
+from apps.domains.lectures.models import Lecture, Section, Session, SessionScheduleChange, SessionScheduleMembership
 from apps.domains.lectures.services.schedules import ScheduleConflict, save_schedules, schedule_state
 from apps.domains.lectures.tests.test_lecture_stabilization import LectureTestBase, User
 from apps.domains.lectures.views import SessionViewSet
@@ -63,6 +65,80 @@ class TestSessionSchedules(LectureTestBase):
         ]})
         self.assertEqual(response.status_code, 200, response.data)
         return response.data
+
+    def create_payload(self, **changes):
+        return {
+            "lecture": self.lecture.pk, "regular_order": 2, "date": "2026-04-15",
+            "create_request_id": str(uuid4()),
+            "initial_schedules": [
+                {"label": "수요일", "date": "2026-04-15", "start_time": "17:00", "end_time": "18:00"},
+                {"label": "목요일", "date": "2026-04-16"},
+            ],
+            **changes,
+        }
+
+    def create_session(self, payload):
+        return self.request("post", resolve("/api/v1/lectures/sessions/with-schedules/").func, payload)
+
+    def test_initial_schedules_create_once_and_replay_with_no_implicit_roster(self):
+        payload = self.create_payload()
+        first = self.create_session(payload)
+        self.assertEqual(first.status_code, 201, first.data)
+        new_session = Session.objects.get(pk=first.data["id"])
+        self.assertEqual([day["label"] for day in first.data["schedule_dates"]], ["수요일", "목요일"])
+        self.assertEqual(self.schedules(session=new_session).data["roster"], [])
+        self.assertFalse(Attendance.objects.filter(session=new_session).exists())
+
+        retry = self.create_session(payload)
+        self.assertEqual(retry.status_code, 201, retry.data)
+        self.assertEqual(retry.data, first.data)
+        self.assertEqual(Session.objects.filter(lecture=self.lecture).count(), 2)
+        self.assertEqual(SessionScheduleChange.objects.filter(session=new_session).count(), 1)
+
+        mismatch = self.create_session({**payload, "title": "다른 차시"})
+        self.assertEqual(mismatch.status_code, 409, mismatch.data)
+        self.assertEqual(Session.objects.filter(lecture=self.lecture).count(), 2)
+        different_request = self.create_session({**payload, "create_request_id": str(uuid4())})
+        self.assertEqual(different_request.status_code, 400, different_request.data)
+
+    def test_initial_schedule_validation_rolls_back_session_and_insert_order(self):
+        payload = self.create_payload(session_type="SUPPLEMENT", title="보강", regular_order=None, insert_after_order=0)
+        payload["initial_schedules"][1]["label"] = "수요일"
+        self.assertEqual(self.create_session(payload).status_code, 400)
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.order, 1)
+        self.assertEqual(Session.objects.filter(lecture=self.lecture).count(), 1)
+        self.assertFalse(SessionScheduleChange.objects.filter(session__lecture=self.lecture).exists())
+
+        payload["initial_schedules"][1].update(label="목요일", date="2026-02-29")
+        self.assertEqual(self.create_session(payload).status_code, 400)
+        payload["initial_schedules"][1]["date"] = "2026-04-16"
+        payload["initial_schedules"][1]["enrollment_ids"] = [self.enrollments[0].pk]
+        self.assertEqual(self.create_session(payload).status_code, 400)
+        self.assertEqual(Session.objects.filter(lecture=self.lecture).count(), 1)
+
+    def test_initial_schedule_replay_still_checks_tenant_and_section(self):
+        payload = self.create_payload()
+        self.assertEqual(self.create_session(payload).status_code, 201)
+        other_tenant = Tenant.objects.create(name="Other", code="schedule-other")
+        other_lecture = Lecture.objects.create(tenant=other_tenant, name="Other", title="Other")
+        foreign_section = Section.objects.create(
+            tenant=other_tenant, lecture=other_lecture, label="외부", day_of_week=1, start_time="17:00",
+        )
+        self.assertEqual(self.create_session({**payload, "lecture": other_lecture.pk}).status_code, 403)
+        self.assertEqual(self.create_session({**payload, "section": foreign_section.pk}).status_code, 400)
+        self.assertFalse(Session.objects.filter(lecture=other_lecture).exists())
+
+    def test_initial_schedule_pair_and_optional_time_types_are_checked(self):
+        payload = self.create_payload()
+        for missing in ("initial_schedules", "create_request_id"):
+            with self.subTest(missing=missing):
+                self.assertEqual(self.create_session({k: v for k, v in payload.items() if k != missing}).status_code, 400)
+        payload["initial_schedules"][0]["start_time"] = True
+        self.assertEqual(self.create_session(payload).status_code, 400)
+        payload["initial_schedules"][0]["start_time"] = "17:00:59"
+        self.assertEqual(self.create_session(payload).status_code, 400)
+        self.assertEqual(Session.objects.filter(lecture=self.lecture).count(), 1)
 
     def test_shared_video_progress_and_attendance_survive_assignment_move_and_removal(self):
         video = Video.objects.create(tenant=self.tenant, session=self.session, title="공유 영상", status="READY")

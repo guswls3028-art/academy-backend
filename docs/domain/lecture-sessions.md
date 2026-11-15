@@ -29,6 +29,18 @@
 - 직원은 차시의 **수업일 관리**에서 이름·날짜·선택적 시작/종료 시각과 학생을
   저장한다. 출결·성적 탭에서 전체 / 개별 수업일 / 미배정을 고른다. 자료·영상·시험·과제는
   공통이며 수업일 선택이 콘텐츠 접근 권한을 새로 만들거나 제거하지 않는다.
+- 직원은 `POST /lectures/sessions/with-schedules/`에 `create_request_id`(UUID)와
+  `initial_schedules`(1~20개: `label`, `date`, 선택 `start_time`·`end_time`)를 함께 보내
+  새 차시와 여러 날짜를 한 트랜잭션에서 생성할 수 있다. 초기 날짜에는 기존 날짜 ID나
+  학생 배정을 입력하지 않는다. 학생은 차시 등록 후 해당 수업일에 배정한다. 일반
+  차시는 기존 `POST /lectures/sessions/`에서 생성한다. 구 API는 통합 생성 경로에
+  404를 반환한다. 이때 일반 생성으로 재시도하지 않는다. 날짜나 순서 검증이 실패하면
+  차시와 순서 변경도 저장되지 않는다. 응답 `schedule_dates`에 새 수업일이 포함된다.
+- 생성 응답이 끊기면 같은 강의에서 같은 UUID와 입력으로 다시 요청한다. 기존 차시 ID를
+  반환하며 새 차시를 만들지 않는다. 같은 UUID에 다른 유효한 입력은 409다. 생성 기록은
+  차시의 수업일 변경 이력에 두므로 차시가 삭제되거나 다른 강의로 이동한 뒤에는 기존
+  강의에서 재시도 확인에 사용할 수 없다. `tests/test_session_schedules.py`가 생성,
+  날짜·순서 실패의 롤백, 재시도, 학원·반 검증을 확인한다.
 - `GET /lectures/sessions/{id}/schedules/`는 `version`, `schedules`, 차시 `roster`,
   `unassigned_enrollment_ids`를 반환한다. `PUT`은 같은 version과 전체 schedules를
   받아 한 트랜잭션으로 저장한다. 각 schedule은 id(신규 생략), label, date,
