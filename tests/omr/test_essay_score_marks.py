@@ -19,7 +19,7 @@ from apps.domains.assets.omr.renderer.pdf_renderer import OMRPdfRenderer
 from apps.domains.assets.omr.services.meta_generator import (
     build_essay_score_marks,
     build_omr_meta,
-    essay_score_mark_availability,
+    legacy_essay_score_mark_availability,
 )
 
 
@@ -67,7 +67,7 @@ def _mark_score(image, meta, mark, *, tens=None, ones=None, tenths=None, **kwarg
 @pytest.mark.parametrize(("mc", "max_essays", "lines"), [(0, 10, 1), (20, 10, 1), (30, 8, 2), (40, 8, 2)])
 def test_layout_is_fixed_and_fits_every_supported_essay_row(mc, max_essays, lines):
     for essays in range(1, max_essays + 2):
-        availability = essay_score_mark_availability(
+        availability = legacy_essay_score_mark_availability(
             question_count=mc, essay_count=essays, essay_max_scores=[10] * essays,
         )
         assert availability["available"] is (essays <= max_essays), (mc, essays, availability)
@@ -105,7 +105,7 @@ def test_layout_is_fixed_and_fits_every_supported_essay_row(mc, max_essays, line
     ],
 )
 def test_unavailable_layouts_explain_the_reason(essays, maxes, reason):
-    availability = essay_score_mark_availability(
+    availability = legacy_essay_score_mark_availability(
         question_count=30, essay_count=essays, essay_max_scores=maxes,
     )
     assert availability["available"] is False

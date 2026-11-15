@@ -17,8 +17,9 @@ from copy import deepcopy
 from typing import Any, Optional
 
 from apps.domains.assets.omr.services.meta_generator import (
+    build_essay_score_grid_metadata,
     build_essay_score_marks,
-    essay_score_mark_availability,
+    legacy_essay_score_mark_availability,
 )
 from apps.domains.exams.models import ExamQuestion
 from apps.domains.submissions.models import Submission
@@ -117,22 +118,25 @@ def build_omr_payload(submission: Submission) -> dict[str, Any]:
         ]
         template_meta["numeric_short_answers"] = []
         template_meta["numeric_short_answer_count"] = 0
-        if (
-            not contract.essay_score_marks
-            and sheet.essay_score_marks_scan_shape
+        if contract.essay_score_marks or (
+            sheet.essay_score_marks_scan_shape
             and supports_essay_score_marks(exam)
             and sheet.essay_score_marks_scan_shape == essay_score_marks_scan_shape(contract)
         ):
-            # Earlier prints use the same coordinates as long as the question
-            # layout matches. The worker still requires both physical anchors.
-            availability = essay_score_mark_availability(
+            # Keep recognizing prints already in circulation after disabling printing.
+            essay_numbers = list(contract.essay_question_numbers)
+            if not contract.essay_score_marks:
+                template_meta.update(build_essay_score_grid_metadata(
+                    choice_numbers=list(contract.objective_question_numbers),
+                    essay_numbers=essay_numbers,
+                ))
+            if legacy_essay_score_mark_availability(
                 question_count=contract.choice_count,
                 essay_count=contract.essay_count,
-            )
-            if availability["available"]:
+            )["available"]:
                 template_meta["essay_score_marks"] = build_essay_score_marks(
                     question_count=contract.choice_count,
-                    essay_question_numbers=list(contract.essay_question_numbers),
+                    essay_question_numbers=essay_numbers,
                 )
         payload["template_meta"] = template_meta
 

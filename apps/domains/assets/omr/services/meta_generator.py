@@ -19,6 +19,7 @@ AI 워커는 이 메타의 `markers`(homography)와 `questions[*].choices[*].cen
 from __future__ import annotations
 
 import math
+from hashlib import sha256
 from typing import Any, Dict, List
 
 # ══════════════════════════════════════════
@@ -309,7 +310,7 @@ def _essay_score_strip_shape(question_count: int) -> Dict[str, Any] | None:
     return None
 
 
-def essay_score_mark_availability(
+def legacy_essay_score_mark_availability(
     *,
     question_count: int,
     essay_count: int,
@@ -343,6 +344,78 @@ def essay_score_mark_availability(
                 "reason": f"서술형 배점은 {ESSAY_SCORE_MAX:g}점까지 점수칸으로 읽을 수 있습니다.",
             }
     return {"available": True, "reason": "", "lines": shape["lines"]}
+
+
+ESSAY_GRID_WIDTH = 17.0
+ESSAY_GRID_ROWS_PER_COLUMN = 10
+ESSAY_GRID_X_PITCH = 5.0
+ESSAY_GRID_Y_PITCH = 6.0
+ESSAY_SCORE_GRID_MAX = sum(range(9))
+
+
+def essay_score_mark_availability(
+    *,
+    question_count: int,
+    essay_count: int,
+    essay_max_scores: List[float | None] | None = None,
+) -> Dict[str, Any]:
+    if essay_count <= 0:
+        return {"available": False, "reason": "서술형 문항이 없습니다."}
+    if essay_count > 20 or validate_layout(question_count, essay_count):
+        return {"available": False, "reason": "답안지 레이아웃을 먼저 확인해 주세요."}
+    if any(score is None or float(score) <= 0 for score in essay_max_scores or []):
+        return {"available": False, "reason": "배점이 없는 서술형 문항이 있습니다."}
+    return {"available": True, "reason": "", "lines": 3}
+
+
+def essay_score_column_ranges(essay_count: int) -> list[range]:
+    """Balanced vertical columns, with at most ten 3×3 grids per column."""
+    if essay_count <= ESSAY_GRID_ROWS_PER_COLUMN:
+        return [range(essay_count)]
+    split = (essay_count + 1) // 2
+    return [range(split), range(split, essay_count)]
+
+
+def build_essay_score_grid_metadata(
+    *, choice_numbers: list[int], essay_numbers: list[int],
+) -> dict[str, Any]:
+    if not essay_score_mark_availability(
+        question_count=len(choice_numbers), essay_count=len(essay_numbers),
+    )["available"]:
+        return {}
+
+    mc_columns = compute_safe_layout(len(choice_numbers))["n_cols"]
+    essay_x = ANS_X + mc_columns * (MC_COL_W + MC_COL_GAP)
+    columns = essay_score_column_ranges(len(essay_numbers))
+    column_width = (PAGE_W - MARGIN_R - essay_x) / len(columns)
+    questions = []
+    for column, indices in enumerate(columns):
+        right = essay_x + (column + 1) * column_width
+        row_height = (CONTENT_H - MC_HEADER_H) / len(indices)
+        for row, index in enumerate(indices):
+            y = CONTENT_Y + MC_HEADER_H + (row + 0.5) * row_height
+            questions.append({
+                "question_number": essay_numbers[index],
+                "choices": [{
+                    "label": str(value),
+                    "center": {
+                        "x": round(right - ESSAY_GRID_WIDTH / 2 + (value % 3 - 1) * ESSAY_GRID_X_PITCH, 2),
+                        "y": round(y + (value // 3 - 1) * ESSAY_GRID_Y_PITCH, 2),
+                    },
+                    "radius_x": BUB_W / 2,
+                    "radius_y": BUB_H / 2,
+                } for value in range(9)],
+            })
+
+    # Place the layout pattern above the frame, clear of corner/column anchors.
+    # Each pair has one printed and one white cell so old paper cannot match.
+    signature = sha256(repr((choice_numbers, essay_numbers, "essay_score_grid.v2")).encode("ascii")).digest()
+    layout_marks = [
+        {"x": 204.0 + index * 2.6, "y": y, "size": 1.5, "filled": row == (signature[index // 8] >> (index % 8) & 1)}
+        for index in range(24)
+        for row, y in enumerate((4.6, 7.0))
+    ]
+    return {"essay_score_questions": questions, "essay_score_layout_marks": layout_marks}
 
 
 def build_essay_score_marks(

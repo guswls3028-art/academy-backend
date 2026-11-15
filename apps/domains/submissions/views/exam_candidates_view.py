@@ -6,7 +6,8 @@ GET /api/v1/submissions/submissions/exams/<exam_id>/candidates/?q=<query>
 
 - 해당 시험의 ExamEnrollment을 기반으로 응시 대상 학생 리스트 반환.
 - ExamEnrollment이 비어있으면 exam.sessions의 SessionEnrollment로 fallback.
-- q (검색어): 학생명, 학생폰 뒤 8자리, 학부모폰 뒤 8자리 부분일치.
+- session_id: 해당 시험과 연결된 차시로 제한하며, 응답에 검증된 차시 ID를 포함한다.
+- q (검색어): 학생명, 학생·학부모 전화번호 일부 또는 정확한 뒤 8자리.
 - 최대 50건.
 - 응답 필드: enrollment_id, student_name, student_phone, parent_phone,
              lecture_title, lecture_color, lecture_chip_label,
@@ -16,10 +17,12 @@ from __future__ import annotations
 
 from typing import Set
 
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.api.common.query_params import parse_query_int
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.submissions.models import Submission
 from apps.support.submissions.candidate_dependencies import exam_candidate_rows
@@ -33,13 +36,22 @@ class ExamCandidatesView(APIView):
         if not tenant:
             return Response([], status=200)
 
+        session_id = parse_query_int(request.query_params, "session_id", min_value=1, max_value=2**63 - 1)
+        if "session_id" in request.query_params and (
+            session_id is None or len(request.query_params.getlist("session_id")) != 1
+        ):
+            raise ValidationError({"session_id": "차시 ID를 하나 입력해 주세요."})
+
         candidates = exam_candidate_rows(
             tenant=tenant,
             exam_id=int(exam_id),
             q=str(request.query_params.get("q") or "").strip(),
+            session_id=session_id,
         )
         if not candidates.found:
             return Response({"detail": "시험을 찾을 수 없습니다."}, status=404)
+        if not candidates.session_valid:
+            raise ValidationError({"session_id": "해당 시험에 연결된 차시가 아닙니다."})
 
         # 이미 submission 매칭된 enrollment_id
         matched_ids: Set[int] = set(
@@ -61,4 +73,7 @@ class ExamCandidatesView(APIView):
             item["already_matched"] = int(item["enrollment_id"]) in matched_ids
             items.append(item)
 
-        return Response(items, status=200)
+        return Response(
+            items if session_id is None else {"session_id": session_id, "candidates": items},
+            status=200,
+        )

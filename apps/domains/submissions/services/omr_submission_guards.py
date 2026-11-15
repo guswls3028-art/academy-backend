@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from apps.domains.submissions.models import Submission
+from django.db.models import Exists, OuterRef
+
+from apps.domains.submissions.models import OmrUploadBatchItem, Submission
 from apps.domains.submissions.services.lifecycle import OMR_CONFLICT_STATUSES
 from apps.support.omr.candidate_matching import (
     ensure_exam_enrollment_candidate,
@@ -62,3 +64,23 @@ def duplicate_conflict_payload(submission: Submission) -> dict:
         "conflict_file_key": submission.file_key or "",
         "conflict_status": submission.status,
     }
+
+
+def omr_admissions_in_other_sessions(*, tenant, exam_id: int, session_id: int, submission_id: int | OuterRef):
+    # The one-to-one submission link is the original admission. Duplicate
+    # items only reference it through duplicate_of_submission and never change its origin.
+    return OmrUploadBatchItem.objects.filter(
+        submission_id=submission_id, batch__tenant=tenant, batch__exam_id=exam_id,
+        batch__session_id__isnull=False,
+    ).exclude(batch__session_id=session_id)
+
+
+def omr_replacement_crosses_sessions(*, tenant, exam_id: int, session_id: int, enrollment_id: int, submission_id: int) -> bool:
+    return Submission.objects.filter(
+        Exists(omr_admissions_in_other_sessions(
+            tenant=tenant, exam_id=exam_id, session_id=session_id, submission_id=OuterRef("pk"),
+        )),
+        tenant=tenant, target_type=Submission.TargetType.EXAM, target_id=exam_id,
+        enrollment_id=enrollment_id, source=Submission.Source.OMR_SCAN,
+        status__in=OMR_CONFLICT_STATUSES,
+    ).exclude(id=submission_id).exists()

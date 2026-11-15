@@ -103,7 +103,8 @@ class OMRDocumentService:
         # request that changes the shape prints without strips.
         if contract is None:
             contract = OMRDocumentService._exam_contract_or_none(exam=exam, tenant=tenant)
-        essay_score_marks: tuple = ()
+        essay_score_questions: tuple = ()
+        essay_score_layout_marks: tuple = ()
         if contract is not None and contract.essay_score_marks:
             effective_choice = list(resolved_choice_numbers or range(1, _mc_count + 1))
             effective_essay = list(
@@ -115,7 +116,8 @@ class OMRDocumentService:
                 and effective_choice == list(contract.objective_question_numbers)
                 and effective_essay == list(contract.essay_question_numbers)
             ):
-                essay_score_marks = tuple(contract.essay_score_marks)
+                essay_score_questions = tuple(contract.essay_score_marks)
+                essay_score_layout_marks = tuple(contract.template_meta["essay_score_layout_marks"])
 
         # 로고 & 브랜드 컬러 resolve
         logo_url = OMRDocumentService._resolve_logo_url(tenant)
@@ -136,7 +138,8 @@ class OMRDocumentService:
             include_optional_essay_area=include_optional_essay_area,
             choice_question_numbers=tuple(resolved_choice_numbers or ()),
             essay_question_numbers=tuple(resolved_essay_numbers or ()),
-            essay_score_marks=essay_score_marks,
+            essay_score_questions=essay_score_questions,
+            essay_score_layout_marks=essay_score_layout_marks,
             logo_url=logo_url,
             logo_key=logo_key,
             logo_variant=logo_variant,
