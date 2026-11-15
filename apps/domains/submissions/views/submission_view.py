@@ -55,6 +55,7 @@ from apps.support.student_app.exam_dependencies import (
     StudentExamSubmitError,
     submit_online_exam_for_enrollment,
 )
+from apps.support.submissions.candidate_dependencies import exam_review_session_is_linked
 from apps.support.submissions.dependencies import (
     absence_blocks_confirmed_scan,
     allowed_manual_exam_question_ids,
@@ -76,6 +77,15 @@ from apps.support.submissions.dependencies import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _review_session_id(data) -> int | None:
+    if "session_id" not in data:
+        return None
+    raw = data["session_id"]
+    if type(raw) is not int or not 1 <= raw <= 2**63 - 1:
+        raise ValidationError({"session_id": "유효한 차시 ID를 입력해 주세요."})
+    return raw
 
 
 def _answer_review_version(submission: Submission) -> str | None:
@@ -757,11 +767,22 @@ class SubmissionViewSet(ModelViewSet):
                 }, status=status.HTTP_409_CONFLICT)
 
         identifier = request.data.get("identifier")
+        session_id = _review_session_id(request.data)
         answers = request.data.get("answers", [])
         if answers is None:
             answers = []
         note = str(request.data.get("note") or "manual_edit")
         tenant = submission.tenant
+        if session_id is not None and not (isinstance(identifier, dict) and identifier.get("enrollment_id") is not None):
+            exam_id = submission.target_id if submission.target_type == Submission.TargetType.EXAM else 0
+            if submission.enrollment_id:
+                candidate = validate_exam_enrollment_candidate(
+                    tenant=tenant, exam_id=exam_id, enrollment_id=submission.enrollment_id, session_id=session_id,
+                )
+                if not candidate.ok:
+                    return Response({"detail": candidate.detail}, status=400)
+            elif not exam_id or not exam_review_session_is_linked(tenant=tenant, exam_id=exam_id, session_id=session_id):
+                return Response({"detail": "해당 시험에 연결된 차시가 아닙니다."}, status=400)
         confirming_answers = "answer_review_version" in request.data
         # Explicit teacher decision from the absence prompt; identification
         # alone never cancels an absence.
@@ -807,6 +828,7 @@ class SubmissionViewSet(ModelViewSet):
                 tenant=tenant,
                 exam_id=exam_id,
                 enrollment_id=candidate_eid,
+                session_id=session_id,
             )
             if not candidate.ok:
                 return Response({"detail": candidate.detail}, status=400)
@@ -1185,6 +1207,7 @@ class SubmissionViewSet(ModelViewSet):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "Tenant required"}, status=403)
+        session_id = _review_session_id(request.data)
 
         with transaction.atomic():
             submission_scope = Submission.objects.only(
@@ -1210,6 +1233,13 @@ class SubmissionViewSet(ModelViewSet):
                 )
             if not submission.target_id:
                 return Response({"detail": "시험 정보가 없습니다."}, status=400)
+            if session_id is not None:
+                candidate = validate_exam_enrollment_candidate(
+                    tenant=tenant, exam_id=submission.target_id,
+                    enrollment_id=submission.enrollment_id, session_id=session_id,
+                )
+                if not candidate.ok:
+                    return Response({"detail": candidate.detail}, status=400)
 
             now = timezone.now()
             actor = f"admin.accept_from_duplicates.user_{getattr(request.user, 'id', '?')}"
