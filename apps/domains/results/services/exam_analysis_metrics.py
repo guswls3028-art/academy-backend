@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from dataclasses import dataclass
-from statistics import mean
+from statistics import mean, median, pstdev, quantiles
 from typing import Any
 
 from apps.domains.results.models import ExamAttempt
@@ -50,12 +50,51 @@ def score_rate(score: float, maximum: float) -> float:
     return max(0.0, min(100.0, score / maximum * 100.0))
 
 
-def recommended_cutoff(scores: list[float], maximum: float) -> int | None:
-    if not scores or not math.isfinite(maximum) or maximum < 5:
+def recommended_cutoff(average: float | None, maximum: float) -> int | None:
+    if average is None or not math.isfinite(maximum) or maximum < 5:
         return None
     # Positive half ties round up, even when the multiple of five is odd.
-    rounded = math.floor(mean(scores) / 5 + 0.5) * 5
+    rounded = math.floor(average / 5 + 0.5) * 5
     return min(rounded, math.floor(maximum / 5) * 5) if rounded > 0 else None
+
+
+def _score_summary(
+    *, confirmed: dict[int, AnalysisScore], pass_by_enrollment: dict[int, float], roster_count: int,
+) -> dict[str, Any]:
+    raw_scores = []
+    score_rates = []
+    distribution_counts = [0] * 5
+    pass_criterion_count = pass_count = remediated_count = 0
+    for enrollment_id, row in confirmed.items():
+        score = row.initial.total_score
+        rate = score_rate(score, row.initial.max_score)
+        raw_scores.append(score)
+        score_rates.append(rate)
+        distribution_counts[max(0, math.ceil(rate / 20) - 1)] += 1
+        criterion = pass_by_enrollment[enrollment_id]
+        if criterion > 0:
+            pass_criterion_count += 1
+            pass_count += score >= criterion
+        remediated_count += bool(row.achievement.get("remediated"))
+
+    ordered = sorted(raw_scores)
+    top_count = math.ceil(len(ordered) / 10)
+    quartiles = quantiles(ordered, n=4, method="inclusive") if len(ordered) >= 4 else None
+    return {
+        "average": mean(ordered) if ordered else None,
+        "median": median(ordered) if ordered else None,
+        "top_ten_average": mean(ordered[-top_count:]) if ordered else None,
+        "highest": ordered[-1] if ordered else None,
+        "std_dev": pstdev(ordered) if ordered else None,
+        "std_rate": pstdev(score_rates) if score_rates else None,
+        "p25": quartiles[0] if quartiles else None,
+        "p75": quartiles[2] if quartiles else None,
+        "unscored_count": roster_count - len(confirmed),
+        "pass_criterion_count": pass_criterion_count,
+        "pass_count": pass_count,
+        "remediated_count": remediated_count,
+        "distribution_counts": distribution_counts,
+    }
 
 
 def _load_scores(*, results, exam_maxima, tenant, candidate_policy=None):
@@ -208,9 +247,14 @@ def load_exam_analysis(
         if session_id in sessions
     }
 
+    default_pass_score = float(exam.pass_score or 0.0)
+    pass_by_enrollment = {
+        enrollment_id: pass_scores.get(candidate.lecture_id, default_pass_score)
+        for enrollment_id, candidate in candidates.items()
+    }
+
     def candidate_policy(enrollment_id):
-        value = candidates[enrollment_id].lecture_id
-        return pass_scores.get(value, float(exam.pass_score or 0.0)), current_sessions.get(value)
+        return pass_by_enrollment[enrollment_id], current_sessions.get(candidates[enrollment_id].lecture_id)
 
     results = latest_results_for_targets_per_enrollment(
         target_type="exam", target_ids=[exam.id],
@@ -228,8 +272,11 @@ def load_exam_analysis(
             tenant=tenant, candidate_policy=candidate_policy,
         ).items()
     }
-    confirmed = [entry.initial.total_score for entry in scores.values() if entry.status == "DONE"]
-    cutoff = recommended_cutoff(confirmed, maximum)
+    confirmed = {enrollment_id: row for enrollment_id, row in scores.items() if row.status == "DONE"}
+    summary = _score_summary(
+        confirmed=confirmed, pass_by_enrollment=pass_by_enrollment, roster_count=len(candidates),
+    )
+    cutoff = recommended_cutoff(summary["average"], maximum)
     return ExamAnalysis(
         candidates=candidates,
         results=results,
@@ -237,12 +284,15 @@ def load_exam_analysis(
         pass_scores_by_lecture=pass_scores,
         insights={
             "recommended_cutoff": cutoff,
-            "below_recommended_count": sum(score < cutoff for score in confirmed) if cutoff is not None else None,
+            "below_recommended_count": (
+                sum(row.initial.total_score < cutoff for row in confirmed.values()) if cutoff is not None else None
+            ),
             "scored_count": len(confirmed),
+            "score_summary": summary,
             "trend_threshold_pp": TREND_THRESHOLD_PP,
             "trends": _trends(
                 tenant=tenant, exam=exam, candidates=candidates,
                 scores=scores, current_sessions=current_sessions,
-            ),
+            ) if confirmed else [],
         },
     )

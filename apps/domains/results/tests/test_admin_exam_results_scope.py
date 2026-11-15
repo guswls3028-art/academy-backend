@@ -504,6 +504,12 @@ class AdminExamResultsScopeTest(TestCase):
         self.assertEqual(response.data["recommended_cutoff"], 65)
         self.assertEqual(response.data["below_recommended_count"], 1)
         self.assertEqual(response.data["scored_count"], 1)
+        summary = response.data["score_summary"]
+        self.assertEqual(summary["average"], 63.5)
+        self.assertEqual(summary["unscored_count"], 0)
+        self.assertEqual(summary["pass_criterion_count"], 1)
+        self.assertEqual(summary["pass_count"], 1)
+        self.assertEqual(summary["distribution_counts"], [0, 0, 0, 1, 0])
         self.assertEqual(response.data["trends"], [{
             "enrollment_id": self.enrollment.id,
             "student_name": self.enrollment.student.name,
@@ -521,7 +527,10 @@ class AdminExamResultsScopeTest(TestCase):
         overview = workbook["시험 요약"]
         self.assertEqual(overview["A11"].value, "65점")
         self.assertEqual(overview["C11"].value, "1/1명")
-        self.assertEqual([overview.cell(row, 2).value for row in range(15, 20)], [0, 0, 0, 1, 0])
+        self.assertEqual(
+            [overview.cell(row, 2).value for row in range(15, 20)],
+            summary["distribution_counts"],
+        )
         chart = overview._charts[0]
         self.assertTrue(chart.dLbls.showVal)
         self.assertFalse(chart.dLbls.showCatName)

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import math
-from statistics import median, pstdev, quantiles
 from typing import Any
 
 from django.utils import timezone
@@ -18,7 +17,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from apps.domains.results.models import ResultFact
-from apps.domains.results.services.exam_analysis_metrics import load_exam_analysis, score_rate
+from apps.domains.results.services.exam_analysis_metrics import load_exam_analysis
 from apps.domains.results.services.exam_result_excel_import import ExamResultWorkbookError
 from apps.domains.results.services.question_stats_service import QuestionStatsService
 from apps.support.results.exam_result_excel_import_dependencies import get_result_import_questions
@@ -52,17 +51,6 @@ def _safe_excel_text(value: Any) -> str:
     if text.startswith(("=", "+", "-", "@")):
         return f"'{text}"
     return text
-
-
-def _mean(values: list[float]) -> float:
-    return sum(values) / len(values) if values else 0.0
-
-
-def _top_ten_mean(values: list[float]) -> float:
-    if not values:
-        return 0.0
-    count = max(1, math.ceil(len(values) * 0.1))
-    return _mean(sorted(values, reverse=True)[:count])
 
 
 def _set_title(sheet, title: str, subtitle: str, *, last_column: int) -> None:
@@ -260,7 +248,6 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
         int(result.enrollment_id): analysis_score(result)
         for result in scored_results
     }
-    scores = list(score_by_enrollment.values())
     analysis_rankings: dict[int, dict[str, float | int]] = {}
     previous_score: float | None = None
     current_rank = 0
@@ -297,29 +284,21 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
             int(row.get("question_number") or 0),
         )
     )
-    scored_with_criterion = [
-        (analysis_score(result), candidate_pass_score(candidate_by_id[int(result.enrollment_id)]))
-        for result in scored_results
-        if candidate_pass_score(candidate_by_id[int(result.enrollment_id)]) > 0
-    ]
-    criterion_count = len(scored_with_criterion)
-    has_pass_criterion = criterion_count > 0
-    pass_count = sum(
-        1 for score, criterion in scored_with_criterion if score >= criterion
-    )
-    fail_count = max(criterion_count - pass_count, 0)
-    pass_rate = (
-        pass_count / criterion_count
-        if has_pass_criterion
-        else 0.0
-    )
-    score_rates = [
-        score_rate(analysis_score(result), initial_scores[result.enrollment_id].max_score)
-        for result in scored_results
-    ]
-    quartiles = quantiles(scores, n=4, method="inclusive") if len(scores) >= 4 else None
-    cutoff = analysis.insights["recommended_cutoff"]
-    below_cutoff = analysis.insights["below_recommended_count"]
+    insights = analysis.insights
+    summary = insights["score_summary"]
+    scored_count = insights["scored_count"]
+    criterion_count = summary["pass_criterion_count"]
+    pass_count = summary["pass_count"]
+    if criterion_count:
+        pass_label = f"{pass_count}명" if criterion_count == scored_count else f"{pass_count}/{criterion_count}명"
+        pass_label = f"{pass_label} · {pass_count / criterion_count:.0%}"
+    elif not scored_count and any(candidate_pass_score(candidate) > 0 for candidate in candidates):
+        pass_label = "—"
+    else:
+        pass_label = "기준 미설정"
+    cutoff = insights["recommended_cutoff"]
+    below_cutoff = insights["below_recommended_count"]
+    average_score = summary["average"]
 
     generated_at = timezone.localtime().strftime("%Y-%m-%d %H:%M")
     workbook = Workbook()
@@ -337,28 +316,21 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
     )
     _section_heading(overview, 5, "핵심 지표", last_column=8)
     metrics = [
-        ("응시", f"{len(scores)}명"),
-        ("미응시·미채점", f"{len(candidates) - len(scores)}명"),
-        ("평균", f"{_mean(scores):.1f}/{max_score:g}" if scores else "—"),
-        ("상위 10% 평균", f"{_top_ten_mean(scores):.1f}/{max_score:g}" if scores else "—"),
-        ("최고점", f"{max(scores):g}/{max_score:g}" if scores else "—"),
-        ("중앙값", f"{median(scores):.1f}점" if scores else "—"),
-        ("표준편차", f"{pstdev(scores):.1f}점" if scores else "—"),
-        (
-            "1차 합격",
-            (
-                f"{pass_count}명 · {pass_rate * 100:.0f}%"
-                if has_pass_criterion and criterion_count == len(scores)
-                else f"{pass_count}/{criterion_count}명 · {pass_rate * 100:.0f}%"
-                if has_pass_criterion
-                else "—" if not scores and any(candidate_pass_score(candidate) > 0 for candidate in candidates)
-                else "기준 미설정"
-            ),
-        ),
+        ("응시", f"{scored_count}명"),
+        ("미응시·미채점", f"{summary['unscored_count']}명"),
+        ("평균", f"{average_score:.1f}/{max_score:g}" if scored_count else "—"),
+        ("상위 10% 평균", f"{summary['top_ten_average']:.1f}/{max_score:g}" if scored_count else "—"),
+        ("최고점", f"{summary['highest']:g}/{max_score:g}" if scored_count else "—"),
+        ("중앙값", f"{summary['median']:.1f}점" if scored_count else "—"),
+        ("표준편차", f"{summary['std_dev']:.1f}점" if scored_count else "—"),
+        ("1차 합격", pass_label),
         ("추천 커트라인", f"{cutoff}점" if cutoff is not None else "—"),
-        ("추천선 미만", f"{below_cutoff}/{len(scores)}명" if below_cutoff is not None else "—"),
-        ("중간 50% 점수", f"{quartiles[0]:.1f}–{quartiles[2]:.1f}점" if quartiles else "—"),
-        ("성적 추이 비교 가능", f"{len(analysis.insights['trends'])}명"),
+        ("추천선 미만", f"{below_cutoff}/{scored_count}명" if below_cutoff is not None else "—"),
+        (
+            "중간 50% 점수",
+            f"{summary['p25']:.1f}–{summary['p75']:.1f}점" if summary["p25"] is not None else "—",
+        ),
+        ("성적 추이 비교 가능", f"{len(insights['trends'])}명"),
     ]
     for index, (label, value) in enumerate(metrics):
         column = (index % 4) * 2 + 1
@@ -377,23 +349,15 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
     _section_heading(overview, 13, "점수 분포 · 만점 대비 구간", last_column=8)
     distribution_header = 14
     _table_header(overview, distribution_header, ["만점 대비", "인원", "비율"])
-    bands = [(0, 20), (20, 40), (40, 60), (60, 80), (80, 100)]
-    labels, counts = [], []
-    for offset, (lower, upper) in enumerate(bands, start=1):
-        count = sum(
-            1 for rate in score_rates
-            if (rate >= lower if lower == 0 else rate > lower) and rate <= upper
-        )
-        label = f"{lower}–{upper}%" if lower == 0 else f">{lower}–{upper}%"
-        labels.append(label)
-        counts.append(count)
-        row = distribution_header + offset
+    labels = ["0–20%", ">20–40%", ">40–60%", ">60–80%", ">80–100%"]
+    counts = summary["distribution_counts"]
+    for row, (label, count) in enumerate(zip(labels, counts, strict=True), start=distribution_header + 1):
         overview.cell(row, 1, label)
         overview.cell(row, 2, count)
-        overview.cell(row, 3, count / len(scores) if scores else None).number_format = "0.0%"
+        overview.cell(row, 3, count / scored_count if scored_count else None).number_format = "0.0%"
         overview.row_dimensions[row].height = 23
     _style_data_table(overview, start_row=15, end_row=19, end_column=3)
-    if scores:
+    if scored_count:
         _add_distribution_chart(overview, distribution_header, labels, counts)
     else:
         overview.merge_cells("D15:H19")
@@ -474,7 +438,6 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
         "합격 기준", "판정", "결과 상태", "오답 문항", "사이트 최종 저장",
     ]
     _table_header(ranked_sheet, 5, ranked_headers)
-    average_score = _mean(scores)
     ranked_rows: list[tuple[tuple[Any, ...], int, list[Any]]] = []
     for candidate in candidates:
         enrollment_id = int(candidate.enrollment_id)
@@ -518,7 +481,7 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
             score,
             result_max,
             (score / result_max) if score is not None and result_max > 0 else None,
-            (score - average_score) if score is not None and scores else None,
+            (score - average_score) if score is not None and average_score is not None else None,
             pass_score,
             verdict,
             status,

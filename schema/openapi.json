@@ -302,6 +302,9 @@
             "nullable": true,
             "type": "integer"
           },
+          "score_summary": {
+            "$ref": "#/components/schemas/ExamScoreSummary"
+          },
           "scored_count": {
             "type": "integer"
           },
@@ -318,6 +321,7 @@
         "required": [
           "below_recommended_count",
           "recommended_cutoff",
+          "score_summary",
           "scored_count",
           "trend_threshold_pp",
           "trends"
@@ -3612,6 +3616,87 @@
           "second"
         ],
         "type": "string"
+      },
+      "ExamScoreSummary": {
+        "properties": {
+          "average": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "distribution_counts": {
+            "items": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 5,
+            "minItems": 5,
+            "type": "array"
+          },
+          "highest": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "median": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "p25": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "p75": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "pass_count": {
+            "type": "integer"
+          },
+          "pass_criterion_count": {
+            "type": "integer"
+          },
+          "remediated_count": {
+            "type": "integer"
+          },
+          "std_dev": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "std_rate": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "top_ten_average": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "unscored_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "average",
+          "distribution_counts",
+          "highest",
+          "median",
+          "p25",
+          "p75",
+          "pass_count",
+          "pass_criterion_count",
+          "remediated_count",
+          "std_dev",
+          "std_rate",
+          "top_ten_average",
+          "unscored_count"
+        ],
+        "type": "object"
       },
       "ExamScoreTrend": {
         "properties": {
