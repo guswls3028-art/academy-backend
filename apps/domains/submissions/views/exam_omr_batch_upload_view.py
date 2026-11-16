@@ -53,6 +53,12 @@ GENERIC_SCAN_TYPES = {
     "tiff": ("image/tiff", (b"II*\x00", b"MM\x00*")),
     "pdf": ("application/pdf", (b"%PDF-",)),
 }
+IMAGE_SCAN_SIGNATURES = tuple(dict.fromkeys(
+    signature
+    for mime_type, signatures in GENERIC_SCAN_TYPES.values()
+    if mime_type.startswith("image/")
+    for signature in signatures
+)) + (b"II+\x00", b"MM\x00+")  # BigTIFF is also readable by the image worker.
 OMR_UPLOAD_FILE_PROPERTIES = {
     "file": {"type": "string", "format": "binary"},
     "files": {
@@ -454,12 +460,17 @@ def _file_validation_error(upload_file) -> tuple[str, str] | None:
     if upload_file.size > MAX_FILE_SIZE:
         return "file_too_large", "파일 크기가 10MB를 초과합니다."
     content_type = str(upload_file.content_type or "").split(";", 1)[0].strip().lower()
+    signatures = ()
     if content_type in ("", "application/octet-stream"):
         suffix = upload_file.name.rpartition(".")[2].lower()
         detected = GENERIC_SCAN_TYPES.get(suffix)
         if detected is None:
             return "unsupported_file_type", "허용되지 않는 파일 형식입니다."
         content_type, signatures = detected
+    elif content_type in OMR_CONTENT_TYPES and content_type.startswith("image/"):
+        # Keep valid scanner images even when the browser labels them as another supported image type.
+        signatures = IMAGE_SCAN_SIGNATURES
+    if signatures:
         position = upload_file.tell()
         try:
             upload_file.seek(0)

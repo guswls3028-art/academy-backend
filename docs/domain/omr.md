@@ -596,6 +596,11 @@ submission id, 안전한 접수 실패 사유를 제공한다. 다른 tenant·�
 스캐너가 파일 형식을 일반 바이너리(`application/octet-stream`)로 보내도 지원 확장자와
 파일 시작 바이트가 일치하면 실제 MIME으로 접수한다. PDF는 이 경우에도 한 페이지인지
 확인하며, 묶음 PDF는 해당 순번을 한 장짜리 파일로 교체해 복구할 수 있다.
+JPEG·PNG·TIFF로 표시된 파일도 접수 전에 지원 이미지의 시작 바이트를 확인한다.
+지원 이미지로 시작하지 않는 파일은 R2 저장이나 작업 전송 없이 `invalid_file_content`로
+처리한다. 예약된 작업에서는 해당 순번의 파일만 다시 선택할 수 있으며, legacy 요청은
+batch 생성 전에 400을 반환한다. 시작 바이트가 맞는 파일의 전체 디코딩과 EXIF 방향
+보정은 기존 워커에서 수행한다.
 회귀 검증은 `test_exam_omr_batch_upload_pdf_guard.py`의 빈 파일→재접수, 100개 순번 보존,
 혼합 처리 상태, tenant 격리 및 GET 무변경 사례를 따른다.
 도입 전 item은 migration에서 tenant/exam scope만 backfill하고 기존 R2 원본을 다시 읽지
