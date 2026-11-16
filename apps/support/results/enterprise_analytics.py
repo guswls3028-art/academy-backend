@@ -628,7 +628,9 @@ def build_student_enterprise_analytics(*, tenant: Any, student: Any, days: int =
     days = _bounded_days(days, default=365)
     now = timezone.now()
     start_at = now - timedelta(days=days)
-    summary = build_student_grades_summary(tenant=tenant, student=student)
+    summary = build_student_grades_summary(
+        tenant=tenant, student=student, include_grade_board_details=False,
+    )
     all_exams = summary.get("exams", [])
     non_test_exams = [
         exam for exam in all_exams

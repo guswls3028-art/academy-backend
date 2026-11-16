@@ -162,9 +162,11 @@ def _safe_homework_number(value: Any, *, positive: bool = False) -> float | None
     return parsed if isfinite(parsed) and minimum_ok else None
 
 
-def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]:
+def build_student_grades_summary(
+    *, tenant: Any, student: Any, include_grade_board_details: bool = True,
+) -> dict[str, Any]:
+    """Build authorized grade rows, with report and rollup details for the grade board."""
     today = timezone.localdate()
-    report_layout = get_student_grade_report_layout(tenant=tenant)
     history_enrollments = list(
         learning_history_enrollments_for_student(
             tenant=tenant,
@@ -176,32 +178,20 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         int(enrollment.id): lecture_is_ongoing(enrollment.lecture, today=today)
         for enrollment in history_enrollments
     }
-    current_todos_by_enrollment = {
-        int(enrollment.id): lecture_has_current_learning_todos(enrollment.lecture, today=today)
-        for enrollment in history_enrollments
-    }
-    lecture_options = [
-        {
-            "id": int(enrollment.lecture_id),
-            "title": enrollment.lecture.title,
-            "color": enrollment.lecture.color,
-            "chip_label": enrollment.lecture.chip_label,
-            "is_active": lecture_active_by_enrollment[int(enrollment.id)],
-        }
-        for enrollment in history_enrollments
-    ]
     if not enrollment_ids:
+        if not include_grade_board_details:
+            return {"exams": [], "homeworks": []}
         return {
             "exams": [],
             "homeworks": [],
             "exam_trend": [],
             "exam_summary": empty_exam_summary(),
             "lecture_options": [],
-            "report_layout": report_layout,
+            "report_layout": get_student_grade_report_layout(tenant=tenant),
         }
 
     totals_exam_rows = []
-    exam_list, exam_trend, exam_summary = build_student_exam_history(
+    exam_list, _, _ = build_student_exam_history(
         tenant=tenant,
         enrollment_ids=enrollment_ids,
         published_results_only=True,
@@ -372,8 +362,6 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "teacher_resolved": correction_payload["teacher_resolved"],
             "lecture_active": lecture_active_by_enrollment.get(enrollment_id, False),
         })
-    exam_trend, exam_summary = build_exam_progression(exam_list)
-
     homework_scores = (
         HomeworkScore.objects.filter(
             enrollment_id__in=enrollment_ids,
@@ -584,6 +572,24 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
 
     homework_list.sort(key=_homework_history_sort_key)
 
+    if not include_grade_board_details:
+        return {"exams": exam_list, "homeworks": homework_list}
+
+    exam_trend, exam_summary = build_exam_progression(exam_list)
+    current_todos_by_enrollment = {
+        int(enrollment.id): lecture_has_current_learning_todos(enrollment.lecture, today=today)
+        for enrollment in history_enrollments
+    }
+    lecture_options = [
+        {
+            "id": int(enrollment.lecture_id),
+            "title": enrollment.lecture.title,
+            "color": enrollment.lecture.color,
+            "chip_label": enrollment.lecture.chip_label,
+            "is_active": lecture_active_by_enrollment[int(enrollment.id)],
+        }
+        for enrollment in history_enrollments
+    ]
     active_exam_ids = set(Exam.objects.filter(
         tenant=tenant, id__in=[exam["exam_id"] for exam in exam_list],
         is_active=True, exam_type=Exam.ExamType.REGULAR,
@@ -609,5 +615,5 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "pass": (getattr(tenant, "pass_label", None) or "").strip(),
             "fail": (getattr(tenant, "fail_label", None) or "").strip(),
         },
-        "report_layout": report_layout,
+        "report_layout": get_student_grade_report_layout(tenant=tenant),
     }
