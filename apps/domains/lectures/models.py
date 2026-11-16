@@ -17,6 +17,10 @@ class Lecture(TimestampModel):
     - 여러 Session(차시)을 가진다
     """
 
+    class ScheduleMode(models.TextChoices):
+        SINGLE = "SINGLE", "한 날짜"
+        SPLIT = "SPLIT", "여러 날짜"
+
     # 🔐 tenant-safe manager
     objects = TenantQuerySet.as_manager()
 
@@ -36,6 +40,14 @@ class Lecture(TimestampModel):
     end_date = models.DateField(null=True, blank=True)
 
     lecture_time = models.CharField(max_length=100, blank=True, help_text="강의 시간 (예: 토 12:00 ~ 13:00)")
+    schedule_mode = models.CharField(
+        max_length=6, choices=ScheduleMode.choices, default=ScheduleMode.SINGLE, db_default=ScheduleMode.SINGLE,
+        help_text="새 차시의 기본 수업일 구성",
+    )
+    schedule_defaults = models.JSONField(
+        default=list, db_default=[], blank=True,
+        help_text="새 차시의 기본 반 이름과 요일 (ISO 1=월요일, 7=일요일)",
+    )
 
     color = models.CharField(max_length=20, default="#3b82f6", help_text="아이콘/라벨 색상")
     chip_label = models.CharField(

@@ -58,6 +58,14 @@ class StudentTotalsQueryBudgetTests(TestCase):
             )
         return len(queries), pairs, totals
 
+    def test_exam_pair_lookup_skips_homework_options(self):
+        session, _ = self._session(1)
+        homework_table = connection.ops.quote_name(apps.get_model("homework_results", "Homework")._meta.db_table)
+        with CaptureQueriesContext(connection) as queries:
+            pairs = student_exam_session_pairs(tenant=self.tenant, enrollment_ids=[self.enrollment.id])
+        self.assertEqual(pairs, {(self.enrollment.id, session.id)})
+        self.assertFalse(any(f"FROM {homework_table}" in query["sql"] for query in queries))
+
     def test_query_count_is_bounded_as_session_history_grows(self):
         first, _ = self._session(1)
         small_count, _, _ = self._read()

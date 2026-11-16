@@ -4,9 +4,11 @@ from zoneinfo import ZoneInfo
 import threading
 import unittest
 from unittest.mock import patch
+from uuid import uuid4
 
 from django.db import OperationalError, close_old_connections, connection, transaction
 from django.test import TransactionTestCase
+from django.urls import resolve
 from rest_framework.test import force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -14,10 +16,10 @@ from apps.domains.attendance.models import Attendance, AttendanceQrPoint
 from apps.domains.attendance.services.qr import class_roster
 from apps.domains.attendance.views import AttendanceViewSet
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.lectures.models import Lecture, Session, SessionScheduleChange, SessionScheduleMembership
+from apps.domains.lectures.models import Lecture, Section, Session, SessionScheduleChange, SessionScheduleMembership
 from apps.domains.lectures.services.schedules import ScheduleConflict, save_schedules, schedule_state
 from apps.domains.lectures.tests.test_lecture_stabilization import LectureTestBase, User
-from apps.domains.lectures.views import SessionViewSet
+from apps.domains.lectures.views import LectureViewSet, SessionViewSet
 from apps.domains.results.views.session_scores_view import SessionScoresView
 from apps.domains.students.models import Student
 from apps.domains.student_app.sessions.views import StudentSessionDetailView, StudentSessionListView
@@ -63,6 +65,178 @@ class TestSessionSchedules(LectureTestBase):
         ]})
         self.assertEqual(response.status_code, 200, response.data)
         return response.data
+
+    def lecture_detail(self, method="get", data=None, lecture=None):
+        action = {"get": "retrieve", "patch": "partial_update"}[method]
+        return self.request(method, LectureViewSet.as_view({method: action}), data, pk=(lecture or self.lecture).pk)
+
+    def test_lecture_schedule_defaults_persist_without_rewriting_existing_lesson(self):
+        saved = self.configure()
+        section = Section.objects.create(
+            tenant=self.tenant, lecture=self.lecture, label="기존 반", day_of_week=3, start_time="17:00",
+        )
+        independent = Session.objects.create(
+            lecture=self.lecture, section=section, order=1, title="반별 기존 차시", date=date(2026, 4, 9),
+        )
+        initial = self.lecture_detail()
+        self.assertEqual(initial.data["schedule_mode"], "SINGLE")
+        self.assertEqual(initial.data["schedule_defaults"], [])
+
+        defaults = [{"label": "  A반  ", "weekday": 3}, {"label": "B반", "weekday": 4}]
+        update = self.lecture_detail("patch", {"schedule_mode": "SPLIT", "schedule_defaults": defaults})
+        self.assertEqual(update.status_code, 200, update.data)
+        self.assertEqual(self.lecture_detail().data["schedule_defaults"], [
+            {"label": "A반", "weekday": 3}, {"label": "B반", "weekday": 4},
+        ])
+        defaults_only = self.lecture_detail("patch", {"schedule_defaults": [
+            {"label": "수요일반", "weekday": 3}, {"label": "목요일반", "weekday": 4},
+        ]})
+        self.assertEqual(defaults_only.status_code, 200, defaults_only.data)
+        self.assertEqual(defaults_only.data["schedule_mode"], "SPLIT")
+
+        self.assertEqual(self.lecture_detail("patch", {"schedule_mode": "SINGLE"}).status_code, 400)
+        archived = self.lecture_detail("patch", {"is_active": False, "description": "운영 기록"})
+        self.assertEqual(archived.status_code, 200, archived.data)
+        self.assertFalse(archived.data["is_active"])
+        self.assertEqual(archived.data["schedule_mode"], "SPLIT")
+        single = self.lecture_detail("patch", {"schedule_mode": "SINGLE", "schedule_defaults": []})
+        self.assertEqual(single.status_code, 200, single.data)
+        self.assertEqual(self.lecture_detail().data["schedule_mode"], "SINGLE")
+        self.assertEqual(self.schedules().data, saved)
+        independent.refresh_from_db()
+        self.assertEqual(independent.section_id, section.pk)
+        self.assertEqual(independent.date, date(2026, 4, 9))
+
+    def test_lecture_schedule_defaults_reject_invalid_rows_and_foreign_lecture(self):
+        good = {"label": "A반", "weekday": 3}
+        for row in (
+            {"label": "B반", "weekday": True}, {"label": "B반", "weekday": 3.5},
+            {"label": "B반", "weekday": 0}, {"label": "B반", "weekday": 8},
+            {"label": " a반 ", "weekday": 4}, {"label": 42, "weekday": 4},
+            {"label": "B반", "weekday": 4, "date": "2026-11-01"},
+        ):
+            with self.subTest(row=row):
+                response = self.lecture_detail("patch", {"schedule_mode": "SPLIT", "schedule_defaults": [good, row]})
+                self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(self.lecture_detail().data["schedule_defaults"], [])
+        other = Tenant.objects.create(name="Other", code="other-lecture-defaults")
+        lecture = Lecture.objects.create(tenant=other, name="Other", title="Other")
+        self.assertEqual(self.lecture_detail("patch", {"schedule_defaults": [good]}, lecture=lecture).status_code, 404)
+        self.assertEqual(Lecture.objects.get(pk=lecture.pk).schedule_defaults, [])
+
+    def test_explicit_lecture_schedule_routes_require_both_settings_and_reuse_staff_boundary(self):
+        create = resolve("/api/v1/lectures/lectures/with-schedule-settings/")
+        lecture_data = {"title": "새 강의", "name": "담당", "subject": "수학"}
+        settings = {"schedule_mode": "SPLIT", "schedule_defaults": [
+            {"label": "A반", "weekday": 3}, {"label": "B반", "weekday": 4},
+        ]}
+        denied_create = self.factory.post("/", {**lecture_data, **settings}, format="json")
+        denied_create.tenant = self.tenant
+        force_authenticate(denied_create, user=self.students[0].user)
+        self.assertEqual(create.func(denied_create).status_code, 403)
+        self.assertEqual(self.request("post", create.func, {**lecture_data, "schedule_mode": "SPLIT"}).status_code, 400)
+        self.assertFalse(Lecture.objects.filter(tenant=self.tenant, title=lecture_data["title"]).exists())
+        created = self.request("post", create.func, {**lecture_data, **settings})
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["tenant"], self.tenant.pk)
+        self.assertEqual(created.data["schedule_defaults"], settings["schedule_defaults"])
+
+        patch = resolve(f"/api/v1/lectures/lectures/{created.data['id']}/schedule-settings/")
+        rejected = self.request("patch", patch.func, {"description": "저장하지 않음", "schedule_defaults": []}, **patch.kwargs)
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        lecture = Lecture.objects.get(pk=created.data["id"])
+        self.assertEqual(lecture.description, "")
+        self.assertEqual(lecture.schedule_mode, "SPLIT")
+
+        single = {"schedule_mode": "SINGLE", "schedule_defaults": [], "description": "새 기본값"}
+        denied = self.factory.patch("/", single, format="json")
+        denied.tenant = self.tenant
+        force_authenticate(denied, user=self.students[0].user)
+        self.assertEqual(patch.func(denied, **patch.kwargs).status_code, 403)
+        updated = self.request("patch", patch.func, single, **patch.kwargs)
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["schedule_mode"], "SINGLE")
+        self.assertEqual(updated.data["schedule_defaults"], [])
+        self.assertEqual(updated.data["description"], "새 기본값")
+
+        other = Tenant.objects.create(name="Other", code="other-schedule-settings")
+        foreign = Lecture.objects.create(tenant=other, name="Other", title="Other")
+        foreign_patch = resolve(f"/api/v1/lectures/lectures/{foreign.pk}/schedule-settings/")
+        self.assertEqual(self.request("patch", foreign_patch.func, single, **foreign_patch.kwargs).status_code, 404)
+
+    def create_payload(self, **changes):
+        return {
+            "lecture": self.lecture.pk, "regular_order": 2, "date": "2026-04-15",
+            "create_request_id": str(uuid4()),
+            "initial_schedules": [
+                {"label": "수요일", "date": "2026-04-15", "start_time": "17:00", "end_time": "18:00"},
+                {"label": "목요일", "date": "2026-04-16"},
+            ],
+            **changes,
+        }
+
+    def create_session(self, payload):
+        return self.request("post", resolve("/api/v1/lectures/sessions/with-schedules/").func, payload)
+
+    def test_initial_schedules_create_once_and_replay_with_no_implicit_roster(self):
+        payload = self.create_payload()
+        first = self.create_session(payload)
+        self.assertEqual(first.status_code, 201, first.data)
+        new_session = Session.objects.get(pk=first.data["id"])
+        self.assertEqual([day["label"] for day in first.data["schedule_dates"]], ["수요일", "목요일"])
+        self.assertEqual(self.schedules(session=new_session).data["roster"], [])
+        self.assertFalse(Attendance.objects.filter(session=new_session).exists())
+
+        retry = self.create_session(payload)
+        self.assertEqual(retry.status_code, 201, retry.data)
+        self.assertEqual(retry.data, first.data)
+        self.assertEqual(Session.objects.filter(lecture=self.lecture).count(), 2)
+        self.assertEqual(SessionScheduleChange.objects.filter(session=new_session).count(), 1)
+
+        mismatch = self.create_session({**payload, "title": "다른 차시"})
+        self.assertEqual(mismatch.status_code, 409, mismatch.data)
+        self.assertEqual(Session.objects.filter(lecture=self.lecture).count(), 2)
+        different_request = self.create_session({**payload, "create_request_id": str(uuid4())})
+        self.assertEqual(different_request.status_code, 400, different_request.data)
+
+    def test_initial_schedule_validation_rolls_back_session_and_insert_order(self):
+        payload = self.create_payload(session_type="SUPPLEMENT", title="보강", regular_order=None, insert_after_order=0)
+        payload["initial_schedules"][1]["label"] = "수요일"
+        self.assertEqual(self.create_session(payload).status_code, 400)
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.order, 1)
+        self.assertEqual(Session.objects.filter(lecture=self.lecture).count(), 1)
+        self.assertFalse(SessionScheduleChange.objects.filter(session__lecture=self.lecture).exists())
+
+        payload["initial_schedules"][1].update(label="목요일", date="2026-02-29")
+        self.assertEqual(self.create_session(payload).status_code, 400)
+        payload["initial_schedules"][1]["date"] = "2026-04-16"
+        payload["initial_schedules"][1]["enrollment_ids"] = [self.enrollments[0].pk]
+        self.assertEqual(self.create_session(payload).status_code, 400)
+        self.assertEqual(Session.objects.filter(lecture=self.lecture).count(), 1)
+
+    def test_initial_schedule_replay_still_checks_tenant_and_section(self):
+        payload = self.create_payload()
+        self.assertEqual(self.create_session(payload).status_code, 201)
+        other_tenant = Tenant.objects.create(name="Other", code="schedule-other")
+        other_lecture = Lecture.objects.create(tenant=other_tenant, name="Other", title="Other")
+        foreign_section = Section.objects.create(
+            tenant=other_tenant, lecture=other_lecture, label="외부", day_of_week=1, start_time="17:00",
+        )
+        self.assertEqual(self.create_session({**payload, "lecture": other_lecture.pk}).status_code, 403)
+        self.assertEqual(self.create_session({**payload, "section": foreign_section.pk}).status_code, 400)
+        self.assertFalse(Session.objects.filter(lecture=other_lecture).exists())
+
+    def test_initial_schedule_pair_and_optional_time_types_are_checked(self):
+        payload = self.create_payload()
+        for missing in ("initial_schedules", "create_request_id"):
+            with self.subTest(missing=missing):
+                self.assertEqual(self.create_session({k: v for k, v in payload.items() if k != missing}).status_code, 400)
+        payload["initial_schedules"][0]["start_time"] = True
+        self.assertEqual(self.create_session(payload).status_code, 400)
+        payload["initial_schedules"][0]["start_time"] = "17:00:59"
+        self.assertEqual(self.create_session(payload).status_code, 400)
+        self.assertEqual(Session.objects.filter(lecture=self.lecture).count(), 1)
 
     def test_shared_video_progress_and_attendance_survive_assignment_move_and_removal(self):
         video = Video.objects.create(tenant=self.tenant, session=self.session, title="공유 영상", status="READY")

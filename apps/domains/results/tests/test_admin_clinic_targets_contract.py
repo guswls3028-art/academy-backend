@@ -314,6 +314,57 @@ class AdminClinicTargetsContractTests(TestCase):
         self.assertEqual(current.data[0]["lecture_id"], current_lecture.id)
         self.assertEqual(current.data[0]["source_title"], "멘델의 유전 확인")
 
+    def test_same_named_homework_targets_include_regular_and_supplemental_lesson_labels(self):
+        Homework = django_apps.get_model("homework_results", "Homework")
+        HomeworkAssignment = django_apps.get_model("homework", "HomeworkAssignment")
+        Section = django_apps.get_model("lectures", "Section")
+        section = Section.objects.create(
+            tenant=self.tenant,
+            lecture=self.lecture,
+            label="A",
+            day_of_week=0,
+            start_time=datetime.time(17),
+        )
+        session_cases = (
+            ({"order": 2, "title": "2차시"}, "2차시", "2차시"),
+            (
+                {"order": 5, "regular_order": 3, "title": "분수", "section": section},
+                "3차시 · 분수 (A반)",
+                "분수 (A반)",
+            ),
+            (
+                {"order": 6, "session_type": self.LectureSession.SessionType.SUPPLEMENT, "title": "분수 보강"},
+                "분수 보강",
+                "분수 보강",
+            ),
+        )
+        expected = {}
+        for session_fields, label, legacy_label in session_cases:
+            session = self.LectureSession.objects.create(lecture=self.lecture, **session_fields)
+            homework = Homework.objects.create(tenant=self.tenant, session=session, title="복습 과제")
+            HomeworkAssignment.objects.create(
+                tenant=self.tenant, session=session, homework=homework, enrollment=self.enrollment,
+            )
+            self.ClinicLink.objects.create(
+                tenant=self.tenant,
+                enrollment=self.enrollment,
+                session=session,
+                reason="AUTO_FAILED",
+                source_type="homework",
+                source_id=homework.id,
+                is_auto=True,
+            )
+            expected[session.id] = (label, f"{self.lecture.title} - {legacy_label}")
+
+        response = self._get()
+        self.assertEqual(response.status_code, 200, response.data)
+        homework_targets = {
+            row["session_id"]: (row["session_label"], row["session_title"])
+            for row in response.data
+            if row["source_type"] == "homework" and row["source_title"] == "복습 과제"
+        }
+        self.assertEqual(homework_targets, expected)
+
     def test_missing_tenant_fails_closed_instead_of_empty_success(self):
         before = self.ClinicLink.objects.count()
         request = self.factory.get("/results/admin/clinic-targets/")

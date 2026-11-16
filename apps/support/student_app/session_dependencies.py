@@ -10,23 +10,24 @@ from django.utils import timezone
 from apps.support.lectures.schedule_queries import student_schedule_annotations
 
 
-def get_active_student_session_ids(*, student: Any, tenant: Any) -> list[int]:
+def get_active_student_session_ids(
+    *, student: Any, tenant: Any, session_ids: Iterable[int] | None = None,
+) -> list[int]:
     from apps.domains.enrollment.models import SessionEnrollment
 
-    return list(
-        SessionEnrollment.objects.filter(
-            tenant=tenant,
-            enrollment__student=student,
-            enrollment__tenant=tenant,
-            enrollment__status="ACTIVE",
-            enrollment__lecture__is_active=True,
-            session__lecture__is_active=True,
-            session__lecture__tenant=tenant,
-            enrollment__lecture_id=F("session__lecture_id"),
-        )
-        .values_list("session_id", flat=True)
-        .distinct()
+    memberships = SessionEnrollment.objects.filter(
+        tenant=tenant,
+        enrollment__student=student,
+        enrollment__tenant=tenant,
+        enrollment__status="ACTIVE",
+        enrollment__lecture__is_active=True,
+        session__lecture__is_active=True,
+        session__lecture__tenant=tenant,
+        enrollment__lecture_id=F("session__lecture_id"),
     )
+    if session_ids is not None:
+        memberships = memberships.filter(session_id__in=session_ids)
+    return list(memberships.values_list("session_id", flat=True).distinct())
 
 
 def get_student_lecture_sessions(
@@ -206,14 +207,19 @@ def get_student_attendance_payload(*, student: Any, tenant: Any) -> tuple[dict, 
         runaway=Count("id", filter=Q(status="RUNAWAY")),
     )
 
-    accessible_session_ids = set(get_active_student_session_ids(student=student, tenant=tenant))
-    recent = []
-    for attendance in (
+    recent_attendances = list(
         attendances
         .annotate(**student_schedule_annotations(tenant=tenant, student=student, session_ref="session_id", date_ref="session__date"))
         .select_related("session", "session__lecture")
         .order_by("-effective_date", "-id")[:20]
-    ):
+    )
+    accessible_session_ids = set(get_active_student_session_ids(
+        student=student,
+        tenant=tenant,
+        session_ids={attendance.session_id for attendance in recent_attendances},
+    ))
+    recent = []
+    for attendance in recent_attendances:
         session = attendance.session
         recent.append({
             "session_id": session.id,

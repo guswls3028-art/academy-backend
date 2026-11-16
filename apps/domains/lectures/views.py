@@ -8,7 +8,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.filters import SearchFilter
@@ -29,9 +29,14 @@ from apps.support.lectures.view_dependencies import (
     list_unassigned_active_enrollments,
 )
 from .models import Lecture, Session, Section, SectionAssignment
-from .services.schedules import SessionScheduleCopy, SessionScheduleState, SessionScheduleWrite
+from .services.schedules import (
+    SessionScheduleCopy, SessionScheduleState, SessionScheduleWrite,
+    create_initial_schedules, replay_initial_schedule_create, session_create_payload_digest,
+)
 from .serializers import (
+    LectureScheduleSettingsSerializer,
     LectureSerializer,
+    SessionCreateSerializer,
     SessionSerializer,
     SectionSerializer,
     SectionAssignmentSerializer,
@@ -124,6 +129,20 @@ class LectureViewSet(ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ["is_active", "subject"]
     search_fields = ["title", "name", "subject"]
+
+    @extend_schema(responses={201: LectureSerializer})
+    @action(detail=False, methods=["post"], url_path="with-schedule-settings", serializer_class=LectureScheduleSettingsSerializer)
+    def create_with_schedule_settings(self, request, *args, **kwargs):
+        return self.create(request, *args, **kwargs)
+
+    @extend_schema(
+        description="일반 강의 필드는 생략할 수 있지만 schedule_mode와 schedule_defaults는 모두 필요합니다.",
+        parameters=[OpenApiParameter("id", OpenApiTypes.INT, OpenApiParameter.PATH)],
+        responses={200: LectureSerializer},
+    )
+    @action(detail=True, methods=["patch"], url_path="schedule-settings", serializer_class=LectureScheduleSettingsSerializer)
+    def update_schedule_settings(self, request, *args, **kwargs):
+        return self.partial_update(request, *args, **kwargs)
 
     def get_queryset(self):
         """
@@ -494,6 +513,14 @@ class SessionViewSet(ModelViewSet):
     filterset_fields = ["lecture", "section"]
     search_fields = ["title"]
 
+    @extend_schema(request=SessionCreateSerializer, responses={
+        201: SessionSerializer,
+        409: OpenApiResponse(description="같은 생성 요청 ID에 이미 다른 입력이 저장되었습니다."),
+    })
+    @action(detail=False, methods=["post"], url_path="with-schedules", serializer_class=SessionCreateSerializer)
+    def create_with_schedules(self, request, *args, **kwargs):
+        return self.create(request, *args, **kwargs)
+
     @extend_schema(methods=["GET"], responses=SessionScheduleState)
     @extend_schema(methods=["PUT"], request=SessionScheduleWrite, responses=SessionScheduleState)
     @extend_schema(methods=["POST"], request=SessionScheduleCopy, responses=SessionScheduleState)
@@ -603,6 +630,11 @@ class SessionViewSet(ModelViewSet):
             if section.tenant_id != self.request.tenant.id:
                 raise PermissionDenied("다른 학원의 반에 세션을 추가할 수 없습니다.")
 
+        initial_schedules = serializer.validated_data.pop("initial_schedules", None)
+        create_request_id = serializer.validated_data.pop("create_request_id", None)
+        create_digest = None
+        if create_request_id is not None:
+            create_digest = session_create_payload_digest(serializer.validated_data, initial_schedules)
         insert_after_order = serializer.validated_data.pop("insert_after_order", None)
         requested_order = serializer.validated_data.get("order")
         requested_regular_order = serializer.validated_data.get("regular_order")
@@ -613,6 +645,14 @@ class SessionViewSet(ModelViewSet):
         with transaction.atomic():
             # same lecture session insert 직렬화: max/shift 레이스 방지
             Lecture.objects.select_for_update().filter(pk=lecture.pk).exists()
+
+            if create_request_id is not None:
+                existing = replay_initial_schedule_create(
+                    lecture=lecture, request_id=create_request_id, digest=create_digest,
+                )
+                if existing is not None:
+                    serializer.instance = existing
+                    return
 
             scope = _session_scope(lecture, section)
             if session_type == Session.SessionType.SUPPLEMENT:
@@ -640,12 +680,11 @@ class SessionViewSet(ModelViewSet):
 
             try:
                 _shift_display_orders(scope, order)
-                serializer.save(
+                session = serializer.save(
                     order=order,
                     session_type=session_type,
                     regular_order=regular_order,
                 )
-                return
             except IntegrityError as e:
                 section_label = _session_section_label(section)
                 if "regular" in str(e).lower():
@@ -654,6 +693,11 @@ class SessionViewSet(ModelViewSet):
                     )
                 raise ValidationError(
                     {"order": f"차시 배치 순서 계산 중 충돌이 발생했습니다. 다시 시도해 주세요. (강의{section_label})"}
+                )
+            if create_request_id is not None:
+                create_initial_schedules(
+                    session=session, rows=initial_schedules, actor_id=self.request.user.pk,
+                    request_id=create_request_id, digest=create_digest,
                 )
 
     def perform_update(self, serializer):

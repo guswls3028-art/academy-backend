@@ -121,6 +121,8 @@ class AdminClinicMissingExamWaiverTests(TestCase):
         self.assertEqual(before.data[0]["reason"], "missing")
         self.assertEqual(before.data[0]["meta_status"], "NOT_SUBMITTED")
         self.assertIsNone(before.data[0]["clinic_link_id"])
+        self.assertEqual(before.data[0]["session_label"], "2차시 · 결시 확인 차시")
+        self.assertEqual(before.data[0]["session_title"], "과학 - 결시 확인 차시")
 
         payload = {
             "session_id": self.session.id,
