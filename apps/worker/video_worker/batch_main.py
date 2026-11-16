@@ -330,7 +330,7 @@ def main() -> int:
             if job_mark_dead(
                 job_id,
                 error_code="SOURCE_NO_VIDEO_STREAM",
-                error_message=str(e),
+                error_message="업로드한 파일에 영상이 없습니다. 영상이 포함된 원본을 다시 업로드해 주세요.",
                 failed_aws_batch_job_id=os.environ.get("AWS_BATCH_JOB_ID") or aws_batch_job_id,
             ):
                 _log_json("BATCH_JOB_DEAD", **failure, error_code="SOURCE_NO_VIDEO_STREAM")

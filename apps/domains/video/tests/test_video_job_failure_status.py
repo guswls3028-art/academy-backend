@@ -144,6 +144,7 @@ class VideoJobFailureStatusTests(TestCase):
         self.assertEqual(self.job.state, VideoTranscodeJob.State.DEAD)
         self.assertEqual(self.job.attempt_count, 2)
         self.assertEqual(self.video.status, Video.Status.FAILED)
+        self.assertIn("영상이 포함된 원본을 다시 업로드", self.video.error_reason)
 
 
 class VideoJobRunningStatusTests(TestCase):
