@@ -148,6 +148,17 @@ def _get_session_title(session: Any) -> str:
     return f"Session#{int(getattr(session, 'id', 0) or 0)}"
 
 
+def _get_session_label(session: Any) -> str:
+    label = session.display_label
+    if session.session_type == session.SessionType.REGULAR:
+        lesson_number = f"{session.regular_order or session.order}차시"
+        if label != lesson_number:
+            label = f"{lesson_number} · {label}"
+    if session.section:
+        label = f"{label} ({session.section.label}반)"
+    return label
+
+
 @dataclass(frozen=True)
 class ClinicTargetRow:
     enrollment_id: int
@@ -381,6 +392,7 @@ class ClinicTargetService:
                 "linked_bookings": linked_bookings.get(int(link.id), []),
                 "student_name": student_name,
                 "session_title": _get_session_title(session),
+                "session_label": _get_session_label(session),
                 "source_type": source_type,
                 "source_id": getattr(link, "source_id", None),
                 "source_scope": None,
@@ -583,6 +595,7 @@ class ClinicTargetService:
                 "student_id": int(student.id) if student else None,
                 "student_name": _safe_str(getattr(student, "name", None), "-"),
                 "session_title": _get_session_title(session),
+                "session_label": _get_session_label(session),
                 "reason": "missing",
                 "clinic_reason": "exam",
                 "exam_score": None,
