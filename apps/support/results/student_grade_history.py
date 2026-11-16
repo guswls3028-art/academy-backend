@@ -286,6 +286,7 @@ def build_student_exam_history(
         ],
         tenant=tenant,
         scoring_details_loader=load_scoring_details,
+        initial_scores=initial_scores,
     )
 
     exam_list: list[dict[str, Any]] = []
