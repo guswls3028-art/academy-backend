@@ -79,7 +79,7 @@ The middle variant is emitted only when it is smaller than the high variant
 and at least 100 pixels shorter. For example, a 640×360 source produces a single
 640×360 variant rather than an upscaled fallback.
 
-`tests/video/test_transcoder.py` verifies distinct options, original frame rate
+`tests/test_video_transcoder.py` verifies distinct options, original frame rate
 and automatic level selection, audio selection, and synthetic 360p decoding for
 sources with zero, one, and two audio tracks. The synthetic FFmpeg checks inspect both
 variants' codec parameters and master playlist at 30 and 60 fps, including
