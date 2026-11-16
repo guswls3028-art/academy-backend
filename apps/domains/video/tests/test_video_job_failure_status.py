@@ -108,6 +108,7 @@ class VideoJobFailureStatusTests(TestCase):
         diagnostics = ("Stream map '0:v:0' matches no streams.",)
         with (
             patch.dict(os.environ, VIDEO_JOB_ID=str(self.job.id), AWS_BATCH_JOB_ID="aws-old"),
+            patch("django.db.close_old_connections"),  # The test owns a shared transaction.
             patch("apps.domains.video.redis_status_cache.delete_video_progress_key"),
             patch("apps.domains.video.redis_status_cache.cache_video_status"),
             patch.multiple(
