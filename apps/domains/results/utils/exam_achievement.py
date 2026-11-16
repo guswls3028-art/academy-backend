@@ -27,6 +27,7 @@ from apps.domains.results.services.omr_subjective_completion import (
 )
 from apps.domains.results.services.online_grading_completion import completed_online_result_pairs
 from apps.domains.results.utils.initial_exam_score import (
+    InitialExamScore,
     load_initial_exam_scores,
     project_initial_exam_score,
 )
@@ -158,6 +159,7 @@ def compute_exam_achievement_bulk(
     tenant: Any,
     scoring_details_loader=None,
     include_first_attempt_readiness: bool = False,
+    initial_scores: dict[tuple[int, int], InitialExamScore] | None = None,
 ) -> dict[tuple[int, int], dict[str, Any]]:
     """
     여러 (enrollment, exam) 쌍의 성취를 한 번에 계산 (N+1 방지).
@@ -180,6 +182,8 @@ def compute_exam_achievement_bulk(
     compute_exam_achievement 와 동일한 키 셋 (is_pass/remediated/final_pass/
     clinic_retake/achievement/is_provisional/meta_status).
 
+    initial_scores may supply an already loaded superset of the requested exam/enrollment scope.
+
     쿼리 수: items 수와 무관하게 ClinicLink/ExamAttempt/ExamResult 각 1회 (최대 3개).
     """
     if not items:
@@ -189,10 +193,14 @@ def compute_exam_achievement_bulk(
     exam_ids = {int(i["exam_id"]) for i in items}
     attempt_ids = {int(i["attempt_id"]) for i in items if i.get("attempt_id")}
     session_ids = {int(i["session_id"]) for i in items if i.get("session_id") is not None}
-    initial_scores = load_initial_exam_scores(
-        exam_ids=exam_ids,
-        enrollment_ids=enrollment_ids,
-    )
+    if initial_scores is None:
+        initial_scores = load_initial_exam_scores(exam_ids=exam_ids, enrollment_ids=enrollment_ids)
+    else:
+        initial_scores = {
+            key: state
+            for key, state in initial_scores.items()
+            if key[0] in exam_ids and key[1] in enrollment_ids
+        }
     attempt_ids.update(
         state.attempt_id
         for state in initial_scores.values()
