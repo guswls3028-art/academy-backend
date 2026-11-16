@@ -374,37 +374,23 @@ def exam_remediation_link_values(
     enrollment_ids: set[int],
     exam_ids: set[int],
     session_ids: set[int],
-    use_session_filter: bool,
     tenant: Any,
 ) -> list[dict[str, Any]]:
     from apps.domains.progress.models import ClinicLink
+    from apps.support.results.assessment_clinic_status import current_clinic_resolution_rows
 
-    link_filter: dict[str, Any] = dict(
-        enrollment_id__in=enrollment_ids,
+    current_links = current_clinic_resolution_rows(
+        tenant=tenant,
         source_type="exam",
-        source_id__in=exam_ids,
-        resolved_at__isnull=False,
-        resolution_type__in=[
+        enrollment_ids=enrollment_ids,
+        source_ids=exam_ids,
+        session_ids=session_ids,
+        extra_fields=("id", "resolution_evidence"),
+    )
+    return [
+        link for link in current_links
+        if link["resolved_at"] and link["resolution_type"] in (
             ClinicLink.ResolutionType.EXAM_PASS,
             ClinicLink.ResolutionType.MANUAL_OVERRIDE,
-        ],
-    )
-    if use_session_filter and session_ids:
-        link_filter["session_id__in"] = session_ids
-    link_filter.update({
-        "tenant": tenant,
-        "enrollment__tenant": tenant,
-        "session__lecture__tenant": tenant,
-    })
-
-    return list(
-        ClinicLink.objects.filter(**link_filter).values(
-            "id",
-            "enrollment_id",
-            "source_id",
-            "session_id",
-            "resolution_type",
-            "resolution_evidence",
-            "resolved_at",
         )
-    )
+    ]

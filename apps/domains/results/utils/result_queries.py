@@ -4,8 +4,18 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from django.db.models import Max, QuerySet, Subquery
+from django.db.models.functions import Coalesce
 
 from apps.domains.results.models import Result
+
+
+def exam_history_results(*, enrollment_ids) -> QuerySet[Result]:
+    """Newest recorded results first, within the caller's authorized enrollments."""
+    return (
+        Result.objects.filter(target_type="exam", enrollment_id__in=enrollment_ids)
+        .annotate(recorded_at=Coalesce("submitted_at", "created_at"))
+        .order_by("-recorded_at", "-id")
+    )
 
 
 def latest_results_per_enrollment(

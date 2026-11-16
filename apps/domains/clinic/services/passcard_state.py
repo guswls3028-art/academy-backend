@@ -9,8 +9,9 @@ from typing import Any
 from django.db.models import Q
 from django.utils import timezone
 
+from apps.domains.clinic.contracts import participant_tenant_scope
 from apps.domains.clinic.models import SessionParticipant
-from apps.domains.clinic.time_ranges import booking_window, session_window
+from apps.domains.clinic.time_ranges import participant_booking_window
 
 
 def passcard_required_booking_date(clinic_links: Iterable[Any]):
@@ -25,9 +26,11 @@ def passcard_required_booking_date(clinic_links: Iterable[Any]):
 def passcard_booking_covers_requirements(*, participant, required_date) -> bool:
     if required_date is None:
         return True
-    schedule_date = (
-        participant.session.date if participant.session_id else participant.requested_date
-    )
+    if participant.session_id:
+        start, _ = participant_booking_window(participant)
+        schedule_date = start.date()
+    else:
+        schedule_date = participant.requested_date
     return bool(schedule_date and schedule_date >= required_date)
 
 
@@ -50,24 +53,10 @@ def passcard_booking_is_scheduled(*, participant, local_date=None) -> bool:
         return True
     if session is None or schedule_date != local_date - timedelta(days=1):
         return False
-    if participant.booking_start_time is not None and participant.booking_end_time is not None:
-        _, closing = booking_window(
-            session=session, start_time=participant.booking_start_time, end_time=participant.booking_end_time,
-        )
-    else:
-        _, closing = session_window(session)
+    _, closing = participant_booking_window(participant)
     current = timezone.localtime()
     boundary = current.replace(tzinfo=None) if current.date() == local_date else datetime.combine(local_date, time.min)
     return closing > boundary
-
-
-def passcard_tenant_booking_q(*, tenant: Any) -> Q:
-    """Require every populated booking relation to remain in the request tenant."""
-    return (
-        Q(student__tenant=tenant)
-        & (Q(session__isnull=True) | Q(session__tenant=tenant))
-        & (Q(enrollment__isnull=True) | Q(enrollment__tenant=tenant))
-    )
 
 
 def passcard_visible_booking_q(*, local_date=None) -> Q:
@@ -114,7 +103,7 @@ def passcard_confirmed_student_ids(
             tenant=tenant,
             student_id__in=normalized_ids,
         )
-        .filter(passcard_tenant_booking_q(tenant=tenant))
+        .filter(participant_tenant_scope(tenant=tenant))
         .filter(passcard_confirming_booking_q(local_date=local_date))
         .select_related("session")
     )

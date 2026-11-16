@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
 from typing import Any, Iterable
 
 from django.db.models import BooleanField, Count, F, Q, Value
@@ -69,22 +69,50 @@ def get_student_lecture_sessions(
     return list(sessions)
 
 
+def _owned_clinic_participants(*, student: Any, tenant: Any):
+    from apps.domains.clinic.contracts import participant_tenant_scope
+    from apps.domains.clinic.models import SessionParticipant
+
+    return SessionParticipant.objects.filter(
+        participant_tenant_scope(tenant=tenant),
+        student=student,
+        tenant=tenant,
+    )
+
+
 def get_student_clinic_participants(*, student: Any, tenant: Any) -> list[Any]:
     from apps.domains.clinic.models import SessionParticipant
 
     return list(
-        SessionParticipant.objects
+        _owned_clinic_participants(student=student, tenant=tenant)
         .filter(
-            student=student,
-            tenant=tenant,
             status__in=[
                 SessionParticipant.Status.PENDING,
                 SessionParticipant.Status.BOOKED,
+                SessionParticipant.Status.ATTENDED,
             ],
             session__isnull=False,
         )
         .select_related("session")
     )
+
+
+def student_clinic_schedule_entry(participant) -> tuple[date, time, str]:
+    from apps.domains.clinic.contracts import participant_booking_window
+    from apps.domains.clinic.models import SessionParticipant
+
+    start, _ = participant_booking_window(participant)
+    if participant.checked_out_at is not None:
+        status = "하원"
+    elif participant.completed_at is not None:
+        status = "학습 완료"
+    elif participant.checked_in_at is not None or participant.status == SessionParticipant.Status.ATTENDED:
+        status = "지각 등원" if participant.is_late else "등원"
+    elif participant.status == SessionParticipant.Status.PENDING:
+        status = "대기 중"
+    else:
+        status = "예약됨"
+    return start.date(), start.time(), status
 
 
 def get_future_hidden_session_ids(
@@ -121,16 +149,11 @@ def get_future_hidden_clinic_participant_ids(
     if not participant_ids:
         return []
 
-    from apps.domains.clinic.models import SessionParticipant
-
     return [
-        int(participant_id)
-        for participant_id in (
-            SessionParticipant.objects
-            .filter(id__in=participant_ids, student=student, tenant=tenant)
-            .exclude(session__date__lte=cutoff)
-            .values_list("id", flat=True)
-        )
+        int(participant.id)
+        for participant in _owned_clinic_participants(student=student, tenant=tenant)
+        .filter(id__in=participant_ids).select_related("session")
+        if participant.session_id is None or student_clinic_schedule_entry(participant)[0] > cutoff
     ]
 
 
@@ -156,11 +179,7 @@ def student_owns_clinic_participant(
     tenant: Any,
     participant_id: int,
 ) -> bool:
-    from apps.domains.clinic.models import SessionParticipant
-
-    return SessionParticipant.objects.filter(
-        tenant=tenant,
-        student=student,
+    return _owned_clinic_participants(student=student, tenant=tenant).filter(
         id=participant_id,
     ).exists()
 

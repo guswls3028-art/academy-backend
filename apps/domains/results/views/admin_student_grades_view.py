@@ -5,18 +5,17 @@ GET /results/admin/student-grades/?student_id=<int>
 Admin/Teacher용 학생 개인 성적 요약과 전체 기간 시험 추이.
 시험 결과가 추가될 때마다 별도 집계 작업 없이 회차가 자동 누적된다.
 """
-from django.db.models.functions import Coalesce
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
-from apps.domains.results.models import Result
 from apps.domains.results.services.omr_subjective_completion import (
     pending_omr_result_ids_for_ids,
 )
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 from apps.domains.results.utils.ranking import compute_exam_rankings_batch
+from apps.domains.results.utils.result_queries import exam_history_results
 from apps.domains.results.utils.initial_exam_score import (
     load_initial_exam_scores,
     project_initial_exam_score,
@@ -32,7 +31,7 @@ from apps.support.results.admin_student_grades_dependencies import (
     primary_session_metadata_by_exam_and_lecture,
     submitted_homework_keys_for_grades,
 )
-from apps.support.results.homework_clinic_status import homework_remediation_keys
+from apps.support.results.assessment_clinic_status import homework_remediation_keys
 from apps.support.results.student_grade_history import (
     build_exam_progression as _build_exam_progression,
     empty_exam_summary as _empty_exam_summary,
@@ -80,12 +79,7 @@ class AdminStudentGradesView(APIView):
 
         # ── 시험 결과 ──
         results = list(
-            Result.objects.filter(
-                enrollment_id__in=enrollment_ids,
-                target_type="exam",
-            )
-            .annotate(recorded_at=Coalesce("submitted_at", "created_at"))
-            .order_by("-recorded_at", "-id")
+            exam_history_results(enrollment_ids=enrollment_ids)
             .values(
                 "id",
                 "target_id",
@@ -193,7 +187,7 @@ class AdminStudentGradesView(APIView):
 
             seen_exam_ids.add(eid)
             exam_rows.append({
-                "r": r, "eid": eid, "info": info, "session": None,
+                "r": r, "eid": eid, "info": info,
                 "session_id": session_id, "session_title": session_title,
                 "session_order": session_meta.get("session_order"),
                 "session_regular_order": session_meta.get("session_regular_order"),
@@ -216,16 +210,13 @@ class AdminStudentGradesView(APIView):
                     row["info"]["pass_score"],
                 ),
                 "attempt_id": row["r"].get("attempt_id"),
-                "session": row["session"],
+                "session_id": row["session_id"],
             }
             for row in exam_rows
             if not row["subjective_pending"]
         ]
-        # admin_student_grades_view 는 exam 별로 대표 session 을 이미 선택했으므로
-        # (동일 exam 이 여러 session 에 걸려도 primary 만 사용), session-agnostic 매칭.
-        # 정책 동등성(HOMEWORK_PASS 케이스)은 test_achievement_contract.py 가 보장.
         bulk_ach = compute_exam_achievement_bulk(
-            items=bulk_items, use_session_filter=False, tenant=tenant,
+            items=bulk_items, tenant=tenant,
         )
         exam_rank_maps = compute_exam_rankings_batch(
             exam_ids=[

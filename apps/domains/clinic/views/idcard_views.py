@@ -13,12 +13,12 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolved
 from apps.domains.clinic.color_utils import get_effective_clinic_colors
+from apps.domains.clinic.contracts import participant_booking_window, participant_tenant_scope
 from apps.domains.clinic.models import SessionParticipant
 from apps.domains.clinic.services.passcard_state import (
     passcard_booking_covers_requirements,
     passcard_booking_is_scheduled,
     passcard_required_booking_date,
-    passcard_tenant_booking_q,
     passcard_visible_booking_q,
 )
 from apps.support.clinic.idcard_dependencies import (
@@ -28,7 +28,6 @@ from apps.support.clinic.idcard_dependencies import (
     unresolved_auto_clinic_links,
 )
 from apps.support.clinic.session_dependencies import get_student_for_clinic_request
-from apps.domains.clinic.time_ranges import booking_window
 
 
 BOOKING_STATUS_LABELS = {
@@ -43,16 +42,14 @@ BOOKING_STATUS_LABELS = {
 
 def _participant_schedule(participant):
     session = getattr(participant, "session", None)
-    if session and participant.booking_start_time is not None and participant.booking_end_time is not None:
-        start, _ = booking_window(
-            session=session, start_time=participant.booking_start_time, end_time=participant.booking_end_time,
-        )
+    if session:
+        start, _ = participant_booking_window(participant)
         return start.date(), start.time(), session.location, session.title or ""
     return (
-        getattr(session, "date", None) or participant.requested_date,
-        getattr(session, "start_time", None) or participant.requested_start_time,
-        getattr(session, "location", None),
-        getattr(session, "title", "") or "",
+        participant.requested_date,
+        participant.requested_start_time,
+        None,
+        "",
     )
 
 
@@ -63,7 +60,7 @@ def _valid_booking_projection(*, tenant, student, local_date, required_date=None
             tenant=tenant,
             student=student,
         )
-        .filter(passcard_tenant_booking_q(tenant=tenant))
+        .filter(participant_tenant_scope(tenant=tenant))
         .filter(passcard_visible_booking_q(local_date=local_date))
         .select_related("session")
         .order_by("id")
@@ -262,12 +259,21 @@ class StudentClinicIdcardView(APIView):
                     "clinic_required": clinic_required,
                 })
 
+        from apps.support.student_app.learning_todo_policy import lecture_is_ongoing
+        from apps.support.submissions.dependencies import homework_submission_media_lock_keys
+
+        homework_links = [link for link in clinic_links if link.source_type == "homework" and link.source_id]
+        media_locks = homework_submission_media_lock_keys(
+            tenant=tenant,
+            enrollment_ids={link.enrollment_id for link in homework_links},
+            homework_ids={link.source_id for link in homework_links},
+        )
         current_targets = []
         for link in clinic_links:
             sess = link.session
             lecture = sess.lecture
             source = source_projection.get(int(link.id), {})
-            current_targets.append({
+            target = {
                 "clinic_link_id": int(link.id),
                 "enrollment_id": int(link.enrollment_id),
                 "lecture_id": int(lecture.id),
@@ -282,7 +288,14 @@ class StudentClinicIdcardView(APIView):
                 "source_title": source.get("source_title"),
                 "source_scope": source.get("source_scope"),
                 "created_at": getattr(link, "created_at", None),
-            })
+            }
+            if link.source_type == "homework":
+                target["can_submit_homework_files"] = (
+                    bool(link.source_id)
+                    and lecture_is_ongoing(lecture, today=local_now.date())
+                    and (link.enrollment_id, link.source_id) not in media_locks
+                )
+            current_targets.append(target)
 
         # 프로필 사진 URL (신원 확인용) - 기존 방식 사용
         return Response(

@@ -1227,7 +1227,7 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
                 "total_score": 100,
                 "pass_score": 90,
                 "attempt_id": pending_attempt.id,
-                "session": self.session,
+                "session_id": self.session.id,
             }],
             tenant=self.tenant,
         )[(self.enrollment.id, self.exam.id)]

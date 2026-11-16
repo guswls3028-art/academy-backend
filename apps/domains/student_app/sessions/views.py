@@ -17,6 +17,7 @@ from apps.support.student_app.session_dependencies import (
     get_student_clinic_participants,
     get_student_detail_session,
     get_student_lecture_sessions,
+    student_clinic_schedule_entry,
     student_owns_clinic_participant,
     student_owns_session,
 )
@@ -99,18 +100,18 @@ class StudentSessionListView(APIView):
             for s in sessions
         ]
 
-        # 2) 클리닉 예약 (PENDING/BOOKED만, session 있는 것만)
+        # 2) 클리닉 예약과 등원 이력 (실제 예약 시각, 개설 시각은 전체 예약의 fallback)
         clinic_participants = get_student_clinic_participants(
             student=student,
             tenant=tenant,
         )
         for cp in clinic_participants:
             sess = cp.session
-            if hidden_before is not None and sess and sess.date and sess.date <= hidden_before:
+            booking_date, start_time, status_label = student_clinic_schedule_entry(cp)
+            if hidden_before is not None and booking_date <= hidden_before:
                 continue
             if cp.id in hidden_clinic_participant_ids:
                 continue
-            status_label = "대기 중" if cp.status == "pending" else "예약됨"
             data.append({
                 "id": cp.id * -1,  # 음수 ID로 클리닉 구분
                 "title": f"🏥 클리닉 {sess.title or sess.location}" if sess else "🏥 클리닉",
@@ -118,11 +119,11 @@ class StudentSessionListView(APIView):
                 "session_type": None,
                 "regular_order": None,
                 "display_label": None,
-                "date": sess.date.isoformat() if sess and sess.date else None,
+                "date": booking_date.isoformat(),
                 "status": status_label,
                 "exam_ids": [],
                 "type": "clinic",
-                "start_time": sess.start_time if sess else None,
+                "start_time": start_time,
             })
 
         # 날짜 정렬

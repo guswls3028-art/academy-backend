@@ -3,10 +3,20 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.domains.clinic.models import SessionParticipant
-from apps.domains.clinic.time_ranges import booking_window, session_window
+from apps.domains.clinic.time_ranges import participant_booking_window, session_window
+
+
+def participant_tenant_scope(*, tenant) -> Q:
+    """Require every populated booking relation to belong to the request tenant."""
+    return (
+        Q(student__tenant=tenant)
+        & (Q(session__isnull=True) | Q(session__tenant=tenant))
+        & (Q(enrollment__isnull=True) | Q(enrollment__tenant=tenant))
+    )
 
 
 def is_clinic_participant_reminder_active(*, participant_id: int, tenant_id: int) -> bool:
@@ -48,12 +58,13 @@ def is_clinic_booking_reminder_active(*, tenant_id: int, origin_id: str, now=Non
         return False
     session = participant.session
     opening, closing = session_window(session)
-    booking_start, ending = booking_window(
-        session=session,
-        start_time=participant.booking_start_time,
-        end_time=participant.booking_end_time,
-    )
+    booking_start, ending = participant_booking_window(participant)
     return booking_start == start.replace(tzinfo=None) and opening <= booking_start < ending <= closing
 
 
-__all__ = ["is_clinic_participant_reminder_active", "is_clinic_booking_reminder_active"]
+__all__ = [
+    "is_clinic_participant_reminder_active",
+    "is_clinic_booking_reminder_active",
+    "participant_booking_window",
+    "participant_tenant_scope",
+]

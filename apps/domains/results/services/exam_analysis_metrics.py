@@ -130,7 +130,7 @@ def _load_scores(*, results, exam_maxima, tenant, candidate_policy=None):
             "attempt_id": score.attempt_id,
             "total_score": score.total_score,
             "pass_score": pass_score,
-            "session": session,
+            "session_id": session.id if session is not None else None,
         })
     achievements = compute_exam_achievement_bulk(
         items=items, tenant=tenant, include_first_attempt_readiness=True,
