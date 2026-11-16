@@ -7,7 +7,9 @@ workaround then made the later OMR match fail with a retake conflict.
 from __future__ import annotations
 
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -182,7 +184,15 @@ class MixedGridOmrOrderTests(TestCase):
         self.assertEqual(
             ExamResult.objects.get(submission=scan, exam=self.exam).status, ExamResult.Status.FINAL,
         )
-        self.assertEqual(pending_omr_result_ids([result]), set())
+        with CaptureQueriesContext(connection) as queries:
+            self.assertEqual(pending_omr_result_ids([result]), set())
+        submission_reads = [
+            query["sql"] for query in queries
+            if 'FROM "submissions_submission"' in query["sql"]
+        ]
+        self.assertEqual(len(submission_reads), 1)
+        self.assertNotIn('"payload"', submission_reads[0])
+        self.assertNotIn('"error_message"', submission_reads[0])
         self.assertEqual(
             float(ResultItem.objects.get(result=result, question=self.essay).score), 15,
         )

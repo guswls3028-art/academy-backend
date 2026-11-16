@@ -17,7 +17,6 @@ from rest_framework import status
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
 from apps.support.lectures.schedule_queries import student_schedule_annotations
 from apps.support.student_app.video_dependencies import (
-    active_inactive_video_entitlements_for_student,
     active_enrollments_for_student,
     get_lecture_models,
     get_media_models,
@@ -27,6 +26,7 @@ from apps.support.student_app.video_dependencies import (
     get_video_like_models,
     get_video_model,
     get_video_progress_model,
+    inactive_video_catalog_entitlements_for_student,
     resolve_active_inactive_video_entitlement,
     resolve_access_modes_for_videos_prefetched,
     update_inactive_entitled_video_progress,
@@ -278,17 +278,11 @@ class StudentVideoMeView(APIView):
         ).values_list("enrollment__lecture_id", "session_id"):
             active_session_ids_by_lecture[lecture_id].add(session_id)
         active_lecture_ids = set(enrollment_by_lecture)
-        inactive_entitlements = []
-        for candidate in active_inactive_video_entitlements_for_student(
-            tenant=tenant,
-            student=student,
-        ):
-            entitlement = resolve_active_inactive_video_entitlement(
-                video=candidate.video,
-                enrollment=candidate.enrollment,
-            )
-            if entitlement is not None and entitlement.enrollment.lecture_id not in active_lecture_ids:
-                inactive_entitlements.append(entitlement)
+        inactive_entitlements = [
+            entitlement
+            for entitlement in inactive_video_catalog_entitlements_for_student(tenant=tenant, student=student)
+            if entitlement.enrollment.lecture_id not in active_lecture_ids
+        ]
         inactive_video_ids_by_lecture: dict[int, set[int]] = {}
         inactive_session_ids_by_lecture: dict[int, set[int]] = {}
         inactive_first_video_by_lecture = {}
