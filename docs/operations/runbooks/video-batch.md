@@ -72,10 +72,24 @@ level to the high variant, which could signal a level too low for the encoded
 frames. Existing HLS requires a re-encode through the owning video workflow to
 adopt the corrected bitstream.
 
-`tests/video/test_transcoder.py` verifies distinct options, original frame rate
-and automatic level selection. The synthetic FFmpeg checks inspect both
+A source with multiple audio tracks uses its first default-disposition audio
+stream, or its first audio stream when no default is marked. Every HLS variant
+maps that one input stream as stereo AAC. Silent sources remain video-only.
+The middle variant is emitted only when it is smaller than the high variant
+and at least 100 pixels shorter. For example, a 640×360 source produces a single
+640×360 variant rather than an upscaled fallback.
+
+`tests/test_video_transcoder.py` verifies distinct options, original frame rate
+and automatic level selection, audio selection, and synthetic 360p decoding for
+sources with zero, one, and two audio tracks. The synthetic FFmpeg checks inspect both
 variants' codec parameters and master playlist at 30 and 60 fps, including
 single-variant 1080p60 output.
+
+The ARM Video Worker image build runs `docker/video-worker/lecture-transcoder-smoke.py`
+as the worker user with networking disabled. The packaged encoder must decode a
+single 360p rendition and both the 900p and 720p renditions, each with one AAC
+track matching the input's default audio. The script removes the synthetic media
+after verification.
 
 ## 2. Deploy Path
 

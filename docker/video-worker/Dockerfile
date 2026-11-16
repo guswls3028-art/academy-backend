@@ -99,6 +99,9 @@ COPY --chown=appuser:appuser academy ./academy
 COPY --chown=appuser:appuser apps ./apps
 COPY --chown=appuser:appuser libs ./libs
 COPY --chown=appuser:appuser manage.py ./
+# Exercise the packaged lecture encoder without starting the Batch entrypoint.
+RUN --network=none --mount=type=bind,source=docker/video-worker/lecture-transcoder-smoke.py,target=/tmp/lecture-transcoder-smoke.py \
+    PYTHONPATH="$PWD" python -B /tmp/lecture-transcoder-smoke.py
 # Batch must remain the only video entry boundary; validate the SSM bootstrap
 # module without starting a job or touching production resources.
 RUN python -c "from apps.worker.video_worker.batch_entrypoint import REQUIRED_KEYS, load_env_from_ssm_json; assert 'DJANGO_SETTINGS_MODULE' in REQUIRED_KEYS; print('video Batch entrypoint import OK')"
