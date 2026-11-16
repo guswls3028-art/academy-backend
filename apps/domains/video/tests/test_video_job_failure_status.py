@@ -98,7 +98,10 @@ class VideoJobFailureStatusTests(TestCase):
 
     def test_batch_worker_records_ffmpeg_diagnostics_and_skips_retry_for_audio_only_source(self):
         from academy.adapters.video.transcoder import FFmpegProcessError
-        from apps.worker.video_worker import batch_main
+
+        # The test runner already initialized Django and its process-wide logging.
+        with patch("django.setup"), patch("logging.basicConfig"):
+            from apps.worker.video_worker import batch_main
 
         self.job.state = VideoTranscodeJob.State.QUEUED
         self.job.save(update_fields=["state"])
