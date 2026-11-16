@@ -611,6 +611,14 @@ item 전환도 row lock 아래에서 현재 상태를 다시 확인하며, 이�
 연결이 확정된 item은 지우지 않는다. Legacy multipart는 sheet/session 해석까지 성공한
 뒤에만 implicit batch를 만들므로 잘못된 sheet 요청이 pending batch를 남기지 않는다.
 
+초기 접수 JSON의 선택 필드 `client_request_id`는 한 파일 선택 작업을 나타내는 UUID다.
+서버는 같은 학원·생성 직원·요청 UUID에서 시험, 차시, 파일 총수가 일치하면
+최초 요청과 재시도에 모두 `201` 및 같은 batch와 순번을 돌려준다. 초기 응답이
+끊겨도 같은 UUID로 다시 요청하면 새 작업을 만들지 않는다. 같은 UUID의 시험·차시·
+파일 총수가 바뀌면 `409`를 반환한다. 새로운 파일 선택 작업은 새 UUID를 사용한다.
+필드를 생략한 기존 클라이언트는 종전처럼 요청마다 새 batch를 생성한다.
+동시 재요청에서는 하나의 transaction만 batch와 순번 전체를 생성한다.
+
 업로드 OpenAPI는 multipart의 legacy/durable 및 단일/다중 파일 형태를 `anyOf` 대안으로
 명시한다. 둘 모두 `file` 또는 `files` 중 하나가 필수이며, durable 대안은 `batch_id`와
 `item_ordinals`도 필수다. 각 대안은 미선언 필드를 거부하므로 durable 식별자 중 한쪽만
