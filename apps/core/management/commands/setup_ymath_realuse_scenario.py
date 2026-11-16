@@ -19,6 +19,7 @@ from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
 
 from apps.core.models import OpsAuditLog, Program, Tenant, TenantMembership
 from apps.core.models.user import user_display_username, user_internal_username
+from apps.core.r2_paths import video_raw_prefix
 from apps.core.services.password import change_password
 from apps.domains.parents.services import ensure_parent_account_for_student
 from apps.core.services.student_grade_report_layout import (
@@ -1083,6 +1084,44 @@ class Command(BaseCommand):
                 retries={"total_max_attempts": 2},
             ),
         )
+
+    @staticmethod
+    def _cleanup_qa_video_raw_upload(*, tenant_id: int, session_id: int, key: str) -> dict[str, int]:
+        """Clean one synthetic MP4 key after fixed QA has verified scenario ownership."""
+        assert_isolated_runtime()
+        if any(type(scope_id) is not int or scope_id <= 0 for scope_id in (tenant_id, session_id)):
+            raise CommandError("QA video cleanup requires exact tenant and session IDs.")
+        prefix = f"{video_raw_prefix(tenant_id)}{session_id}/"
+        if not isinstance(key, str) or not key.startswith(prefix) or not re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.mp4",
+            key[len(prefix):],
+        ):
+            raise CommandError("QA video cleanup requires an exact scoped raw MP4 key.")
+
+        client = Command._r2_storage_client()
+        bucket = settings.R2_VIDEO_BUCKET
+
+        def exact_entries(operation, entries):
+            for page in client.get_paginator(operation).paginate(Bucket=bucket, Prefix=key):
+                for entry in page.get(entries) or ():
+                    if entry.get("Key") != key:
+                        raise CommandError("R2 returned an entry outside the exact QA video key.")
+                    yield entry
+
+        uploads = list(exact_entries("list_multipart_uploads", "Uploads"))
+        objects = list(exact_entries("list_objects_v2", "Contents"))
+        upload_ids = [entry.get("UploadId") for entry in uploads]
+        if any(not isinstance(upload_id, str) or not upload_id for upload_id in upload_ids):
+            raise CommandError("R2 returned an invalid QA video upload identity.")
+        for upload_id in upload_ids:
+            client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+        if objects:
+            client.delete_object(Bucket=bucket, Key=key)
+        remaining_uploads = list(exact_entries("list_multipart_uploads", "Uploads"))
+        remaining_objects = list(exact_entries("list_objects_v2", "Contents"))
+        if remaining_uploads or remaining_objects:
+            raise CommandError("QA video cleanup could not verify zero storage residue.")
+        return {"aborted": len(upload_ids), "deleted": len(objects), "remaining": 0}
 
     @staticmethod
     def _cleanup_qa_r2_objects(*, tenant_id: int) -> dict[str, int]:

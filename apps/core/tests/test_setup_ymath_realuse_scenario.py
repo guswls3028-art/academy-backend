@@ -5,7 +5,7 @@ import time
 from datetime import date, time as datetime_time, timedelta
 from decimal import Decimal
 from io import StringIO
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
@@ -13,7 +13,7 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import close_old_connections, connection, transaction
 from django.db.models.deletion import ProtectedError
-from django.test import TestCase, TransactionTestCase, override_settings
+from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
@@ -41,6 +41,56 @@ from apps.domains.video.models import (
     VideoPlaybackSession,
     VideoProgress,
 )
+
+
+class QAVideoMultipartCleanupTests(SimpleTestCase):
+    key = "tenants/712/video/raw/4/00000000-0000-4000-8000-000000000001.mp4"
+
+    @override_settings(R2_VIDEO_BUCKET="test-video")
+    def test_cleans_multipart_pages_and_object_with_zero_readback(self):
+        client = Mock()
+        uploads = Mock()
+        objects = Mock()
+        uploads.paginate.side_effect = [
+            [{"Uploads": [{"Key": self.key, "UploadId": upload_id}]} for upload_id in ("first", "last")],
+            [{}],
+        ]
+        objects.paginate.side_effect = [[{"Contents": [{"Key": self.key}]}], [{}]]
+        client.get_paginator.side_effect = {"list_multipart_uploads": uploads, "list_objects_v2": objects}.get
+        with patch.object(Command, "_r2_storage_client", return_value=client):
+            result = Command._cleanup_qa_video_raw_upload(tenant_id=712, session_id=4, key=self.key)
+        self.assertEqual(result, {"aborted": 2, "deleted": 1, "remaining": 0})
+        probe = call(Bucket="test-video", Prefix=self.key)
+        self.assertEqual(uploads.paginate.call_args_list, [probe, probe])
+        self.assertEqual(objects.paginate.call_args_list, [probe, probe])
+        self.assertEqual(client.abort_multipart_upload.call_args_list, [
+            call(Bucket="test-video", Key=self.key, UploadId="first"),
+            call(Bucket="test-video", Key=self.key, UploadId="last"),
+        ])
+        client.delete_object.assert_called_once_with(Bucket="test-video", Key=self.key)
+
+    def test_refuses_wrong_scope_and_unexpected_provider_key(self):
+        client = Mock()
+        client.get_paginator.return_value.paginate.return_value = [
+            {"Uploads": [{"Key": self.key + ".other", "UploadId": "unexpected"}]},
+        ]
+        with patch.object(Command, "_r2_storage_client", return_value=client) as client_factory:
+            with self.assertRaisesRegex(CommandError, "exact scoped raw MP4"):
+                Command._cleanup_qa_video_raw_upload(tenant_id=713, session_id=4, key=self.key)
+            client_factory.assert_not_called()
+            with self.assertRaisesRegex(CommandError, "outside the exact QA video key"):
+                Command._cleanup_qa_video_raw_upload(tenant_id=712, session_id=4, key=self.key)
+        client.abort_multipart_upload.assert_not_called()
+        client.delete_object.assert_not_called()
+
+    def test_refuses_remaining_upload_after_abort(self):
+        client = Mock()
+        client.get_paginator.return_value.paginate.return_value = [
+            {"Uploads": [{"Key": self.key, "UploadId": "remaining"}]},
+        ]
+        with patch.object(Command, "_r2_storage_client", return_value=client):
+            with self.assertRaisesRegex(CommandError, "verify zero storage residue"):
+                Command._cleanup_qa_video_raw_upload(tenant_id=712, session_id=4, key=self.key)
 
 
 class SetupYmathRealuseScenarioTests(TestCase):
