@@ -137,7 +137,7 @@ def _compute_output_resolution(input_w: int, input_h: int) -> tuple[int, int]:
     return out_w, out_h
 
 
-def has_audio_stream(*, input_path: str, ffprobe_bin: str, timeout: int) -> bool:
+def _probe_audio_stream_index(*, input_path: str, ffprobe_bin: str, timeout: int) -> int | None:
     cmd = [
         ffprobe_bin,
         "-v", "error",
@@ -155,17 +155,25 @@ def has_audio_stream(*, input_path: str, ffprobe_bin: str, timeout: int) -> bool
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return False
+        return None
 
     if p.returncode != 0:
-        return False
+        return None
 
     try:
         data = json.loads(p.stdout)
-        streams = data.get("streams") or []
-        return any(s.get("codec_type") == "audio" for s in streams)
-    except Exception:
-        return False
+        audio_streams = [
+            stream for stream in data.get("streams", [])
+            if stream.get("codec_type") == "audio" and isinstance(stream.get("index"), int)
+        ]
+        default = next(
+            (stream for stream in audio_streams if (stream.get("disposition") or {}).get("default") == 1),
+            None,
+        )
+        selected = default or (audio_streams[0] if audio_streams else None)
+        return selected["index"] if selected is not None else None
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 
 def _compute_mid_resolution(input_w: int, input_h: int) -> tuple[int, int]:
@@ -191,13 +199,6 @@ def _compute_mid_resolution(input_w: int, input_h: int) -> tuple[int, int]:
     return out_w, out_h
 
 
-def _needs_two_variants(input_w: int, input_h: int, hi_w: int, hi_h: int) -> bool:
-    """고화질과 중화질이 실질적으로 다른 해상도인 경우에만 2단계."""
-    mid_w, mid_h = _compute_mid_resolution(input_w, input_h)
-    # 해상도 차이가 의미 있을 때만 (높이 차이 100px 이상)
-    return mid_h > 0 and abs(hi_h - mid_h) >= 100
-
-
 def build_ffmpeg_command(
     *,
     input_path: str,
@@ -206,7 +207,7 @@ def build_ffmpeg_command(
     mid_w: int,
     mid_h: int,
     two_variants: bool,
-    with_audio: bool,
+    audio_stream_index: int | None,
     ffmpeg_bin: str,
     hls_time: int,
 ) -> List[str]:
@@ -215,6 +216,7 @@ def build_ffmpeg_command(
     two_variants=False면 고화질 단일 출력.
     """
     cmd: List[str] = [ffmpeg_bin, "-y", "-i", input_path]
+    with_audio = audio_stream_index is not None
 
     if two_variants:
         # filter_complex: split → 고화질 스케일 + 중화질 스케일
@@ -226,7 +228,7 @@ def build_ffmpeg_command(
         # v2 = 고화질
         cmd += ["-map", "[vhiout]"]
         if with_audio:
-            cmd += ["-map", "0:a?"]
+            cmd += ["-map", f"0:{audio_stream_index}"]
         cmd += [
             "-profile:v:0", HI_PROFILE, "-refs:v:0", str(HI_REFERENCE_FRAMES),
             "-crf:v:0", str(HI_CRF),
@@ -238,7 +240,7 @@ def build_ffmpeg_command(
         # v1 = 중화질
         cmd += ["-map", "[vmidout]"]
         if with_audio:
-            cmd += ["-map", "0:a?"]
+            cmd += ["-map", f"0:{audio_stream_index}"]
         cmd += [
             "-profile:v:1", MID_PROFILE, "-crf:v:1", str(MID_CRF),
             "-maxrate:v:1", MID_MAXRATE, "-bufsize:v:1", MID_BUFSIZE,
@@ -261,7 +263,7 @@ def build_ffmpeg_command(
             "-maxrate", HI_MAXRATE, "-bufsize", HI_BUFSIZE,
         ]
         if with_audio:
-            cmd += ["-map", "0:a?", "-b:a", HI_AUDIO_BITRATE]
+            cmd += ["-map", f"0:{audio_stream_index}", "-b:a", HI_AUDIO_BITRATE]
 
         if with_audio:
             var_map = "v:0,a:0,name:1"
@@ -340,7 +342,7 @@ def transcode_to_hls(
     input_w, input_h = _probe_resolution(input_path, ffprobe_bin, min(60, effective_timeout))
     hi_w, hi_h = _compute_output_resolution(input_w, input_h)
     mid_w, mid_h = _compute_mid_resolution(input_w, input_h)
-    two_variants = _needs_two_variants(input_w, input_h, hi_w, hi_h)
+    two_variants = 0 < mid_w <= hi_w and mid_h > 0 and hi_h - mid_h >= 100
 
     logger.info(
         "[TRANSCODER] Resolution: input=%dx%d → hi=%dx%d mid=%dx%d two_variants=%s video_id=%s",
@@ -352,11 +354,12 @@ def transcode_to_hls(
     if two_variants:
         ensure_dir(output_root / "v2")
 
-    with_audio = has_audio_stream(
+    audio_stream_index = _probe_audio_stream_index(
         input_path=input_path,
         ffprobe_bin=ffprobe_bin,
         timeout=min(60, effective_timeout),
     )
+    with_audio = audio_stream_index is not None
 
     cmd = build_ffmpeg_command(
         input_path=input_path,
@@ -365,7 +368,7 @@ def transcode_to_hls(
         mid_w=mid_w,
         mid_h=mid_h,
         two_variants=two_variants,
-        with_audio=with_audio,
+        audio_stream_index=audio_stream_index,
         ffmpeg_bin=ffmpeg_bin,
         hls_time=hls_time,
     )
