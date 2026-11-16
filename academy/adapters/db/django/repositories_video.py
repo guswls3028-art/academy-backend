@@ -1283,7 +1283,13 @@ def job_cancel(job_id: str) -> bool:
     return n == 1
 
 
-def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") -> bool:
+def job_mark_dead(
+    job_id: str,
+    error_code: str = "",
+    error_message: str = "",
+    *,
+    failed_aws_batch_job_id: str | None = None,
+) -> bool:
     """Job DEAD. Transactional: Job + Video 원자적 업데이트. Terminal 상태(SUCCEEDED, DEAD, CANCELLED)는 보호."""
     from django.db import transaction
     from apps.domains.video.models import Video, VideoTranscodeJob
@@ -1306,12 +1312,23 @@ def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") ->
                 "job_mark_dead: job %s already in terminal state %s, skipping", job_id, job.state,
             )
             return False
+        if failed_aws_batch_job_id is not None and (
+            job.state != VideoTranscodeJob.State.RUNNING
+            or job.cancel_requested
+            or (job.aws_batch_job_id or "") != failed_aws_batch_job_id
+        ):
+            return False
         job.state = VideoTranscodeJob.State.DEAD
         job.error_code = err_code
         job.error_message = err_msg
         job.locked_by = ""
         job.locked_until = None
-        job.save(update_fields=["state", "error_code", "error_message", "locked_by", "locked_until", "updated_at"])
+        update_fields = ["state", "error_code", "error_message", "locked_by", "locked_until", "updated_at"]
+        if failed_aws_batch_job_id is not None:
+            job.attempt_count += 1
+            job.last_counted_failure_aws_batch_job_id = failed_aws_batch_job_id
+            update_fields.extend(["attempt_count", "last_counted_failure_aws_batch_job_id"])
+        job.save(update_fields=update_fields)
         Video.objects.filter(current_job_id=job_id).update(
             status=Video.Status.FAILED,
             error_reason=err_msg or job.error_message,

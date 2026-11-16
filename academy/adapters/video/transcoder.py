@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections import deque
 import json
+import logging
 import re
 import subprocess
 import threading
@@ -9,8 +11,7 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from academy.application.video import CancelledError
-from academy.adapters.video.utils import ensure_dir, trim_tail
-import logging
+from academy.adapters.video.utils import ensure_dir
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,31 @@ ENCODING_PRESET = "slow"
 
 class TranscodeError(RuntimeError):
     pass
+
+
+_FFMPEG_DIAGNOSTIC_LINES = 8
+_FFMPEG_DIAGNOSTIC_CHARS = 300
+_FFMPEG_URL = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s]+", re.IGNORECASE)
+_FFMPEG_CREDENTIAL = re.compile(
+    r"\b(?:authorization|proxy-authorization|cookie|set-cookie|password|token|signature)\s*[:=].*$",
+    re.IGNORECASE,
+)
+_FFMPEG_PATH = re.compile(r"(?:[a-z]:[\\/]|(?<![\w/])/|\\\\)[^\r\n]*?(?=:\s|$)", re.IGNORECASE)
+_NO_INPUT_VIDEO = re.compile(
+    r"""^(?:Stream map ['"]0:v:0['"] matches no streams\.?|"""
+    r"""Stream specifier ['"]:v['"] in filtergraph description .* matches no streams\.?)$"""
+)
+
+
+class FFmpegProcessError(TranscodeError):
+    """A nonzero FFmpeg exit with bounded diagnostics for the Batch log."""
+
+    def __init__(self, exit_code: int, diagnostics: tuple[str, ...], *, invalid_source: bool):
+        message = "Source file contains no video stream." if invalid_source else f"FFmpeg exited with code {exit_code}."
+        super().__init__(message)
+        self.exit_code = exit_code
+        self.diagnostics = diagnostics
+        self.invalid_source = invalid_source
 
 
 def _probe_resolution(input_path: str, ffprobe_bin: str, timeout: int) -> tuple[int, int]:
@@ -215,7 +241,7 @@ def build_ffmpeg_command(
     CRF 기반 2단계 ABR HLS. 원본 비율 보존.
     two_variants=False면 고화질 단일 출력.
     """
-    cmd: List[str] = [ffmpeg_bin, "-y", "-i", input_path]
+    cmd: List[str] = [ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-nostats", "-y", "-i", input_path]
     with_audio = audio_stream_index is not None
 
     if two_variants:
@@ -359,8 +385,6 @@ def transcode_to_hls(
         ffprobe_bin=ffprobe_bin,
         timeout=min(60, effective_timeout),
     )
-    with_audio = audio_stream_index is not None
-
     cmd = build_ffmpeg_command(
         input_path=input_path,
         hi_w=hi_w,
@@ -373,179 +397,124 @@ def transcode_to_hls(
         hls_time=hls_time,
     )
 
-    # Always use Popen+stderr when duration is known so progress is parsed (no 50% stick). Callback optional.
-    use_popen = duration_sec is not None and duration_sec > 0
+    total_sec = float(duration_sec) if duration_sec and duration_sec > 0 else 0.0
+    last_pct = -1
+    last_progress_time = time.monotonic()
+    progress_lock = threading.Lock()
+    diagnostics_lock = threading.Lock()
+    first_diagnostics: list[str] = []
+    recent_diagnostics: deque[str] = deque(maxlen=_FFMPEG_DIAGNOSTIC_LINES - 2)
+    input_has_no_video = False
+    empty_stream_map = False
+    video_map_invalid = False
+    output_path = str(output_root.resolve())
 
-    if use_popen:
-        total_sec = float(duration_sec)
-        last_pct = -1
-        stderr_lines: List[str] = []
-        # Stall detection: track when ffmpeg last made progress
-        _last_progress_time = time.monotonic()
-        _last_progress_lock = threading.Lock()
+    logger.info("[TRANSCODER] Starting ffmpeg for video_id=%s", video_id)
+    try:
+        with subprocess.Popen(
+            cmd,
+            cwd=output_path,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        ) as process:
+            assert process.stdout is not None
+            assert process.stderr is not None
 
-        def _update_progress_time() -> None:
-            nonlocal _last_progress_time
-            with _last_progress_lock:
-                _last_progress_time = time.monotonic()
+            def read_stdout() -> None:
+                nonlocal last_pct, last_progress_time
+                for line in process.stdout:
+                    if not total_sec or not (match := _RE_OUT_TIME_MS.search(line)):
+                        continue
+                    current_sec = int(match.group(1)) / 1_000_000.0
+                    with progress_lock:
+                        last_progress_time = time.monotonic()
+                    pct = min(85, max(50, int(50 + 35 * (current_sec / total_sec))))
+                    if pct != last_pct:
+                        last_pct = pct
+                        if progress_callback is not None:
+                            progress_callback(current_sec, total_sec)
 
-        def _seconds_since_last_progress() -> float:
-            with _last_progress_lock:
-                return time.monotonic() - _last_progress_time
+            def read_stderr() -> None:
+                nonlocal input_has_no_video, empty_stream_map, video_map_invalid
+                for line in process.stderr:
+                    clean = line.strip()
+                    if not clean:
+                        continue
+                    raw_line = clean
+                    for path in (input_path, output_path):
+                        clean = clean.replace(path, "<path>")
+                    clean = _FFMPEG_URL.sub("<url>", clean)
+                    clean = _FFMPEG_CREDENTIAL.sub("<redacted>", clean)
+                    clean = _FFMPEG_PATH.sub("<path>", clean)
+                    safe_line = "".join(c for c in clean if c.isprintable())[:_FFMPEG_DIAGNOSTIC_CHARS]
+                    with diagnostics_lock:
+                        input_has_no_video |= bool(_NO_INPUT_VIDEO.fullmatch(raw_line))
+                        # Some FFmpeg versions omit the selector in the first error line.
+                        empty_stream_map |= raw_line == "Stream map '' matches no streams."
+                        video_map_invalid |= raw_line == "Failed to set value '0:v:0' for option 'map': Invalid argument"
+                        if len(first_diagnostics) < 2:
+                            first_diagnostics.append(safe_line)
+                        else:
+                            recent_diagnostics.append(safe_line)
 
-        def on_progress(current_sec: float) -> None:
-            nonlocal last_pct
-            _update_progress_time()
-            pct = int(50 + 35 * (current_sec / total_sec)) if total_sec > 0 else 50
-            pct = min(85, max(50, pct))
-            if pct != last_pct:
-                last_pct = pct
-                if progress_callback is not None:
-                    progress_callback(current_sec, total_sec)
+            progress_reader = threading.Thread(target=read_stdout, daemon=True)
+            stderr_reader = threading.Thread(target=read_stderr, daemon=True)
+            progress_reader.start()
+            stderr_reader.start()
+            registered = bool(job_id and cancel_event is not None)
+            if registered:
+                from academy.adapters.video.current_transcode import clear_current, set_current
 
-        try:
-            logger.info("[TRANSCODER] Starting ffmpeg for video_id=%s cmd=%s", video_id, " ".join(cmd[:5]) + "...")
-            p = subprocess.Popen(
-                cmd,
-                cwd=str(output_root.resolve()),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
-            )
-            assert p.stdout is not None
-            assert p.stderr is not None
-            if job_id and cancel_event:
-                from academy.adapters.video.current_transcode import set_current
-                set_current(p, job_id, cancel_event)
+                set_current(process, job_id, cancel_event)
             try:
-                def read_stdout_progress() -> None:
-                    """-progress pipe:1: out_time_ms= 마이크로초 파싱. stderr 버퍼링 없이 진행률 수신."""
-                    progress_count = 0
-                    for line in p.stdout or []:
-                        m = _RE_OUT_TIME_MS.search(line)
-                        if m:
-                            current_sec = int(m.group(1)) / 1_000_000.0
-                            progress_count += 1
-                            if progress_count % 30 == 1:
-                                logger.debug("[TRANSCODER] Progress (pipe:1) video_id=%s current=%.1fs", video_id, current_sec)
-                            on_progress(current_sec)
-                    logger.info("[TRANSCODER] Progress pipe finished video_id=%s progress_updates=%d", video_id, progress_count)
-
-                def read_stderr() -> None:
-                    for line in p.stderr or []:
-                        stderr_lines.append(line)
-                        if len(stderr_lines) > 50:
-                            stderr_lines.pop(0)
-                    logger.info("[TRANSCODER] Stderr reading finished video_id=%s lines=%d", video_id, len(stderr_lines))
-
-                progress_reader = threading.Thread(target=read_stdout_progress, daemon=True)
-                stderr_reader = threading.Thread(target=read_stderr, daemon=True)
-                progress_reader.start()
-                stderr_reader.start()
-                # 작업 중 연장: 300초마다 대기, 타임아웃 시 300초 추가 (최대 24h)
-                # + stall detection: 15분간 진행 없으면 hang으로 판정하고 kill
                 deadline = time.monotonic() + effective_timeout
                 while True:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
-                        p.kill()
-                        p.wait()
-                        raise TranscodeError(
-                            f"ffmpeg timeout video_id={video_id} (extending, cap 24h) exceeded"
-                        )
-                    # Stall detection: kill if no progress for FFMPEG_STALL_TIMEOUT_SECONDS
-                    stall_sec = _seconds_since_last_progress()
-                    if stall_sec > FFMPEG_STALL_TIMEOUT_SECONDS:
-                        logger.error(
-                            "[TRANSCODER] STALL DETECTED video_id=%s no_progress_for=%.0fs "
-                            "last_pct=%s stderr_tail=%s — killing ffmpeg",
-                            video_id, stall_sec, last_pct,
-                            trim_tail("".join(stderr_lines[-10:])),
-                        )
-                        p.kill()
-                        p.wait()
+                        process.kill()
+                        process.wait()
+                        raise TranscodeError(f"ffmpeg timeout video_id={video_id} (extending, cap 24h) exceeded")
+                    with progress_lock:
+                        stall_sec = time.monotonic() - last_progress_time
+                    if total_sec and stall_sec > FFMPEG_STALL_TIMEOUT_SECONDS:
+                        process.kill()
+                        process.wait()
                         raise TranscodeError(
                             f"ffmpeg stall detected video_id={video_id}: "
                             f"no progress for {int(stall_sec)}s (limit={FFMPEG_STALL_TIMEOUT_SECONDS}s)"
                         )
-                    chunk = min(FFMPEG_CHUNK_SECONDS, int(remaining))
                     try:
-                        p.wait(timeout=chunk)
+                        process.wait(timeout=min(FFMPEG_CHUNK_SECONDS, int(remaining)))
                         break
                     except subprocess.TimeoutExpired:
-                        # Only extend if progress is still happening
-                        if stall_sec < FFMPEG_STALL_TIMEOUT_SECONDS:
-                            deadline += FFMPEG_EXTEND_SECONDS
-                            cap = time.monotonic() + FFMPEG_MAX_TOTAL_SECONDS
-                            if deadline > cap:
-                                deadline = cap
-                        logger.debug(
-                            "[TRANSCODER] ffmpeg wait chunk video_id=%s remaining=%ds stall=%.0fs",
-                            video_id, int(deadline - time.monotonic()), stall_sec,
-                        )
+                        if not total_sec or stall_sec < FFMPEG_STALL_TIMEOUT_SECONDS:
+                            deadline = min(
+                                deadline + FFMPEG_EXTEND_SECONDS,
+                                time.monotonic() + FFMPEG_MAX_TOTAL_SECONDS,
+                            )
                 progress_reader.join(timeout=2.0)
                 stderr_reader.join(timeout=2.0)
-
                 if cancel_event and cancel_event.is_set():
                     raise CancelledError("Retry requested; ffmpeg SIGTERM sent")
-                if p.returncode != 0:
-                    raise TranscodeError(
-                        f"ffmpeg failed video_id={video_id} with_audio={with_audio} stderr={trim_tail(''.join(stderr_lines))}"
-                    )
+                if process.returncode != 0:
+                    with diagnostics_lock:
+                        raise FFmpegProcessError(
+                            process.returncode,
+                            (*first_diagnostics, *recent_diagnostics),
+                            invalid_source=process.returncode > 0 and (
+                                input_has_no_video or (empty_stream_map and video_map_invalid)
+                            ),
+                        )
             finally:
-                if job_id and cancel_event:
-                    from academy.adapters.video.current_transcode import clear_current
+                if registered:
                     clear_current()
-        except Exception as e:
-            if isinstance(e, TranscodeError):
-                raise
-            raise TranscodeError(f"ffmpeg error video_id={video_id}: {e}") from e
-        stderr_tail = ""
-    else:
-        # duration 미확인 시 Popen + 동일 연장 대기
-        p = subprocess.Popen(
-            cmd,
-            cwd=str(output_root.resolve()),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        if job_id and cancel_event:
-            from academy.adapters.video.current_transcode import set_current
-            set_current(p, job_id, cancel_event)
-        try:
-            deadline = time.monotonic() + effective_timeout
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    p.kill()
-                    p.wait()
-                    raise TranscodeError(
-                        f"ffmpeg timeout video_id={video_id} (extending, cap 24h) exceeded"
-                    )
-                chunk = min(FFMPEG_CHUNK_SECONDS, int(remaining))
-                try:
-                    p.wait(timeout=chunk)
-                    break
-                except subprocess.TimeoutExpired:
-                    deadline += FFMPEG_EXTEND_SECONDS
-                    cap = time.monotonic() + FFMPEG_MAX_TOTAL_SECONDS
-                    if deadline > cap:
-                        deadline = cap
-
-            if cancel_event and cancel_event.is_set():
-                raise CancelledError("Retry requested; ffmpeg SIGTERM sent")
-            if p.returncode != 0:
-                stderr_tail = (p.stderr.read() if p.stderr else "")
-                raise TranscodeError(
-                    f"ffmpeg failed video_id={video_id} with_audio={with_audio} stderr={trim_tail(stderr_tail)}"
-                )
-            stderr_tail = (p.stderr.read() if p.stderr else "")
-        finally:
-            if job_id and cancel_event:
-                from academy.adapters.video.current_transcode import clear_current
-                clear_current()
+    except (TranscodeError, CancelledError):
+        raise
+    except OSError as exc:
+        raise TranscodeError(f"ffmpeg process could not run (errno={exc.errno})") from None
 
     master = output_root / "master.m3u8"
     if not master.exists():
