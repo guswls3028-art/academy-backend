@@ -5,9 +5,27 @@ import json
 from django.utils.crypto import salted_hmac
 
 from apps.domains.homework.models import HomeworkAssignment
+from apps.domains.messaging.alimtalk_content_builders import build_manual_replacements, render_alimtalk_preview_text
 from apps.support.attendance.learning_todo_eligibility import attendance_status_map
 
 NOTICE = "이번 차시는 영상으로 보강합니다. 아래 과제를 확인해 주세요."
+PROVIDER_MAX_MESSAGE_LENGTH = 1000
+VIDEO_HOMEWORK_LENGTH_CODE = "video_makeup_homework_message_too_long"
+
+
+def video_makeup_homework_length_issue(*, recipients, template_type, replacements):
+    """Reject oversized provider payloads without omitting assignment titles."""
+    too_long = sum(
+        len(render_alimtalk_preview_text(template_type, replacements[recipient.student_id])) > PROVIDER_MAX_MESSAGE_LENGTH
+        for recipient in recipients
+        if len(recipient.phone or "") >= 10 and recipient.student_id in replacements
+    )
+    if too_long:
+        return (
+            f"영상보강 과제 안내 {too_long}건이 알림톡 {PROVIDER_MAX_MESSAGE_LENGTH:,}자 제한을 초과합니다. "
+            "해당 차시의 과제명을 줄인 뒤 미리보기를 다시 확인해 주세요."
+        )
+    return None
 
 
 def resolve_video_makeup_homework(*, tenant, session, data, enrollments):
@@ -57,13 +75,33 @@ def resolve_video_makeup_homework(*, tenant, session, data, enrollments):
     }
 
 
-def video_makeup_homework_preview(*, tenant, data, recipients):
+def build_video_makeup_homework_envelope(*, tenant, data, recipients, template_type, template_id):
+    """Prepare the same reviewed replacements for preview and outbox admission."""
     selection = data.get("_video_makeup_homework")
     if selection is None:
-        return None
+        return None, {}
+    from apps.domains.messaging.services import get_tenant_site_url
+
+    replacements = {}
     fingerprint = None
-    if selection["recipients"] and set(data["student_ids"]) == {recipient.student_id for recipient in recipients}:
-        session_context = data["alimtalk_extra_vars"]
+    if (
+        template_type and template_id and selection["recipients"]
+        and set(data["student_ids"]) == {recipient.student_id for recipient in recipients}
+    ):
+        site_url = get_tenant_site_url(tenant) or ""
+        tenant_name = (tenant.name or "").strip()
+        for recipient in recipients:
+            context = dict(data["alimtalk_extra_vars_per_student"][str(recipient.student_id)])
+            body = context.pop("_body_subst")
+            replacements[recipient.student_id] = build_manual_replacements(
+                template_type=template_type,
+                content_body=body,
+                context={**data["alimtalk_extra_vars"], **context},
+                tenant_name=tenant_name,
+                student_name=recipient.student_name,
+                site_url=site_url,
+                literal_body=True,
+            )
         scheduled_send_at = data.get("scheduled_send_at")
         snapshot = {
             "tenant": tenant.pk,
@@ -73,10 +111,8 @@ def video_makeup_homework_preview(*, tenant, data, recipients):
             "excluded": selection["excluded"],
             "assignments": selection["assignments"],
             "contacts": [(r.student_id, r.student_name, r.phone) for r in recipients],
-            "lecture": session_context.get("강의명"),
-            "session_title": session_context.get("차시명"),
-            "session_date": session_context.get("강의날짜"),
-            "body": data["raw_body"],
+            "envelope": [template_type, template_id],
+            "replacements": replacements,
             "assignment_order": selection["recipients"],
         }
         serialized = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
@@ -85,4 +121,4 @@ def video_makeup_homework_preview(*, tenant, data, recipients):
         "recipients": selection["recipients"],
         "excluded": selection["excluded"],
         "fingerprint": fingerprint,
-    }
+    }, replacements

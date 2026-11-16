@@ -127,24 +127,8 @@ class SendMessageView(APIView):
             student_ids,
             send_to=send_to,
         )
-        if data.get("video_makeup_homework"):
-            from django.utils.crypto import constant_time_compare
-
-            from apps.support.messaging.video_makeup_homework import video_makeup_homework_preview
-
-            preview = video_makeup_homework_preview(tenant=tenant, data=data, recipients=recipients)
-            fingerprint = preview["fingerprint"]
-            if not fingerprint or not constant_time_compare(
-                fingerprint, data["video_makeup_homework_fingerprint"],
-            ):
-                return Response(
-                    {
-                        "detail": "영상보강 과제 또는 수신 정보가 변경되었습니다. 미리보기를 다시 확인해 주세요.",
-                        "code": "video_makeup_homework_changed",
-                    },
-                    status=status.HTTP_409_CONFLICT,
-                )
-        if not recipients:
+        video_homework = data.get("video_makeup_homework")
+        if not recipients and not video_homework:
             return Response(
                 {"detail": "선택한 학생을 찾을 수 없거나 삭제된 학생입니다."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -274,6 +258,38 @@ class SendMessageView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        homework_replacements = {}
+        if video_homework:
+            from django.utils.crypto import constant_time_compare
+
+            from apps.support.messaging.video_makeup_homework import (
+                VIDEO_HOMEWORK_LENGTH_CODE,
+                build_video_makeup_homework_envelope,
+                video_makeup_homework_length_issue,
+            )
+
+            preview, homework_replacements = build_video_makeup_homework_envelope(
+                tenant=tenant, data=data, recipients=recipients,
+                template_type=unified_template_type, template_id=solapi_template_id,
+            )
+            fingerprint = preview["fingerprint"]
+            if not fingerprint or not constant_time_compare(fingerprint, data["video_makeup_homework_fingerprint"]):
+                return Response(
+                    {
+                        "detail": "영상보강 과제 안내가 변경되었습니다. 미리보기를 다시 확인해 주세요.",
+                        "code": "video_makeup_homework_changed",
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            length_issue = video_makeup_homework_length_issue(
+                recipients=recipients, template_type=unified_template_type, replacements=homework_replacements,
+            )
+            if length_issue:
+                return Response(
+                    {"detail": length_issue, "code": VIDEO_HOMEWORK_LENGTH_CODE},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         enqueued = 0
         scheduled = 0
         skipped_no_phone = 0
@@ -286,7 +302,7 @@ class SendMessageView(APIView):
             name = recipient.student_name
             name_2 = name[-2:] if len(name) >= 2 else name
             name_3 = name
-            site_url = get_tenant_site_url(request.tenant) or ""
+            site_url = (get_tenant_site_url(tenant) or "") if not video_homework else ""
             academy_name = (tenant.name or "").strip()
 
             # 학생별 개별 변수 merge
@@ -321,7 +337,7 @@ class SendMessageView(APIView):
                 text = text.replace(f"#{{{var_key}}}", str(var_val or ""))
             text = re.sub(r"#\{[^}]+\}", "", text)
             text = re.sub(r"\n{3,}", "\n\n", text).strip()
-            if data.get("video_makeup_homework"):
+            if video_homework:
                 text = student_body
             if subject_base:
                 text = subject_base + "\n" + text
@@ -332,7 +348,9 @@ class SendMessageView(APIView):
             if message_mode == "alimtalk" and solapi_template_id:
                 template_id_solapi = solapi_template_id
 
-                if use_unified and unified_template_type:
+                if video_homework:
+                    alimtalk_replacements = homework_replacements[recipient.student_id]
+                elif use_unified and unified_template_type:
                     # ── 통합 승인 봉투: build_manual_replacements로 정확한 변수 세트 빌드 ──
                     # SSOT (2026-05-13): student_body (학생별 치환된 본문) 사용 → 봉투의 #{선생님메모} 변수에
                     # 정확한 학생별 점수가 들어감.
@@ -343,7 +361,6 @@ class SendMessageView(APIView):
                         tenant_name=academy_name,
                         student_name=name,
                         site_url=site_url,
-                        literal_body=bool(data.get("video_makeup_homework")),
                     )
                 else:
                     # ── 시스템 기본양식: 기존 방식 유지 (가입승인/비번 등) ──
