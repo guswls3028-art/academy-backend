@@ -92,9 +92,10 @@ single-variant 1080p60 output.
 
 The ARM Video Worker image build runs `docker/video-worker/lecture-transcoder-smoke.py`
 as the worker user with networking disabled. The packaged encoder must decode a
-single 360p rendition and both the 900p and 720p renditions, each with one AAC
-track matching the input's default audio. The script removes the synthetic media
-after verification.
+single 360p rendition and both the 900p and 720p renditions with moving frames and
+one AAC track matching the input's default audio, even when the source contains
+attached cover art. Audio with cover art alone must be rejected permanently without
+producing a master playlist. The script removes the synthetic media after verification.
 
 ## 2. Deploy Path
 
