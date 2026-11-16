@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase, skipUnless
 from unittest.mock import patch
 
+from academy.adapters.video.source_probe import validate_source_media_via_ffprobe
 from academy.adapters.video.transcoder import (
     FFmpegProcessError,
     _probe_audio_stream_index,
@@ -60,6 +61,7 @@ class TranscoderCommandTests(TestCase):
                 self.assertIn("scale=1920:1080,setsar=1", filter_graph)
                 self.assertNotIn("fps=", filter_graph)
                 if dual:
+                    self.assertTrue(filter_graph.startswith("[0:V:0]split=2"))
                     self.assertIn("scale=1280:720,setsar=1", filter_graph)
                 else:
                     self.assertEqual(command[command.index("-profile:v") + 1], "high")
@@ -71,7 +73,7 @@ class TranscoderCommandTests(TestCase):
             with self.subTest(dual=dual):
                 command = self.command(dual=dual, audio=True)
                 maps = [command[i + 1] for i, arg in enumerate(command) if arg == "-map"]
-                expected = ["[vhiout]", "0:2", "[vmidout]", "0:2"] if dual else ["0:v:0", "0:2"]
+                expected = ["[vhiout]", "0:2", "[vmidout]", "0:2"] if dual else ["0:V:0", "0:2"]
                 self.assertEqual(maps, expected)
 
     def test_probe_prefers_default_audio_and_falls_back_to_first_stream(self):
@@ -146,6 +148,94 @@ class TranscoderCommandTests(TestCase):
                 )
             self.assertTrue(caught.exception.invalid_source, caught.exception.diagnostics)
             self.assertGreater(caught.exception.exit_code, 0)
+
+    @skipUnless(which("ffmpeg") and which("ffprobe"), "requires FFmpeg and ffprobe")
+    def test_attached_cover_art_is_excluded_from_probe_and_transcode(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            cover = root / "cover.jpg"
+            subprocess.run(
+                ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=32x32",
+                 "-frames:v", "1", "-c:v", "mjpeg", "-threads", "1", str(cover)],
+                check=True, capture_output=True, timeout=15,
+            )
+            for height, expected_variants in (
+                (None, []),
+                (360, ["v1/index.m3u8"]),
+                (720, ["v2/index.m3u8", "v1/index.m3u8"]),
+            ):
+                with self.subTest(height=height):
+                    source = root / f"cover-{height}.mp4"
+                    command = [
+                        "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=duration=1",
+                        "-i", str(cover),
+                    ]
+                    maps = ["-map", "1:v:0", "-map", "0:a:0"]
+                    if height:
+                        width = height * 16 // 9
+                        command += ["-f", "lavfi", "-i", f"testsrc2=s={width}x{height}:r=4:d=1"]
+                        maps += ["-map", "2:v:0", "-c:v:1", "libx264", "-preset", "ultrafast"]
+                    subprocess.run(
+                        [*command, *maps, "-c:v:0", "copy", "-disposition:v:0", "attached_pic",
+                         "-c:a", "aac", str(source)],
+                        check=True, capture_output=True, timeout=20,
+                    )
+                    output_root = root / f"hls-{height}"
+                    kwargs = dict(
+                        video_id=1, input_path=str(source), output_root=output_root,
+                        ffmpeg_bin="ffmpeg", ffprobe_bin="ffprobe", hls_time=4, timeout=45, duration_sec=1,
+                    )
+                    probe = validate_source_media_via_ffprobe(str(source))
+                    if not height:
+                        self.assertEqual(probe, (False, {"duration": 1, "has_video": False}, "no_video_stream"))
+                        with self.assertRaises(FFmpegProcessError) as caught:
+                            transcode_to_hls(**kwargs)
+                        self.assertTrue(caught.exception.invalid_source, caught.exception.diagnostics)
+                        self.assertFalse((output_root / "master.m3u8").exists())
+                        # A no-stream error from the complex graph is definitive too.
+                        with patch("academy.adapters.video.transcoder._probe_resolution", return_value=(1280, 720)):
+                            with self.assertRaises(FFmpegProcessError) as caught:
+                                transcode_to_hls(**kwargs)
+                        self.assertTrue(caught.exception.invalid_source, caught.exception.diagnostics)
+                        continue
+
+                    self.assertEqual(probe, (True, {"duration": 1, "has_video": True}, ""))
+                    master = transcode_to_hls(**kwargs)
+                    no_cover = root / f"no-cover-{height}.mp4"
+                    subprocess.run(
+                        ["ffmpeg", "-v", "error", "-i", str(source), "-map", "0:V:0",
+                         "-map", "0:a:0", "-c", "copy", str(no_cover)],
+                        check=True, capture_output=True, timeout=15,
+                    )
+                    baseline = transcode_to_hls(
+                        **{**kwargs, "input_path": str(no_cover), "output_root": root / f"baseline-{height}"},
+                    )
+                    self.assertEqual(master.read_text(), baseline.read_text())
+                    variants = [line for line in master.read_text().splitlines() if line and not line.startswith("#")]
+                    self.assertEqual(variants, expected_variants)
+                    for variant, output_height in zip(variants, (height, 480)):
+                        playlist = str(master.parent / variant)
+                        streams = subprocess.run(
+                            ["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,height",
+                             "-of", "json", playlist],
+                            check=True, capture_output=True, timeout=15,
+                        )
+                        self.assertEqual(json.loads(streams.stdout)["streams"], [
+                            {"codec_name": "h264", "height": output_height}, {"codec_name": "aac"},
+                        ])
+                        hashes = []
+                        for candidate in (playlist, str(baseline.parent / variant)):
+                            frames = subprocess.run(
+                                ["ffmpeg", "-v", "error", "-i", candidate,
+                                 "-map", "0:v:0", "-f", "framemd5", "-"],
+                                check=True, capture_output=True, text=True, timeout=15,
+                            )
+                            hashes.append([
+                                line.rsplit(",", 1)[-1].strip()
+                                for line in frames.stdout.splitlines() if line and not line.startswith("#")
+                            ])
+                        self.assertGreater(len(set(hashes[0])), 1)
+                        self.assertEqual(hashes[0], hashes[1])
 
     @skipUnless(which("ffmpeg") and which("ffprobe"), "requires FFmpeg and ffprobe")
     def test_short_360p_sources_decode_without_upscaling_or_extra_audio(self):
