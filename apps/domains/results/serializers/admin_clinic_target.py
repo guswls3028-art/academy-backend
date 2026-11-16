@@ -40,6 +40,7 @@ class AdminClinicTargetSerializer(serializers.Serializer):
     student_id = serializers.IntegerField(required=False, allow_null=True)
     student_name = serializers.CharField()
     session_title = serializers.CharField()
+    session_label = serializers.CharField()
 
     reason = serializers.ChoiceField(choices=["score", "confidence", "missing"])
     clinic_reason = serializers.ChoiceField(

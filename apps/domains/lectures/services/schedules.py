@@ -4,6 +4,7 @@ import json
 from datetime import timedelta
 from uuid import uuid4
 
+from django.core.serializers.json import DjangoJSONEncoder
 from django.db import transaction
 from django.db.models import F
 from rest_framework import serializers
@@ -20,6 +21,11 @@ class ScheduleConflict(APIException):
     default_detail = "수업일 또는 학생 명단이 변경되었습니다. 최신 내용을 불러온 뒤 다시 저장해 주세요."
 
 
+class SessionCreateConflict(APIException):
+    status_code = 409
+    default_detail = "이 생성 요청 ID로 다른 차시 정보가 저장되었습니다. 입력 내용을 확인해 주세요."
+
+
 class ScheduleId(serializers.IntegerField):
     def to_internal_value(self, data):
         if isinstance(data, bool) or not isinstance(data, int) or not 0 < data <= 2**63 - 1:
@@ -27,13 +33,11 @@ class ScheduleId(serializers.IntegerField):
         return data
 
 
-class ScheduleInput(serializers.Serializer):
-    id = ScheduleId(required=False, allow_null=True)
+class InitialScheduleInput(serializers.Serializer):
     label = serializers.CharField(max_length=40)
     date = serializers.DateField()
     start_time = serializers.TimeField(required=False, allow_null=True)
     end_time = serializers.TimeField(required=False, allow_null=True)
-    enrollment_ids = serializers.ListField(child=ScheduleId(), max_length=2000)
 
     def validate(self, attrs):
         start, end = attrs.get("start_time"), attrs.get("end_time")
@@ -44,6 +48,18 @@ class ScheduleInput(serializers.Serializer):
         attrs.setdefault("start_time", None)
         attrs.setdefault("end_time", None)
         return attrs
+
+
+class ScheduleInput(InitialScheduleInput):
+    id = ScheduleId(required=False, allow_null=True)
+    enrollment_ids = serializers.ListField(child=ScheduleId(), max_length=2000)
+
+
+class SessionCreateScheduleInput(InitialScheduleInput):
+    def to_internal_value(self, data):
+        if isinstance(data, dict) and data.keys() - self.fields.keys():
+            raise ValidationError("새 수업일에는 이름, 날짜, 시작·종료 시간만 입력할 수 있습니다.")
+        return super().to_internal_value(data)
 
 
 class ScheduleRosterEntry(serializers.Serializer):
@@ -66,6 +82,42 @@ class SessionScheduleWrite(serializers.Serializer):
 class SessionScheduleCopy(serializers.Serializer):
     version = serializers.CharField()
     source_session = serializers.IntegerField(min_value=1)
+
+
+def session_create_payload_digest(attributes, initial_schedules):
+    # Use validated values (canonical dates and times, trimmed labels, numeric relation IDs).
+    data = {**attributes, "initial_schedules": initial_schedules}
+    for name in ("lecture", "section"):
+        if data.get(name) is not None:
+            data[name] = data[name].pk
+    return hashlib.sha256(json.dumps(data, cls=DjangoJSONEncoder, sort_keys=True).encode()).hexdigest()
+
+
+def replay_initial_schedule_create(*, lecture, request_id, digest):
+    """The caller holds the lecture lock, serializing lookup and receipt creation."""
+    receipt = (
+        SessionScheduleChange.objects.filter(
+            session__lecture=lecture, after__create_request__id=str(request_id),
+        )
+        .select_related("session", "session__lecture", "session__section")
+        .first()
+    )
+    if receipt is None:
+        return None
+    if receipt.after["create_request"]["digest"] != digest:
+        raise SessionCreateConflict()
+    return receipt.session
+
+
+def create_initial_schedules(*, session, rows, actor_id, request_id, digest):
+    """Store the first dates and receipt in the caller's session creation transaction."""
+    if len({row["label"] for row in rows}) != len(rows):
+        raise ValidationError({"initial_schedules": "수업일마다 다른 이름을 입력해 주세요."})
+    before = schedule_state(session)
+    SessionSchedule.objects.bulk_create(SessionSchedule(session=session, **row) for row in rows)
+    after = schedule_state(session)
+    after["create_request"] = {"id": str(request_id), "digest": digest}
+    SessionScheduleChange.objects.create(session=session, actor_id=actor_id, before=before, after=after)
 
 
 def roster_for(session):
