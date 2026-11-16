@@ -2,11 +2,13 @@ import json
 from datetime import timedelta
 from pathlib import Path
 from unittest import skipUnless
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.test import TestCase, TransactionTestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 from rest_framework_simplejwt.tokens import AccessToken
@@ -32,6 +34,7 @@ from apps.domains.students.test_support import create_student_fixture
 from apps.domains.video.models import (
     AccessMode,
     DirectVideoEntitlement,
+    InactiveVideoEntitlement,
     Video,
     VideoAccess,
     VideoPlaybackEvent,
@@ -130,6 +133,51 @@ class DirectVideoEntitlementTests(TestCase):
         )
         TenantMembership.ensure_active(tenant=tenant, user=user, role=role)
         return user
+
+    def test_inactive_catalog_filters_exact_grants_without_per_video_queries(self):
+        enrollment = create_enrollment_fixture(
+            tenant=self.tenant, student=self.student, lecture=self.lecture, status="INACTIVE",
+        )
+        SessionEnrollment.objects.create(tenant=self.tenant, session=self.session, enrollment=enrollment)
+        now = timezone.now()
+
+        def grant(video, expires_at=None):
+            InactiveVideoEntitlement.objects.create(
+                tenant=self.tenant, student=self.student, enrollment=enrollment, video=video,
+                access_mode=AccessMode.FREE_REVIEW, source=InactiveVideoEntitlement.Source.STAFF_AUTHORIZATION,
+                source_reference="catalog-test", reason="Catalog test", granted_by_reference="catalog-test",
+                granted_at=now - timedelta(minutes=1), expires_at=expires_at,
+            )
+
+        def read_catalog():
+            request = self._request("get", "/api/v1/student/video/me/", user=self.student_user)
+            with patch("django.utils.timezone.now", return_value=now), CaptureQueriesContext(connection) as queries:
+                response = StudentVideoMeView.as_view()(request)
+                response.render()
+            self.assertEqual(response.status_code, 200)
+            return response, len(queries)
+
+        grant(self.video)
+        initial, initial_queries = read_catalog()
+        self.assertEqual(initial.data["lectures"][0]["video_count"], 1)
+        grant(self.sibling_video, expires_at=now)
+        for order, kind in enumerate(("blocked", "legacy-blocked", "valid"), start=3):
+            video = Video.objects.create(
+                tenant=self.tenant, session=self.session, title=kind, status=Video.Status.READY, duration=90, order=order,
+            )
+            grant(video)
+            if kind != "valid":
+                VideoAccess.objects.create(
+                    video=video, enrollment=enrollment,
+                    access_mode=AccessMode.BLOCKED if kind == "blocked" else AccessMode.FREE_REVIEW,
+                    rule="blocked" if kind == "legacy-blocked" else "free",
+                )
+        expanded, expanded_queries = read_catalog()
+        self.assertEqual(expanded_queries, initial_queries)
+        course, = expanded.data["lectures"]
+        self.assertEqual(course["video_count"], 2)
+        self.assertEqual(course["total_duration"], 210)
+        self.assertEqual([item["id"] for item in course["sessions"]], [self.session.id])
 
     @override_settings(
         ALLOWED_HOSTS=["api.hakwonplus.com"],
