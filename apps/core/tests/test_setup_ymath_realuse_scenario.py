@@ -5,6 +5,7 @@ import time
 from datetime import date, time as datetime_time, timedelta
 from decimal import Decimal
 from io import StringIO
+from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 
 from django.apps import apps
@@ -91,6 +92,26 @@ class QAVideoMultipartCleanupTests(SimpleTestCase):
         with patch.object(Command, "_r2_storage_client", return_value=client):
             with self.assertRaisesRegex(CommandError, "verify zero storage residue"):
                 Command._cleanup_qa_video_raw_upload(tenant_id=712, session_id=4, key=self.key)
+
+    @override_settings(R2_VIDEO_BUCKET="test-video")
+    def test_raw_preflight_and_exact_completed_length_use_video_bucket(self):
+        client = Mock()
+        client.get_paginator.return_value.paginate.return_value = [{}]
+        client.head_object.return_value = {"ContentLength": 105906176}
+        job = Mock()
+        job.objects.filter.return_value.exclude.return_value.exists.return_value = False
+        video = SimpleNamespace(tenant_id=712, session_id=4, file_key=self.key, status=Video.Status.FAILED)
+        models = {("video", "Video"): Video, ("video", "VideoTranscodeJob"): job}
+        with patch.object(Command, "_r2_storage_client", return_value=client), patch.object(
+            apps, "get_model", side_effect=lambda *args: models[args],
+        ):
+            self.assertEqual(Command._qa_video_raw_state(tenant_id=712, session_id=4), {"objects": 0, "uploads": 0})
+            result = Command._qa_video_multipart_readback(video, objects=1)
+        self.assertEqual(client.get_paginator.call_args_list, [call("list_objects_v2"), call("list_multipart_uploads")])
+        prefix = call(Bucket="test-video", Prefix="tenants/712/video/raw/4/")
+        self.assertEqual(client.get_paginator.return_value.paginate.call_args_list, [prefix, prefix])
+        client.head_object.assert_called_once_with(Bucket="test-video", Key=self.key)
+        self.assertEqual(result, {"status": Video.Status.FAILED, "content_length": 105906176, "batch_submitted": False})
 
 
 class SetupYmathRealuseScenarioTests(TestCase):

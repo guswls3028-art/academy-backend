@@ -1086,9 +1086,72 @@ class Command(BaseCommand):
         )
 
     @staticmethod
-    def _cleanup_qa_video_raw_upload(*, tenant_id: int, session_id: int, key: str) -> dict[str, int]:
-        """Clean one synthetic MP4 key after fixed QA has verified scenario ownership."""
+    def _qa_video_raw_state(*, tenant_id: int, session_id: int, key: str | None = None) -> dict[str, int]:
+        """Inventory the sealed session on the same credential that performs cleanup."""
         assert_isolated_runtime()
+        if any(type(scope_id) is not int or scope_id <= 0 for scope_id in (tenant_id, session_id)):
+            raise CommandError("QA video inspection requires exact tenant and session IDs.")
+        prefix = f"{video_raw_prefix(tenant_id)}{session_id}/"
+        client = Command._r2_storage_client()
+        bucket = settings.R2_VIDEO_BUCKET
+        counts = {}
+        for name, operation, entries in (
+            ("objects", "list_objects_v2", "Contents"),
+            ("uploads", "list_multipart_uploads", "Uploads"),
+        ):
+            counts[name] = 0
+            for page in client.get_paginator(operation).paginate(Bucket=bucket, Prefix=prefix):
+                for entry in page.get(entries) or ():
+                    if key is None or entry.get("Key") != key:
+                        raise CommandError("Unexpected storage in the sealed QA video session.")
+                    counts[name] += 1
+        return counts
+
+    @staticmethod
+    def _qa_video_multipart_lecture_id(*, tenant_id: int, session_id: int) -> int:
+        Session = apps.get_model("lectures", "Session")
+        lecture_id = Session.objects.filter(
+            pk=session_id, lecture__tenant_id=tenant_id, lecture__is_system=False,
+        ).values_list("lecture_id", flat=True).first()
+        if lecture_id is None:
+            raise CommandError("The sealed QA video session is missing or out of scope.")
+        return lecture_id
+
+    @staticmethod
+    def _qa_video_multipart_row(*, tenant_id: int, session_id: int):
+        """Resolve zero or one synthetic server-created row, including a retired row."""
+        Command._qa_video_multipart_lecture_id(tenant_id=tenant_id, session_id=session_id)
+        Video = apps.get_model("video", "Video")
+        rows = list(Video.all_with_deleted.select_for_update().filter(session_id=session_id).order_by("pk")[:2])
+        if len(rows) > 1:
+            raise CommandError("Unexpected video rows in the sealed QA session.")
+        if not rows:
+            return None
+        row = rows[0]
+        if row.tenant_id != tenant_id or row.source_type != Video.SourceType.UPLOADED or row.reused_from_id:
+            raise CommandError("The video row is outside the sealed upload scope.")
+        Command._assert_qa_video_raw_key(tenant_id=tenant_id, session_id=session_id, key=row.file_key)
+        return row
+
+    @staticmethod
+    def _qa_video_multipart_readback(video, *, objects: int) -> dict:
+        assert_isolated_runtime()
+        Video = apps.get_model("video", "Video")
+        if video.status not in Video.Status.values or objects not in (0, 1):
+            raise CommandError("Unexpected QA video status or completed object count.")
+        Job = apps.get_model("video", "VideoTranscodeJob")
+        batch_submitted = Job.objects.filter(video=video).exclude(aws_batch_job_id="").exists()
+        content_length = None
+        if objects == 1:
+            Command._assert_qa_video_raw_key(tenant_id=video.tenant_id, session_id=video.session_id, key=video.file_key)
+            result = Command._r2_storage_client().head_object(Bucket=settings.R2_VIDEO_BUCKET, Key=video.file_key)
+            content_length = result.get("ContentLength")
+            if type(content_length) is not int or content_length <= 0:
+                raise CommandError("Unexpected QA video content length.")
+        return {"status": video.status, "content_length": content_length, "batch_submitted": batch_submitted}
+
+    @staticmethod
+    def _assert_qa_video_raw_key(*, tenant_id: int, session_id: int, key: str) -> None:
         if any(type(scope_id) is not int or scope_id <= 0 for scope_id in (tenant_id, session_id)):
             raise CommandError("QA video cleanup requires exact tenant and session IDs.")
         prefix = f"{video_raw_prefix(tenant_id)}{session_id}/"
@@ -1097,6 +1160,12 @@ class Command(BaseCommand):
             key[len(prefix):],
         ):
             raise CommandError("QA video cleanup requires an exact scoped raw MP4 key.")
+
+    @staticmethod
+    def _cleanup_qa_video_raw_upload(*, tenant_id: int, session_id: int, key: str) -> dict[str, int]:
+        """Clean one synthetic MP4 key after fixed QA has verified scenario ownership."""
+        assert_isolated_runtime()
+        Command._assert_qa_video_raw_key(tenant_id=tenant_id, session_id=session_id, key=key)
 
         client = Command._r2_storage_client()
         bucket = settings.R2_VIDEO_BUCKET

@@ -191,6 +191,19 @@ digest는 shell 문자/경로/SSM 참조를 허용하지 않는 strict pattern�
 공식 frontend Playwright runner는 API가 반환한 정확한 signed path만 loopback 합성
 HLS server에 매핑해야 하며, 이 매핑 없이 metadata 경로를 재생 성공 증거로 사용할 수
 없다. 일반 Setup과 기존 caller는 기본 `false`라 영상 fixture가 생기지 않는다.
+`SyntheticMultipartVideo`는 별도 raw 영상 검증에서만 `true`로 전달한다. 기본값은
+`false`이며 `SyntheticLongVideo` 또는 `AccountProbe`와 함께 사용할 수 없다.
+Setup은 격리된 개발 DB와 영상 버킷에서 전용 차시를 확인하고, 실행 시 사용하는 R2
+자격으로 해당 차시의 raw prefix에 완료 객체와 미완료 multipart가 없음을 확인한다.
+읽기 권한이나 빈 상태를 확인하지 못하면 Setup이 실패한다. 기존 생성 감사 기록에
+capability와 차시 ID를 묶어 기록하고 `synthetic_multipart_video`에 `lecture_id`,
+`session_id`와 두 빈 목록의 개수를 반환한다. 업로드 뒤의 Inspect는 실제 객체의 바이트
+길이, 저장된 영상 상태, AWS Batch 제출 ID가 있는지를 값으로 반환한다.
+브라우저를 종료한 뒤 같은 capability로 Cleanup을 호출한다. 서버가 기록한 영상 행의
+정확한 원본 키만 대상으로 하며, 미완료 업로드를 중단하고 완료 객체를 지운 뒤 양쪽
+목록이 모두 비었음을 확인해야 DB를 정리한다. 행이 이미 삭제된 재호출은 감사 기록의
+차시 범위에서 읽기 검증만 한다. 호출자가 임의 키나 업로드 ID를 지정할 수 없다.
+일반 Video Batch는 계속 비활성화하며, 이 검증 범위는 원본 객체 조립과 정리까지다.
 `NonInteractiveCommands` agent는 command 문자열에 shell을 암묵적으로 추가하지 않는다.
 따라서 Linux command는 POSIX tokenization 결과가 정확히
 `["/bin/sh", "-lc", <고정 script>]`가 되도록 shell과 단일 script 인자를 명시하며,
