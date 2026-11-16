@@ -53,12 +53,12 @@ def get_inactive_video_entitlement_error_type():
     return InactiveVideoEntitlementError
 
 
-def active_inactive_video_entitlements_for_student(**kwargs):
+def inactive_video_catalog_entitlements_for_student(**kwargs):
     from apps.domains.video.services.inactive_entitlements import (
-        active_entitlements_for_student,
+        catalog_entitlements_for_student,
     )
 
-    return active_entitlements_for_student(**kwargs)
+    return catalog_entitlements_for_student(**kwargs)
 
 
 def resolve_active_inactive_video_entitlement(**kwargs):
