@@ -415,6 +415,7 @@ def render_alimtalk_preview_text(
             "성적표 안내 드립니다.\n"
             f"강의\n{value('강의명')}\n\n"
             f"차시\n{value('차시명')}\n\n"
+            "[성적표 안내]\n"
             f"{value('선생님메모')}\n"
             f"{value('사이트링크')}"
         ).strip()
@@ -427,6 +428,7 @@ def render_alimtalk_preview_text(
             f"차시\n{value('차시명')}\n\n"
             f"날짜\n{value('강의날짜')}\n\n"
             f"시간\n{value('강의시간')}\n\n"
+            "[출석 안내]\n"
             f"{value('선생님메모')}\n"
             f"{value('사이트링크')}"
         ).strip()
