@@ -37,6 +37,7 @@ from academy.adapters.db.django.repositories_video import (
 )
 from academy.adapters.video.config import load_config
 from academy.adapters.video.processor import process_video
+from academy.adapters.video.transcoder import FFmpegProcessError
 from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
 from apps.domains.video.redis_status_cache import cache_video_status
 from academy.application.video import CancelledError
@@ -301,7 +302,23 @@ def main() -> int:
         return 1
 
     except Exception as e:
-        logger.exception("BATCH_JOB_FAILED | job_id=%s | error=%s", job_id, e)
+        failure = {
+            "job_id": job_id,
+            "tenant_id": job_obj.tenant_id,
+            "video_id": job_obj.video_id,
+            "aws_batch_job_id": aws_batch_job_id,
+        }
+        if isinstance(e, FFmpegProcessError):
+            _log_json(
+                "BATCH_JOB_FAILED",
+                **failure,
+                error_type="ffmpeg",
+                exit_code=e.exit_code,
+                diagnostics=e.diagnostics,
+                retryable=not e.invalid_source,
+            )
+        else:
+            logger.exception("BATCH_JOB_FAILED | job_id=%s | error=%s", job_id, e)
         # 메인 스레드 커넥션이 stale 상태에서 예외가 발생했을 수 있다. job_fail_retry가
         # 재차 'connection already closed'로 죽으면 attempt_count를 못 올려 무한 재시도된다.
         try:
@@ -309,6 +326,15 @@ def main() -> int:
             close_old_connections()
         except Exception:
             pass
+        if isinstance(e, FFmpegProcessError) and e.invalid_source:
+            if job_mark_dead(
+                job_id,
+                error_code="SOURCE_NO_VIDEO_STREAM",
+                error_message="업로드한 파일에 영상이 없습니다. 영상이 포함된 원본을 다시 업로드해 주세요.",
+                failed_aws_batch_job_id=os.environ.get("AWS_BATCH_JOB_ID") or aws_batch_job_id,
+            ):
+                _log_json("BATCH_JOB_DEAD", **failure, error_code="SOURCE_NO_VIDEO_STREAM")
+            return 1
         job_fail_retry(job_id, str(e)[:2000])
         job_after = job_get_by_id(job_id)
         if job_after and job_after.attempt_count >= VIDEO_JOB_MAX_ATTEMPTS:

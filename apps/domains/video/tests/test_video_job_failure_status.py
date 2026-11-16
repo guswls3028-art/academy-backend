@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import os
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import DEFAULT, Mock, patch
 
 from django.core.management import call_command
 from django.test import TestCase, override_settings
@@ -65,6 +66,85 @@ class VideoJobFailureStatusTests(TestCase):
             ttl=None,
         )
         mock_delete_progress.assert_called_once_with(self.tenant.id, self.video.id)
+
+
+    @patch("apps.domains.video.redis_status_cache.delete_video_progress_key")
+    @patch("apps.domains.video.redis_status_cache.cache_video_status")
+    def test_permanent_failure_only_counts_the_current_uncancelled_batch_attempt(self, _, __):
+        def mark_dead(batch_id):
+            return job_mark_dead(
+                str(self.job.id),
+                error_code="SOURCE_NO_VIDEO_STREAM",
+                error_message="Source file contains no video stream.",
+                failed_aws_batch_job_id=batch_id,
+            )
+
+        self.assertFalse(mark_dead("stale-batch"))
+        self.job.cancel_requested = True
+        self.job.save(update_fields=["cancel_requested"])
+        self.assertFalse(mark_dead("aws-old"))
+        self.job.cancel_requested = False
+        self.job.save(update_fields=["cancel_requested"])
+        self.assertTrue(mark_dead("aws-old"))
+        self.assertFalse(mark_dead("aws-old"))
+        self.job.refresh_from_db()
+        self.video.refresh_from_db()
+        self.assertEqual(self.job.attempt_count, 2)
+        self.assertEqual(self.job.last_counted_failure_aws_batch_job_id, "aws-old")
+        self.assertEqual(self.job.error_code, "SOURCE_NO_VIDEO_STREAM")
+        self.assertEqual(self.job.state, VideoTranscodeJob.State.DEAD)
+        self.assertEqual(self.video.status, Video.Status.FAILED)
+
+
+    def test_batch_worker_records_ffmpeg_diagnostics_and_skips_retry_for_audio_only_source(self):
+        from academy.adapters.video.transcoder import FFmpegProcessError
+
+        # The test runner already initialized Django and its process-wide logging.
+        with patch("django.setup"), patch("logging.basicConfig"):
+            from apps.worker.video_worker import batch_main
+
+        self.job.state = VideoTranscodeJob.State.QUEUED
+        self.job.save(update_fields=["state"])
+        diagnostics = ("Stream map '0:v:0' matches no streams.",)
+        with (
+            patch.dict(os.environ, VIDEO_JOB_ID=str(self.job.id), AWS_BATCH_JOB_ID="aws-old"),
+            patch("django.db.close_old_connections"),  # The test owns a shared transaction.
+            patch("apps.domains.video.redis_status_cache.delete_video_progress_key"),
+            patch("apps.domains.video.redis_status_cache.cache_video_status"),
+            patch.multiple(
+                batch_main,
+                signal=SimpleNamespace(),
+                threading=SimpleNamespace(Thread=Mock()),
+                _heartbeat_stop=Mock(),
+                _current_job_id=[None],
+                load_config=DEFAULT,
+                RedisProgressAdapter=DEFAULT,
+                cache_video_status=DEFAULT,
+                _log_json=DEFAULT,
+                job_fail_retry=DEFAULT,
+                process_video=Mock(side_effect=FFmpegProcessError(1, diagnostics, invalid_source=True)),
+            ) as mocks,
+        ):
+            self.assertEqual(batch_main.main(), 1)
+            mocks["job_fail_retry"].assert_not_called()
+            mocks["_log_json"].assert_any_call(
+                "BATCH_JOB_FAILED",
+                job_id=str(self.job.id),
+                tenant_id=self.tenant.id,
+                video_id=self.video.id,
+                aws_batch_job_id="aws-old",
+                error_type="ffmpeg",
+                exit_code=1,
+                diagnostics=diagnostics,
+                retryable=False,
+            )
+
+        self.job.refresh_from_db()
+        self.video.refresh_from_db()
+        self.assertEqual(self.job.state, VideoTranscodeJob.State.DEAD)
+        self.assertEqual(self.job.attempt_count, 2)
+        self.assertEqual(self.video.status, Video.Status.FAILED)
+        self.assertIn("영상이 포함된 원본을 다시 업로드", self.video.error_reason)
 
 
 class VideoJobRunningStatusTests(TestCase):
