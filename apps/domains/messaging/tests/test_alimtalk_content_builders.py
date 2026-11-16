@@ -197,6 +197,7 @@ class TestRegisteredSolapiVariables(TestCase):
         self.assertIn(replacement_map["강의명"], preview)
         self.assertNotIn("아주 긴 수학 심화 강의 이름은 카카오 제한에 맞춰야 합니다", preview)
         self.assertIn("김민준 성적 안내입니다.", preview)
+        self.assertIn("차시\n3회차\n\n[성적표 안내]\n김민준 성적 안내입니다.\n", preview)
         self.assertTrue(preview.endswith("https://yedam.example.com"))
 
     def test_score_replacements_match_registered_solapi_variables(self):
