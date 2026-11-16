@@ -1,3 +1,4 @@
+from io import StringIO
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,7 @@ from unittest import TestCase, skipUnless
 from unittest.mock import patch
 
 from academy.adapters.video.transcoder import (
+    FFmpegProcessError,
     _probe_audio_stream_index,
     build_ffmpeg_command,
     transcode_to_hls,
@@ -88,6 +90,62 @@ class TranscoderCommandTests(TestCase):
                         _probe_audio_stream_index(input_path="source.mp4", ffprobe_bin="ffprobe", timeout=5),
                         expected,
                     )
+
+    @patch("academy.adapters.video.transcoder._probe_audio_stream_index", return_value=None)
+    @patch("academy.adapters.video.transcoder._probe_resolution", return_value=(0, 0))
+    @patch("academy.adapters.video.transcoder.subprocess.Popen")
+    def test_failure_retains_bounded_redacted_diagnostics_with_or_without_duration(self, popen, _, __):
+        for duration in (None, 120):
+            with self.subTest(duration=duration), TemporaryDirectory() as directory:
+                src = str(Path(directory) / "private-source.mp4")
+                process = popen.return_value.__enter__.return_value
+                process.returncode = 1
+                process.stdout = StringIO("out_time_ms=2000000\n")
+                process.stderr = StringIO(
+                    f"{src}: Input/output error\n"
+                    "Error opening https://storage.example/private-key?token=secret-value\n"
+                    + ("x" * 400 + "\n") * 10
+                    + "Authorization: Bearer secret-value\n"
+                )
+                progress = []
+                with self.assertRaises(FFmpegProcessError) as caught:
+                    transcode_to_hls(
+                        video_id=1,
+                        input_path=src,
+                        output_root=Path(directory) / "hls",
+                        ffmpeg_bin="ffmpeg",
+                        ffprobe_bin="ffprobe",
+                        hls_time=4,
+                        timeout=45,
+                        duration_sec=duration,
+                        progress_callback=lambda current, total: progress.append((current, total)),
+                    )
+                error = caught.exception
+                self.assertEqual(error.exit_code, 1)
+                self.assertFalse(error.invalid_source)
+                self.assertEqual(error.diagnostics[:2], ("<path>: Input/output error", "Error opening <url>"))
+                self.assertEqual(len(error.diagnostics), 8)
+                self.assertEqual(error.diagnostics[-1], "<redacted>")
+                self.assertTrue(all(len(line) <= 300 for line in error.diagnostics))
+                self.assertNotIn("secret-value", str(error))
+                self.assertEqual(progress, [(2.0, 120.0)] if duration else [])
+
+    @skipUnless(which("ffmpeg") and which("ffprobe"), "requires FFmpeg and ffprobe")
+    def test_audio_only_source_is_a_confirmed_permanent_failure(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "audio-only.mp4"
+            subprocess.run(
+                ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "1", str(source)],
+                check=True, capture_output=True, timeout=15,
+            )
+            with self.assertRaises(FFmpegProcessError) as caught:
+                transcode_to_hls(
+                    video_id=1, input_path=str(source), output_root=root / "hls",
+                    ffmpeg_bin="ffmpeg", ffprobe_bin="ffprobe", hls_time=4, timeout=45,
+                )
+            self.assertTrue(caught.exception.invalid_source, caught.exception.diagnostics)
+            self.assertGreater(caught.exception.exit_code, 0)
 
     @skipUnless(which("ffmpeg") and which("ffprobe"), "requires FFmpeg and ffprobe")
     def test_short_360p_sources_decode_without_upscaling_or_extra_audio(self):

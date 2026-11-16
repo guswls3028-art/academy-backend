@@ -9,7 +9,7 @@ AWS Batch 컨테이너
   → ENTRYPOINT: python -m apps.worker.video_worker.batch_entrypoint
   → Command:     python -m apps.worker.video_worker.batch_main <job_id>
   → batch_entrypoint: SSM /academy/workers/env 로드 후 exec → batch_main
-  → batch_main:  job_set_running → process_video → job_complete / job_fail_retry
+  → batch_main:  job_set_running → process_video → job_complete / job_fail_retry / job_mark_dead
 ```
 
 ## 파일 역할
@@ -28,7 +28,17 @@ AWS Batch 컨테이너
 - **QUEUED** → API에서 Job 생성 + submit_batch_job
 - **RUNNING** → batch_main에서 `job_set_running(job_id)` 호출, `job_heartbeat` 주기 갱신
 - **SUCCEEDED** → `job_complete(job_id, hls_path, duration)`
-- **RETRY_WAIT** → 예외/SIGTERM 시 `job_fail_retry(job_id, reason)`; attempt_count >= 5면 `job_mark_dead`
+- **RETRY_WAIT** → 원인이 확인되지 않은 FFmpeg 실패나 일시 장애는 기존 재시도 경로를 따른다. 배포된 최대 시도 횟수에 도달하면 `job_mark_dead`로 종료한다.
+- **DEAD** → FFmpeg가 원본에 영상 스트림이 없다고 명시하면 현재 Batch 시도만 한 번 기록하고 즉시 종료한다. 작업의 오류 코드는 `SOURCE_NO_VIDEO_STREAM`이며 교사 화면에는 실패가 표시된다. 원본에 영상 트랙이 있는 파일을 다시 업로드해 복구할 수 있다. 예전 Batch 시도와 취소 요청이 진행 중인 작업은 이 경로에서 갱신하지 않는다.
+
+## FFmpeg 진단
+
+FFmpeg는 오류 수준 stderr와 stdout 진행률을 별도 파이프로 보낸다. 종료 코드가
+0이 아니면 Batch 로그의 `BATCH_JOB_FAILED` 이벤트에 식별자, 종료 코드,
+재시도 가능 여부, 최대 8줄(줄당 300자)의 오류 진단을 남긴다. 진단에서는
+로컬 작업 경로와 URL을 가리고 DB에는 짧은 종료 사유만 저장한다. 원본에
+영상 스트림이 없다는 명시적 진단만 자동 재시도와 DEAD 복구 대상에서 제외된다.
+Spot 종료, 시간 초과, 파일 다운로드·저장소 오류는 기존 복구 경로를 따른다.
 
 ## 인프라 실패 대응
 
@@ -52,6 +62,7 @@ DB 경로, tmp→final 게시 순서와 사용자 승인 데이터는 바꾸지 
 않으며, 복사 실패 때 tmp를 보존하는 기존 재시도 순서는 유지한다.
 
 - 집중 회귀: `python -m unittest apps.domains.video.tests.test_video_hls_integrity_policy`
+- FFmpeg/Batch 실패 회귀: `python -m pytest tests/test_video_transcoder.py apps/domains/video/tests/test_video_job_failure_status.py`
 - R2 LIST 일관성: <https://developers.cloudflare.com/r2/reference/consistency/>
 
 - 로컬 import: `python -c "import apps.worker.video_worker.batch_main as m; assert hasattr(m, 'main')"`
