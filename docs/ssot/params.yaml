@@ -204,7 +204,7 @@ toolsWorker:
   dlqSuffix: -dlq
 
 videoBatch:
-  # standard: all video encode work. Keep c6g.2xlarge+ so 8-vCPU job definitions can place.
+  # Standard video encoding uses the 2-vCPU, 4096-MiB job definition.
   standard:
     computeEnvironmentName: academy-v1-video-batch-ce-200gb
     videoQueueName: academy-v1-video-batch-queue

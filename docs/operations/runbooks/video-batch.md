@@ -22,7 +22,7 @@
 - Ops compute environment: `academy-v1-video-ops-ce` (`EC2`, desired=0 max=1 vCPU)
 - Ops queue: `academy-v1-video-ops-queue`
 - Worker image: ECR `academy-video-worker`
-- Runtime shape: c6g.4xlarge, 8 vCPU, 16GB memory, 200GB EBS, job timeout 6h.
+- The standard job requests 2 vCPUs and 4096 MiB of memory and has a six-hour timeout. The compute environment allows `c6g.xlarge`, `c6g.2xlarge` and `c6g.4xlarge` hosts with a 200 GB root volume.
 - Ops jobs such as reconcile/scan_stuck/netprobe use the same worker image and worker settings.
 Current runtime snapshot: `docs/ssot/runtime-current.md`.
 
