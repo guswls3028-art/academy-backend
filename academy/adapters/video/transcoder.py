@@ -62,8 +62,9 @@ _FFMPEG_CREDENTIAL = re.compile(
 )
 _FFMPEG_PATH = re.compile(r"(?:[a-z]:[\\/]|(?<![\w/])/|\\\\)[^\r\n]*?(?=:\s|$)", re.IGNORECASE)
 _NO_INPUT_VIDEO = re.compile(
-    r"""^(?:Stream map ['"]0:v:0['"] matches no streams\.?|"""
-    r"""Stream specifier ['"]:v['"] in filtergraph description .* matches no streams\.?)$"""
+    r"""^(?:Stream map ['"]0:V:0['"] matches no streams\.?|"""
+    r"""(?:\[fc#\d+ @ (?:0x)?[0-9a-fA-F]+\] )?"""
+    r"""Stream specifier ['"](?:0)?:V:0['"] in filtergraph description .* matches no streams\.?)$"""
 )
 
 
@@ -87,7 +88,7 @@ def _probe_resolution(input_path: str, ffprobe_bin: str, timeout: int) -> tuple[
     cmd = [
         ffprobe_bin,
         "-v", "error",
-        "-select_streams", "v:0",
+        "-select_streams", "V:0",
         "-show_entries", "stream=width,height:stream_side_data=rotation:stream_tags=rotate",
         "-of", "json",
         input_path,
@@ -248,7 +249,7 @@ def build_ffmpeg_command(
         # filter_complex: split → 고화질 스케일 + 중화질 스케일
         hi_scale = f"scale={hi_w}:{hi_h},setsar=1" if hi_w > 0 else "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1"
         mid_scale = f"scale={mid_w}:{mid_h},setsar=1"
-        fc = f"[0:v]split=2[vhi][vmid];[vhi]{hi_scale}[vhiout];[vmid]{mid_scale}[vmidout]"
+        fc = f"[0:V:0]split=2[vhi][vmid];[vhi]{hi_scale}[vhiout];[vmid]{mid_scale}[vmidout]"
         cmd += ["-filter_complex", fc]
 
         # v2 = 고화질
@@ -283,7 +284,7 @@ def build_ffmpeg_command(
         hi_scale = f"scale={hi_w}:{hi_h},setsar=1" if hi_w > 0 else "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1"
         cmd += ["-vf", hi_scale]
         cmd += [
-            "-map", "0:v:0",
+            "-map", "0:V:0",
             "-profile:v", HI_PROFILE, "-refs:v", str(HI_REFERENCE_FRAMES),
             "-crf", str(HI_CRF),
             "-maxrate", HI_MAXRATE, "-bufsize", HI_BUFSIZE,
@@ -454,7 +455,7 @@ def transcode_to_hls(
                         input_has_no_video |= bool(_NO_INPUT_VIDEO.fullmatch(raw_line))
                         # Some FFmpeg versions omit the selector in the first error line.
                         empty_stream_map |= raw_line == "Stream map '' matches no streams."
-                        video_map_invalid |= raw_line == "Failed to set value '0:v:0' for option 'map': Invalid argument"
+                        video_map_invalid |= raw_line == "Failed to set value '0:V:0' for option 'map': Invalid argument"
                         if len(first_diagnostics) < 2:
                             first_diagnostics.append(safe_line)
                         else:

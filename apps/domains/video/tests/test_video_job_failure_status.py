@@ -105,7 +105,7 @@ class VideoJobFailureStatusTests(TestCase):
 
         self.job.state = VideoTranscodeJob.State.QUEUED
         self.job.save(update_fields=["state"])
-        diagnostics = ("Stream map '0:v:0' matches no streams.",)
+        diagnostics = ("Stream map '0:V:0' matches no streams.",)
         with (
             patch.dict(os.environ, VIDEO_JOB_ID=str(self.job.id), AWS_BATCH_JOB_ID="aws-old"),
             patch("django.db.close_old_connections"),  # The test owns a shared transaction.

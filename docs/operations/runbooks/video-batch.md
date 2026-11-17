@@ -22,7 +22,7 @@
 - Ops compute environment: `academy-v1-video-ops-ce` (`EC2`, desired=0 max=1 vCPU)
 - Ops queue: `academy-v1-video-ops-queue`
 - Worker image: ECR `academy-video-worker`
-- Runtime shape: c6g.4xlarge, 8 vCPU, 16GB memory, 200GB EBS, job timeout 6h.
+- The standard job requests 2 vCPUs and 4096 MiB of memory and has a six-hour timeout. The compute environment allows `c6g.xlarge`, `c6g.2xlarge` and `c6g.4xlarge` hosts with a 200 GB root volume.
 - Ops jobs such as reconcile/scan_stuck/netprobe use the same worker image and worker settings.
 Current runtime snapshot: `docs/ssot/runtime-current.md`.
 
@@ -44,12 +44,15 @@ transcode jobs. This includes jobs just created by upload completion and lets a 
 its job-to-video lock sequence. Already completed jobs and retained raw files are preserved.
 
 In an environment with ffprobe, the optional upload metadata probe reads duration and video-stream
-presence for up to 15 seconds. The production API image ships without FFmpeg and uses the
-existing unknown-duration enqueue path, as do storage stalls. AWS Batch checks the source.
+presence for up to 15 seconds, excluding attached pictures, thumbnails, and cover art.
+The production API image ships without FFmpeg and uses the
+existing unknown-duration enqueue path, as do storage stalls. AWS Batch selects the first playable
+video stream for both sizing and encoding. An audio source with only cover art is handled as
+`SOURCE_NO_VIDEO_STREAM` without an encoding retry.
 Signed source URLs stay out of the probe failure reason.
 
 Coverage: `test_video_multipart_upload.py`, `test_video_job_failure_status.py` and the
-`tests/video/test_source_probe.py` cases, plus the
+`tests/test_video_source_probe.py` cases, plus the
 [staff upload UI](../../../../frontend/docs/PUBLIC-VIDEO-WORKFLOW.md).
 
 The authenticated encoding status endpoint reads the tenant-scoped Redis state.
@@ -81,15 +84,18 @@ and at least 100 pixels shorter. For example, a 640×360 source produces a singl
 
 `tests/test_video_transcoder.py` verifies distinct options, original frame rate
 and automatic level selection, audio selection, and synthetic 360p decoding for
-sources with zero, one, and two audio tracks. The synthetic FFmpeg checks inspect both
+sources with zero, one, and two audio tracks. Attached cover art is rejected when no
+playable video remains, and a playable video yields the same decoded frames with or
+without a cover. The synthetic FFmpeg checks inspect both
 variants' codec parameters and master playlist at 30 and 60 fps, including
 single-variant 1080p60 output.
 
 The ARM Video Worker image build runs `docker/video-worker/lecture-transcoder-smoke.py`
 as the worker user with networking disabled. The packaged encoder must decode a
-single 360p rendition and both the 900p and 720p renditions, each with one AAC
-track matching the input's default audio. The script removes the synthetic media
-after verification.
+single 360p rendition and both the 900p and 720p renditions with moving frames and
+one AAC track matching the input's default audio, even when the source contains
+attached cover art. Audio with cover art alone must be rejected permanently without
+producing a master playlist. The script removes the synthetic media after verification.
 
 ## 2. Deploy Path
 

@@ -34,19 +34,32 @@ class OwnedQaAI:
                 or not re.fullmatch(r"[a-f0-9]{64}", capability)):
             raise PermissionError("Invalid QA AI scope")
         self.code, self.tenant_id = tenant_code, tenant_id
-        self.owner = {
-            "schema": "frontend-development-qa/v1", "tenant_code": tenant_code,
-            "tenant_id": tenant_id, "owner_sha256": hashlib.sha256(
-                f"{tenant_code}:{tenant_id}:{capability}".encode()).hexdigest(),
-        }
         # SET_NULL preserves this setup seal after tenant deletion.
         seals = list(OpsAuditLog.objects.filter(
             action="development.qa.setup", result="success",
             payload__tenant_code=tenant_code, payload__tenant_id=tenant_id,
         )[:2])
-        if len(seals) != 1 or not self._same_owner(seals[0].payload):
+        if len(seals) != 1 or not isinstance(seals[0].payload, dict):
             raise PermissionError("Missing or ambiguous QA AI ownership")
-        self.seal = seals[0]
+
+        seal = seals[0]
+        owner_scope = f"{tenant_code}:{tenant_id}"
+        self.owner = {
+            "schema": "frontend-development-qa/v1",
+            "tenant_code": tenant_code,
+            "tenant_id": tenant_id,
+        }
+        if seal.payload.get("schema") == "frontend-development-qa/video-multipart-v1":
+            session_id = seal.payload.get("multipart_session_id")
+            if type(session_id) is not int or not 0 < session_id <= 9223372036854775807:
+                raise PermissionError("Invalid multipart QA AI ownership session")
+            self.owner["schema"] = "frontend-development-qa/video-multipart-v1"
+            self.owner["multipart_session_id"] = session_id
+            owner_scope = f"{owner_scope}:video-multipart-v1:{session_id}"
+        self.owner["owner_sha256"] = hashlib.sha256(f"{owner_scope}:{capability}".encode()).hexdigest()
+        if not self._same_owner(seal.payload):
+            raise PermissionError("Missing or ambiguous QA AI ownership")
+        self.seal = seal
         tenants = list(Tenant.objects.filter(pk=tenant_id).values_list("code", flat=True))
         if tenants not in ([], [tenant_code]) or self.seal.target_tenant_id not in (None, tenant_id):
             raise PermissionError("QA AI tenant identity mismatch")
@@ -58,7 +71,8 @@ class OwnedQaAI:
 
     def _same_owner(self, owner):
         return (isinstance(owner, dict) and set(owner) == set(self.owner)
-                and all(owner[k] == self.owner[k] for k in ("schema", "tenant_code", "tenant_id"))
+                and all(type(owner[key]) is type(self.owner[key]) and owner[key] == self.owner[key]
+                        for key in self.owner if key != "owner_sha256")
                 and isinstance(owner["owner_sha256"], str)
                 and hmac.compare_digest(owner["owner_sha256"], self.owner["owner_sha256"]))
 

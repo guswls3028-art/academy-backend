@@ -455,6 +455,11 @@ REJECTED_BAD_INPUT/REVIEW_REQUIRED이면서 완료 시각이 있고 lease/lock�
 정확한 AIJob 삭제에 연결된 AIResult만 cascade한다. 일반 사용자 데이터 보존 기간이나
 제품의 AI 결과 보존 정책은 바꾸지 않는다.
 
+영상 멀티파트 격리 검사는 setup seal에 보관한 정확한 session ID까지 capability
+digest에 포함한다. AI Inspect와 Cleanup도 이 seal과 원래 capability를 검증하고
+같은 소유권을 정리 receipt에 보존한다. 기존 일반 검사의 seal과 receipt는 같은
+방식으로 계속 읽으며, 잘못된 session이나 capability는 정리 전에 거부한다.
+
 `development.qa.ai.cleanup` 감사 receipt에는 기존 owner hash, 정확한 job ID와 사전
 AIJob/AIResult/Redis 건수만 저장한다. setup seal과 receipt는 tenant 삭제 후 SET_NULL로
 보존한다. 별도 Inspect는 원래 capability로 seal을 다시 검증하고 이 ID들의 네 키 및
