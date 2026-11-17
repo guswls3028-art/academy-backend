@@ -459,6 +459,8 @@ REJECTED_BAD_INPUT/REVIEW_REQUIRED이면서 완료 시각이 있고 lease/lock�
 digest에 포함한다. AI Inspect와 Cleanup도 이 seal과 원래 capability를 검증하고
 같은 소유권을 정리 receipt에 보존한다. 기존 일반 검사의 seal과 receipt는 같은
 방식으로 계속 읽으며, 잘못된 session이나 capability는 정리 전에 거부한다.
+계정 스냅샷 정리도 같은 setup seal 검증을 사용한다. 멀티파트 Cleanup에서는
+스냅샷이 없어야 한다. 계정 스냅샷 생성·비교는 일반 격리 계정 검사에서만 실행한다.
 
 `development.qa.ai.cleanup` 감사 receipt에는 기존 owner hash, 정확한 job ID와 사전
 AIJob/AIResult/Redis 건수만 저장한다. setup seal과 receipt는 tenant 삭제 후 SET_NULL로
