@@ -30,8 +30,10 @@ Current runtime snapshot: `docs/ssot/runtime-current.md`.
 
 The authenticated staff upload actions resolve the video in the request tenant and serialize
 completion on its row. A repeated completion for an already uploaded, processing or ready file
-returns the current video and starts no additional Batch job. A known Batch submission failure
-still uses the existing encoding retry flow.
+returns the current video and starts no additional Batch job. When the Batch queue or job
+definition is missing, completion retains the raw object, records `FAILED` and returns
+`VIDEO_BATCH_SUBMIT_FAILED` before allocating a new job or DynamoDB lock. Restore the configured
+target and use the existing encoding retry flow.
 
 Multipart completion creates the object at its assigned raw key conditionally. If storage reports
 that the upload ID is gone or an object already exists, the API checks that object's multipart ETag

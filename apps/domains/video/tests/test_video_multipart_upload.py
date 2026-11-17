@@ -10,7 +10,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from academy.adapters.storage.r2_presign import MultipartCompletionMismatch
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.video.models import Video
+from apps.domains.video.models import Video, VideoTranscodeJob
 from apps.domains.video.views.video_views import VideoViewSet
 
 
@@ -134,6 +134,52 @@ class VideoMultipartUploadTests(TestCase):
         assemble.assert_called_once()
         enqueue.assert_called_once()
         abort.assert_not_called()
+
+    def test_complete_with_missing_batch_settings_records_failure_without_external_dispatch(self):
+        object_size = 101 * 1024 * 1024
+        parts = [*self.multipart_payload["parts"], {"ETag": '"second-part"', "PartNumber": 2}]
+        payload = {**self.multipart_payload, "parts": parts}
+        key = self.video.file_key
+
+        for queue, definition in (("", ""), ("", "video-job"), ("video-queue", "")):
+            with self.subTest(queue=queue, definition=definition):
+                Video.objects.filter(pk=self.video.pk).update(status=Video.Status.PENDING, error_reason="")
+                stored = {}
+
+                def assemble(*, key, upload_id, parts):
+                    stored[key] = object_size
+
+                with (
+                    self.settings(VIDEO_BATCH_JOB_QUEUE=queue, VIDEO_BATCH_JOB_DEFINITION=definition),
+                    patch("apps.domains.video.views.video_views.complete_multipart_upload",
+                          side_effect=assemble) as complete,
+                    patch("apps.domains.video.views.video_views.head_object",
+                          side_effect=lambda object_key: (object_key in stored, stored.get(object_key, 0))) as head,
+                    patch("apps.domains.video.views.video_views.create_presigned_get_url",
+                          return_value="https://example.test/raw.mp4"),
+                    patch("apps.domains.video.views.video_views._validate_source_media_via_ffprobe",
+                          return_value=(True, {"duration": 60}, "")),
+                    patch("apps.domains.video.views.video_views._cache_uploaded_status"),
+                    patch("apps.domains.video.views.video_views._cache_failed_status"),
+                    patch("apps.domains.video.views.video_views.abort_multipart_upload") as abort,
+                    patch("apps.domains.video.services.video_job_lock.acquire",
+                          side_effect=PermissionError("isolated video job lock denied")) as lock,
+                    patch("apps.domains.video.services.batch_submit.submit_batch_job") as submit,
+                ):
+                    response = self._post("upload_multipart_complete", payload)
+
+                self.assertEqual(response.status_code, 503, response.data)
+                self.assertEqual(response.data.get("code"), "VIDEO_BATCH_SUBMIT_FAILED")
+                self.video.refresh_from_db()
+                self.assertEqual(self.video.status, Video.Status.FAILED)
+                self.assertIsNone(self.video.current_job_id)
+                self.assertFalse(VideoTranscodeJob.objects.filter(video=self.video).exists())
+                self.assertEqual(stored, {key: object_size})
+                complete.assert_called_once_with(key=key, upload_id=payload["upload_id"], parts=parts)
+                head.assert_called_once_with(key)
+                abort.assert_not_called()
+                lock.assert_not_called()
+                submit.assert_not_called()
 
     @patch("apps.domains.video.views.video_views.abort_multipart_upload")
     @patch("apps.domains.video.views.video_views.complete_multipart_upload",
