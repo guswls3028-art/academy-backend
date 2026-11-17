@@ -110,10 +110,13 @@ def canonical_state(objects):
                   if field.attname not in {"last_login", "updated_at"}) for obj in objects]
 
 
-def runtime_scope(tenant):
+def runtime_scope(tenant, *, multipart=False):
     from django.conf import settings
     from apps.core.models import OpsAuditLog
     from apps.core.management.commands.setup_ymath_realuse_scenario import assert_isolated_runtime
+    from apps.core.services.development_qa_ownership import (
+        MULTIPART_SETUP_SCHEMA, STANDARD_SETUP_SCHEMA, verify_setup_owner,
+    )
     release, digest, capability = (os.environ.get(key, "") for key in ("QA_RELEASE", "QA_DIGEST", "QA_CAPABILITY"))
     if (not re.fullmatch(r"qa-ymath-realuse-fe-[0-9]+-[0-9]+-[a-f0-9]{12}", tenant.code)
             or not re.fullmatch(r"sha-[a-f0-9]{40}-run-[0-9]+-[0-9]+", release)
@@ -121,6 +124,8 @@ def runtime_scope(tenant):
             or not re.fullmatch(r"[a-f0-9]{64}", capability)
             or os.environ.get("QA_TENANT") != tenant.code
             or os.environ.get("QA_TENANT_ID") != str(tenant.pk)
+            or (multipart and (os.environ.get("QA_ACTION") != "Cleanup"
+                              or os.environ.get("QA_SYNTHETIC_MULTIPART_VIDEO") != "true"))
             or os.environ.get("DJANGO_SETTINGS_MODULE") != "apps.api.config.settings.development"
             or os.environ.get("ACADEMY_RUNTIME_ENV") != "development"
             or os.environ.get("ACADEMY_DEVELOPMENT_RELEASE_ID") != release
@@ -132,10 +137,13 @@ def runtime_scope(tenant):
     assert_isolated_runtime()
     records = list(OpsAuditLog.objects.filter(action="development.qa.setup", target_tenant=tenant,
                                              result="success").values_list("payload", flat=True)[:2])
-    expected = {"schema": "frontend-development-qa/v1", "tenant_code": tenant.code, "tenant_id": tenant.pk,
-                "owner_sha256": hashlib.sha256(f"{tenant.code}:{tenant.pk}:{capability}".encode()).hexdigest()}
-    if len(records) != 1 or records[0] != expected:
+    if len(records) != 1:
         raise ProbeFailure("owner-mismatch")
+    try:
+        schema = MULTIPART_SETUP_SCHEMA if multipart else STANDARD_SETUP_SCHEMA
+        verify_setup_owner(tenant.code, tenant.pk, capability, records[0], schema=schema)
+    except PermissionError:
+        raise ProbeFailure("owner-mismatch") from None
     return scope_hash(tenant.code, tenant.pk, release, digest)
 
 
@@ -148,8 +156,13 @@ def snapshot_seal(scope, parent_user):
 
 def cleanup_snapshots(tenant):
     from apps.core.models import OpsAuditLog
-    scope = runtime_scope(tenant)
+    multipart = os.environ.get("QA_SYNTHETIC_MULTIPART_VIDEO") == "true"
+    scope = runtime_scope(tenant, multipart=multipart)
     rows = OpsAuditLog.objects.filter(action=SNAPSHOT_ACTION, target_tenant=tenant)
+    if multipart:
+        if rows.exists():
+            raise ProbeFailure("snapshot-owner-mismatch")
+        return
     records = list(rows.values_list("payload", flat=True))
     if any(not isinstance(record, dict) or record.get("scope_sha256") != scope for record in records):
         raise ProbeFailure("snapshot-owner-mismatch")
