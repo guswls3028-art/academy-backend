@@ -709,6 +709,13 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
         cleanup(first, 71, owner, [record])
         self.assertEqual(destroyed, [first])
         self.assertNotIn(owner, json.dumps(record))
+        multipart = payload(first, 71, owner, 12)
+        self.assertEqual(check(first, 71, owner, [multipart], multipart=True), 12)
+        for wrong in (record, {**multipart, "multipart_session_id": 13}):
+            with self.assertRaises(PermissionError):
+                check(first, 71, owner, [wrong], multipart=True)
+        with self.assertRaises(PermissionError):
+            check(first, 71, owner, [multipart])
         self.assertIn('OpsAuditLog.objects.create(', source)
         self.assertIn('assert_cleanup_owner(tenant, existing.pk, capability, records)', source)
         self.assertLess(source.index('assert_cleanup_owner(tenant, existing.pk, capability, records)'),
@@ -1150,6 +1157,27 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
             self.assertEqual(post_inspect["tenant_id"], 72)
             self.assertTrue(post_inspect["r2_scope_proven"])
             command._non_database_residue.assert_called_once_with(tenant_id=72, tenant_code=tenant)
+            os.environ.update(QA_ACTION="Cleanup", QA_SYNTHETIC_MULTIPART_VIDEO="true")
+            media_key = "tenants/72/video/raw/12/00000000-0000-4000-8000-000000000001.mp4"
+            command._exact_tenant_or_fail_on_case_variant.return_value = SimpleNamespace(pk=72)
+            command._qa_video_multipart_row.return_value = SimpleNamespace(file_key=media_key)
+            command._qa_video_raw_state.return_value = {"objects": 0, "uploads": 0}
+            with self.assertRaises(PermissionError):
+                namespace["run"]()
+            command._cleanup_qa_video_raw_upload.assert_not_called()
+            multipart_record = namespace["ownership_payload"](tenant, 72, capability, 12)
+            audit.filter.return_value.values_list.return_value = [multipart_record]
+            command._cleanup_qa_video_raw_upload.side_effect = lambda **kwargs: events.append("multipart")
+            events.clear()
+            native = namespace["run"]()
+            self.assertEqual(native["synthetic_multipart_video"], {"session_id": 12, "objects": 0, "uploads": 0})
+            command._cleanup_qa_video_raw_upload.assert_called_once_with(tenant_id=72, session_id=12, key=media_key)
+            self.assertEqual(events, ["multipart", "r2", "database"])
+            command._exact_tenant_or_fail_on_case_variant.return_value = None
+            after = namespace["run"]()
+            self.assertEqual(after["synthetic_multipart_video"], native["synthetic_multipart_video"])
+            self.assertEqual(after["status"], "YMATH_REALUSE_SCENARIO_ABSENT")
+            self.assertEqual(events, ["multipart", "r2", "database"])
 
     def test_fixed_cleanup_stops_before_database_destroy_when_r2_cleanup_fails(self):
         session = json.loads((ROOT / "scripts/v1/templates/ssm/frontend_development_qa.json").read_text())
@@ -1456,7 +1484,7 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
                          "187f6ac218435d3b3f938d903153c5785db3529ace89f4e79ea9b6e1bde8ddb6")
         for path, expected in (
             ("iam/trust_frontend_development_qa.json", "aa2c1a60b63ad287c2e8caba7257beaafe5d602df66659c3093f917ad670713a"),
-            ("ssm/frontend_development_qa.json", "1f744f012ac7baef350bf0e6046d66e8a1774f6da024a8b743a8471dc44f2552"),
+            ("ssm/frontend_development_qa.json", "6bd3f1a5abe78703659621f901f2b5ea1d9dce66b36b3da9c12eefdcaf3efc10"),
             ("ssm/frontend_development_api_port.json", "457d31ebdb1ed4436da3bfdb6f090b0180f8ec5dff7ac1303dfb45fe506f486c"),
         ):
             with self.subTest(path=path):
@@ -1478,11 +1506,13 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
                 "ApiDigest",
                 "OwnershipCapability",
                 "SyntheticLongVideo",
+                "SyntheticMultipartVideo",
                 "AccountStudentId",
                 "AccountProbeMode",
                 "AccountProbeKind",
             },
         )
+        self.assertEqual(session["parameters"]["SyntheticMultipartVideo"], session["parameters"]["SyntheticLongVideo"])
         self.assertEqual(
             session["parameters"]["TenantId"],
             {
