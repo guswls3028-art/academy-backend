@@ -1,8 +1,10 @@
+from io import BytesIO
 from unittest.mock import patch
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from PIL import Image
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -12,6 +14,16 @@ from apps.domains.submissions.views.submission_view import SubmissionViewSet
 
 Exam = apps.get_model("exams", "Exam")
 Sheet = apps.get_model("exams", "Sheet")
+
+
+def tiny_omr_image(seed: bytes, *, image_format: str = "JPEG", orientation: int = 1) -> bytes:
+    output = BytesIO()
+    with Image.new("RGB", (16, 12), color="white") as image:
+        exif = image.getexif()
+        exif[270] = seed.hex()
+        exif[274] = orientation
+        image.save(output, image_format, exif=exif)
+    return output.getvalue()
 
 
 class OmrReceiptFixture:
@@ -43,7 +55,7 @@ class OmrReceiptFixture:
         batch_id = batch_id or self.initialize()
         request = APIRequestFactory().post("/", {
             "batch_id": str(batch_id), "item_ordinals": [str(ordinal)],
-            "files": [SimpleUploadedFile("scan.jpg", content, content_type="image/jpeg")],
+            "files": [SimpleUploadedFile("scan.jpg", tiny_omr_image(content), content_type="image/jpeg")],
         }, format="multipart")
         request.tenant = self.tenant
         force_authenticate(request, user=self.user)

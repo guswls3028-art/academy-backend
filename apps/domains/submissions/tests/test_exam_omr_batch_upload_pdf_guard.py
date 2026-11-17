@@ -28,6 +28,7 @@ from apps.domains.submissions.services.lifecycle import (
     retry_failed_submission as retry_failed_submission_lifecycle,
 )
 from apps.domains.submissions.services.transition import InvalidTransitionError
+from apps.domains.submissions.tests.omr_receipt_test_support import tiny_omr_image
 from apps.domains.submissions.views.exam_omr_batch_upload_view import (
     ExamOMRBatchInitializeView,
     ExamOMRBatchUploadView,
@@ -171,7 +172,7 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
     def _image(name: str):
         return SimpleUploadedFile(
             name,
-            f"jpeg-body:{name}".encode(),
+            tiny_omr_image(name.encode()),
             content_type="image/jpeg",
         )
 
@@ -329,6 +330,45 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
         self.assertEqual(upload_fileobj_to_r2.call_count, 2)
         self.assertEqual(dispatch_submission.call_count, 2)
 
+    @patch("apps.domains.submissions.views.exam_omr_batch_upload_view.dispatch_submission")
+    @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
+    def test_corrupt_typed_scan_stays_reselectable_before_storage_and_dispatch(self, storage, dispatch):
+        def broken():
+            return SimpleUploadedFile("camera.jpg", b"incomplete camera write", content_type="image/jpeg")
+
+        legacy = self._post(broken())
+        self.assertEqual(legacy.status_code, 400)
+        self.assertFalse(OmrUploadBatch.objects.exists())
+        storage.assert_not_called()
+        dispatch.assert_not_called()
+
+        batch_id = self._initialize(2).data["id"]
+        photo = SimpleUploadedFile(
+            "rotated.jpg", tiny_omr_image(b"rotated camera photo", orientation=6), content_type="image/jpeg",
+        )
+        response = self._upload_to_batch(batch_id, [photo, broken()], [1, 2])
+        self.assertEqual(response.status_code, 201)
+        original, failed = response.data["items"]
+        self.assertEqual(failed["ordinal"], 2)
+        self.assertEqual(failed["failure_code"], "invalid_file_content")
+        self.assertIn("다시 선택", failed["failure_message"])
+        self.assertIsNone(failed["submission_id"])
+        self.assertEqual(self._detail(batch_id).data["admission_failed_ordinals"], [2])
+        self.assertIsNotNone(original["submission_id"])
+        self.assertEqual(storage.call_count, 1)
+        self.assertEqual(dispatch.call_count, 1)
+
+        replacement = SimpleUploadedFile(
+            "reselected.png", tiny_omr_image(b"replacement", image_format="PNG"), content_type="image/png",
+        )
+        retry = self._upload_to_batch(batch_id, [replacement], [2])
+        self.assertEqual(retry.status_code, 201)
+        self.assertEqual(retry.data["items"][0], original)
+        self.assertEqual(retry.data["items"][1]["id"], failed["id"])
+        self.assertEqual(retry.data["items"][1]["status"], "received")
+        self.assertEqual(storage.call_count, 2)
+        self.assertEqual(dispatch.call_count, 2)
+
     def test_batch_ledger_keeps_every_reserved_ordinal_without_file_identity(self):
         response = self._initialize(100)
         ledger = response.data["items"]
@@ -384,13 +424,13 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
         first_batch = self._initialize(1).data["id"]
         first = self._upload_to_batch(
             first_batch,
-            [SimpleUploadedFile("scan-a.jpg", b"same-scan", content_type="image/jpeg")],
+            [SimpleUploadedFile("scan-a.jpg", tiny_omr_image(b"same-scan"), content_type="image/jpeg")],
             [1],
         )
         second_batch = self._initialize(1).data["id"]
         duplicate = self._upload_to_batch(
             second_batch,
-            [SimpleUploadedFile("renamed.jpg", b"same-scan", content_type="image/jpeg")],
+            [SimpleUploadedFile("renamed.jpg", tiny_omr_image(b"same-scan"), content_type="image/jpeg")],
             [1],
         )
 
@@ -419,13 +459,13 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
         first_batch = self._initialize(1).data["id"]
         self._upload_to_batch(
             first_batch,
-            [SimpleUploadedFile("scan.jpg", b"scan-one", content_type="image/jpeg")],
+            [SimpleUploadedFile("scan.jpg", tiny_omr_image(b"scan-one"), content_type="image/jpeg")],
             [1],
         )
         second_batch = self._initialize(1).data["id"]
         second = self._upload_to_batch(
             second_batch,
-            [SimpleUploadedFile("scan.jpg", b"scan-two", content_type="image/jpeg")],
+            [SimpleUploadedFile("scan.jpg", tiny_omr_image(b"scan-two"), content_type="image/jpeg")],
             [1],
         )
 
@@ -1055,7 +1095,7 @@ class OmrUploadBatchMutationConcurrencyPostgresTests(TransactionTestCase):
                         tenant=tenant,
                         upload_file=SimpleUploadedFile(
                             "valid.jpg",
-                            b"jpeg-body",
+                            tiny_omr_image(b"valid concurrent upload"),
                             content_type="image/jpeg",
                         ),
                     )
