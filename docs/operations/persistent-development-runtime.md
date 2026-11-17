@@ -27,6 +27,11 @@
 - 객체 저장소는 Cloudflare R2의 `academy-development-artifacts` 버킷만 사용한다.
   자격증명은 `/academy/r2/development/credentials` SecureString에 있고 운영 R2 버킷
   접근은 검증 단계에서 거부되어야 한다. AWS S3 버킷은 만들거나 사용하지 않는다.
+  영상 멀티파트 실사용 진단에는 `academy-dev-native-multipart-qa` CORS 규칙을 둔다.
+  `http://localhost:4173`의 `PUT`과 요청 헤더 `Content-Type`을 허용하고 `ETag`를 노출한다.
+  Cloudflare 정책 API로 적용할 때 기존 Range 재생용 `GET`·`HEAD` 규칙을 보존하고 다시 읽는다.
+  격리 브라우저에서 서명된 조각 업로드, 응답 유실 후 같은 조각 재시도, 완성 객체의 크기와
+  열린 멀티파트 업로드·테스트 데이터 정리 0건을 확인한다.
 - worker 설정도 `R2_STORAGE_BUCKET`·`R2_ADMIN_BUCKET`·`R2_REGION`을 worker env에서
   명시적으로 읽는다. API에는 개발 버킷이 적용됐지만 worker가 운영 기본 버킷명으로
   되돌아가 HWP 문항/해설 저장이 `AccessDenied`로 끝나는 경로를 허용하지 않는다.
@@ -40,8 +45,9 @@
   계속 필수 경계다.
 - Video Batch는 아직 이 상시 개발 런타임의 구성 자원이 아니다. 개발 API·worker env의
   `VIDEO_BATCH_JOB_QUEUE`와 `VIDEO_BATCH_JOB_DEFINITION`은 빈 값으로 고정하고 settings와
-  배포 readback에서도 이를 강제한다. 따라서 업로드 완료 후 Batch 제출은 누락 설정 오류로
-  실패 폐쇄하며 운영 `academy-v1-video-batch-*` 큐·job definition으로 흘러가지 않는다.
+  배포 readback에서도 이를 강제한다. 업로드가 완료되어도 인코딩 대상으로 사용할 큐와 job
+  definition이 없으면 신규 job과 잠금 전에 `VIDEO_BATCH_SUBMIT_FAILED`를 반환한다.
+  영상은 `FAILED`로 저장하고 원본 객체를 보존한다. 필요한 설정이 갖춰지면 기존 재처리 경로를 쓴다.
 - 운영 `CDN_HLS_SIGNING_SECRET`은 개발 env에 복사하거나 다른 개발 credential에서 파생하지
   않는다. env publication은 매 릴리스마다 암호학적 난수 32바이트로 개발 전용 키를 만들고,
   운영 키와 다름을 확인한 뒤 API와 worker에 같은 `CDN_HLS_SIGNING_SECRET`과 key id `v1`을

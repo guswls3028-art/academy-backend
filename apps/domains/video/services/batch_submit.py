@@ -11,6 +11,7 @@ import logging
 from typing import Optional
 
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from academy.adapters.compute.aws_batch import (
     AwsBatchClientError,
     submit_video_batch_job,
@@ -18,6 +19,16 @@ from academy.adapters.compute.aws_batch import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def require_video_batch_target() -> tuple[str, str]:
+    queue_name = getattr(settings, "VIDEO_BATCH_JOB_QUEUE", None)
+    if not queue_name:
+        raise ImproperlyConfigured("VIDEO_BATCH_JOB_QUEUE is missing")
+    job_definition = getattr(settings, "VIDEO_BATCH_JOB_DEFINITION", None)
+    if not job_definition:
+        raise ImproperlyConfigured("VIDEO_BATCH_JOB_DEFINITION is missing")
+    return queue_name, job_definition
 
 
 def submit_batch_job(video_job_id: str, duration_seconds: int | None = None) -> tuple[Optional[str], Optional[str]]:
@@ -35,15 +46,7 @@ def submit_batch_job(video_job_id: str, duration_seconds: int | None = None) -> 
     Returns:
         (aws_job_id, None) 성공 시. (None, error_message) 실패 시.
     """
-    from django.core.exceptions import ImproperlyConfigured
-
-    if not getattr(settings, "VIDEO_BATCH_JOB_QUEUE", None):
-        raise ImproperlyConfigured("VIDEO_BATCH_JOB_QUEUE is missing")
-    if not getattr(settings, "VIDEO_BATCH_JOB_DEFINITION", None):
-        raise ImproperlyConfigured("VIDEO_BATCH_JOB_DEFINITION is missing")
-
-    queue_name = getattr(settings, "VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
-    job_def_name = getattr(settings, "VIDEO_BATCH_JOB_DEFINITION", "academy-v1-video-batch-jobdef")
+    queue_name, job_def_name = require_video_batch_target()
     logger.info(
         "BATCH_SUBMIT_ROUTE | job_id=%s | duration_sec=%s | queue=%s",
         video_job_id, duration_seconds, queue_name,
