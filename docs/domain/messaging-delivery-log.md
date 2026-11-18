@@ -34,6 +34,21 @@
 
 ## 상태와 시각 의미
 
+교사·조교(`teacher`, `staff`)를 포함한 기존 조회 권한자는 같은 학원의 현재
+업무 연락처를 전체 확인할 수 있다. `current_recipient_phone`은 로그의 불변
+`student`/`parent` 학생 PK 또는 계정 `student:{id}`/`parent:{id}` 참조로만
+조회한다. 공급사 공통 채널의 물리 tenant가 아닌 `source_tenant` 우선 업무
+tenant를 적용하고, 현재 tenant의 삭제되지 않은 학생만 페이지당 한 번 조회한다.
+연결 불명·삭제 학생·전화번호 없는 식별자 학생 계정은 빈 값이며 다른 사람의
+번호를 추측하지 않는다. 계정 `parent-account:{id}` 등 학생 참조가 없는 과거
+기록에는 학생 연락처를 붙이지 않는다.
+
+이 값은 **현재 연락처**이며 과거 실제 발송 대상 번호의 증거가 아니다.
+`recipient_summary` 저장값, 진단·워커 로그 비식별화, 본문·공급사 증거 권한은
+변경하지 않는다. 기존 데이터 마이그레이션과 재발송도 없다. 예약·미리보기는
+기존 API 권한과 동일 tenant의 확정 수신자 범위에서 발송할 전체 번호를 제공한다.
+예약 완료 후 보안상 삭제된 payload는 복원하지 않는다.
+
 `NotificationLog.status`의 의미를 보존한다.
 
 | 상태 | 운영 의미 |
@@ -86,4 +101,6 @@ C:\academy\backend\.venv\Scripts\python.exe manage.py test tests.test_clinic_tim
 ```
 
 테스트는 테넌트 격리, 역할별 본문·공급자 증거, 민감 본문 비복원, 실패 원문
-비노출을 고정한다.
+비노출을 고정한다. `test_staff_contact_projection`은 교사·조교 목록/상세,
+현재 번호 변경, 공통 공급사/타 tenant 격리, 삭제/식별자/불명 대상 비추정,
+페이지 조회 수와 저장 기록 불변을 검증한다.
