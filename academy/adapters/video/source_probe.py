@@ -17,7 +17,7 @@ def validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict[str, Any], s
 
     try:
         result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type", "-of", "json", url],
+            ["ffprobe", "-v", "error", "-select_streams", "V:0", "-show_entries", "format=duration:stream=codec_type", "-of", "json", url],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

@@ -176,6 +176,37 @@ def active_entitlements_for_student(*, tenant, student, now=None):
     )
 
 
+def catalog_entitlements_for_student(*, tenant, student, now=None):
+    """Read exact inactive access at one instant for the student catalog."""
+    membership = TenantMembership.objects.filter(
+        tenant_id=tenant.pk, user_id=models.OuterRef("student__user_id"), role="student", is_active=True,
+    )
+    blocked = VideoAccess.objects.filter(
+        video_id=models.OuterRef("video_id"), enrollment_id=models.OuterRef("enrollment_id"),
+    ).filter(models.Q(access_mode=AccessMode.BLOCKED) | models.Q(rule="blocked"))
+    roster = SessionEnrollment.objects.filter(
+        tenant_id=tenant.pk,
+        enrollment_id=models.OuterRef("enrollment_id"),
+        session_id=models.OuterRef("video__session_id"),
+    )
+    return (
+        active_entitlements_for_student(tenant=tenant, student=student, now=now)
+        .filter(
+            student__tenant=tenant,
+            student__deleted_at__isnull=True,
+            student__user__is_active=True,
+            enrollment__tenant=tenant,
+            enrollment__student=student,
+            enrollment__lecture_id=models.F("video__session__lecture_id"),
+            video__tenant=tenant,
+            video__status=Video.Status.READY,
+            video__session__lecture__is_active=True,
+        )
+        .exclude(video__source_type=Video.SourceType.YOUTUBE)
+        .filter(models.Exists(membership), ~models.Exists(blocked), models.Exists(roster))
+    )
+
+
 def lock_and_revalidate_inactive_video_write_access(
     *,
     tenant_id: int,

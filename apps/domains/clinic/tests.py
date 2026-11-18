@@ -2147,6 +2147,23 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(required["current_result"], "FAIL")
         self.assertFalse(required["can_leave"])
         self.assertEqual({row["clinic_link_id"] for row in required["current_targets"]}, {link.id for link in links})
+        self.assertTrue(all(row["can_submit_homework_files"] for row in required["current_targets"]))
+
+        # Reopened remediation stays visible, but a saved passing retake still locks files.
+        Score = django_apps.get_model("homework_results", "HomeworkScore")
+        Score.objects.create(
+            enrollment=enrollment, session=session, homework_id=links[0].source_id,
+            attempt_index=1, score=None, passed=False, meta={"status": "NOT_SUBMITTED"},
+        )
+        Score.objects.create(
+            enrollment=enrollment, session=session, homework_id=links[0].source_id,
+            attempt_index=2, score=100, max_score=100, passed=True,
+        )
+        reopened = assert_same_projection("CLINIC_REQUIRED")
+        self.assertEqual(
+            {row["clinic_link_id"]: row["can_submit_homework_files"] for row in reopened["current_targets"]},
+            {links[0].id: False, links[1].id: True},
+        )
         self.make_participant(
             self.tenant, self.data["clinic_session"], self.student,
             enrollment=enrollment, status="booked",
@@ -2447,6 +2464,22 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertIsNotNone(attended.checked_out_at)
         self.assertIsNone(attended.completed_at)
         self.assertIsNone(link.resolved_at)
+
+        # A slot after midnight belongs to the assessment date even when the
+        # clinic opened the night before.
+        ClinicSession.objects.filter(pk=before_exam.pk).update(
+            date=assessment_session.date - datetime.timedelta(days=1),
+            start_time=datetime.time(23, 0), duration_minutes=240, booking_mode="time_range",
+        )
+        SessionParticipant.objects.filter(pk=booked.pk).update(
+            booking_start_time=datetime.time(1, 0), booking_end_time=datetime.time(2, 0),
+        )
+        state, highlighted = read_state()
+        self.assertEqual(state["passcard_state"], "BOOKING_CONFIRMED")
+        self.assertEqual(state["current_booking"]["participant_id"], booked.id)
+        self.assertEqual(state["current_booking"]["date"], assessment_session.date.isoformat())
+        self.assertEqual(state["current_booking"]["start_time"], "01:00:00")
+        self.assertFalse(highlighted)
 
     @timezone.override("Asia/Seoul")
     def test_undated_assessment_uses_local_requirement_date_not_utc_date(self):

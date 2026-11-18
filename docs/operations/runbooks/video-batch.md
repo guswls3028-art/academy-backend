@@ -22,7 +22,7 @@
 - Ops compute environment: `academy-v1-video-ops-ce` (`EC2`, desired=0 max=1 vCPU)
 - Ops queue: `academy-v1-video-ops-queue`
 - Worker image: ECR `academy-video-worker`
-- Runtime shape: c6g.4xlarge, 8 vCPU, 16GB memory, 200GB EBS, job timeout 6h.
+- The standard job requests 2 vCPUs and 4096 MiB of memory and has a six-hour timeout. The compute environment allows `c6g.xlarge`, `c6g.2xlarge` and `c6g.4xlarge` hosts with a 200 GB root volume.
 - Ops jobs such as reconcile/scan_stuck/netprobe use the same worker image and worker settings.
 Current runtime snapshot: `docs/ssot/runtime-current.md`.
 
@@ -30,8 +30,10 @@ Current runtime snapshot: `docs/ssot/runtime-current.md`.
 
 The authenticated staff upload actions resolve the video in the request tenant and serialize
 completion on its row. A repeated completion for an already uploaded, processing or ready file
-returns the current video and starts no additional Batch job. A known Batch submission failure
-still uses the existing encoding retry flow.
+returns the current video and starts no additional Batch job. When the Batch queue or job
+definition is missing, completion retains the raw object, records `FAILED` and returns
+`VIDEO_BATCH_SUBMIT_FAILED` before allocating a new job or DynamoDB lock. Restore the configured
+target and use the existing encoding retry flow.
 
 Multipart completion creates the object at its assigned raw key conditionally. If storage reports
 that the upload ID is gone or an object already exists, the API checks that object's multipart ETag
@@ -44,12 +46,15 @@ transcode jobs. This includes jobs just created by upload completion and lets a 
 its job-to-video lock sequence. Already completed jobs and retained raw files are preserved.
 
 In an environment with ffprobe, the optional upload metadata probe reads duration and video-stream
-presence for up to 15 seconds. The production API image ships without FFmpeg and uses the
-existing unknown-duration enqueue path, as do storage stalls. AWS Batch checks the source.
+presence for up to 15 seconds, excluding attached pictures, thumbnails, and cover art.
+The production API image ships without FFmpeg and uses the
+existing unknown-duration enqueue path, as do storage stalls. AWS Batch selects the first playable
+video stream for both sizing and encoding. An audio source with only cover art is handled as
+`SOURCE_NO_VIDEO_STREAM` without an encoding retry.
 Signed source URLs stay out of the probe failure reason.
 
 Coverage: `test_video_multipart_upload.py`, `test_video_job_failure_status.py` and the
-`tests/video/test_source_probe.py` cases, plus the
+`tests/test_video_source_probe.py` cases, plus the
 [staff upload UI](../../../../frontend/docs/PUBLIC-VIDEO-WORKFLOW.md).
 
 The authenticated encoding status endpoint reads the tenant-scoped Redis state.
@@ -58,6 +63,41 @@ CloudWatch metrics request. To inspect requests, Redis misses and DB fallbacks
 in `/academy/api`, filter `extra.event = "video_encoding_progress_poll"` and sum
 `extra.progress_requests`, `extra.redis_miss` and `extra.db_hit`. Domain job
 and failure metrics still use their existing CloudWatch publishing path.
+
+### HLS encoding
+
+`academy/adapters/video/transcoder.py` uses separate H.264 profile and rate-control
+options for the high and middle variants. Both keep YUV 4:2:0, square pixels,
+the source frame rate and the existing GOP settings. x264 selects a level for
+each output's frame size, rate and buffer limits. The high variant limits x264 to
+four reference frames so the slow preset stays within the 1080p H.264 Level 4
+decoded-picture-buffer limits. The same applies to single-variant output.
+Repeated unscoped options previously applied the middle profile, CRF and forced
+level to the high variant, which could signal a level too low for the encoded
+frames. Existing HLS requires a re-encode through the owning video workflow to
+adopt the corrected bitstream.
+
+A source with multiple audio tracks uses its first default-disposition audio
+stream, or its first audio stream when no default is marked. Every HLS variant
+maps that one input stream as stereo AAC. Silent sources remain video-only.
+The middle variant is emitted only when it is smaller than the high variant
+and at least 100 pixels shorter. For example, a 640×360 source produces a single
+640×360 variant rather than an upscaled fallback.
+
+`tests/test_video_transcoder.py` verifies distinct options, original frame rate
+and automatic level selection, audio selection, and synthetic 360p decoding for
+sources with zero, one, and two audio tracks. Attached cover art is rejected when no
+playable video remains, and a playable video yields the same decoded frames with or
+without a cover. The synthetic FFmpeg checks inspect both
+variants' codec parameters and master playlist at 30 and 60 fps, including
+single-variant 1080p60 output.
+
+The ARM Video Worker image build runs `docker/video-worker/lecture-transcoder-smoke.py`
+as the worker user with networking disabled. The packaged encoder must decode a
+single 360p rendition and both the 900p and 720p renditions with moving frames and
+one AAC track matching the input's default audio, even when the source contains
+attached cover art. Audio with cover art alone must be rejected permanently without
+producing a master playlist. The script removes the synthetic media after verification.
 
 ## 2. Deploy Path
 

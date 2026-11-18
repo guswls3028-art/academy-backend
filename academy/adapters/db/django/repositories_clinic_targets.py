@@ -112,7 +112,7 @@ def explicit_not_submitted_exam_targets(*, tenant, section_id: int | None = None
         for session in Session.objects.filter(
             id__in=session_ids,
             lecture__tenant=tenant,
-        ).select_related("lecture")
+        ).select_related("lecture", "section")
     }
     existing = set(
         ClinicLink.objects.filter(
@@ -156,6 +156,7 @@ def clinic_links_for_admin_targets(*, tenant, include_resolved: bool):
         )
         .select_related(
             "session__lecture__tenant",
+            "session__section",
             "session__homework_policy",
             "enrollment__student",
             "enrollment__lecture",

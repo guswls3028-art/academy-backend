@@ -156,6 +156,56 @@ class OwnedQaAICleanupTests(TestCase):
         self.assertFalse(any(self.scope().inspect().values()))
         self.assertEqual(OpsAuditLog.objects.get(action=RECEIPT_ACTION).payload["job_ids"], [])
 
+    def multipart_owner(self, session_id):
+        digest = hashlib.sha256(
+            f"{self.code}:{self.tenant_id}:video-multipart-v1:{session_id}:{self.capability}".encode()
+        ).hexdigest()
+        return {
+            **self.owner,
+            "schema": "frontend-development-qa/video-multipart-v1",
+            "multipart_session_id": session_id,
+            "owner_sha256": digest,
+        }
+
+    def test_multipart_seal_allows_inspect_cleanup_and_post_delete_readback(self):
+        self.seal.payload = self.multipart_owner(1)
+        self.seal.save(update_fields=["payload"])
+        zero = {"ai_jobs": 0, "ai_results": 0, "ai_redis_keys": 0}
+        self.assertEqual(self.scope().inspect(), zero)
+
+        with transaction.atomic():
+            ai = self.scope()
+            self.assertEqual(ai.delete(ai.prepare()), zero)
+            self.tenant.delete()
+
+        receipt = OpsAuditLog.objects.get(action=RECEIPT_ACTION)
+        self.assertIsNone(receipt.target_tenant_id)
+        self.assertEqual(receipt.payload["owner"], self.seal.payload)
+        self.assertEqual(self.scope().inspect(), zero)
+        receipt.payload["owner"]["multipart_session_id"] = True
+        receipt.save(update_fields=["payload"])
+        with self.assertRaises(PermissionError):
+            self.scope().inspect()
+
+    def test_multipart_seal_rejects_wrong_capability_session_and_extra_fields(self):
+        owner = self.multipart_owner(42)
+        self.seal.payload = owner
+        self.seal.save(update_fields=["payload"])
+        with self.assertRaises(PermissionError):
+            self.scope(capability="b" * 64)
+
+        for payload in (
+            {**owner, "multipart_session_id": 43},
+            {**owner, "extra": True},
+            *(self.multipart_owner(invalid) for invalid in (True, "42", 0, 2**63)),
+        ):
+            with self.subTest(payload=payload), self.assertRaises(PermissionError):
+                self.seal.payload = payload
+                self.seal.save(update_fields=["payload"])
+                self.scope()
+        self.assertEqual(self.redis.deleted, [])
+        self.assertFalse(OpsAuditLog.objects.filter(action=RECEIPT_ACTION).exists())
+
     def test_cache_unavailable_or_delete_failure_cannot_claim_zero(self):
         self.job()
         with patch("apps.core.services.development_qa_ai_cleanup.get_redis_client", return_value=None):

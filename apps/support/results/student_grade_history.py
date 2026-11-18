@@ -7,9 +7,8 @@ from statistics import fmean
 from typing import Any
 
 from django.db.models import Count
-from django.db.models.functions import Coalesce
 
-from apps.domains.results.models import ExamAttempt, Result
+from apps.domains.results.models import ExamAttempt
 from apps.domains.results.services.omr_subjective_completion import (
     pending_omr_result_ids_for_ids,
 )
@@ -18,6 +17,8 @@ from apps.domains.results.utils.initial_exam_score import (
     load_initial_exam_scores,
     project_initial_exam_score,
 )
+from apps.domains.results.utils.result_queries import exam_history_results
+from apps.support.omr.score_shape_batch import request_exam_scoring_details_loader
 from apps.support.results.admin_student_grades_dependencies import (
     enrollment_lecture_metadata_by_id,
     exam_metadata_by_id,
@@ -142,12 +143,7 @@ def build_student_exam_history(
         return [], [], empty_exam_summary()
 
     results = list(
-        Result.objects.filter(
-            enrollment_id__in=enrollment_ids,
-            target_type="exam",
-        )
-        .annotate(recorded_at=Coalesce("submitted_at", "created_at"))
-        .order_by("-recorded_at", "-id")
+        exam_history_results(enrollment_ids=enrollment_ids)
         .values(
             "id",
             "target_id",
@@ -171,8 +167,9 @@ def build_student_exam_history(
         if int(row["target_id"]) not in explicit_exam_ids
         or (int(row["enrollment_id"]), int(row["target_id"])) in explicit_target_pairs
     ]
+    load_scoring_details = request_exam_scoring_details_loader()
     pending_result_ids = pending_omr_result_ids_for_ids(
-        row["id"] for row in results
+        (row["id"] for row in results), scoring_details_loader=load_scoring_details,
     )
     exam_ids = list({row["target_id"] for row in results})
     initial_scores = load_initial_exam_scores(
@@ -282,13 +279,14 @@ def build_student_exam_history(
                     row["info"]["pass_score"],
                 ),
                 "attempt_id": row["result"].get("attempt_id"),
-                "session": None,
+                "session_id": row["session_id"],
             }
             for row in canonical_rows
             if not row["subjective_pending"]
         ],
-        use_session_filter=False,
         tenant=tenant,
+        scoring_details_loader=load_scoring_details,
+        initial_scores=initial_scores,
     )
 
     exam_list: list[dict[str, Any]] = []

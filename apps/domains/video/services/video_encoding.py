@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, NamedTuple, Optional
 
+from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 
 from apps.domains.video.models import Video
@@ -49,9 +51,8 @@ def create_job_and_submit_batch(video: Video) -> JobResult:
         is not None when job creation was skipped (e.g. tenant_limit, submit_failed).
     """
     from apps.domains.video.models import VideoTranscodeJob
-    from .batch_submit import submit_batch_job
+    from .batch_submit import require_video_batch_target, submit_batch_job
     from .video_job_lock import acquire as lock_acquire, release as lock_release
-    from django.conf import settings
 
     lock_ttl = int(getattr(settings, "VIDEO_JOB_LOCK_TTL_SECONDS", 43200))
 
@@ -86,7 +87,6 @@ def create_job_and_submit_batch(video: Video) -> JobResult:
             logger.info("create_job_and_submit_batch: video %s already has active job %s", video.id, existing.id)
             return JobResult(existing, None)
 
-        from django.conf import settings
         tenant_limit = int(getattr(settings, "VIDEO_TENANT_MAX_CONCURRENT", 9999))
         global_limit = int(getattr(settings, "VIDEO_GLOBAL_MAX_CONCURRENT", 9999))
         per_video_limit = int(getattr(settings, "VIDEO_MAX_JOBS_PER_VIDEO", 10))
@@ -118,6 +118,12 @@ def create_job_and_submit_batch(video: Video) -> JobResult:
         if video_job_count >= per_video_limit:
             logger.warning("create_job_and_submit_batch: video %s total jobs=%s >= %s", video.id, video_job_count, per_video_limit)
             return JobResult(None, REASON_PER_VIDEO_LIMIT)
+
+        try:
+            require_video_batch_target()
+        except ImproperlyConfigured as exc:
+            logger.warning("create_job_and_submit_batch: video %s Batch target unavailable: %s", video.id, exc)
+            return JobResult(None, REASON_SUBMIT_FAILED)
 
         job = VideoTranscodeJob.objects.create(
             video=video,

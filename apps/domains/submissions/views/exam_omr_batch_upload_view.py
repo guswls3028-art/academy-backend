@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import timedelta
 import hashlib
 import logging
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from django.apps import apps
 from django.core.exceptions import ValidationError
@@ -12,6 +12,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
+from rest_framework.exceptions import APIException
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -52,6 +53,12 @@ GENERIC_SCAN_TYPES = {
     "tiff": ("image/tiff", (b"II*\x00", b"MM\x00*")),
     "pdf": ("application/pdf", (b"%PDF-",)),
 }
+IMAGE_SCAN_SIGNATURES = tuple(dict.fromkeys(
+    signature
+    for mime_type, signatures in GENERIC_SCAN_TYPES.values()
+    if mime_type.startswith("image/")
+    for signature in signatures
+)) + (b"II+\x00", b"MM\x00+")  # BigTIFF is also readable by the image worker.
 OMR_UPLOAD_FILE_PROPERTIES = {
     "file": {"type": "string", "format": "binary"},
     "files": {
@@ -203,23 +210,54 @@ def _batch_context(*, tenant, exam_id: int, session_id: int | None):
     return exam, int(session["id"]), int(session["lecture_id"])
 
 
-def _create_batch(*, tenant, user, exam_id: int, total_count: int, session_id: int | None):
+class OmrBatchInitializationConflict(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "등록 요청 정보가 기존 작업과 일치하지 않습니다."
+
+
+def _create_batch(
+    *, tenant, user, exam_id: int, total_count: int, session_id: int | None,
+    client_request_id: UUID | None = None,
+):
     if total_count < 1 or total_count > MAX_FILES:
         raise ValueError(f"total_count must be between 1 and {MAX_FILES}")
-    _, resolved_session_id, lecture_id = _batch_context(
-        tenant=tenant,
+    batches = OmrUploadBatch.objects.filter(tenant=tenant, created_by=user)
+    batch_id = None
+    if client_request_id is not None:
+        batch_id = uuid5(
+            NAMESPACE_URL,
+            f"academy:omr-batch-initialize:{tenant.pk}:{user.pk}:{client_request_id}",
+        )
+    try:
+        _, resolved_session_id, lecture_id = _batch_context(
+            tenant=tenant,
+            exam_id=exam_id,
+            session_id=session_id,
+        )
+    except ValueError:
+        # Use the same conflict response if a retry supplies a context that
+        # would not have been valid for a new batch.
+        if batch_id is not None and batches.filter(pk=batch_id).exists():
+            raise OmrBatchInitializationConflict()
+        raise
+    batch_fields = dict(
         exam_id=exam_id,
-        session_id=session_id,
+        session_id=resolved_session_id,
+        lecture_id=lecture_id,
+        total_count=total_count,
     )
     with transaction.atomic():
-        batch = OmrUploadBatch.objects.create(
-            tenant=tenant,
-            created_by=user,
-            exam_id=exam_id,
-            session_id=resolved_session_id,
-            lecture_id=lecture_id,
-            total_count=total_count,
-        )
+        if batch_id is None:
+            batch = batches.create(tenant=tenant, created_by=user, **batch_fields)
+        else:
+            batch, created = batches.get_or_create(
+                pk=batch_id,
+                defaults={"tenant": tenant, "created_by": user, **batch_fields},
+            )
+            if not created:
+                if any(getattr(batch, field) != value for field, value in batch_fields.items()):
+                    raise OmrBatchInitializationConflict()
+                return batch
         OmrUploadBatchItem.objects.bulk_create(
             [
                 OmrUploadBatchItem(
@@ -422,12 +460,17 @@ def _file_validation_error(upload_file) -> tuple[str, str] | None:
     if upload_file.size > MAX_FILE_SIZE:
         return "file_too_large", "파일 크기가 10MB를 초과합니다."
     content_type = str(upload_file.content_type or "").split(";", 1)[0].strip().lower()
+    signatures = ()
     if content_type in ("", "application/octet-stream"):
         suffix = upload_file.name.rpartition(".")[2].lower()
         detected = GENERIC_SCAN_TYPES.get(suffix)
         if detected is None:
             return "unsupported_file_type", "허용되지 않는 파일 형식입니다."
         content_type, signatures = detected
+    elif content_type in OMR_CONTENT_TYPES and content_type.startswith("image/"):
+        # Keep valid scanner images even when the browser labels them as another supported image type.
+        signatures = IMAGE_SCAN_SIGNATURES
+    if signatures:
         position = upload_file.tell()
         try:
             upload_file.seek(0)
@@ -602,9 +645,16 @@ class ExamOMRBatchInitializeView(APIView):
             fields={
                 "total_count": serializers.IntegerField(min_value=1, max_value=MAX_FILES),
                 "session_id": serializers.IntegerField(required=False, allow_null=True),
+                "client_request_id": serializers.UUIDField(required=False),
             },
         ),
-        responses={201: OmrUploadBatchSummarySerializer},
+        responses={
+            201: OmrUploadBatchSummarySerializer,
+            409: inline_serializer(
+                name="OmrUploadBatchInitializeConflict",
+                fields={"detail": serializers.CharField()},
+            ),
+        },
     )
     def post(self, request, exam_id: int):
         tenant = getattr(request, "tenant", None)
@@ -617,12 +667,17 @@ class ExamOMRBatchInitializeView(APIView):
                 field="session_id",
                 required=False,
             )
+            client_request_id = (
+                serializers.UUIDField().run_validation(request.data["client_request_id"])
+                if "client_request_id" in request.data else None
+            )
             batch = _create_batch(
                 tenant=tenant,
                 user=request.user,
                 exam_id=int(exam_id),
                 total_count=int(total_count),
                 session_id=session_id,
+                client_request_id=client_request_id,
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)

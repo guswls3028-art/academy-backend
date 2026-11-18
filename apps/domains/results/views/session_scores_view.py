@@ -720,11 +720,10 @@ class SessionScoresView(APIView):
                     "total_score": float(r.total_score or 0.0) if r is not None else None,
                     "pass_score": exam_pass_score_map.get(exid, 0.0),
                     "attempt_id": int(r.attempt_id) if r is not None and r.attempt_id else None,
-                    "session": session,
+                    "session_id": session.id,
                 })
         achievement_map = compute_exam_achievement_bulk(
             items=achievement_items,
-            use_session_filter=True,
             tenant=tenant,
         )
 

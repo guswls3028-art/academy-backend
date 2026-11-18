@@ -2,7 +2,7 @@
 import logging
 
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Prefetch, prefetch_related_objects
 from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema
 from rest_framework import mixins, viewsets, status
 from rest_framework.decorators import action
@@ -47,6 +47,19 @@ from apps.support.clinic.session_dependencies import (
 logger = logging.getLogger(__name__)
 
 CLINIC_RECIPIENT_TARGETS = ("student", "parent", "both")
+
+
+def _participant_plan_prefetches():
+    return (
+        "session__target_lectures",
+        Prefetch(
+            "plan_items",
+            queryset=SessionParticipantPlanItem.objects.filter(removed_at__isnull=True)
+            .select_related("clinic_link__enrollment", "clinic_link__session")
+            .order_by("clinic_link_id", "id"),
+            to_attr="_active_plan_items",
+        ),
+    )
 
 
 class ClinicRecipientActionSerializer(serializers.Serializer):
@@ -267,21 +280,7 @@ class ParticipantViewSet(
                 "checked_out_by",
                 "enrollment__lecture",
             )
-            .prefetch_related(
-                "session__target_lectures",
-                Prefetch(
-                    "plan_items",
-                    queryset=(
-                        SessionParticipantPlanItem.objects.filter(removed_at__isnull=True)
-                        .select_related(
-                            "clinic_link__enrollment",
-                            "clinic_link__session",
-                        )
-                        .order_by("clinic_link_id", "id")
-                    ),
-                    to_attr="_active_plan_items",
-                ),
-            )
+            .prefetch_related(*_participant_plan_prefetches())
         )
 
         # 학생이 조회하는 경우: 자신의 예약 신청만 조회
@@ -374,6 +373,7 @@ class ParticipantViewSet(
 
             transaction.on_commit(send_notifications)
 
+        prefetch_related_objects(result.participants, *_participant_plan_prefetches())
         response_data = {
             "count": len(result.participants),
             "participants": ClinicSessionParticipantSerializer(

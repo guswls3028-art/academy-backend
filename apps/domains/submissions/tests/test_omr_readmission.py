@@ -9,6 +9,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.submissions.models import OmrUploadBatchItem, Submission, SubmissionAnswer
+from apps.domains.submissions.tests.omr_receipt_test_support import tiny_omr_image
 from apps.domains.submissions.views.exam_omr_batch_upload_view import (
     ExamOMRBatchInitializeView, ExamOMRBatchUploadView, OmrUploadBatchDetailView,
     OmrUploadBatchRetryView, _mark_admission_failed, _mark_duplicate_admission,
@@ -62,7 +63,7 @@ class OmrReadmissionFixture:
         batch_id = batch_id or self.initialize()
         request = APIRequestFactory().post("/", {
             "batch_id": str(batch_id), "item_ordinals": ["1"],
-            "files": [SimpleUploadedFile("scan.jpg", content, content_type="image/jpeg")],
+            "files": [SimpleUploadedFile("scan.jpg", tiny_omr_image(content), content_type="image/jpeg")],
         }, format="multipart")
         request.tenant = self.tenant
         force_authenticate(request, user=self.user)

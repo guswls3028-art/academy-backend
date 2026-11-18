@@ -154,6 +154,7 @@ def _build_manual_preview_recipients(
     data: dict[str, Any],
     recipients,
     template_plan: TemplatePlan,
+    video_homework_replacements: dict | None = None,
 ) -> list[dict[str, Any]]:
     """Build safe preview rows from the exact values used for Solapi."""
     if not template_plan.ok or not template_plan.template_type:
@@ -178,7 +179,7 @@ def _build_manual_preview_recipients(
     is_grade_send = (data.get("block_category") or "").strip() == "grades"
 
     tenant_name = (tenant.name or "").strip()
-    site_url = get_tenant_site_url(tenant) or ""
+    site_url = (get_tenant_site_url(tenant) or "") if video_homework_replacements is None else ""
     preview_recipients = []
     for recipient in recipients:
         phone = recipient.phone or ""
@@ -194,15 +195,17 @@ def _build_manual_preview_recipients(
         else:
             student_body = student_body_override or body_base
         merged_context = {**shared_context, **student_context}
-        replacements = build_manual_replacements(
-            template_type=template_plan.template_type,
-            content_body=student_body,
-            context=merged_context,
-            tenant_name=tenant_name,
-            student_name=recipient.student_name,
-            site_url=site_url,
-            literal_body=bool(data.get("video_makeup_homework")),
-        )
+        if video_homework_replacements is None:
+            replacements = build_manual_replacements(
+                template_type=template_plan.template_type,
+                content_body=student_body,
+                context=merged_context,
+                tenant_name=tenant_name,
+                student_name=recipient.student_name,
+                site_url=site_url,
+            )
+        else:
+            replacements = video_homework_replacements.get(recipient.student_id, [])
         preview_recipients.append(
             {
                 "student_id": recipient.student_id,
@@ -252,15 +255,6 @@ def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
     student_ids = list(dict.fromkeys(int(student_id) for student_id in (data.get("student_ids") or [])))
     selected_count = len(student_ids)
     recipients = resolve_student_message_recipients(tenant, student_ids, send_to=send_to)
-    from apps.support.messaging.video_makeup_homework import video_makeup_homework_preview
-
-    homework_preview = video_makeup_homework_preview(tenant=tenant, data=data, recipients=recipients)
-    if homework_preview and not homework_preview["fingerprint"] and student_ids:
-        blockers.append(PreflightIssue(
-            "video_makeup_homework_changed",
-            "영상보강 과제 대상 확인",
-            "과제 안내 대상을 다시 확인해 주세요.",
-        ))
     resolved_count = len(recipients)
     phones = [recipient.phone for recipient in recipients]
 
@@ -324,6 +318,27 @@ def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
     template_plan = _resolve_template_for_manual_send(tenant, data)
     if not template_plan.ok:
         blockers.append(PreflightIssue("template_not_ready", "알림톡 봉투 확인 필요", template_plan.detail))
+    from apps.support.messaging.video_makeup_homework import (
+        VIDEO_HOMEWORK_LENGTH_CODE,
+        build_video_makeup_homework_envelope,
+        video_makeup_homework_length_issue,
+    )
+
+    homework_preview, homework_replacements = build_video_makeup_homework_envelope(
+        tenant=tenant, data=data, recipients=recipients,
+        template_type=template_plan.template_type, template_id=template_plan.solapi_template_id,
+    )
+    if homework_preview and not homework_preview["fingerprint"] and student_ids and template_plan.ok:
+        blockers.append(PreflightIssue(
+            "video_makeup_homework_changed",
+            "영상보강 과제 대상 확인",
+            "과제 안내 대상을 다시 확인해 주세요.",
+        ))
+    length_issue = video_makeup_homework_length_issue(
+        recipients=recipients, template_type=template_plan.template_type, replacements=homework_replacements,
+    )
+    if length_issue:
+        blockers.append(PreflightIssue(VIDEO_HOMEWORK_LENGTH_CODE, "영상보강 과제 안내 길이 초과", length_issue))
 
     recent_count = get_hourly_notification_usage(tenant)
     remaining_hourly = max(0, HOURLY_SEND_LIMIT - recent_count)
@@ -404,6 +419,7 @@ def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
             data,
             recipients,
             template_plan,
+            homework_replacements if homework_preview is not None else None,
         ),
         "limits": {
             "hourly_limit": HOURLY_SEND_LIMIT,

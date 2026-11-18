@@ -2,17 +2,37 @@
 
 from rest_framework import serializers
 from .models import Lecture, Session, Section, SectionAssignment, SessionSchedule
+from .services.schedules import SessionCreateScheduleInput
 from apps.support.lectures.filter_dependencies import active_enrollment_count_for_lecture
+
+
+class LectureScheduleWeekdayField(serializers.IntegerField):
+    def to_internal_value(self, data):
+        if type(data) is not int:
+            self.fail("invalid")
+        return super().to_internal_value(data)
+
+
+class LectureScheduleDefaultSerializer(serializers.Serializer):
+    label = serializers.CharField(max_length=40)
+    weekday = LectureScheduleWeekdayField(min_value=1, max_value=7, help_text="ISO 요일 (1=월요일, 7=일요일)")
+
+    def to_internal_value(self, data):
+        if not isinstance(data, dict) or set(data) != {"label", "weekday"} or not isinstance(data["label"], str):
+            raise serializers.ValidationError("수업일 기본값에는 반 이름과 숫자 요일을 입력해 주세요.")
+        return super().to_internal_value(data)
 
 
 class LectureSerializer(serializers.ModelSerializer):
     active_enrollment_count = serializers.IntegerField(read_only=True)
+    schedule_defaults = LectureScheduleDefaultSerializer(many=True, required=False, max_length=20)
 
     class Meta:
         model = Lecture
         fields = [
             "id", "tenant", "title", "name", "subject", "description",
             "start_date", "end_date", "lecture_time",
+            "schedule_mode", "schedule_defaults",
             "color", "chip_label", "is_active", "display_order", "is_system",
             "active_enrollment_count",
             "created_at", "updated_at",
@@ -37,7 +57,31 @@ class LectureSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"end_date": "종료일은 시작일보다 같거나 이후여야 합니다."}
             )
+        if "schedule_mode" in attrs or "schedule_defaults" in attrs:
+            mode = attrs.get("schedule_mode", self.instance.schedule_mode if self.instance else Lecture.ScheduleMode.SINGLE)
+            defaults = attrs.get("schedule_defaults", self.instance.schedule_defaults if self.instance else [])
+            if len({row["label"].casefold() for row in defaults}) != len(defaults):
+                raise serializers.ValidationError({"schedule_defaults": "반마다 서로 다른 이름을 입력해 주세요."})
+            if mode == Lecture.ScheduleMode.SPLIT and len(defaults) < 2:
+                raise serializers.ValidationError({"schedule_defaults": "여러 날짜로 운영하려면 기본 반을 두 개 이상 입력해 주세요."})
+            if mode == Lecture.ScheduleMode.SINGLE and len(defaults) > 1:
+                raise serializers.ValidationError({"schedule_defaults": "한 날짜로 운영할 때는 기본 수업일을 하나만 입력할 수 있습니다."})
         return attrs
+
+
+class LectureScheduleSettingsSerializer(LectureSerializer):
+    schedule_mode = serializers.ChoiceField(choices=Lecture.ScheduleMode.choices)
+    schedule_defaults = LectureScheduleDefaultSerializer(many=True, max_length=20)
+
+    class Meta(LectureSerializer.Meta):
+        ref_name = "LectureScheduleSettings"
+
+    def validate(self, attrs):
+        # `partial_update` permits omitting ordinary lecture fields, but not either setting.
+        required = {field: "이 필드는 필수입니다." for field in ("schedule_mode", "schedule_defaults") if field not in attrs}
+        if required:
+            raise serializers.ValidationError(required)
+        return super().validate(attrs)
 
 
 class SessionScheduleSummarySerializer(serializers.ModelSerializer):
@@ -171,7 +215,8 @@ class SessionSerializer(serializers.ModelSerializer):
                     else self.instance.order
                 )
 
-        if candidate_regular_order is not None and lecture and session_type == Session.SessionType.REGULAR:
+        # Bundled creates check order under the lecture lock, after replay lookup.
+        if not attrs.get("create_request_id") and candidate_regular_order is not None and lecture and session_type == Session.SessionType.REGULAR:
             qs = Session.objects.filter(
                 lecture=lecture,
                 section=section,
@@ -208,6 +253,15 @@ class SessionSerializer(serializers.ModelSerializer):
                 pass
 
         return attrs
+
+
+class SessionCreateSerializer(SessionSerializer):
+    initial_schedules = SessionCreateScheduleInput(many=True, write_only=True, allow_empty=False, max_length=20)
+    create_request_id = serializers.UUIDField(write_only=True)
+
+    class Meta(SessionSerializer.Meta):
+        fields = [*SessionSerializer.Meta.fields, "initial_schedules", "create_request_id"]
+        ref_name = "LectureSessionCreate"
 
 
 class SectionSerializer(serializers.ModelSerializer):

@@ -27,6 +27,7 @@ from apps.domains.results.services.omr_subjective_completion import (
 )
 from apps.domains.results.services.online_grading_completion import completed_online_result_pairs
 from apps.domains.results.utils.initial_exam_score import (
+    InitialExamScore,
     load_initial_exam_scores,
     project_initial_exam_score,
 )
@@ -124,12 +125,11 @@ def compute_exam_achievement(
         "total_score": total_score,
         "pass_score": pass_score,
         "attempt_id": attempt_id,
-        "session": session,
+        "session_id": session.id if session is not None else None,
         "meta_status": meta_status,
     }
     return compute_exam_achievement_bulk(
         items=[item],
-        use_session_filter=True,
         tenant=tenant,
     )[(int(enrollment_id), int(exam_id))]
 
@@ -156,8 +156,10 @@ def _build_clinic_retake_info(link_or_dict) -> dict[str, Any]:
 def compute_exam_achievement_bulk(
     *,
     items: list[dict[str, Any]],
-    use_session_filter: bool = True,
     tenant: Any,
+    scoring_details_loader=None,
+    include_first_attempt_readiness: bool = False,
+    initial_scores: dict[tuple[int, int], InitialExamScore] | None = None,
 ) -> dict[tuple[int, int], dict[str, Any]]:
     """
     여러 (enrollment, exam) 쌍의 성취를 한 번에 계산 (N+1 방지).
@@ -169,20 +171,18 @@ def compute_exam_achievement_bulk(
         "total_score": float | None,
         "pass_score": float | None,
         "attempt_id": int | None,
-        "session": Session | None,  # None 이면 클리닉 판정 스킵
+        "session_id": int | None,
         "meta_status": str | None,  # 선택: 유효한 시도에 상태가 없을 때의 fallback
       }
 
-    use_session_filter=True (기본):
-        ClinicLink 조회 시 session_id 도 조건에 포함 —
-        동일 (enrollment, exam)이 여러 session 을 거칠 때 session 일치만 인정.
-    use_session_filter=False:
-        session 무관하게 (enrollment, exam)로만 매칭 —
-        admin_student_grades_view 처럼 이미 exam 별로 대표 session 을 고른 뷰용.
+    보강은 같은 수강·시험·차시의 현재 회차만 인정한다. 차시가 확정되지
+    않으면 원점수 판정만 반환한다.
 
     반환: { (enrollment_id, exam_id): achievement_data }
     compute_exam_achievement 와 동일한 키 셋 (is_pass/remediated/final_pass/
     clinic_retake/achievement/is_provisional/meta_status).
+
+    initial_scores may supply an already loaded superset of the requested exam/enrollment scope.
 
     쿼리 수: items 수와 무관하게 ClinicLink/ExamAttempt/ExamResult 각 1회 (최대 3개).
     """
@@ -192,54 +192,36 @@ def compute_exam_achievement_bulk(
     enrollment_ids = {int(i["enrollment_id"]) for i in items}
     exam_ids = {int(i["exam_id"]) for i in items}
     attempt_ids = {int(i["attempt_id"]) for i in items if i.get("attempt_id")}
-    session_ids = {
-        int(i["session"].id) for i in items
-        if use_session_filter and i.get("session") is not None
-    }
-    initial_scores = load_initial_exam_scores(
-        exam_ids=exam_ids,
-        enrollment_ids=enrollment_ids,
-    )
+    session_ids = {int(i["session_id"]) for i in items if i.get("session_id") is not None}
+    if initial_scores is None:
+        initial_scores = load_initial_exam_scores(exam_ids=exam_ids, enrollment_ids=enrollment_ids)
+    else:
+        initial_scores = {
+            key: state
+            for key, state in initial_scores.items()
+            if key[0] in exam_ids and key[1] in enrollment_ids
+        }
     attempt_ids.update(
         state.attempt_id
         for state in initial_scores.values()
         if state.attempt_id is not None
     )
 
-    # 1) ClinicLink bulk fetch (remediated 판정)
-    # key 구조:
-    #   use_session_filter=True  → (enrollment_id, exam_id, session_id or None)
-    #   use_session_filter=False → (enrollment_id, exam_id, None) — session 무관
-    # 동일 key 에 link 가 여러 개면 resolved_at 최신만 보관.
-    link_map: dict[tuple[int, int, int | None], dict[str, Any]] = {}
     remediation_links = exam_remediation_link_values(
         enrollment_ids=enrollment_ids,
         exam_ids=exam_ids,
         session_ids=session_ids,
-        use_session_filter=use_session_filter,
         tenant=tenant,
     )
     stale_teacher_link_ids = stale_teacher_exam_resolution_link_ids(
         links=remediation_links,
         tenant_id=int(tenant.id),
     )
-    for cl in remediation_links:
-        if int(cl["id"]) in stale_teacher_link_ids:
-            continue
-        if use_session_filter:
-            sid = int(cl["session_id"]) if cl.get("session_id") is not None else None
-        else:
-            sid = None
-        key = (int(cl["enrollment_id"]), int(cl["source_id"]), sid)
-        prev = link_map.get(key)
-        if prev is None:
-            link_map[key] = cl
-            continue
-        # order by -resolved_at (latest wins)
-        prev_at = prev.get("resolved_at")
-        cur_at = cl.get("resolved_at")
-        if cur_at and (prev_at is None or cur_at > prev_at):
-            link_map[key] = cl
+    link_map = {
+        (int(link["enrollment_id"]), int(link["source_id"]), int(link["session_id"])): link
+        for link in remediation_links
+        if int(link["id"]) not in stale_teacher_link_ids
+    }
 
     # 2) ExamAttempt.meta.status + submission_id bulk
     meta_status_by_attempt: dict[int, str | None] = {}
@@ -266,13 +248,14 @@ def compute_exam_achievement_bulk(
             enrollment__tenant_id=int(tenant.id),
         )
     )
-    pending_result_ids = pending_omr_result_ids(result_rows)
-    pending_result_pairs = {
-        (int(result.enrollment_id), int(result.target_id))
+    pending_result_ids = pending_omr_result_ids(result_rows, scoring_details_loader=scoring_details_loader)
+    pending_result_attempts = {
+        (int(result.enrollment_id), int(result.target_id), result.attempt_id)
         for result in result_rows
         if result.enrollment_id is not None
         and int(result.id) in pending_result_ids
     }
+    pending_result_pairs = {(enrollment_id, exam_id) for enrollment_id, exam_id, _ in pending_result_attempts}
 
     # 3) ExamResult.status bulk (is_provisional 판정)
     er_status_by_pair: dict[tuple[int, int, int], str] = {}
@@ -300,6 +283,7 @@ def compute_exam_achievement_bulk(
             completed_attempt_pairs=completed_attempt_pairs,
             canonical_pairs={(int(row.enrollment_id), int(row.target_id)) for row in result_rows},
             tenant_id=int(tenant.id),
+            scoring_details_loader=scoring_details_loader,
         )
         for er in legacy_rows:
             enrollment_id = er["submission__enrollment_id"]
@@ -328,8 +312,7 @@ def compute_exam_achievement_bulk(
             candidate_attempt_id is not None
             and pair_by_attempt.get(candidate_attempt_id) == (e_id, x_id)
         ) else None
-        session = i.get("session")
-        sid = int(session.id) if (use_session_filter and session is not None) else None
+        sid = i.get("session_id")
 
         meta_status = meta_status_by_attempt.get(a_id) if a_id else None
         if meta_status is None:
@@ -350,15 +333,7 @@ def compute_exam_achievement_bulk(
             is_not_submitted=is_not_submitted,
         )
 
-        # remediated 조회 키:
-        #  - use_session_filter=True: session 이 있을 때만 (e, x, session.id) 로 조회
-        #  - use_session_filter=False: session 유무 무관하게 (e, x, None) 으로 조회
-        link_info = None
-        if use_session_filter:
-            if session is not None:
-                link_info = link_map.get((e_id, x_id, sid))
-        else:
-            link_info = link_map.get((e_id, x_id, None))
+        link_info = link_map.get((e_id, x_id, int(sid))) if sid is not None else None
         # A saved clinic resolution is history when the first attempt already passed.
         if link_info is not None and is_pass is not True:
             remediated = True
@@ -386,6 +361,13 @@ def compute_exam_achievement_bulk(
                 and (submission_by_attempt[a_id], e_id, x_id) not in completed_online_pairs
             )
 
+        if include_first_attempt_readiness:
+            # Preserve the separate latest-result hold on achievement labels.
+            first_attempt_provisional = is_provisional or (
+                (e_id, x_id, a_id) in pending_result_attempts
+                if a_id is not None else (e_id, x_id) in pending_result_pairs
+            )
+
         # First-attempt scoring remains the achievement SSOT, but a newer
         # representative OMR result can still be awaiting essay grading. In
         # that state no final pass/remediation label may be projected yet.
@@ -406,5 +388,7 @@ def compute_exam_achievement_bulk(
             "is_provisional": is_provisional,
             "meta_status": meta_status,
         }
+        if include_first_attempt_readiness:
+            out[(e_id, x_id)]["first_attempt_provisional"] = first_attempt_provisional
 
     return out

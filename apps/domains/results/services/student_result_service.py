@@ -10,11 +10,12 @@ from __future__ import annotations
 from django.http import Http404
 
 from academy.adapters.db.django import repositories_exams as exams_repo
-from apps.domains.results.models import Result, ExamAttempt
+from apps.domains.results.models import ExamAttempt
 from apps.domains.results.serializers.student_exam_result import StudentExamResultSerializer
 from apps.domains.results.utils.session_exam import get_sessions_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.ranking import compute_exam_rankings
+from apps.domains.results.utils.result_queries import exam_history_results
 from apps.domains.results.services.student_rank_visibility import student_rank_visibility_payload
 from apps.domains.results.utils.initial_exam_score import (
     load_initial_exam_scores,
@@ -54,18 +55,6 @@ def active_exam_enrollment_ids_for_student(*, tenant, student, exam_id: int) -> 
     )
 
 
-def _history_exam_enrollment_ids_for_student(*, tenant, student, exam_id: int) -> list[int]:
-    allowed_enrollment_ids = exams_repo.exam_enrollment_ids_for_tenant_exam(exam_id, tenant)
-    return list(
-        learning_history_enrollments_for_student(
-            tenant=tenant,
-            student=student,
-        )
-        .filter(id__in=allowed_enrollment_ids)
-        .values_list("id", flat=True)
-    )
-
-
 def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     """
     현재 사용자의 시험 결과 스냅샷 + 재시험/클리닉 정책.
@@ -84,21 +73,24 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     if not student:
         raise Http404("student not found")
 
-    enrollment_ids = _history_exam_enrollment_ids_for_student(
-        tenant=tenant,
-        student=student,
-        exam_id=exam_id,
-    )
-    enrollment = (
+    allowed_enrollment_ids = exams_repo.exam_enrollment_ids_for_tenant_exam(exam_id, tenant)
+    enrollment_ids = (
         learning_history_enrollments_for_student(tenant=tenant, student=student)
-        .filter(id__in=enrollment_ids)
-        .order_by("id")
+        .filter(id__in=allowed_enrollment_ids)
+        .values_list("id", flat=True)
+    )
+    result = (
+        exam_history_results(enrollment_ids=enrollment_ids)
+        .filter(target_id=exam_id)
+        .select_related("enrollment__lecture")
+        .prefetch_related("items")
         .first()
     )
-    if not enrollment:
-        raise Http404("enrollment not found")
+    if not result:
+        raise Http404("result not found")
 
-    enrollment_id = int(enrollment.id)
+    enrollment = result.enrollment
+    enrollment_id = int(result.enrollment_id)
     session_candidates = list(
         get_sessions_for_exam(exam_id)
         .filter(
@@ -110,16 +102,6 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     # 다른 강의/차시의 확인 기록을 빌려오지 않는다. 같은 수강 강의에서도
     # 후보가 둘 이상이면 상세 화면의 상태는 실패 폐쇄한다.
     session = session_candidates[0] if len(session_candidates) == 1 else None
-
-    result = (
-        Result.objects
-        .filter(target_type="exam", target_id=exam_id, enrollment_id=enrollment_id)
-        .prefetch_related("items")
-        .order_by("-id")
-        .first()
-    )
-    if not result:
-        raise Http404("result not found")
 
     allow_retake = bool(getattr(exam, "allow_retake", False))
     max_attempts = int(getattr(exam, "max_attempts", 1) or 1)

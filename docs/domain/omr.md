@@ -596,6 +596,11 @@ submission id, 안전한 접수 실패 사유를 제공한다. 다른 tenant·�
 스캐너가 파일 형식을 일반 바이너리(`application/octet-stream`)로 보내도 지원 확장자와
 파일 시작 바이트가 일치하면 실제 MIME으로 접수한다. PDF는 이 경우에도 한 페이지인지
 확인하며, 묶음 PDF는 해당 순번을 한 장짜리 파일로 교체해 복구할 수 있다.
+JPEG·PNG·TIFF로 표시된 파일도 접수 전에 지원 이미지의 시작 바이트를 확인한다.
+지원 이미지로 시작하지 않는 파일은 R2 저장이나 작업 전송 없이 `invalid_file_content`로
+처리한다. 예약된 작업에서는 해당 순번의 파일만 다시 선택할 수 있으며, legacy 요청은
+batch 생성 전에 400을 반환한다. 시작 바이트가 맞는 파일의 전체 디코딩과 EXIF 방향
+보정은 기존 워커에서 수행한다.
 회귀 검증은 `test_exam_omr_batch_upload_pdf_guard.py`의 빈 파일→재접수, 100개 순번 보존,
 혼합 처리 상태, tenant 격리 및 GET 무변경 사례를 따른다.
 도입 전 item은 migration에서 tenant/exam scope만 backfill하고 기존 R2 원본을 다시 읽지
@@ -610,6 +615,14 @@ DB transaction이 rollback되면 서버는 그 요청에서 생성한 exact obje
 item 전환도 row lock 아래에서 현재 상태를 다시 확인하며, 이미 `RECEIVED`와 Submission
 연결이 확정된 item은 지우지 않는다. Legacy multipart는 sheet/session 해석까지 성공한
 뒤에만 implicit batch를 만들므로 잘못된 sheet 요청이 pending batch를 남기지 않는다.
+
+초기 접수 JSON의 선택 필드 `client_request_id`는 한 파일 선택 작업을 나타내는 UUID다.
+서버는 같은 학원·생성 직원·요청 UUID에서 시험, 차시, 파일 총수가 일치하면
+최초 요청과 재시도에 모두 `201` 및 같은 batch와 순번을 돌려준다. 초기 응답이
+끊겨도 같은 UUID로 다시 요청하면 새 작업을 만들지 않는다. 같은 UUID의 시험·차시·
+파일 총수가 바뀌면 `409`를 반환한다. 새로운 파일 선택 작업은 새 UUID를 사용한다.
+필드를 생략한 기존 클라이언트는 종전처럼 요청마다 새 batch를 생성한다.
+동시 재요청에서는 하나의 transaction만 batch와 순번 전체를 생성한다.
 
 업로드 OpenAPI는 multipart의 legacy/durable 및 단일/다중 파일 형태를 `anyOf` 대안으로
 명시한다. 둘 모두 `file` 또는 `files` 중 하나가 필수이며, durable 대안은 `batch_id`와

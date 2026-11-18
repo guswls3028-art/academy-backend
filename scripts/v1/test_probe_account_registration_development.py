@@ -1,11 +1,12 @@
 """Offline tests: no Django bootstrap, credentials store, network or AWS."""
+import hashlib
 import importlib.util
 import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 PATH = Path(__file__).with_name("probe-account-registration-development.py")
 SPEC = importlib.util.spec_from_file_location("account_probe", PATH)
@@ -193,6 +194,97 @@ class AccountProbeTests(unittest.TestCase):
         with patch.dict(sys.modules, modules), patch.dict(probe.os.environ, {}, clear=True):
             with self.assertRaisesRegex(probe.ProbeFailure, "runtime-scope-invalid"):
                 probe.runtime_scope(SimpleNamespace(pk=10, code="movementhui"))
+
+    def test_multipart_cleanup_requires_exact_seal_and_preserves_unexpected_snapshots(self):
+        tenant = SimpleNamespace(pk=71, code="qa-ymath-realuse-fe-123-1-abcdef123456")
+        capability = "a" * 64
+        release = f"sha-{'b' * 40}-run-123-1"
+        digest = f"sha256:{'c' * 64}"
+        seal = {
+            "schema": "frontend-development-qa/video-multipart-v1",
+            "tenant_code": tenant.code,
+            "tenant_id": tenant.pk,
+            "multipart_session_id": 42,
+            "owner_sha256": hashlib.sha256(
+                f"{tenant.code}:{tenant.pk}:video-multipart-v1:42:{capability}".encode()
+            ).hexdigest(),
+        }
+        env = {
+            "QA_ACTION": "Cleanup",
+            "QA_SYNTHETIC_MULTIPART_VIDEO": "true",
+            "QA_TENANT": tenant.code,
+            "QA_TENANT_ID": str(tenant.pk),
+            "QA_RELEASE": release,
+            "QA_DIGEST": digest,
+            "QA_CAPABILITY": capability,
+            "QA_IMAGE": f"809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api@{digest}",
+            "DJANGO_SETTINGS_MODULE": "apps.api.config.settings.development",
+            "ACADEMY_RUNTIME_ENV": "development",
+            "ACADEMY_DEVELOPMENT_RELEASE_ID": release,
+            "SOLAPI_MOCK": "1",
+        }
+        setup_rows = Mock()
+        setup_rows.values_list.return_value = [seal]
+        snapshot_rows = Mock()
+        snapshot_rows.exists.return_value = False
+        def audit_filter(**kwargs):
+            self.assertIs(kwargs["target_tenant"], tenant)
+            if kwargs["action"] == "development.qa.setup":
+                self.assertEqual(kwargs["result"], "success")
+                return setup_rows
+            self.assertEqual(kwargs["action"], probe.SNAPSHOT_ACTION)
+            return snapshot_rows
+
+        modules = {
+            "django.conf": SimpleNamespace(settings=SimpleNamespace(DATABASES={"default": {
+                "NAME": "academy_api_development", "USER": "academy_api_development_app",
+            }})),
+            "apps.core.models": SimpleNamespace(OpsAuditLog=SimpleNamespace(
+                objects=SimpleNamespace(filter=audit_filter),
+            )),
+            "apps.core.management.commands.setup_ymath_realuse_scenario": SimpleNamespace(
+                assert_isolated_runtime=Mock(),
+            ),
+        }
+        with patch.dict(sys.modules, modules), patch.dict(probe.os.environ, env, clear=True):
+            self.assertEqual(
+                probe.runtime_scope(tenant, multipart=True),
+                probe.scope_hash(tenant.code, tenant.pk, release, digest),
+            )
+            probe.cleanup_snapshots(tenant)
+            snapshot_rows.exists.assert_called_once_with()
+
+            for change in ({"QA_ACTION": "AccountProbe"}, {"QA_SYNTHETIC_MULTIPART_VIDEO": "false"},
+                           {"QA_CAPABILITY": "d" * 64}):
+                with self.subTest(change=change), patch.dict(probe.os.environ, change):
+                    with self.assertRaises(probe.ProbeFailure):
+                        probe.runtime_scope(tenant, multipart=True)
+                    with self.assertRaises(probe.ProbeFailure):
+                        probe.cleanup_snapshots(tenant)
+
+            for changed_seal in ({**seal, "multipart_session_id": 43}, {**seal, "unexpected": True}):
+                setup_rows.values_list.return_value = [changed_seal]
+                with self.assertRaisesRegex(probe.ProbeFailure, "owner-mismatch"):
+                    probe.cleanup_snapshots(tenant)
+            setup_rows.values_list.return_value = [seal]
+
+            snapshot_rows.exists.return_value = True
+            with self.assertRaisesRegex(probe.ProbeFailure, "snapshot-owner-mismatch"):
+                probe.cleanup_snapshots(tenant)
+            snapshot_rows.delete.assert_not_called()
+
+            with patch.dict(probe.os.environ, {
+                "QA_ACTION": "AccountProbe", "QA_SYNTHETIC_MULTIPART_VIDEO": "false",
+            }):
+                with self.assertRaisesRegex(probe.ProbeFailure, "owner-mismatch"):
+                    probe.runtime_scope(tenant)
+                setup_rows.values_list.return_value = [{
+                    "schema": "frontend-development-qa/v1", "tenant_code": tenant.code,
+                    "tenant_id": tenant.pk, "owner_sha256": hashlib.sha256(
+                        f"{tenant.code}:{tenant.pk}:{capability}".encode(),
+                    ).hexdigest(),
+                }]
+                self.assertEqual(probe.runtime_scope(tenant), probe.scope_hash(tenant.code, tenant.pk, release, digest))
 
 
 if __name__ == "__main__":

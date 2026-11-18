@@ -27,17 +27,26 @@ function environment(objects, key = secret) {
   return {
     calls,
     CDN_HLS_SIGNING_SECRET: key,
-    R2_VIDEO: { async get(name, options) {
-      calls.push({ name, options });
-      if (!(name in objects)) return null;
-      let data = Buffer.from(objects[name]);
-      const size = data.length;
-      if (options.range) {
-        const { offset, length, suffix } = options.range;
-        data = suffix ? data.subarray(-suffix) : data.subarray(offset, length ? offset + length : undefined);
-      }
-      return { body: data, size, httpEtag: '"fixture"', httpMetadata: {} };
-    } },
+    R2_VIDEO: {
+      async get(name, options) {
+        calls.push({ name, options });
+        if (!(name in objects)) return null;
+        let data = Buffer.from(objects[name]);
+        const size = data.length;
+        if (options.range) {
+          const { offset, length, suffix } = options.range;
+          if (size === 0 || offset >= size) {
+            throw new Error("get: The requested range is not satisfiable. (10039)");
+          }
+          data = suffix ? data.subarray(-suffix) : data.subarray(offset, length ? offset + length : undefined);
+        }
+        return { body: data, size, httpEtag: '"fixture"', httpMetadata: {} };
+      },
+      async head(name) {
+        calls.push({ name, method: "head" });
+        return name in objects ? { size: Buffer.byteLength(objects[name]) } : null;
+      },
+    },
   };
 }
 
@@ -67,6 +76,45 @@ test("master -> variant -> segment preserves valid playback and byte ranges", as
   assert.equal(partial.headers.get("Access-Control-Expose-Headers"), "Accept-Ranges, Content-Range");
   assert.equal(partial.headers.get("Content-Range"), "bytes 2-5/10");
   assert.equal(await partial.text(), "2345");
+});
+
+test("binary range headers match the bytes that R2 returns", async () => {
+  const path = "/tenants/17/video/hls/23/v1/seg.ts";
+  const data = Buffer.alloc(968200).fill("0123456789");
+  const env = environment({ [path.slice(1)]: data });
+  for (const [range, start, end] of [
+    ["bytes=0-1048575", 0, data.length - 1],
+    ["bytes=2-5", 2, 5],
+    ["bytes=968197-1048575", 968197, data.length - 1],
+    ["bytes=968197-", 968197, data.length - 1],
+    ["bytes=-3", 968197, data.length - 1],
+    ["bytes=-1048576", 0, data.length - 1],
+  ]) {
+    const request = new Request(signed(path), { headers: { Origin: "https://academy.example", Range: range } });
+    const response = await worker.fetch(request, env, {});
+    assert.equal(response.status, 206, range);
+    assert.equal(response.headers.get("Content-Range"), `bytes ${start}-${end}/${data.length}`, range);
+    assert.equal(response.headers.get("Content-Length"), String(end - start + 1), range);
+    assert.equal(response.headers.get("Access-Control-Allow-Origin"), "*");
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), data.subarray(start, end + 1), range);
+  }
+  assert.equal(env.calls.length, 6);
+  assert.ok(env.calls.every(call => call.options.range));
+});
+
+test("unsatisfiable binary ranges return an empty 416 with the object size", async () => {
+  const path = "/tenants/17/video/hls/23/v1/seg.ts";
+  const emptyPath = "/tenants/17/video/hls/23/v1/empty.ts";
+  const env = environment({ [path.slice(1)]: "0123456789", [emptyPath.slice(1)]: "" });
+  for (const [key, range, size] of [[path, "bytes=10-", 10], [path, "bytes=10-20", 10], [emptyPath, "bytes=-2", 0]]) {
+    const response = await worker.fetch(new Request(signed(key), { headers: { Range: range } }), env, {});
+    assert.equal(response.status, 416);
+    assert.equal(response.headers.get("Content-Range"), `bytes */${size}`);
+    assert.equal(response.headers.get("Content-Length"), "0");
+    assert.equal(response.headers.get("Access-Control-Allow-Origin"), "*");
+    assert.equal((await response.arrayBuffer()).byteLength, 0);
+  }
+  assert.equal(env.calls.filter(call => call.method === "head").length, 3);
 });
 
 test("long playlists reuse the key while independently signing every URL", async () => {

@@ -4,8 +4,6 @@ The fixed SSM entrypoint owns the surrounding transaction and tenant cleanup.
 Receipts retain only exact job IDs/counts and the existing ownership hash, so
 post-delete Inspect can check the same Redis keys without storing credentials.
 """
-import hashlib
-import hmac
 import os
 import re
 
@@ -13,6 +11,7 @@ from django.db import connection
 
 from apps.core.management.commands.setup_ymath_realuse_scenario import assert_isolated_runtime
 from apps.core.models import OpsAuditLog, Tenant
+from apps.core.services.development_qa_ownership import same_setup_owner, verify_setup_owner
 from apps.domains.ai.models import AIJobModel, AIResultModel
 from libs.redis.client import get_redis_client
 
@@ -34,19 +33,16 @@ class OwnedQaAI:
                 or not re.fullmatch(r"[a-f0-9]{64}", capability)):
             raise PermissionError("Invalid QA AI scope")
         self.code, self.tenant_id = tenant_code, tenant_id
-        self.owner = {
-            "schema": "frontend-development-qa/v1", "tenant_code": tenant_code,
-            "tenant_id": tenant_id, "owner_sha256": hashlib.sha256(
-                f"{tenant_code}:{tenant_id}:{capability}".encode()).hexdigest(),
-        }
         # SET_NULL preserves this setup seal after tenant deletion.
         seals = list(OpsAuditLog.objects.filter(
             action="development.qa.setup", result="success",
             payload__tenant_code=tenant_code, payload__tenant_id=tenant_id,
         )[:2])
-        if len(seals) != 1 or not self._same_owner(seals[0].payload):
+        if len(seals) != 1:
             raise PermissionError("Missing or ambiguous QA AI ownership")
+
         self.seal = seals[0]
+        self.owner = verify_setup_owner(tenant_code, tenant_id, capability, self.seal.payload)
         tenants = list(Tenant.objects.filter(pk=tenant_id).values_list("code", flat=True))
         if tenants not in ([], [tenant_code]) or self.seal.target_tenant_id not in (None, tenant_id):
             raise PermissionError("QA AI tenant identity mismatch")
@@ -55,12 +51,6 @@ class OwnedQaAI:
         if self.redis is None:
             raise RuntimeError("QA AI cache readback unavailable")
         self.redis.ping()
-
-    def _same_owner(self, owner):
-        return (isinstance(owner, dict) and set(owner) == set(self.owner)
-                and all(owner[k] == self.owner[k] for k in ("schema", "tenant_code", "tenant_id"))
-                and isinstance(owner["owner_sha256"], str)
-                and hmac.compare_digest(owner["owner_sha256"], self.owner["owner_sha256"]))
 
     def _receipts(self):
         records = list(OpsAuditLog.objects.filter(
@@ -73,7 +63,7 @@ class OwnedQaAI:
             return None
         receipt = records[0].payload
         if (not isinstance(receipt, dict) or set(receipt) != {"owner", "job_ids", "before"}
-                or not self._same_owner(receipt["owner"])):
+                or not same_setup_owner(receipt["owner"], self.owner)):
             raise PermissionError("Invalid QA AI receipt")
         ids = receipt["job_ids"]
         self._validate_ids(ids)

@@ -2,12 +2,16 @@ import json
 from datetime import timedelta
 from pathlib import Path
 from unittest import skipUnless
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.test import TestCase, TransactionTestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
-from rest_framework.test import APIRequestFactory, force_authenticate
+from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
+from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.core.models import OpsAuditLog, Tenant, TenantMembership, User
 from apps.domains.attendance.models import Attendance
@@ -25,15 +29,19 @@ from apps.domains.student_app.media.views import (
     StudentVideoMeView,
     StudentVideoPlaybackView,
 )
+from apps.domains.students.models import StudentSupportSession
 from apps.domains.students.test_support import create_student_fixture
 from apps.domains.video.models import (
     AccessMode,
     DirectVideoEntitlement,
+    InactiveVideoEntitlement,
     Video,
     VideoAccess,
     VideoPlaybackEvent,
     VideoPlaybackSession,
     VideoProgress,
+    VideoReviewWatchStream,
+    VideoReviewWatchUsage,
 )
 from apps.domains.video.drm import create_playback_token, verify_playback_token
 from apps.domains.video.services.direct_entitlements import (
@@ -125,6 +133,217 @@ class DirectVideoEntitlementTests(TestCase):
         )
         TenantMembership.ensure_active(tenant=tenant, user=user, role=role)
         return user
+
+    def test_inactive_catalog_filters_exact_grants_without_per_video_queries(self):
+        enrollment = create_enrollment_fixture(
+            tenant=self.tenant, student=self.student, lecture=self.lecture, status="INACTIVE",
+        )
+        SessionEnrollment.objects.create(tenant=self.tenant, session=self.session, enrollment=enrollment)
+        now = timezone.now()
+
+        def grant(video, expires_at=None):
+            InactiveVideoEntitlement.objects.create(
+                tenant=self.tenant, student=self.student, enrollment=enrollment, video=video,
+                access_mode=AccessMode.FREE_REVIEW, source=InactiveVideoEntitlement.Source.STAFF_AUTHORIZATION,
+                source_reference="catalog-test", reason="Catalog test", granted_by_reference="catalog-test",
+                granted_at=now - timedelta(minutes=1), expires_at=expires_at,
+            )
+
+        def read_catalog():
+            request = self._request("get", "/api/v1/student/video/me/", user=self.student_user)
+            with patch("django.utils.timezone.now", return_value=now), CaptureQueriesContext(connection) as queries:
+                response = StudentVideoMeView.as_view()(request)
+                response.render()
+            self.assertEqual(response.status_code, 200)
+            return response, len(queries)
+
+        grant(self.video)
+        initial, initial_queries = read_catalog()
+        self.assertEqual(initial.data["lectures"][0]["video_count"], 1)
+        grant(self.sibling_video, expires_at=now)
+        for order, kind in enumerate(("blocked", "legacy-blocked", "valid"), start=3):
+            video = Video.objects.create(
+                tenant=self.tenant, session=self.session, title=kind, status=Video.Status.READY, duration=90, order=order,
+            )
+            grant(video)
+            if kind != "valid":
+                VideoAccess.objects.create(
+                    video=video, enrollment=enrollment,
+                    access_mode=AccessMode.BLOCKED if kind == "blocked" else AccessMode.FREE_REVIEW,
+                    rule="blocked" if kind == "legacy-blocked" else "free",
+                )
+        expanded, expanded_queries = read_catalog()
+        self.assertEqual(expanded_queries, initial_queries)
+        course, = expanded.data["lectures"]
+        self.assertEqual(course["video_count"], 2)
+        self.assertEqual(course["total_duration"], 210)
+        self.assertEqual([item["id"] for item in course["sessions"]], [self.session.id])
+
+    @override_settings(
+        ALLOWED_HOSTS=["api.hakwonplus.com"],
+        TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
+        CDN_HLS_BASE_URL="https://cdn.example.test",
+        CDN_HLS_SIGNING_SECRET="synthetic-preview-test-secret",
+    )
+    def test_support_video_preview_keeps_student_playback_and_accounting_isolated(self):
+        enrollment = create_enrollment_fixture(
+            tenant=self.tenant, student=self.student, lecture=self.lecture, status="ACTIVE",
+        )
+        SessionEnrollment.objects.create(session=self.session, enrollment=enrollment, tenant=self.tenant)
+        VideoAccess.objects.create(
+            video=self.video, enrollment=enrollment, access_mode=AccessMode.PROCTORED_CLASS,
+            is_override=True,
+        )
+        VideoProgress.objects.create(video=self.video, enrollment=enrollment, progress=0.25, last_position=30)
+        self.video.hls_path = f"tenants/{self.tenant.pk}/video/hls/{self.video.pk}/master.m3u8"
+        self.video.allow_skip = False
+        self.video.save(update_fields=["hls_path", "allow_skip"])
+        client = APIClient()
+        headers = {"HTTP_HOST": "api.hakwonplus.com", "HTTP_X_TENANT_CODE": self.tenant.code}
+
+        def authorization(user):
+            token = AccessToken.for_user(user)
+            token["tenant_id"] = self.tenant.pk
+            token["token_version"] = user.token_version
+            return {"HTTP_AUTHORIZATION": f"Bearer {token}"}
+
+        def support_access():
+            response = client.post(
+                f"/api/v1/students/{self.student.pk}/support-session/", {}, format="json",
+                **headers, **authorization(self.staff),
+            )
+            self.assertEqual(response.status_code, 200, response.content)
+            return {"HTTP_AUTHORIZATION": f"Bearer {response.data['access']}"}
+
+        def post(path, data, auth, *, device="support-device"):
+            return client.post(path, data, format="json", HTTP_X_DEVICE_ID=device, **headers, **auth)
+
+        student_auth = authorization(self.student_user)
+        support_auth = support_access()
+        session = StudentSupportSession.objects.get(student=self.student)
+        session.expires_at = timezone.now() + timedelta(seconds=120)
+        session.save(update_fields=["expires_at"])
+        video_path = f"/api/v1/student/video/videos/{self.video.pk}/"
+        learner = post(f"{video_path}playback/", {}, student_auth, device="learner-device")
+        self.assertEqual(learner.status_code, 200, learner.content)
+        self.assertTrue(learner.data["playback_session_id"])
+        learner_token = learner.data["playback_token"]
+        self.sibling_video.review_watch_limit_enabled = True
+        self.sibling_video.save(update_fields=["review_watch_limit_enabled"])
+        VideoAccess.objects.create(
+            video=self.sibling_video, enrollment=enrollment, access_mode=AccessMode.FREE_REVIEW,
+            is_override=True,
+        )
+        review_path = f"/api/v1/student/video/videos/{self.sibling_video.pk}/playback/"
+        learner_review = post(review_path, {"review_watch": True}, student_auth, device="learner-device")
+        self.assertEqual(learner_review.status_code, 200, learner_review.content)
+        self.assertTrue(learner_review.data["review_watch"]["stream"])
+        usage_before = list(VideoReviewWatchUsage.objects.values())
+        streams_before = list(VideoReviewWatchStream.objects.values())
+
+        self.video.refresh_from_db()
+        initial_views = self.video.view_count
+        initial_sessions = list(VideoPlaybackSession.objects.values())
+        progress_before = list(VideoProgress.objects.values())
+
+        preview = post(f"{video_path}playback/", {"review_watch": True, "event_protocol_version": 2}, support_auth)
+        self.assertEqual(preview.status_code, 200, preview.content)
+        self.assertTrue(preview.data["support_preview"])
+        self.assertIsNone(preview.data["playback_session_id"])
+        self.assertIsNone(preview.data["review_watch"])
+        self.assertIsNone(preview.data["progress_revision"])
+        self.assertEqual(preview.data["video"]["last_position"], 30)
+        self.assertEqual(preview.data["video"]["progress"], 25)
+        self.assertEqual(preview.data["policy"]["access_mode"], "PROCTORED_CLASS")
+        self.assertFalse(preview.data["policy"]["monitoring_enabled"])
+        self.assertEqual(preview.data["policy"]["seek"]["mode"], "free")
+        self.assertEqual(preview.data["event_protocol_version"], 1)
+        current_access = client.get(f"{video_path}playback/?access_check=true", **headers, **support_auth)
+        self.assertEqual(current_access.status_code, 200, current_access.content)
+        self.assertEqual(current_access.data["access_mode"], preview.data["policy"]["access_mode"])
+        self.assertFalse(current_access.data["monitoring_enabled"])
+        token = preview.data["playback_token"]
+        valid, claims, _ = verify_playback_token(token)
+        self.assertTrue(valid)
+        self.assertTrue(claims["support_preview"])
+        self.assertEqual(claims["exp"], int(session.expires_at.timestamp()))
+        media_url = urlsplit(preview.data["play_url"])
+        self.assertEqual(media_url.netloc, "cdn.example.test")
+        self.assertEqual(media_url.path, f"/{self.video.hls_path}")
+        self.assertEqual(int(parse_qs(media_url.query)["exp"][0]), claims["exp"])
+        self.assertEqual(parse_qs(media_url.query)["uid"], [str(self.staff.pk)])
+        self.assertTrue(parse_qs(media_url.query)["sig"][0])
+
+        preview_review = post(review_path, {"review_watch": True}, support_auth)
+        self.assertEqual(preview_review.status_code, 200, preview_review.content)
+        self.assertTrue(preview_review.data["support_preview"])
+        self.assertEqual(preview_review.data["policy"]["access_mode"], "FREE_REVIEW")
+        self.assertIsNone(preview_review.data["review_watch"])
+        self.assertEqual(urlsplit(preview_review.data["play_url"]).netloc, "cdn.example.test")
+        with override_settings(CDN_HLS_SIGNING_SECRET=""):
+            self.assertEqual(post(f"{video_path}playback/", {}, support_auth).status_code, 503)
+
+        renew_path = "/api/v1/media/playback/renew/"
+        renewed = post(renew_path, {"token": token}, support_auth)
+        self.assertEqual(renewed.status_code, 200, renewed.content)
+        self.assertFalse(renewed.data["monitoring_enabled"])
+        self.assertEqual(renewed.data["event_protocol_version"], 1)
+        self.assertIsNone(renewed.data["playback_session_id"])
+        self.assertEqual(renewed.data["playback_expires_at"], preview.data["playback_expires_at"])
+        refresh_path = "/api/v1/media/playback/refresh/"
+        self.assertEqual(post(refresh_path, {"token": token}, support_auth).status_code, 200)
+        for auth, unusable in ((student_auth, token), (support_auth, learner_token), (support_access(), token)):
+            self.assertEqual(post(renew_path, {"token": unusable}, auth).status_code, 403)
+        for action in ("refresh", "end", "heartbeat"):
+            path = f"/api/v1/media/playback/{action}/"
+            self.assertEqual(post(path, {"token": learner_token}, support_auth).status_code, 403)
+            self.assertEqual(post(path, {"token": token}, student_auth).status_code, 403)
+        for action, data in (("events", {"events": []}), ("v2/end", {"batches": []})):
+            path = f"/api/v1/media/playback/{action}/"
+            self.assertEqual(post(path, {"token": learner_token, **data}, support_auth).status_code, 403)
+            self.assertEqual(post(path, {"token": token, **data}, student_auth).status_code, 403)
+        local_progress = post(f"{video_path}progress/", {"progress": 0.5, "last_position": 60}, support_auth)
+        self.assertEqual(local_progress.status_code, 200, local_progress.content)
+        self.assertEqual((local_progress.data["id"], local_progress.data["last_position"]), (0, 60))
+        for action in ("review-watch", "forward-skip"):
+            self.assertEqual(post(f"{video_path}{action}/", {}, support_auth).status_code, 403)
+
+        self.assertEqual(list(VideoPlaybackSession.objects.values()), initial_sessions)
+        self.assertEqual(list(VideoProgress.objects.values()), progress_before)
+        self.assertEqual(list(VideoReviewWatchUsage.objects.values()), usage_before)
+        self.assertEqual(list(VideoReviewWatchStream.objects.values()), streams_before)
+        self.video.refresh_from_db()
+        self.assertEqual(self.video.view_count, initial_views)
+        self.assertTrue(OpsAuditLog.objects.filter(
+            action="student_activity.target_open", actor_user=self.staff,
+            target_user=self.student_user, payload__actor_mode="support",
+        ).exists())
+
+        VideoAccess.objects.filter(video=self.video, enrollment=enrollment).update(rule="blocked")
+        self.assertEqual(post(renew_path, {"token": token}, support_auth).status_code, 403)
+        self.assertEqual(post(f"{video_path}playback/", {}, support_auth).status_code, 403)
+        VideoAccess.objects.filter(video=self.video, enrollment=enrollment).update(rule="free")
+
+        public_lecture = create_lecture_fixture(tenant=self.tenant, title="Public Library")
+        public_session = create_session_fixture(lecture=public_lecture, title="Public Course", order=1)
+        public_video = Video.objects.create(
+            tenant=self.tenant, session=public_session, title="Public Preview",
+            status=Video.Status.READY, visibility=Video.Visibility.PUBLIC, duration=120,
+        )
+        public_preview = post(f"/api/v1/student/video/videos/{public_video.pk}/playback/", {}, support_auth)
+        self.assertEqual(public_preview.status_code, 200, public_preview.content)
+        self.assertIsNone(public_preview.data["video"]["enrollment_id"])
+        self.assertFalse(Enrollment.objects.filter(student=self.student, lecture=public_lecture).exists())
+
+        cross_tenant = client.post(
+            f"{video_path}playback/", {}, format="json", HTTP_HOST=headers["HTTP_HOST"],
+            HTTP_X_TENANT_CODE=self.other_tenant.code, **support_auth,
+        )
+        self.assertIn(cross_tenant.status_code, (401, 403))
+        session.expires_at = timezone.now() - timedelta(seconds=1)
+        session.save(update_fields=["expires_at"])
+        self.assertIn(post(renew_path, {"token": token}, support_auth).status_code, (401, 403))
+        self.assertIn(post(f"{video_path}playback/", {}, support_auth).status_code, (401, 403))
 
     def _grant(self, **overrides):
         values = {
@@ -474,6 +693,172 @@ class DirectVideoEntitlementTests(TestCase):
         self.video.refresh_from_db()
         self.assertEqual(self.video.view_count, before_view_count)
         self.assertEqual(self._side_effect_counts(), before)
+
+    @override_settings(
+        CDN_HLS_BASE_URL="https://cdn.example.test",
+        CDN_HLS_SIGNING_SECRET="direct-video-test-secret",
+        VIDEO_PLAYBACK_TTL_SECONDS=3600,
+    )
+    def test_staff_review_allowance_update_preserves_used_time_and_reopens_exhausted_video(self):
+        from unittest.mock import patch
+
+        from apps.domains.video.views.review_watch_views import ReviewWatchAllowanceView, ReviewWatchReportView
+
+        self._grant()
+        self.video.duration = 10
+        self.video.review_watch_limit_enabled = True
+        self.video.save(update_fields=["duration", "review_watch_limit_enabled"])
+
+        def change(limit, revision, *, actor=self.staff, video_id=self.video.pk):
+            request = self._request("patch", "/allowance/", user=actor, data={
+                "limit_ms": limit, "expected_revision": revision,
+            })
+            return ReviewWatchAllowanceView.as_view()(request, video_id=video_id, student_id=self.student.pk)
+
+        def open_video():
+            request = self._request("post", "/playback/", user=self.student_user, data={"review_watch": True})
+            return StudentVideoPlaybackView.as_view()(request, video_id=self.video.pk)
+
+        catalog = StudentSessionVideoListView.as_view()(
+            self._request("get", "/videos/", user=self.student_user), session_id=self.session.pk,
+        )
+        self.assertEqual(catalog.status_code, 200, catalog.data)
+        student_summary = catalog.data["items"][0]["review_watch_summary"]
+        self.assertEqual((student_summary["used_ms"], student_summary["limit_ms"], student_summary["remaining_ms"]), (0, 14_000, 14_000))
+        report = ReviewWatchReportView.as_view()(self._request("get", "/report/", user=self.staff), video_id=self.video.pk)
+        self.assertEqual(report.status_code, 200, report.data)
+        row = next(row for row in report.data["students"] if row["student_id"] == self.student.pk)
+        self.assertEqual((row["used_ms"], row["limit_ms"], row["started_at"]), (0, 14_000, None))
+        self.assertTrue(row["can_adjust"])
+        revision = row["revision"]
+        self.assertEqual(student_summary["revision"], revision)
+        self.assertEqual(change(17_000, revision, actor=self.student_user).status_code, 403)
+        self.assertEqual(change(17_000, revision, video_id=self.sibling_video.pk).status_code, 404)
+        self.assertFalse(VideoReviewWatchUsage.objects.exists())
+
+        opened = open_video()
+        self.assertEqual(opened.status_code, 200, opened.data)
+        stream_key = opened.data["review_watch"]["stream"]
+        request = self._request("post", "/review-watch/", user=self.student_user, data={
+            "stream": stream_key, "sequence": 1, "playing": True,
+        })
+        signal = StudentReviewWatchView.as_view()(request, video_id=self.video.pk)
+        self.assertEqual(signal.status_code, 200, signal.data)
+        self.assertEqual(signal.data["review_watch_summary"]["limit_ms"], 14_000)
+        stream = VideoReviewWatchStream.objects.get(key=stream_key)
+        with patch("apps.domains.video.views.review_watch_views.timezone.now", return_value=stream.active_since + timedelta(seconds=6)):
+            lowered = change(5_000, revision)
+        self.assertEqual(lowered.status_code, 200, lowered.data)
+        self.assertEqual((lowered.data["used_ms"], lowered.data["remaining_ms"], lowered.data["exhausted"]), (6_000, 0, True))
+        stream.refresh_from_db()
+        self.assertTrue(stream.closed)
+        self.assertIsNone(stream.active_since)
+        rejected = open_video()
+        self.assertEqual(rejected.status_code, 403, rejected.data)
+        self.assertEqual(rejected.data["review_watch_summary"], lowered.data)
+
+        retry = change(5_000, revision)
+        self.assertEqual((retry.status_code, retry.data), (200, lowered.data))
+        stale = change(12_000, revision)
+        self.assertEqual(stale.status_code, 409, stale.data)
+        self.assertEqual(stale.data, lowered.data)
+        raised = change(12_000, lowered.data["revision"])
+        self.assertEqual(raised.status_code, 200, raised.data)
+        self.assertEqual(raised.data["remaining_ms"], 6_000)
+        reopened = open_video()
+        self.assertEqual(reopened.status_code, 200, reopened.data)
+        self.assertEqual(reopened.data["review_watch_summary"], raised.data)
+        self.assertNotEqual(reopened.data["review_watch"]["stream"], stream_key)
+
+        reset = change(None, raised.data["revision"])
+        self.assertEqual(reset.status_code, 200, reset.data)
+        self.assertEqual((reset.data["used_ms"], reset.data["limit_ms"], reset.data["remaining_ms"]), (6_000, 14_000, 8_000))
+        history = OpsAuditLog.objects.filter(action="video.review_watch.allowance.update", target_tenant=self.tenant)
+        self.assertEqual(history.count(), 3)
+        self.assertTrue(all(event.actor_user == self.staff and event.target_user == self.student_user for event in history))
+
+    def test_public_video_allowance_refuses_blocked_learner_and_retains_usage(self):
+        from apps.domains.video.views.permission_views import VideoPermissionViewSet
+        from apps.domains.video.views.review_watch_views import ReviewWatchAllowanceView, ReviewWatchReportView
+
+        enrollment = create_enrollment_fixture(
+            tenant=self.tenant, student=self.student, lecture=self.lecture, status="ACTIVE",
+        )
+        SessionEnrollment.objects.create(session=self.session, enrollment=enrollment, tenant=self.tenant)
+        self.video.visibility = Video.Visibility.PUBLIC
+        self.video.review_watch_limit_enabled = True
+        self.video.save(update_fields=["visibility", "review_watch_limit_enabled"])
+        usage = VideoReviewWatchUsage.objects.create(
+            video=self.video, student=self.student, used_ms=12_000, limit_ms_override=60_000,
+        )
+        blocked = VideoPermissionViewSet.as_view({"post": "bulk_set"})(self._request(
+            "post", "/permissions/bulk_set/", user=self.staff,
+            data={"video_id": self.video.pk, "enrollments": [enrollment.pk], "access_mode": "BLOCKED"},
+        ))
+        self.assertEqual(blocked.status_code, 200, blocked.data)
+        unassigned_user = self._user(tenant=self.tenant, username="public-review-unassigned", role="student")
+        unassigned = create_student_fixture(
+            tenant=self.tenant, user=unassigned_user, name="Public learner", ps_number="PUBLIC-002",
+            omr_code="21345678", parent_phone="01011114444", school_type="HIGH",
+        )
+
+        access = StudentVideoPlaybackView.as_view()(self._request(
+            "get", "/playback/?access_check=true", user=self.student_user,
+        ), video_id=self.video.pk)
+        self.assertEqual(access.status_code, 403)
+        report = ReviewWatchReportView.as_view()(
+            self._request("get", "/report/", user=self.staff), video_id=self.video.pk,
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        rows = {row["student_id"]: row for row in report.data["students"]}
+        prior = rows[self.student.pk]
+        revised = ReviewWatchAllowanceView.as_view()(self._request(
+            "patch", "/allowance/", user=self.staff,
+            data={"limit_ms": 90_000, "expected_revision": prior["revision"]},
+        ), video_id=self.video.pk, student_id=self.student.pk)
+        usage.refresh_from_db()
+        with self.subTest("historical blocked learner"):
+            self.assertEqual((prior["used_ms"], prior["limit_ms"]), (12_000, 60_000))
+            self.assertFalse(prior["applicable"])
+            self.assertFalse(prior["can_adjust"])
+        with self.subTest("blocked update"):
+            self.assertEqual(revised.status_code, 404, revised.data)
+            self.assertEqual(revised.data["code"], "video_student_unavailable")
+        with self.subTest("blocked update preserves ledger"):
+            self.assertEqual((usage.used_ms, usage.limit_ms_override, usage.allowance_revision), (12_000, 60_000, 0))
+        with self.subTest("blocked update records no adjustment"):
+            self.assertFalse(OpsAuditLog.objects.filter(
+                action="video.review_watch.allowance.update", target_user=self.student_user,
+            ).exists())
+        with self.subTest("unassigned public learner"):
+            current = rows[unassigned.pk]
+            self.assertTrue(current["applicable"])
+            self.assertTrue(current["can_adjust"])
+            permitted = ReviewWatchAllowanceView.as_view()(self._request(
+                "patch", "/allowance/", user=self.staff,
+                data={"limit_ms": 90_000, "expected_revision": current["revision"]},
+            ), video_id=self.video.pk, student_id=unassigned.pk)
+            self.assertEqual(permitted.status_code, 200, permitted.data)
+            self.assertEqual(permitted.data["limit_ms"], 90_000)
+            self.assertFalse(Enrollment.objects.filter(student=unassigned, lecture=self.lecture).exists())
+
+        unblocked = VideoPermissionViewSet.as_view({"post": "bulk_set"})(self._request(
+            "post", "/permissions/bulk_set/", user=self.staff,
+            data={"video_id": self.video.pk, "enrollments": [enrollment.pk], "access_mode": "FREE_REVIEW"},
+        ))
+        self.assertEqual(unblocked.status_code, 200, unblocked.data)
+        refreshed = ReviewWatchReportView.as_view()(
+            self._request("get", "/report/", user=self.staff), video_id=self.video.pk,
+        )
+        current = next(row for row in refreshed.data["students"] if row["student_id"] == self.student.pk)
+        self.assertTrue(current["can_adjust"])
+        self.assertEqual((current["used_ms"], current["limit_ms"]), (12_000, 60_000))
+        reset = ReviewWatchAllowanceView.as_view()(self._request(
+            "patch", "/allowance/", user=self.staff,
+            data={"limit_ms": None, "expected_revision": current["revision"]},
+        ), video_id=self.video.pk, student_id=self.student.pk)
+        self.assertEqual(reset.status_code, 200, reset.data)
+        self.assertEqual((reset.data["used_ms"], reset.data["limit_ms"]), (12_000, self.video.duration * 1400))
 
     @override_settings(
         CDN_HLS_BASE_URL="https://cdn.example.test",

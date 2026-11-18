@@ -24,14 +24,17 @@ from apps.domains.results.services.assessment_correction_status import (
 )
 from apps.domains.results.utils.ranking import compute_exam_rankings_batch
 from apps.domains.results.services.student_rank_visibility import student_rank_visibility_payload
-from apps.support.results.homework_clinic_status import homework_remediation_keys
+from apps.support.results.assessment_clinic_status import homework_remediation_keys
 from apps.support.results.student_grade_history import (
     build_exam_progression,
     build_student_exam_history,
     empty_exam_summary,
 )
 from apps.support.results.score_total_dependencies import student_exam_session_pairs, student_session_totals
-from apps.support.submissions.dependencies import homework_submission_revisions
+from apps.support.submissions.dependencies import (
+    homework_submission_media_lock_keys,
+    homework_submission_revisions,
+)
 from apps.support.attendance.learning_todo_eligibility import actual_absent_learning_todo_pairs
 from apps.support.student_app.learning_todo_policy import (
     lecture_has_current_learning_todos,
@@ -123,53 +126,6 @@ def _homework_session_metadata(session: Any) -> dict[str, Any]:
     }
 
 
-def _homework_submission_media_lock_keys(
-    *,
-    tenant: Any,
-    enrollment_ids: list[int],
-    homework_ids: list[int],
-) -> set[tuple[int, int]]:
-    """Bulk-project the same latest-result lock enforced by the media API."""
-    if not enrollment_ids or not homework_ids:
-        return set()
-
-    latest_scores: dict[tuple[int, int], bool] = {}
-    for score in (
-        HomeworkScore.objects.filter(
-            enrollment_id__in=enrollment_ids,
-            enrollment__tenant=tenant,
-            homework_id__in=homework_ids,
-            homework__tenant=tenant,
-        )
-        .only("enrollment_id", "homework_id", "passed", "attempt_index", "updated_at")
-        .order_by(
-            "enrollment_id",
-            "homework_id",
-            "-attempt_index",
-            "-updated_at",
-            "-id",
-        )
-    ):
-        latest_scores.setdefault(
-            (int(score.enrollment_id), int(score.homework_id)),
-            bool(score.passed),
-        )
-
-    locked = {key for key, passed in latest_scores.items() if passed}
-    locked.update(
-        (int(enrollment_id), int(homework_id))
-        for enrollment_id, homework_id in AssessmentCorrection.objects.filter(
-            tenant=tenant,
-            enrollment_id__in=enrollment_ids,
-            source_type=AssessmentCorrection.SourceType.HOMEWORK,
-            source_id__in=homework_ids,
-            completed=True,
-        ).values_list("enrollment_id", "source_id")
-        if (int(enrollment_id), int(homework_id)) not in latest_scores
-    )
-    return locked
-
-
 def _homework_history_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
     session_order = row.get("session_order")
     return (
@@ -206,9 +162,11 @@ def _safe_homework_number(value: Any, *, positive: bool = False) -> float | None
     return parsed if isfinite(parsed) and minimum_ok else None
 
 
-def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]:
+def build_student_grades_summary(
+    *, tenant: Any, student: Any, include_grade_board_details: bool = True,
+) -> dict[str, Any]:
+    """Build authorized grade rows, with report and rollup details for the grade board."""
     today = timezone.localdate()
-    report_layout = get_student_grade_report_layout(tenant=tenant)
     history_enrollments = list(
         learning_history_enrollments_for_student(
             tenant=tenant,
@@ -220,32 +178,20 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         int(enrollment.id): lecture_is_ongoing(enrollment.lecture, today=today)
         for enrollment in history_enrollments
     }
-    current_todos_by_enrollment = {
-        int(enrollment.id): lecture_has_current_learning_todos(enrollment.lecture, today=today)
-        for enrollment in history_enrollments
-    }
-    lecture_options = [
-        {
-            "id": int(enrollment.lecture_id),
-            "title": enrollment.lecture.title,
-            "color": enrollment.lecture.color,
-            "chip_label": enrollment.lecture.chip_label,
-            "is_active": lecture_active_by_enrollment[int(enrollment.id)],
-        }
-        for enrollment in history_enrollments
-    ]
     if not enrollment_ids:
+        if not include_grade_board_details:
+            return {"exams": [], "homeworks": []}
         return {
             "exams": [],
             "homeworks": [],
             "exam_trend": [],
             "exam_summary": empty_exam_summary(),
             "lecture_options": [],
-            "report_layout": report_layout,
+            "report_layout": get_student_grade_report_layout(tenant=tenant),
         }
 
     totals_exam_rows = []
-    exam_list, exam_trend, exam_summary = build_student_exam_history(
+    exam_list, _, _ = build_student_exam_history(
         tenant=tenant,
         enrollment_ids=enrollment_ids,
         published_results_only=True,
@@ -416,8 +362,6 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "teacher_resolved": correction_payload["teacher_resolved"],
             "lecture_active": lecture_active_by_enrollment.get(enrollment_id, False),
         })
-    exam_trend, exam_summary = build_exam_progression(exam_list)
-
     homework_scores = (
         HomeworkScore.objects.filter(
             enrollment_id__in=enrollment_ids,
@@ -475,7 +419,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         enrollment_ids=enrollment_ids,
         homework_ids=homework_ids,
     )
-    submission_media_lock_keys = _homework_submission_media_lock_keys(
+    submission_media_lock_keys = homework_submission_media_lock_keys(
         tenant=tenant,
         enrollment_ids=enrollment_ids,
         homework_ids=homework_ids,
@@ -628,6 +572,24 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
 
     homework_list.sort(key=_homework_history_sort_key)
 
+    if not include_grade_board_details:
+        return {"exams": exam_list, "homeworks": homework_list}
+
+    exam_trend, exam_summary = build_exam_progression(exam_list)
+    current_todos_by_enrollment = {
+        int(enrollment.id): lecture_has_current_learning_todos(enrollment.lecture, today=today)
+        for enrollment in history_enrollments
+    }
+    lecture_options = [
+        {
+            "id": int(enrollment.lecture_id),
+            "title": enrollment.lecture.title,
+            "color": enrollment.lecture.color,
+            "chip_label": enrollment.lecture.chip_label,
+            "is_active": lecture_active_by_enrollment[int(enrollment.id)],
+        }
+        for enrollment in history_enrollments
+    ]
     active_exam_ids = set(Exam.objects.filter(
         tenant=tenant, id__in=[exam["exam_id"] for exam in exam_list],
         is_active=True, exam_type=Exam.ExamType.REGULAR,
@@ -653,5 +615,5 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "pass": (getattr(tenant, "pass_label", None) or "").strip(),
             "fail": (getattr(tenant, "fail_label", None) or "").strip(),
         },
-        "report_layout": report_layout,
+        "report_layout": get_student_grade_report_layout(tenant=tenant),
     }

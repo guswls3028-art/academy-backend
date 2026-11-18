@@ -5,6 +5,7 @@ from django.apps import apps
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 
 from apps.domains.student_app.tests import test_grades_summary_homework as fixtures
 from apps.support.omr.score_shape import get_exam_score_shape
@@ -29,6 +30,7 @@ def _single_exam_details(exams):
 class GradesSummaryQueryBudgetTests(TestCase):
     setUp = fixtures.MyGradesSummaryHomeworkTests.setUp
     _call = fixtures.MyGradesSummaryHomeworkTests._call
+    _call_analytics = fixtures.MyGradesSummaryHomeworkTests._call_analytics
     _score_exam = fixtures.MyGradesSummaryHomeworkTests._score_exam
 
     def _add_exam(self, order, source):
@@ -72,9 +74,15 @@ class GradesSummaryQueryBudgetTests(TestCase):
             self.assertEqual(len(response.data["exams"]), order)
             self.assertTrue(all(row["total_score"] == 80 for row in response.data["exams"]))
             counts.append(len(queries))
-            with patch(
-                "apps.domains.results.services.omr_subjective_completion.load_exam_scoring_details",
-                side_effect=_single_exam_details,
+            with (
+                patch(
+                    "apps.support.results.student_grade_history.request_exam_scoring_details_loader",
+                    return_value=_single_exam_details,
+                ),
+                patch(
+                    "apps.domains.results.services.omr_subjective_completion.load_exam_scoring_details",
+                    side_effect=_single_exam_details,
+                ),
             ):
                 original = self._call()
             self.assertEqual(response.data, original.data)
@@ -89,6 +97,33 @@ class GradesSummaryQueryBudgetTests(TestCase):
 
     def test_manual_history_query_budget_and_response_parity(self):
         self._assert_history_budget("manual")
+
+    def test_analytics_skips_grade_board_queries_with_identical_response(self):
+        from apps.support.results import enterprise_analytics
+        from apps.support.student_app.results_summary import build_student_grades_summary
+
+        self._add_exam(1, "manual")
+        self._add_exam(2, "omr_scan")
+
+        with patch.object(timezone, "now", return_value=timezone.now()):
+            with CaptureQueriesContext(connection) as actual_queries:
+                actual = self._call_analytics()
+            with (
+                patch.object(
+                    enterprise_analytics,
+                    "build_student_grades_summary",
+                    side_effect=lambda **options: build_student_grades_summary(
+                        **{**options, "include_grade_board_details": True},
+                    ),
+                ),
+                CaptureQueriesContext(connection) as full_grade_board_queries,
+            ):
+                full_grade_board = self._call_analytics()
+
+        self.assertEqual(actual.status_code, 200, actual.data)
+        self.assertEqual(actual.data["summary"]["scored_exam_count"], 2)
+        self.assertEqual(actual.data, full_grade_board.data)
+        self.assertLessEqual(len(actual_queries) + 2, len(full_grade_board_queries))
 
     def test_summary_limits_ranking_to_exams_with_published_comparison_fields(self):
         from apps.support.student_app import results_summary

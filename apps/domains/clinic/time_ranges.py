@@ -64,6 +64,18 @@ def booking_window(
     return start, end
 
 
+def participant_booking_window(participant) -> tuple[datetime.datetime, datetime.datetime]:
+    """Resolve the saved reservation, including after-midnight ranges."""
+    session = participant.session
+    if participant.booking_start_time is not None and participant.booking_end_time is not None:
+        return booking_window(
+            session=session,
+            start_time=participant.booking_start_time,
+            end_time=participant.booking_end_time,
+        )
+    return session_window(session)
+
+
 def ranges_overlap(
     first_start: datetime.datetime,
     first_end: datetime.datetime,

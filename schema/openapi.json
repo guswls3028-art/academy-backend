@@ -241,6 +241,9 @@
             "nullable": true,
             "type": "integer"
           },
+          "session_label": {
+            "type": "string"
+          },
           "session_title": {
             "type": "string"
           },
@@ -278,6 +281,7 @@
           "enrollment_id",
           "exam_score",
           "reason",
+          "session_label",
           "session_title",
           "student_name"
         ],
@@ -291,6 +295,42 @@
           "missing"
         ],
         "type": "string"
+      },
+      "AdminExamAnalysisInsights": {
+        "properties": {
+          "below_recommended_count": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "recommended_cutoff": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "score_summary": {
+            "$ref": "#/components/schemas/ExamScoreSummary"
+          },
+          "scored_count": {
+            "type": "integer"
+          },
+          "trend_threshold_pp": {
+            "type": "integer"
+          },
+          "trends": {
+            "items": {
+              "$ref": "#/components/schemas/ExamScoreTrend"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "below_recommended_count",
+          "recommended_cutoff",
+          "score_summary",
+          "scored_count",
+          "trend_threshold_pp",
+          "trends"
+        ],
+        "type": "object"
       },
       "AdminExamResultRow": {
         "properties": {
@@ -3581,6 +3621,149 @@
         ],
         "type": "string"
       },
+      "ExamScoreSummary": {
+        "properties": {
+          "average": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "distribution_counts": {
+            "items": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 5,
+            "minItems": 5,
+            "type": "array"
+          },
+          "highest": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "median": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "p25": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "p75": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "pass_count": {
+            "type": "integer"
+          },
+          "pass_criterion_count": {
+            "type": "integer"
+          },
+          "remediated_count": {
+            "type": "integer"
+          },
+          "std_dev": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "std_rate": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "top_ten_average": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "unscored_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "average",
+          "distribution_counts",
+          "highest",
+          "median",
+          "p25",
+          "p75",
+          "pass_count",
+          "pass_criterion_count",
+          "remediated_count",
+          "std_dev",
+          "std_rate",
+          "top_ten_average",
+          "unscored_count"
+        ],
+        "type": "object"
+      },
+      "ExamScoreTrend": {
+        "properties": {
+          "cumulative_delta_pp": {
+            "format": "double",
+            "type": "number"
+          },
+          "cumulative_rate": {
+            "format": "double",
+            "type": "number"
+          },
+          "current_rate": {
+            "format": "double",
+            "type": "number"
+          },
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "lecture_title": {
+            "type": "string"
+          },
+          "previous_delta_pp": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "previous_session_rate": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "prior_exam_count": {
+            "type": "integer"
+          },
+          "signal": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SignalEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "student_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cumulative_delta_pp",
+          "cumulative_rate",
+          "current_rate",
+          "enrollment_id",
+          "lecture_title",
+          "previous_delta_pp",
+          "previous_session_rate",
+          "prior_exam_count",
+          "signal",
+          "student_name"
+        ],
+        "type": "object"
+      },
       "ExamTypeEnum": {
         "description": "* `template` - Template\n* `regular` - Regular",
         "enum": [
@@ -5348,6 +5531,20 @@
             "maxLength": 255,
             "type": "string"
           },
+          "schedule_defaults": {
+            "items": {
+              "$ref": "#/components/schemas/LectureScheduleDefault"
+            },
+            "type": "array"
+          },
+          "schedule_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScheduleModeEnum"
+              }
+            ],
+            "description": "새 차시의 기본 수업일 구성\n\n* `SINGLE` - 한 날짜\n* `SPLIT` - 여러 날짜"
+          },
           "start_date": {
             "format": "date",
             "nullable": true,
@@ -5676,6 +5873,20 @@
             "minLength": 1,
             "type": "string"
           },
+          "schedule_defaults": {
+            "items": {
+              "$ref": "#/components/schemas/LectureScheduleDefaultRequest"
+            },
+            "type": "array"
+          },
+          "schedule_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScheduleModeEnum"
+              }
+            ],
+            "description": "새 차시의 기본 수업일 구성\n\n* `SINGLE` - 한 날짜\n* `SPLIT` - 여러 날짜"
+          },
           "start_date": {
             "format": "date",
             "nullable": true,
@@ -5694,6 +5905,117 @@
         },
         "required": [
           "name",
+          "subject",
+          "title"
+        ],
+        "type": "object"
+      },
+      "LectureScheduleDefault": {
+        "properties": {
+          "label": {
+            "maxLength": 40,
+            "type": "string"
+          },
+          "weekday": {
+            "description": "ISO 요일 (1=월요일, 7=일요일)",
+            "maximum": 7,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "label",
+          "weekday"
+        ],
+        "type": "object"
+      },
+      "LectureScheduleDefaultRequest": {
+        "properties": {
+          "label": {
+            "maxLength": 40,
+            "minLength": 1,
+            "type": "string"
+          },
+          "weekday": {
+            "description": "ISO 요일 (1=월요일, 7=일요일)",
+            "maximum": 7,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "label",
+          "weekday"
+        ],
+        "type": "object"
+      },
+      "LectureScheduleSettingsRequest": {
+        "properties": {
+          "chip_label": {
+            "description": "강의딱지 2글자 (미입력 시 제목 앞 2자 사용)",
+            "maxLength": 2,
+            "type": "string"
+          },
+          "color": {
+            "description": "아이콘/라벨 색상",
+            "maxLength": 20,
+            "minLength": 1,
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "end_date": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "is_system": {
+            "description": "시스템용 강의 (전체공개영상 컨테이너 등). 강의 목록·성적 등에서 자동 제외.",
+            "type": "boolean"
+          },
+          "lecture_time": {
+            "description": "강의 시간 (예: 토 12:00 ~ 13:00)",
+            "maxLength": 100,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schedule_defaults": {
+            "items": {
+              "$ref": "#/components/schemas/LectureScheduleDefaultRequest"
+            },
+            "type": "array"
+          },
+          "schedule_mode": {
+            "$ref": "#/components/schemas/ScheduleModeEnum"
+          },
+          "start_date": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 50,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "schedule_defaults",
+          "schedule_mode",
           "subject",
           "title"
         ],
@@ -5983,6 +6305,69 @@
           "section_type",
           "start_time",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "LectureSessionCreateRequest": {
+        "properties": {
+          "create_request_id": {
+            "format": "uuid",
+            "type": "string",
+            "writeOnly": true
+          },
+          "date": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "initial_schedules": {
+            "items": {
+              "$ref": "#/components/schemas/SessionCreateScheduleInputRequest"
+            },
+            "type": "array",
+            "writeOnly": true
+          },
+          "insert_after_order": {
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer",
+            "writeOnly": true
+          },
+          "lecture": {
+            "type": "integer"
+          },
+          "order": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "regular_order": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "section": {
+            "description": "반별 차시 (section_mode=true). null이면 반 무관 공통 차시.",
+            "nullable": true,
+            "type": "integer"
+          },
+          "session_type": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SessionTypeEnum"
+              }
+            ],
+            "default": "REGULAR"
+          },
+          "title": {
+            "maxLength": 255,
+            "type": "string"
+          }
+        },
+        "required": [
+          "create_request_id",
+          "initial_schedules",
+          "lecture"
         ],
         "type": "object"
       },
@@ -7037,8 +7422,23 @@
         ],
         "type": "object"
       },
+      "OmrUploadBatchInitializeConflict": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "type": "object"
+      },
       "OmrUploadBatchInitializeRequestRequest": {
         "properties": {
+          "client_request_id": {
+            "format": "uuid",
+            "type": "string"
+          },
           "session_id": {
             "nullable": true,
             "type": "integer"
@@ -10200,6 +10600,85 @@
             "minLength": 1,
             "type": "string"
           },
+          "schedule_defaults": {
+            "items": {
+              "$ref": "#/components/schemas/LectureScheduleDefaultRequest"
+            },
+            "type": "array"
+          },
+          "schedule_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScheduleModeEnum"
+              }
+            ],
+            "description": "새 차시의 기본 수업일 구성\n\n* `SINGLE` - 한 날짜\n* `SPLIT` - 여러 날짜"
+          },
+          "start_date": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 50,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedLectureScheduleSettingsRequest": {
+        "properties": {
+          "chip_label": {
+            "description": "강의딱지 2글자 (미입력 시 제목 앞 2자 사용)",
+            "maxLength": 2,
+            "type": "string"
+          },
+          "color": {
+            "description": "아이콘/라벨 색상",
+            "maxLength": 20,
+            "minLength": 1,
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "end_date": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "is_system": {
+            "description": "시스템용 강의 (전체공개영상 컨테이너 등). 강의 목록·성적 등에서 자동 제외.",
+            "type": "boolean"
+          },
+          "lecture_time": {
+            "description": "강의 시간 (예: 토 12:00 ~ 13:00)",
+            "maxLength": 100,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schedule_defaults": {
+            "items": {
+              "$ref": "#/components/schemas/LectureScheduleDefaultRequest"
+            },
+            "type": "array"
+          },
+          "schedule_mode": {
+            "$ref": "#/components/schemas/ScheduleModeEnum"
+          },
           "start_date": {
             "format": "date",
             "nullable": true,
@@ -10643,6 +11122,23 @@
             "maxLength": 200,
             "minLength": 1,
             "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedReviewAllowanceRequest": {
+        "properties": {
+          "expected_revision": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "limit_ms": {
+            "format": "int64",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
           }
         },
         "type": "object"
@@ -15038,6 +15534,9 @@
           "retry_after_ms": {
             "type": "integer"
           },
+          "review_watch_summary": {
+            "$ref": "#/components/schemas/ReviewWatchSummary"
+          },
           "stream": {
             "format": "uuid",
             "type": "string"
@@ -15055,8 +15554,32 @@
       },
       "ReviewStudent": {
         "properties": {
+          "applicable": {
+            "type": "boolean"
+          },
+          "can_adjust": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "exhausted": {
+            "type": "boolean"
+          },
+          "limit_ms": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "remaining_ms": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "revision": {
+            "type": "string"
+          },
           "started_at": {
             "format": "date-time",
+            "nullable": true,
             "type": "string"
           },
           "student_id": {
@@ -15070,9 +15593,53 @@
           }
         },
         "required": [
+          "applicable",
+          "can_adjust",
+          "enabled",
+          "exhausted",
+          "limit_ms",
+          "remaining_ms",
+          "revision",
           "started_at",
           "student_id",
           "student_name",
+          "used_ms"
+        ],
+        "type": "object"
+      },
+      "ReviewWatchSummary": {
+        "properties": {
+          "applicable": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "exhausted": {
+            "type": "boolean"
+          },
+          "limit_ms": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "remaining_ms": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "used_ms": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "applicable",
+          "enabled",
+          "exhausted",
+          "limit_ms",
+          "remaining_ms",
+          "revision",
           "used_ms"
         ],
         "type": "object"
@@ -15228,6 +15795,14 @@
           "label"
         ],
         "type": "object"
+      },
+      "ScheduleModeEnum": {
+        "description": "* `SINGLE` - 한 날짜\n* `SPLIT` - 여러 날짜",
+        "enum": [
+          "SINGLE",
+          "SPLIT"
+        ],
+        "type": "string"
       },
       "ScheduleRosterEntry": {
         "properties": {
@@ -16774,6 +17349,34 @@
         ],
         "type": "string"
       },
+      "SessionCreateScheduleInputRequest": {
+        "properties": {
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "end_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 40,
+            "minLength": 1,
+            "type": "string"
+          },
+          "start_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "label"
+        ],
+        "type": "object"
+      },
       "SessionEnrollment": {
         "properties": {
           "created_at": {
@@ -17225,6 +17828,14 @@
           }
         },
         "type": "object"
+      },
+      "SignalEnum": {
+        "description": "* `up` - up\n* `down` - down",
+        "enum": [
+          "up",
+          "down"
+        ],
+        "type": "string"
       },
       "SolapiStatusEnum": {
         "description": "* `` - 미신청\n* `PENDING` - 검수 대기\n* `APPROVED` - 승인\n* `REJECTED` - 반려",
@@ -20792,6 +21403,9 @@
             "format": "double",
             "type": "number"
           },
+          "review_watch_summary": {
+            "$ref": "#/components/schemas/ReviewWatchSummary"
+          },
           "session_id": {
             "nullable": true,
             "type": "integer"
@@ -20902,6 +21516,12 @@
             "additionalProperties": {},
             "nullable": true,
             "type": "object"
+          },
+          "review_watch_summary": {
+            "$ref": "#/components/schemas/ReviewWatchSummary"
+          },
+          "support_preview": {
+            "type": "boolean"
           },
           "video": {
             "$ref": "#/components/schemas/StudentVideoListItem"
@@ -39469,6 +40089,54 @@
         ]
       }
     },
+    "/api/v1/lectures/lectures/with-schedule-settings/": {
+      "post": {
+        "operationId": "lectures_lectures_with_schedule_settings_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureScheduleSettingsRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureScheduleSettingsRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureScheduleSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Lecture"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "lectures"
+        ]
+      }
+    },
     "/api/v1/lectures/lectures/{id}/": {
       "delete": {
         "operationId": "lectures_lectures_destroy",
@@ -39661,6 +40329,64 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Lecture"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "lectures"
+        ]
+      }
+    },
+    "/api/v1/lectures/lectures/{id}/schedule-settings/": {
+      "patch": {
+        "description": "일반 강의 필드는 생략할 수 있지만 schedule_mode와 schedule_defaults는 모두 필요합니다.",
+        "operationId": "lectures_lectures_schedule_settings_partial_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedLectureScheduleSettingsRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedLectureScheduleSettingsRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedLectureScheduleSettingsRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -40445,6 +41171,57 @@
               }
             },
             "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "lectures"
+        ]
+      }
+    },
+    "/api/v1/lectures/sessions/with-schedules/": {
+      "post": {
+        "operationId": "lectures_sessions_with_schedules_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureSessionCreateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureSessionCreateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureSessionCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LectureSession"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "description": "같은 생성 요청 ID에 이미 다른 입력이 저장되었습니다."
           }
         },
         "security": [
@@ -44255,6 +45032,81 @@
         ]
       }
     },
+    "/api/v1/media/videos/{video_id}/review-watch/students/{student_id}/allowance/": {
+      "patch": {
+        "operationId": "media_videos_review_watch_students_allowance_partial_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedReviewAllowanceRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedReviewAllowanceRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedReviewAllowanceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewWatchSummary"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewWatchSummary"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
     "/api/v1/messaging/attendance-notification/confirm/": {
       "post": {
         "description": "출결 알림 확정 발송.\n\nPOST /api/v1/messaging/attendance-notification/confirm/\n{\n    \"preview_token\": \"uuid\"\n}\n\npreview_token 없이 직접 호출 불가.\n동일 token 재사용 불가 (1회용).",
@@ -47215,6 +48067,52 @@
                 "schema": {
                   "format": "binary",
                   "type": "string"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/exams/{exam_id}/analysis-insights/": {
+      "get": {
+        "operationId": "results_admin_exams_analysis_insights_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exam_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "An exam-linked lecture in the current tenant.",
+            "in": "query",
+            "name": "lecture_id",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminExamAnalysisInsights"
                 }
               }
             },
@@ -56332,6 +57230,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OmrUploadBatchSummary"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OmrUploadBatchInitializeConflict"
                 }
               }
             },

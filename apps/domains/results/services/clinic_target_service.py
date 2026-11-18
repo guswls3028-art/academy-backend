@@ -148,6 +148,17 @@ def _get_session_title(session: Any) -> str:
     return f"Session#{int(getattr(session, 'id', 0) or 0)}"
 
 
+def _get_session_label(session: Any) -> str:
+    label = session.display_label
+    if session.session_type == session.SessionType.REGULAR:
+        lesson_number = f"{session.regular_order or session.order}차시"
+        if label != lesson_number:
+            label = f"{lesson_number} · {label}"
+    if session.section:
+        label = f"{label} ({session.section.label}반)"
+    return label
+
+
 @dataclass(frozen=True)
 class ClinicTargetRow:
     enrollment_id: int
@@ -186,17 +197,24 @@ class ClinicTargetService:
                 section_id=int(section_id),
             )
 
+        current_target_enrollment_ids = None if section_id else set()
         links_list = list(links)
         if links_list:
-            links_list = filter_tenant_consistent_source_links(
-                links_list,
-                tenant=tenant,
-            )
+            consistent_links = filter_tenant_consistent_source_links(links_list, tenant=tenant)
+            if len(consistent_links) != len(links_list):
+                # The listing prefilter can reject a secondary legacy source ID
+                # that the global highlight's primary-source rule does not use.
+                current_target_enrollment_ids = None
+            links_list = consistent_links
         if links_list:
             current_links = filter_current_clinic_links(
                 (link for link in links_list if link.resolved_at is None),
                 tenant=tenant,
             )
+            # The global highlight includes a valid unresolved target even if
+            # actual absence hides that particular row from this listing.
+            if current_target_enrollment_ids is not None:
+                current_target_enrollment_ids.update(int(link.enrollment_id) for link in current_links)
             absent_pairs = actual_absent_learning_todo_pairs(
                 tenant=tenant,
                 enrollment_session_pairs={
@@ -305,6 +323,7 @@ class ClinicTargetService:
         highlight_map = compute_clinic_highlight_map(
             tenant=tenant,
             enrollment_ids=set(all_enrollment_ids),
+            current_target_enrollment_ids=current_target_enrollment_ids,
         ) if tenant else {}
 
         out: List[Dict[str, Any]] = []
@@ -373,6 +392,7 @@ class ClinicTargetService:
                 "linked_bookings": linked_bookings.get(int(link.id), []),
                 "student_name": student_name,
                 "session_title": _get_session_title(session),
+                "session_label": _get_session_label(session),
                 "source_type": source_type,
                 "source_id": getattr(link, "source_id", None),
                 "source_scope": None,
@@ -575,6 +595,7 @@ class ClinicTargetService:
                 "student_id": int(student.id) if student else None,
                 "student_name": _safe_str(getattr(student, "name", None), "-"),
                 "session_title": _get_session_title(session),
+                "session_label": _get_session_label(session),
                 "reason": "missing",
                 "clinic_reason": "exam",
                 "exam_score": None,

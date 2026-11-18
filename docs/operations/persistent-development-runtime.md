@@ -27,6 +27,11 @@
 - 객체 저장소는 Cloudflare R2의 `academy-development-artifacts` 버킷만 사용한다.
   자격증명은 `/academy/r2/development/credentials` SecureString에 있고 운영 R2 버킷
   접근은 검증 단계에서 거부되어야 한다. AWS S3 버킷은 만들거나 사용하지 않는다.
+  영상 멀티파트 실사용 진단에는 `academy-dev-native-multipart-qa` CORS 규칙을 둔다.
+  `http://localhost:4173`의 `PUT`과 요청 헤더 `Content-Type`을 허용하고 `ETag`를 노출한다.
+  Cloudflare 정책 API로 적용할 때 기존 Range 재생용 `GET`·`HEAD` 규칙을 보존하고 다시 읽는다.
+  격리 브라우저에서 서명된 조각 업로드, 응답 유실 후 같은 조각 재시도, 완성 객체의 크기와
+  열린 멀티파트 업로드·테스트 데이터 정리 0건을 확인한다.
 - worker 설정도 `R2_STORAGE_BUCKET`·`R2_ADMIN_BUCKET`·`R2_REGION`을 worker env에서
   명시적으로 읽는다. API에는 개발 버킷이 적용됐지만 worker가 운영 기본 버킷명으로
   되돌아가 HWP 문항/해설 저장이 `AccessDenied`로 끝나는 경로를 허용하지 않는다.
@@ -40,8 +45,9 @@
   계속 필수 경계다.
 - Video Batch는 아직 이 상시 개발 런타임의 구성 자원이 아니다. 개발 API·worker env의
   `VIDEO_BATCH_JOB_QUEUE`와 `VIDEO_BATCH_JOB_DEFINITION`은 빈 값으로 고정하고 settings와
-  배포 readback에서도 이를 강제한다. 따라서 업로드 완료 후 Batch 제출은 누락 설정 오류로
-  실패 폐쇄하며 운영 `academy-v1-video-batch-*` 큐·job definition으로 흘러가지 않는다.
+  배포 readback에서도 이를 강제한다. 업로드가 완료되어도 인코딩 대상으로 사용할 큐와 job
+  definition이 없으면 신규 job과 잠금 전에 `VIDEO_BATCH_SUBMIT_FAILED`를 반환한다.
+  영상은 `FAILED`로 저장하고 원본 객체를 보존한다. 필요한 설정이 갖춰지면 기존 재처리 경로를 쓴다.
 - 운영 `CDN_HLS_SIGNING_SECRET`은 개발 env에 복사하거나 다른 개발 credential에서 파생하지
   않는다. env publication은 매 릴리스마다 암호학적 난수 32바이트로 개발 전용 키를 만들고,
   운영 키와 다름을 확인한 뒤 API와 worker에 같은 `CDN_HLS_SIGNING_SECRET`과 key id `v1`을
@@ -191,6 +197,19 @@ digest는 shell 문자/경로/SSM 참조를 허용하지 않는 strict pattern�
 공식 frontend Playwright runner는 API가 반환한 정확한 signed path만 loopback 합성
 HLS server에 매핑해야 하며, 이 매핑 없이 metadata 경로를 재생 성공 증거로 사용할 수
 없다. 일반 Setup과 기존 caller는 기본 `false`라 영상 fixture가 생기지 않는다.
+`SyntheticMultipartVideo`는 별도 raw 영상 검증에서만 `true`로 전달한다. 기본값은
+`false`이며 `SyntheticLongVideo` 또는 `AccountProbe`와 함께 사용할 수 없다.
+Setup은 격리된 개발 DB와 영상 버킷에서 전용 차시를 확인하고, 실행 시 사용하는 R2
+자격으로 해당 차시의 raw prefix에 완료 객체와 미완료 multipart가 없음을 확인한다.
+읽기 권한이나 빈 상태를 확인하지 못하면 Setup이 실패한다. 기존 생성 감사 기록에
+capability와 차시 ID를 묶어 기록하고 `synthetic_multipart_video`에 `lecture_id`,
+`session_id`와 두 빈 목록의 개수를 반환한다. 업로드 뒤의 Inspect는 실제 객체의 바이트
+길이, 저장된 영상 상태, AWS Batch 제출 ID가 있는지를 값으로 반환한다.
+브라우저를 종료한 뒤 같은 capability로 Cleanup을 호출한다. 서버가 기록한 영상 행의
+정확한 원본 키만 대상으로 하며, 미완료 업로드를 중단하고 완료 객체를 지운 뒤 양쪽
+목록이 모두 비었음을 확인해야 DB를 정리한다. 행이 이미 삭제된 재호출은 감사 기록의
+차시 범위에서 읽기 검증만 한다. 호출자가 임의 키나 업로드 ID를 지정할 수 없다.
+일반 Video Batch는 계속 비활성화하며, 이 검증 범위는 원본 객체 조립과 정리까지다.
 `NonInteractiveCommands` agent는 command 문자열에 shell을 암묵적으로 추가하지 않는다.
 따라서 Linux command는 POSIX tokenization 결과가 정확히
 `["/bin/sh", "-lc", <고정 script>]`가 되도록 shell과 단일 script 인자를 명시하며,
@@ -441,6 +460,13 @@ REJECTED_BAD_INPUT/REVIEW_REQUIRED이면서 완료 시각이 있고 lease/lock�
 재검사한다. 해당 job의 tenant status/progress와 legacy status/progress 네 키만 삭제하며,
 정확한 AIJob 삭제에 연결된 AIResult만 cascade한다. 일반 사용자 데이터 보존 기간이나
 제품의 AI 결과 보존 정책은 바꾸지 않는다.
+
+영상 멀티파트 격리 검사는 setup seal에 보관한 정확한 session ID까지 capability
+digest에 포함한다. AI Inspect와 Cleanup도 이 seal과 원래 capability를 검증하고
+같은 소유권을 정리 receipt에 보존한다. 기존 일반 검사의 seal과 receipt는 같은
+방식으로 계속 읽으며, 잘못된 session이나 capability는 정리 전에 거부한다.
+계정 스냅샷 정리도 같은 setup seal 검증을 사용한다. 멀티파트 Cleanup에서는
+스냅샷이 없어야 한다. 계정 스냅샷 생성·비교는 일반 격리 계정 검사에서만 실행한다.
 
 `development.qa.ai.cleanup` 감사 receipt에는 기존 owner hash, 정확한 job ID와 사전
 AIJob/AIResult/Redis 건수만 저장한다. setup seal과 receipt는 tenant 삭제 후 SET_NULL로
