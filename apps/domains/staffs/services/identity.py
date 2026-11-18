@@ -33,6 +33,27 @@ def _legacy_owner_staff(tenant, user):
     return (matches[0] if matches else None), False
 
 
+def _assignments(tenant, staff):
+    # These FKs are independent; legacy mismatches must neither expose another
+    # tenant's names/rates nor count as an existing local assignment.
+    return StaffWorkType.objects.filter(
+        tenant=tenant, staff=staff, work_type__tenant=tenant,
+    )
+
+
+def _attach_staff_fields(payload, tenant, staff):
+    payload["staff_id"] = staff.pk
+    assigned = list(_assignments(tenant, staff).filter(
+        work_type__is_active=True,
+    ).select_related("work_type").order_by("id"))
+    payload["assigned_work_types"] = [
+        {"id": item.work_type_id, "name": item.work_type.name,
+         "hourly_wage": item.effective_hourly_wage} for item in assigned
+    ]
+    if len(assigned) == 1:
+        payload["default_work_type_id"] = assigned[0].work_type_id
+
+
 def staff_identity_snapshot(*, tenant, user):
     is_owner = _owner(tenant, user)
     name, phone = _owner_name_phone(user)
@@ -50,29 +71,18 @@ def staff_identity_snapshot(*, tenant, user):
     # profile belonging to a different tenant.
     profile = Staff.objects.filter(user=user).first()
     if profile and profile.tenant_id == tenant.pk:
-        payload["staff_id"] = profile.pk
-        assigned = list(profile.staff_work_types.filter(
-            work_type__is_active=True,
-        ).select_related("work_type").order_by("id"))
-        payload["assigned_work_types"] = [
-            {"id": item.work_type_id, "name": item.work_type.name,
-             "hourly_wage": item.effective_hourly_wage} for item in assigned
-        ]
-        if len(assigned) == 1:
-            payload["default_work_type_id"] = assigned[0].work_type_id
+        _attach_staff_fields(payload, tenant, profile)
         # An already-linked manual staff is never automatically assigned/reset.
         return payload
     if not is_owner:
         return payload
     staff, conflict = _legacy_owner_staff(tenant, user)
-    first_type = WorkType.objects.filter(tenant=tenant, is_active=True).order_by("id").first()
+    active_type_exists = WorkType.objects.filter(tenant=tenant, is_active=True).exists()
     payload["owner_setup_required"] = bool(
-        conflict or staff is None or first_type is None or not staff.staff_work_types.exists()
+        conflict or staff is None or not active_type_exists or not _assignments(tenant, staff).exists()
     )
     if staff:
-        payload["staff_id"] = staff.pk
-    if first_type:
-        payload["default_work_type_id"] = first_type.pk
+        _attach_staff_fields(payload, tenant, staff)
     return payload
 
 
@@ -121,7 +131,7 @@ def ensure_owner_staff_identity(*, tenant, user):
         first_type = WorkType.objects.filter(tenant=tenant, is_active=True).order_by("id").first()
         if first_type is None:
             first_type = WorkType.objects.create(tenant=tenant, name="기본", base_hourly_wage=0, is_active=True)
-        if not staff.staff_work_types.exists():
+        if not _assignments(tenant, staff).exists():
             StaffWorkType.objects.get_or_create(
                 tenant=tenant, staff=staff, work_type=first_type, defaults={"hourly_wage": None},
             )
