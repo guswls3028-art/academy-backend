@@ -1,3 +1,5 @@
+"""Cross-domain staff contact visibility and tenant isolation integration tests."""
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone

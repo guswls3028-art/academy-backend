@@ -3,7 +3,7 @@
 import re
 
 from apps.domains.messaging.security import sanitize_notification_target_id
-from apps.domains.students.models import Student
+from apps.support.messaging.student_dependencies import students_for_tenant
 
 
 def current_recipient_phones(tenant, logs):
@@ -28,9 +28,7 @@ def current_recipient_phones(tenant, logs):
         return {}
     students = {
         row["id"]: row
-        for row in Student.objects.filter(
-            tenant=tenant,
-            deleted_at__isnull=True,
+        for row in students_for_tenant(tenant, deleted="active").filter(
             id__in={student_id for student_id, _ in targets.values()},
         ).values("id", "phone", "parent_phone", "uses_identifier")
     }
