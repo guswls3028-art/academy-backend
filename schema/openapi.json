@@ -28806,6 +28806,165 @@
         ]
       }
     },
+    "/api/v1/core/dev/agent-sessions/": {
+      "get": {
+        "description": "Read-only coding-session metadata for tenant 1's admin97. Impersonation and support previews are denied.",
+        "operationId": "core_dev_agent_sessions_retrieve",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "collected_at": {
+                      "format": "date-time",
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "nodes": {
+                      "items": {
+                        "properties": {
+                          "evidence": {
+                            "enum": [
+                              "runtime",
+                              "last_turn",
+                              "closed",
+                              "unknown"
+                            ],
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "parent_id": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "provider": {
+                            "enum": [
+                              "codex",
+                              "claude"
+                            ],
+                            "type": "string"
+                          },
+                          "role": {
+                            "maxLength": 80,
+                            "type": "string"
+                          },
+                          "status": {
+                            "enum": [
+                              "running",
+                              "waiting",
+                              "completed",
+                              "interrupted",
+                              "unknown"
+                            ],
+                            "type": "string"
+                          },
+                          "title": {
+                            "maxLength": 160,
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "format": "date-time",
+                            "nullable": true,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "provider",
+                          "parent_id",
+                          "title",
+                          "role",
+                          "status",
+                          "evidence",
+                          "updated_at"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 600,
+                      "type": "array"
+                    },
+                    "schema": {
+                      "enum": [
+                        1
+                      ],
+                      "type": "integer"
+                    },
+                    "source_errors": {
+                      "items": {
+                        "enum": [
+                          "codex",
+                          "claude"
+                        ],
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "source_status": {
+                      "enum": [
+                        "connected",
+                        "stale",
+                        "unavailable"
+                      ],
+                      "type": "string"
+                    },
+                    "stale_after_seconds": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "schema",
+                    "collected_at",
+                    "source_status",
+                    "stale_after_seconds",
+                    "nodes",
+                    "truncated",
+                    "source_errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "core"
+        ]
+      }
+    },
     "/api/v1/core/dev/audit/": {
       "get": {
         "description": "GET /api/v1/core/dev/audit/?action=&actor=&tenant_code=&result=&since=&until=&limit=100",
