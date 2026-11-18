@@ -120,6 +120,10 @@ def _competition_rank(
     total = sum(row["total_score"] for row in normalized_rows)
     cohort_avg = round(total / cohort_size, 2) if cohort_size else 0.0
 
+    top_count = (cohort_size + 9) // 10
+    top_decile_avg = round(sum(row["total_score"] for row in normalized_rows[:top_count]) / top_count, 2)
+    highest_score = normalized_rows[0]["total_score"]
+
     result_map: Dict[int, dict] = {}
     prev_score: Optional[float] = None
     current_rank = 0
@@ -136,6 +140,8 @@ def _competition_rank(
             "percentile": percentile,
             "cohort_size": cohort_size,
             "cohort_avg": cohort_avg,
+            "cohort_top_decile_avg": top_decile_avg,
+            "cohort_highest": highest_score,
         }
     return result_map
 

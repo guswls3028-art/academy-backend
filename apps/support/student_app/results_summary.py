@@ -11,6 +11,8 @@ from django.utils import timezone
 from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
 from apps.domains.exams.models import Exam
 from apps.domains.homework.models import HomeworkAssignment
+from apps.domains.results.models.homework_inspection import HomeworkInspection
+from apps.support.results.parent_comment_dependencies import parent_comment_titles
 from apps.domains.homework_results.models import HomeworkScore
 from apps.domains.submissions.models import Submission
 from apps.core.services.student_grade_report_layout import (
@@ -442,6 +444,17 @@ def build_student_grades_summary(
         ):
             homework_retake_counts[(row["enrollment_id"], row["homework_id"])] = row["max_attempt"]
 
+    shared_inspections = {}
+    if include_grade_board_details and assigned_homework_ids:
+        inspections = list(HomeworkInspection.objects.filter(
+            tenant=tenant, enrollment_id__in=enrollment_ids, homework_id__in=assigned_homework_ids,
+        ).exclude(solved__isnull=True, feedback="").select_related("session__lecture"))
+        visible = parent_comment_titles(tenant=tenant, student=student, comments=inspections)
+        shared_inspections = {
+            (row.homework_id, row.session_id, row.enrollment_id): {
+                "solved": row.solved, "total": row.total, "feedback": row.feedback,
+            } for row in inspections if row.pk in visible
+        }
     homework_list = []
     seen_homework_key = set()
     unscored_reviewed_revisions = {}
@@ -501,6 +514,7 @@ def build_student_grades_summary(
             "teacher_resolved": key in teacher_completed_homework_keys,
             "submission_media_locked": media_locked,
             "retake_count": max_attempt,
+            **({"practice_inspection": shared_inspections[key]} if key in shared_inspections else {}),
             "grading_mode": score.homework.grading_mode,
             "display_order": score.homework.display_order,
             "session_title": session_title,
@@ -535,6 +549,7 @@ def build_student_grades_summary(
             and not media_locked
             and submission_key not in homework_retake_counts
             and key not in unscored_reviewed_revisions
+            and key not in shared_inspections
             and not video_makeup
             and not remediated
         ):
@@ -561,6 +576,7 @@ def build_student_grades_summary(
             "teacher_resolved": key in teacher_completed_homework_keys,
             "submission_media_locked": media_locked,
             "retake_count": 0,
+            **({"practice_inspection": shared_inspections[key]} if key in shared_inspections else {}),
             "grading_mode": homework.grading_mode,
             "display_order": homework.display_order,
             "session_title": assignment_session_title,
