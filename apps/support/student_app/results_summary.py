@@ -24,6 +24,7 @@ from apps.domains.results.services.assessment_correction_status import (
 )
 from apps.domains.results.utils.ranking import compute_exam_rankings_batch
 from apps.domains.results.services.student_rank_visibility import student_rank_visibility_payload
+from apps.support.omr.score_shape_batch import request_exam_scoring_details_loader
 from apps.support.results.assessment_clinic_status import homework_remediation_keys
 from apps.support.results.student_grade_history import (
     build_exam_progression,
@@ -191,11 +192,13 @@ def build_student_grades_summary(
         }
 
     totals_exam_rows = []
+    load_scoring_details = request_exam_scoring_details_loader()
     exam_list, _, _ = build_student_exam_history(
         tenant=tenant,
         enrollment_ids=enrollment_ids,
         published_results_only=True,
         totals_rows=totals_exam_rows,
+        scoring_details_loader=load_scoring_details,
     )
     pending_exam_keys = set(
         Submission.objects.filter(
@@ -282,6 +285,7 @@ def build_student_grades_summary(
         exam_ids=[exam_id for exam_id, visibility in exam_rank_visibility.items() if any(visibility)],
         enrollment_ids=enrollment_ids,
         tenant=tenant,
+        scoring_details_loader=load_scoring_details,
     )
 
     for exam in exam_list:

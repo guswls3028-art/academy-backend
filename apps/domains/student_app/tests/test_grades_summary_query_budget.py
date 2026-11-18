@@ -37,7 +37,8 @@ class GradesSummaryQueryBudgetTests(TestCase):
         result = self._score_exam(title=f"History {order}", order=order, score=80, max_score=100)
         exam = self.Exam.objects.get(pk=result.target_id)
         exam.student_results_published = True
-        exam.save(update_fields=["student_results_published"])
+        exam.student_rank_published = True
+        exam.save(update_fields=["student_results_published", "student_rank_published"])
         sheet = self.Sheet.objects.create(exam=exam, total_questions=5, choice_count=4, essay_count=1)
         questions = [self.ExamQuestion.objects.create(
             sheet=sheet, number=i, score=20, question_kind="choice" if i <= 4 else "essay",
@@ -76,7 +77,7 @@ class GradesSummaryQueryBudgetTests(TestCase):
             counts.append(len(queries))
             with (
                 patch(
-                    "apps.support.results.student_grade_history.request_exam_scoring_details_loader",
+                    "apps.support.student_app.results_summary.request_exam_scoring_details_loader",
                     return_value=_single_exam_details,
                 ),
                 patch(
@@ -86,7 +87,7 @@ class GradesSummaryQueryBudgetTests(TestCase):
             ):
                 original = self._call()
             self.assertEqual(response.data, original.data)
-        self.assertLessEqual(max(counts), 90, counts)
+        self.assertLessEqual(max(counts), 72, counts)
         self.assertLessEqual(max(counts) - min(counts), 1, counts)
 
     def test_omr_history_query_budget_and_response_parity(self):
