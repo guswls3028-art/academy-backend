@@ -134,6 +134,9 @@ SSOT: `permanently_delete_students(tenant=..., student_ids=[...])`
     ORM cascade로 코멘트와 revision을 정리하며 작성자 계정은 삭제하지 않는다.
     코멘트 tenant 또는 연결 차시의 강의 tenant가 다르면 기존 그래프 검증에서
     `409 cross_tenant_reference`로 전체 작업을 중단하고 원본과 이력을 보존한다.
+  - 과제 검사(`HomeworkInspection`)의 풀이 수·코멘트는 영구 삭제 대상 수강에서만 정리한다.
+    동명이인의 수강 기록과 과제 원본은 보존한다. 검사 기록·검사 차시·과제·과제 차시의
+    학원 중 하나라도 대상 수강의 학원과 다르면 전체 삭제를 중단한다.
 - lecture section assignment
 - fees: `StudentFee`, `StudentInvoice`, `InvoiceItem`, `FeePayment`
 - submissions/results/homework/progress/video/clinic/community의 학생 참조
