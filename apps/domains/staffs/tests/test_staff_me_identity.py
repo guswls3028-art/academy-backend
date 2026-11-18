@@ -181,6 +181,66 @@ class StaffMeIdentityTests(TestCase):
         self.assertEqual(foreign.user_id, self.owner.pk)
         self.assertIsNone(Staff.objects.get(tenant=self.tenant).user_id)
 
+    def test_linked_snapshot_excludes_both_independent_foreign_assignment_links(self):
+        staff = Staff.objects.create(tenant=self.tenant, user=self.owner, name="Owner", phone="")
+        other = Tenant.objects.create(code="staff-me-bad-links", name="Foreign")
+        local = WorkType.objects.create(tenant=self.tenant, name="Local type", base_hourly_wage=10000)
+        foreign = WorkType.objects.create(tenant=other, name="Foreign type", base_hourly_wage=99999)
+        wrong_assignment = StaffWorkType.objects.create(
+            tenant=other, staff=staff, work_type=local, hourly_wage=88888,
+        )
+        wrong_type = StaffWorkType.objects.create(
+            tenant=self.tenant, staff=staff, work_type=foreign, hourly_wage=77777,
+        )
+        valid = StaffWorkType.objects.create(
+            tenant=self.tenant, staff=staff, work_type=local, hourly_wage=23000,
+        )
+        before = self.counts()
+        payload = self.get_me()
+        self.assertEqual(payload["assigned_work_types"], [{"id": local.pk, "name": "Local type", "hourly_wage": 23000}])
+        self.assertEqual(payload["default_work_type_id"], local.pk)
+        self.assertFalse(payload["owner_setup_required"])
+        self.ensure()
+        self.assertEqual(self.counts(), before)
+        self.assertEqual(list(StaffWorkType.objects.filter(pk__in=[wrong_assignment.pk, wrong_type.pk, valid.pk])
+                              .order_by("id").values_list("hourly_wage", flat=True)), [88888, 77777, 23000])
+
+    def test_foreign_assignments_cannot_suppress_unlinked_owner_setup(self):
+        staff = Staff.objects.create(tenant=self.tenant, name="Owner", phone="")
+        other = Tenant.objects.create(code="staff-me-bad-setup", name="Foreign")
+        local = WorkType.objects.create(tenant=self.tenant, name="Local type", base_hourly_wage=17000)
+        foreign = WorkType.objects.create(tenant=other, name="Foreign type", base_hourly_wage=99000)
+        wrong_assignment = StaffWorkType.objects.create(tenant=other, staff=staff, work_type=local, hourly_wage=88000)
+        wrong_type = StaffWorkType.objects.create(tenant=self.tenant, staff=staff, work_type=foreign, hourly_wage=77000)
+        payload = self.get_me()
+        self.assertTrue(payload["owner_setup_required"])
+        self.assertEqual(payload["assigned_work_types"], [])
+        self.assertNotIn("default_work_type_id", payload)
+        prepared = self.ensure().data
+        self.assertFalse(prepared["owner_setup_required"])
+        self.assertEqual(prepared["assigned_work_types"], [{"id": local.pk, "name": "Local type", "hourly_wage": 17000}])
+        self.assertEqual(prepared["default_work_type_id"], local.pk)
+        self.assertEqual(StaffWorkType.objects.filter(staff=staff).count(), 3)
+        wrong_assignment.refresh_from_db()
+        wrong_type.refresh_from_db()
+        self.assertEqual((wrong_assignment.hourly_wage, wrong_type.hourly_wage), (88000, 77000))
+        self.ensure()
+        self.assertEqual(StaffWorkType.objects.filter(staff=staff).count(), 3)
+
+    def test_unlinked_single_and_multiple_assignment_default_matches_selection(self):
+        staff = Staff.objects.create(tenant=self.tenant, name="Owner", phone="")
+        WorkType.objects.create(tenant=self.tenant, name="Unassigned first type", base_hourly_wage=0)
+        first = WorkType.objects.create(tenant=self.tenant, name="Assigned first", base_hourly_wage=11000)
+        second = WorkType.objects.create(tenant=self.tenant, name="Assigned second", base_hourly_wage=22000)
+        StaffWorkType.objects.create(tenant=self.tenant, staff=staff, work_type=first, hourly_wage=12000)
+        self.assertEqual(self.get_me()["default_work_type_id"], first.pk)
+        StaffWorkType.objects.create(tenant=self.tenant, staff=staff, work_type=second, hourly_wage=24000)
+        payload = self.get_me()
+        self.assertFalse(payload["owner_setup_required"])
+        self.assertEqual([row["id"] for row in payload["assigned_work_types"]], [first.pk, second.pk])
+        self.assertNotIn("default_work_type_id", payload)
+        self.assertEqual(self.ensure().data, payload)
+
 
 @skipUnless(connection.vendor == "postgresql", "PostgreSQL row-lock verification")
 class StaffMeConcurrencyTests(TransactionTestCase):
