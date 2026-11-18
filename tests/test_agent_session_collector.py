@@ -90,6 +90,46 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(data["nodes"], [])
         self.assertEqual(data["source_errors"], ["codex", "claude"])
 
+    def test_bad_registry_records_preserve_both_providers_and_report_partial_recovery(self):
+        log = self.codex / "sessions" / "root.jsonl"
+        self.log(log, "task_complete")
+        db = self.database()
+        db.execute("INSERT INTO threads VALUES(?,?,?,?,?,?,?,?,?)", ("root", "Codex", "", "", str(log), str(self.workspace), 1794729000, 0, ""))
+        db.commit()
+        db.close()
+        peers = self.claude / "sessions"
+        peers.mkdir()
+        good = {"sessionId": "healthy", "cwd": str(self.workspace), "name": "Claude", "status": "idle", "pid": 123, "procStart": "1", "updatedAt": 1794729000000}
+        (peers / "healthy.json").write_text(json.dumps(good), encoding="utf-8")
+        bad = peers / "bad.json"
+        malformed = [None, [], 42, "record", {}, {**good, "cwd": []}, {**good, "sessionId": []}, {**good, "status": []}, {**good, "name": {}}, {**good, "pid": True}, {**good, "updatedAt": float("inf")}, {**good, "updatedAt": 10**1000}]
+        with patch.object(collector, "peer_is_alive", return_value=True):
+            for value in malformed:
+                with self.subTest(value_type=type(value).__name__):
+                    bad.write_text(json.dumps(value), encoding="utf-8")
+                    data = collector.collect(self.codex, self.claude, self.workspace)
+                    self.assertEqual({node["id"] for node in data["nodes"]}, {"codex:root", "claude:healthy"})
+                    self.assertEqual(data["source_errors"], ["claude"])
+            for encoded in (b'{"sessionId":', b"x" * 32_769):
+                bad.write_bytes(encoded)
+                data = collector.collect(self.codex, self.claude, self.workspace)
+                self.assertEqual(len(data["nodes"]), 2)
+                self.assertEqual(data["source_errors"], ["claude"])
+            bad.unlink()
+            data = collector.collect(self.codex, self.claude, self.workspace)
+            self.assertEqual(len(data["nodes"]), 2)
+            self.assertEqual(data["source_errors"], [])
+
+    def test_unexpected_log_value_types_do_not_abort_other_lifecycle_records(self):
+        path = self.codex / "sessions" / "root.jsonl"
+        self.log(path, "task_complete")
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write('\nnull\n{"type":"event_msg","payload":{"type":["task_started"]}}\n')
+            stream.write('{"type":"assistant","message":{"stop_reason":[]}}\n')
+        self.assertEqual(collector.metadata_tail(path, "codex")["status"], "completed")
+        collector._TAIL_CACHE.clear()
+        self.assertEqual(collector.metadata_tail(path, "claude")["status"], "completed")
+
     def test_hidden_publisher_writes_only_sanitized_atomic_health_receipt(self):
         receipt = self.root / "state.json"
         with patch.object(collector.sys, "stdout", None):

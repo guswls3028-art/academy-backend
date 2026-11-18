@@ -10,6 +10,7 @@ import argparse
 from collections import defaultdict
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -85,7 +86,8 @@ def metadata_tail(path, provider="claude"):
             if result["status"] != "unknown":
                 continue
             if kind == "event_msg" and isinstance(payload, dict):
-                state = {"task_started": "running", "task_complete": "completed", "turn_aborted": "interrupted"}.get(payload.get("type"))
+                event_type = payload.get("type")
+                state = {"task_started": "running", "task_complete": "completed", "turn_aborted": "interrupted"}.get(event_type) if isinstance(event_type, str) else None
                 if state:
                     result["status"] = state
                     if isinstance(item.get("timestamp"), str):
@@ -93,7 +95,7 @@ def metadata_tail(path, provider="claude"):
                     if provider == "codex":
                         break
             elif kind == "assistant" and isinstance(item.get("message"), dict):
-                if item["message"].get("stop_reason") in {"end_turn", "stop_sequence"}:
+                if item["message"].get("stop_reason") in ("end_turn", "stop_sequence"):
                     result["status"] = "completed"
             elif kind == "system" and item.get("subtype") == "turn_duration":
                 result["status"] = "completed"
@@ -183,7 +185,7 @@ def peer_is_alive(peer):
         kernel.CloseHandle(handle)
 
 
-def claude_nodes(home, workspace):
+def claude_nodes(home, workspace, *, source_errors=None):
     home, workspace = Path(home), Path(workspace).resolve()
     if not home.is_dir():
         raise FileNotFoundError("Claude metadata unavailable")
@@ -214,17 +216,31 @@ def claude_nodes(home, workspace):
                                     "status": child_meta["status"], "evidence": "last_turn" if child_meta["status"] != "unknown" else "unknown",
                                     "updated_at": child_meta["updated_at"]}
     for path in (home / "sessions").glob("*.json"):
-        if not within(path, home / "sessions") or path.stat().st_size > 32_768:
+        if not within(path, home / "sessions"):
             continue
         try:
-            peer = json.loads(path.read_bytes())
-            cwd = Path(peer.get("cwd", "")).resolve()
+            with path.open("rb") as stream:
+                encoded = stream.read(32_769)
+            if len(encoded) > 32_768:
+                raise ValueError("Oversized registry record")
+            peer = json.loads(encoded)
+            if not isinstance(peer, dict) or not isinstance(peer.get("cwd"), str) or not peer["cwd"]:
+                raise ValueError("Invalid registry record")
+            cwd = Path(peer["cwd"]).resolve()
             # The CLI may be launched at the drive root without a project yet.
             if not within(cwd, workspace) and cwd != Path(workspace.anchor):
                 continue
             session_id = peer.get("sessionId", "")
-            if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", session_id):
-                continue
+            if not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", session_id):
+                raise ValueError("Invalid registry identity")
+            for field in ("name", "status", "procStart"):
+                if peer.get(field) is not None and not isinstance(peer[field], str):
+                    raise ValueError("Invalid registry metadata")
+            if peer.get("pid") is not None and (type(peer["pid"]) is not int or peer["pid"] < 1):
+                raise ValueError("Invalid registry process")
+            updated = peer.get("updatedAt")
+            if updated is not None and (type(updated) not in (int, float) or not math.isfinite(updated)):
+                raise ValueError("Invalid registry timestamp")
             node_id = "claude:" + session_id
             fresh = peer_is_alive(peer)
             status = {"idle": "waiting", "working": "running", "running": "running", "waiting_for_input": "waiting", "needs_attention": "waiting"}.get(peer.get("status"), "unknown") if fresh else "unknown"
@@ -232,8 +248,13 @@ def claude_nodes(home, workspace):
                                "title": label(peer.get("name")) or result.get(node_id, {}).get("title") or "Claude " + session_id[:8],
                                "role": "세션" if within(cwd, workspace) else "프로젝트 미지정",
                                "status": status, "evidence": "runtime" if fresh else "unknown",
-                               "updated_at": iso(peer["updatedAt"] / 1000) if isinstance(peer.get("updatedAt"), (int, float)) else iso(path.stat().st_mtime)}
-        except (OSError, ValueError, TypeError):
+                               "updated_at": iso(updated / 1000) if updated is not None else iso(path.stat().st_mtime)}
+        except FileNotFoundError:
+            # Registry records can disappear normally as a CLI exits.
+            continue
+        except (OSError, ValueError, TypeError, OverflowError):
+            if source_errors is not None and "claude" not in source_errors:
+                source_errors.append("claude")
             continue
     return list(result.values())
 
@@ -242,9 +263,11 @@ def collect(codex_home, claude_home, workspace):
     nodes, source_errors = [], []
     for provider, reader, home in (("codex", codex_nodes, codex_home), ("claude", claude_nodes, claude_home)):
         try:
-            nodes.extend(reader(home, workspace))
-        except (OSError, ValueError, sqlite3.Error):
-            source_errors.append(provider)
+            options = {"source_errors": source_errors} if provider == "claude" else {}
+            nodes.extend(reader(home, workspace, **options))
+        except (OSError, ValueError, TypeError, OverflowError, sqlite3.Error):
+            if provider not in source_errors:
+                source_errors.append(provider)
     nodes.sort(key=lambda node: node["updated_at"] or "", reverse=True)
     # Include parents ahead of children, keeping the retained tree understandable.
     by_id = {node["id"]: node for node in nodes}

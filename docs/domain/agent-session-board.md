@@ -50,6 +50,12 @@ the state of every old or unusually long session; the UI exposes the evidence
 basis and latest activity. Missing source data is reported separately from zero
 sessions. A snapshot older than 90 seconds remains readable but is marked stale.
 
+Each Claude registry entry is bounded and validated separately. Non-object JSON,
+invalid field types, incomplete writes and oversized entries are skipped without
+discarding healthy Codex/Claude nodes. `source_errors` includes `claude` while
+such entries make its counts incomplete, and clears on the next healthy collection.
+Normal registry deletion at process exit is not a source failure.
+
 ## Publisher and recovery
 
 Use the existing Windows owner context and existing Python environment; no
