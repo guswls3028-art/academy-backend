@@ -2,7 +2,6 @@
 
 import re
 
-from apps.domains.messaging.security import sanitize_notification_target_id
 from apps.support.messaging.student_dependencies import students_for_tenant
 
 
@@ -17,13 +16,11 @@ def current_recipient_phones(tenant, logs):
     for log in logs:
         if (log.source_tenant_id or log.tenant_id) != tenant.pk:
             continue
-        target_id = sanitize_notification_target_id(log.target_id)
+        target_id = str(log.target_id or "")
         if log.target_type in {"student", "parent"} and re.fullmatch(r"[1-9][0-9]{0,17}", target_id):
             targets[log.pk] = (int(target_id), log.target_type)
-        elif log.target_type == "account":
-            match = re.fullmatch(r"(student|parent):([1-9][0-9]{0,17})", target_id)
-            if match:
-                targets[log.pk] = (int(match[2]), match[1])
+        # Account keys can contain a legacy user-chosen ps_number, including
+        # numeric parent:<value> fallbacks. They are not provable student PKs.
     if not targets:
         return {}
     students = {

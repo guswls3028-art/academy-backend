@@ -36,12 +36,13 @@
 
 교사·조교(`teacher`, `staff`)를 포함한 기존 조회 권한자는 같은 학원의 현재
 업무 연락처를 전체 확인할 수 있다. `current_recipient_phone`은 로그의 불변
-`student`/`parent` 학생 PK 또는 계정 `student:{id}`/`parent:{id}` 참조로만
+`student`/`parent` 유형의 학생 PK 참조로만
 조회한다. 공급사 공통 채널의 물리 tenant가 아닌 `source_tenant` 우선 업무
 tenant를 적용하고, 현재 tenant의 삭제되지 않은 학생만 페이지당 한 번 조회한다.
 연결 불명·삭제 학생·전화번호 없는 식별자 학생 계정은 빈 값이며 다른 사람의
-번호를 추측하지 않는다. 계정 `parent-account:{id}` 등 학생 참조가 없는 과거
-기록에는 학생 연락처를 붙이지 않는다.
+번호를 추측하지 않는다. `account` 유형은 과거 `parent:{ps_number}` fallback이
+숫자형 학생 PK와 구별되지 않을 수 있으므로 현재 연락처를 연결하지 않는다.
+계정 알림의 현재 연락처는 권한 있는 학생 상세에서 확인한다.
 
 이 값은 **현재 연락처**이며 과거 실제 발송 대상 번호의 증거가 아니다.
 `recipient_summary` 저장값, 진단·워커 로그 비식별화, 본문·공급사 증거 권한은

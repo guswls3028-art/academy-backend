@@ -3,12 +3,14 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
+from types import SimpleNamespace
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
 from apps.domains.messaging.models import NotificationLog
 from apps.domains.messaging.services.contact_projection import current_recipient_phones
+from apps.domains.messaging.services.registration_service import _parent_account_target_id
 from apps.domains.messaging.views.log_views import NotificationLogDetailView, NotificationLogListView
 from apps.domains.students.models import Student
 from apps.domains.students.views import StudentViewSet
@@ -86,11 +88,11 @@ class StaffContactProjectionTests(TestCase):
         response = NotificationLogDetailView.as_view()(self.request(self.staff("owner")), pk=log.pk)
         self.assertEqual(response.status_code, 404)
 
-    def test_exact_student_parent_and_account_keys_resolve_in_one_query(self):
-        logs = [self.log(), self.log("parent"), self.log("account", f"parent:{self.student.pk}")]
+    def test_exact_student_and_parent_keys_resolve_in_one_query(self):
+        logs = [self.log(), self.log("parent")]
         with self.assertNumQueries(1):
             contacts = current_recipient_phones(self.tenant, logs)
-        self.assertEqual(contacts, {logs[0].pk: "01000000001", logs[1].pk: "01000000002", logs[2].pk: "01000000002"})
+        self.assertEqual(contacts, {logs[0].pk: "01000000001", logs[1].pk: "01000000002"})
         Student.objects.filter(pk=self.student.pk).update(uses_identifier=True)
         self.assertEqual(current_recipient_phones(self.tenant, logs)[logs[0].pk], "")
         Student.objects.filter(pk=self.student.pk).update(deleted_at=timezone.now())
@@ -102,6 +104,15 @@ class StaffContactProjectionTests(TestCase):
         TenantMembership.ensure_active(tenant=self.tenant, user=self.student.user, role="student")
         response = NotificationLogListView.as_view()(self.request(self.student.user))
         self.assertEqual(response.status_code, 403)
+
+    def test_numeric_legacy_account_fallback_does_not_resolve_to_another_family(self):
+        legacy_target = _parent_account_target_id(
+            SimpleNamespace(ps_number=str(self.student.pk)), "01000000008",
+        )
+        self.assertEqual(legacy_target, f"parent:{self.student.pk}")
+        logs = [self.log("account", legacy_target), self.log("account", f"student:{self.student.pk}")]
+        with self.assertNumQueries(0):
+            self.assertEqual(current_recipient_phones(self.tenant, logs), {})
 
     def test_student_list_search_and_detail_preserve_teacher_assistant_tenant_boundary(self):
         for role in ("teacher", "staff"):
