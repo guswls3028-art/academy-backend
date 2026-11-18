@@ -18182,6 +18182,93 @@
         ],
         "type": "object"
       },
+      "StaffMe": {
+        "properties": {
+          "assigned_work_types": {
+            "items": {
+              "$ref": "#/components/schemas/StaffMeAssignedWorkType"
+            },
+            "type": "array"
+          },
+          "default_work_type_id": {
+            "type": "integer"
+          },
+          "is_authenticated": {
+            "type": "boolean"
+          },
+          "is_owner": {
+            "type": "boolean"
+          },
+          "is_payroll_manager": {
+            "type": "boolean"
+          },
+          "is_staff": {
+            "type": "boolean"
+          },
+          "is_superuser": {
+            "type": "boolean"
+          },
+          "owner_display_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "owner_phone": {
+            "nullable": true,
+            "type": "string"
+          },
+          "owner_setup_required": {
+            "description": "대표의 기존 자동 연결 준비가 필요하면 true. 명시적인 POST /staffs/me/로 준비합니다.",
+            "type": "boolean"
+          },
+          "staff_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "is_authenticated",
+          "is_owner",
+          "is_payroll_manager",
+          "is_staff",
+          "is_superuser",
+          "owner_display_name",
+          "owner_phone",
+          "owner_setup_required"
+        ],
+        "type": "object"
+      },
+      "StaffMeAssignedWorkType": {
+        "properties": {
+          "hourly_wage": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hourly_wage",
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "StaffMeError": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "type": "object"
+      },
       "StaffPayrollOverview": {
         "properties": {
           "date_from": {
@@ -51065,7 +51152,83 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StaffWrite"
+                  "$ref": "#/components/schemas/StaffMe"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      },
+      "post": {
+        "operationId": "staffs_me_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMe"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMeError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMeError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMeError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMeError"
                 }
               }
             },
