@@ -156,36 +156,35 @@ def build_pilot_report(
 
     warnings: list[str] = []
     breaches: list[str] = []
-    auto_disable_reasons: list[str] = []
-    if storage["projection_status"] in {"unavailable", "insufficient_observation"}:
-        warnings.append("storage_projection_unavailable")
-        breaches.append("storage_projection_unavailable")
-    elif storage["projection_status"] == "scope_unverified":
-        warnings.append("storage_projection_scope_unverified")
-        breaches.append("storage_projection_scope_unverified")
-    if enabled_codes != [tenant_code]:
+    readiness_blockers: list[str] = []
+    pilot_enabled = tenant_code in enabled_codes
+    if not pilot_enabled:
+        readiness_blockers.append("pilot_inactive")
+    if storage["projection_status"] == "scope_unverified":
+        readiness_blockers.append("storage_projection_scope_unverified")
+    elif (
+        storage["projection_status"] != "available"
+        or storage["projected_database_share"] is None
+    ):
+        readiness_blockers.append("storage_projection_unavailable")
+    if any(code != tenant_code for code in enabled_codes):
         breaches.append("enabled_tenant_scope_mismatch")
-        auto_disable_reasons.append("enabled_tenant_scope_mismatch")
     if recent_nonpilot_events:
         breaches.append("recent_nonpilot_events")
-        auto_disable_reasons.append("recent_nonpilot_events")
-    if tenant_code in enabled_codes and not getattr(
+    if pilot_enabled and not getattr(
         settings, "PRODUCT_ANALYTICS_HASH_KEY", ""
     ):
         breaches.append("analytics_hash_key_missing")
-        auto_disable_reasons.append("analytics_hash_key_missing")
     if quality["raw_events"] == 0:
         warnings.append("no_events_in_window")
     elif quality["last_received_at"] and quality["last_received_at"] < recent_start:
         warnings.append("event_ingestion_stale")
     if db_time_share is None or write_share is None:
-        warnings.append("db_usage_share_unavailable")
+        readiness_blockers.append("db_usage_share_unavailable")
     if db_time_share is not None and db_time_share >= max_db_time_share:
         breaches.append("db_time_share_exceeded")
-        auto_disable_reasons.append("db_time_share_exceeded")
     if write_share is not None and write_share >= max_write_share:
         breaches.append("write_share_exceeded")
-        auto_disable_reasons.append("write_share_exceeded")
     projected_share = storage["projected_database_share"]
     if (
         storage["projection_status"] == "available"
@@ -193,7 +192,15 @@ def build_pilot_report(
         and projected_share >= max_projected_database_share
     ):
         breaches.append("projected_database_share_exceeded")
-        auto_disable_reasons.append("projected_database_share_exceeded")
+
+    if breaches:
+        status = "breach"
+    elif not pilot_enabled:
+        status = "inactive"
+    elif readiness_blockers:
+        status = "insufficient_observation"
+    else:
+        status = "pass"
 
     starts = eligible["task_starts"] or 0
     successes = eligible["task_successes"] or 0
@@ -202,13 +209,13 @@ def build_pilot_report(
     synthetic_count = quality["synthetic_events"] or 0
     impersonated_count = quality["impersonated_events"] or 0
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": now,
-        "status": "breach" if breaches else "pass",
+        "status": status,
         "tenant": {
             "code": tenant_code,
             "id": tenant.id,
-            "enabled": tenant_code in enabled_codes,
+            "enabled": pilot_enabled,
             "enabled_tenant_codes": enabled_codes,
         },
         "period": {
@@ -246,7 +253,8 @@ def build_pilot_report(
         },
         "warnings": sorted(set(warnings)),
         "breaches": sorted(set(breaches)),
-        "auto_disable_reasons": sorted(set(auto_disable_reasons)),
+        "readiness_blockers": sorted(set(readiness_blockers)),
+        "auto_disable_reasons": sorted(set(breaches)),
     }
 
 
