@@ -10,7 +10,7 @@ import threading
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError, connection, transaction
+from django.db import IntegrityError, connection, connections, transaction
 from django.test import TestCase, TransactionTestCase, RequestFactory
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
@@ -904,29 +904,38 @@ class ConcurrencyTest(TransactionTestCase, ClinicTestMixin):
     """
 
     def test_concurrent_trigger_creates_one_link(self):
-        """두 스레드가 동시에 ClinicLink 생성 시 1건만 남음"""
+        """실제 public trigger의 enrollment 잠금으로 미해소 cycle 1건만 남음."""
         if connection.vendor == "sqlite":
             self.skipTest("SQLite smoke DB locks tables under threaded ClinicLink writes.")
 
         data = self.setup_full_tenant("conc", student_count=1)
         enrollment = data["enrollments"][0]
         lec_session = data["lec_session"]
+        exam = Exam.objects.create(tenant=data["tenant"], title="Concurrent scored exam")
+        exam.sessions.add(lec_session)
+        from apps.domains.progress.models import SessionProgress
+        from apps.domains.progress.services.clinic_trigger_service import ClinicTriggerService
+
+        progress = SessionProgress.objects.create(
+            enrollment=enrollment, session=lec_session,
+            exam_meta={"exams": [{"exam_id": exam.pk, "score": 30, "pass_score": 80, "passed": False}]},
+        )
+        start = threading.Barrier(2)
 
         results = []
         errors = []
 
         def create_link():
             try:
-                from apps.domains.progress.services.clinic_trigger_service import _idempotent_create_clinic_link
-                link = _idempotent_create_clinic_link(
-                    enrollment_id=enrollment.id,
-                    session=lec_session,
-                    source_type="exam", source_id=200,
-                    reason="AUTO_FAILED",
-                )
-                results.append(link)
+                # Start together before the service takes its real lock. A
+                # barrier inside that lock would deadlock the correct path.
+                start.wait(timeout=10)
+                ClinicTriggerService.auto_create_per_exam(progress)
+                results.append(True)
             except Exception as e:
                 errors.append(e)
+            finally:
+                connections.close_all()
 
         t1 = threading.Thread(target=create_link)
         t2 = threading.Thread(target=create_link)
@@ -937,14 +946,16 @@ class ConcurrencyTest(TransactionTestCase, ClinicTestMixin):
 
         # 에러가 없어야 함 (IntegrityError는 내부에서 처리됨)
         self.assertEqual(len(errors), 0, f"Unexpected errors: {errors}")
+        self.assertEqual(len(results), 2)
 
         # 최종 DB에 1건만 존재
-        count = ClinicLink.objects.filter(
+        links = ClinicLink.objects.filter(
             enrollment=enrollment,
             session=lec_session,
-            source_type="exam", source_id=200,
-        ).count()
-        self.assertEqual(count, 1, "Exactly 1 link should exist after concurrent creation")
+            source_type="exam", source_id=exam.pk,
+        )
+        self.assertEqual(links.count(), 1, "Exactly 1 link should exist after concurrent creation")
+        self.assertEqual(links.filter(resolved_at__isnull=True, cycle_no=1).count(), 1)
 
     def test_concurrent_booking_creates_one_participant(self):
         """두 스레드가 동시에 같은 학생 예약 시 1건만 유효"""

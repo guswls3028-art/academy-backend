@@ -131,6 +131,7 @@ def build_student_exam_history(
     enrollment_ids: list[int],
     published_results_only: bool = False,
     totals_rows: list[dict[str, Any]] | None = None,
+    scoring_details_loader=None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     """Build deduplicated exam rows and progression inside an authorized scope.
 
@@ -167,7 +168,7 @@ def build_student_exam_history(
         if int(row["target_id"]) not in explicit_exam_ids
         or (int(row["enrollment_id"]), int(row["target_id"])) in explicit_target_pairs
     ]
-    load_scoring_details = request_exam_scoring_details_loader()
+    load_scoring_details = scoring_details_loader or request_exam_scoring_details_loader()
     pending_result_ids = pending_omr_result_ids_for_ids(
         (row["id"] for row in results), scoring_details_loader=load_scoring_details,
     )

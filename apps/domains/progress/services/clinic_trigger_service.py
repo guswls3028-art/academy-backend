@@ -8,8 +8,8 @@ V1.1.2: 시험/과제별 개별 ClinicLink 생성
 - 세션 MAX 집계와 독립적으로 개별 시험 불합격을 추적
 
 동시성 보장:
-- transaction.atomic + unique constraint fallback으로 idempotent 생성
-- 동시 파이프라인 실행 시에도 중복 생성 방지
+- public trigger가 같은 atomic 안에서 enrollment row lock을 잡고 생성한다.
+- private 생성 helper는 이 caller 잠금을 전제로 하며 unique-cycle 충돌도 방어한다.
 """
 from __future__ import annotations
 
@@ -123,7 +123,8 @@ def _idempotent_create_clinic_link(
     ClinicLink를 idempotent하게 생성.
     - 미해소 link가 있으면 skip
     - unique constraint 충돌 시 기존 link 반환 (race condition 방어)
-    - transaction.atomic으로 check-then-create 원자성 보장
+    - caller는 같은 atomic 안에서 enrollment row lock을 이미 보유해야 한다.
+      atomic/unique cycle 제약만으로 미해소 link의 check-then-create를 직렬화하지 못한다.
     """
     with transaction.atomic():
         # 미해소 link가 있으면 skip
@@ -315,7 +316,7 @@ class ClinicTriggerService:
     ) -> None:
         """
         V1.1.2: source_type/source_id로 시험별 개별 ClinicLink 생성.
-        동시성: atomic + IntegrityError fallback으로 idempotent
+        동시성: 같은 atomic의 enrollment row lock + unique-cycle 충돌 방어
         """
         if is_representative_exam_not_submitted(
             enrollment_id=int(enrollment_id),

@@ -317,7 +317,7 @@ class OnlineAssessmentTotalsTests(TestCase):
                              (len(short_history), len(long_history)))
         with (
             patch(
-                "apps.support.results.student_grade_history.request_exam_scoring_details_loader",
+                "apps.support.student_app.results_summary.request_exam_scoring_details_loader",
                 return_value=load_exam_scoring_details,
             ),
             CaptureQueriesContext(connection) as uncached_queries,

@@ -45,7 +45,7 @@ from apps.support.students.namespace_lock import (
 )
 
 from academy.adapters.db.django import repositories_students as student_repo
-from ..models import Student
+from ..models import STUDENT_LOGIN_ID_MAX_LENGTH, Student
 from ..filters import StudentFilter, StudentSearchFilter
 from ..ordering import student_name_codepoint_ordering
 from ..selectors import student_for_tenant_user, students_for_tenant
@@ -875,6 +875,13 @@ class StudentViewSet(ModelViewSet):
         data = request.data
         tenant = request.tenant
 
+        username_value = data.get("username")
+        if username_value is not None and not isinstance(username_value, str):
+            return Response({"detail": "username은(는) 문자열이어야 합니다."}, status=400)
+        new_username = (username_value or "").strip()
+        if len(new_username) > STUDENT_LOGIN_ID_MAX_LENGTH:
+            return Response({"detail": "username은(는) 50자 이하여야 합니다."}, status=400)
+
         # --- 기본 정보 필드 유효성 검증 (setattr 전에 수행) ---
         from ..services.school import ALL_SCHOOL_TYPES, get_valid_grades
         STRING_FIELD_LIMITS = {
@@ -940,7 +947,6 @@ class StudentViewSet(ModelViewSet):
                 raise ValidationError(e.detail)
             user = student.user
             # 아이디 변경
-            new_username = (data.get("username") or "").strip()
             if new_username and new_username != user_display_username(user):
                 from apps.core.models.user import user_internal_username
                 internal = user_internal_username(tenant, new_username)

@@ -200,7 +200,7 @@ def build_attendance_preview(
         recipients.append({
             "student_id": student.id,
             "student_name": name,
-            "phone": phone[:3] + "****" + phone[-4:] if len(phone) >= 7 else phone,
+            "phone": phone,
             "phone_raw": phone,
             "status": att.status,
             "message_body": body,
@@ -358,7 +358,7 @@ def build_student_list_preview(
             "student_id": resolved.student_id,
             "withdrawn_at": resolved.withdrawn_at,
             "student_name": name,
-            "phone": phone[:3] + "****" + phone[-4:] if len(phone) >= 7 else phone,
+            "phone": phone,
             "phone_raw": phone,
             "message_body": body,
             "full_message_body": full_message_body,
