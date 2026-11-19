@@ -44,10 +44,15 @@ def students_for_tenant(
     raise ValueError(f"unknown deleted state: {deleted!r}")
 
 
-def student_for_tenant_user(tenant, user, *, deleted: DeletedState = "active") -> Student | None:
+def student_for_tenant_user(
+    tenant, user, *, deleted: DeletedState = "active", for_update: bool = False,
+) -> Student | None:
     if user is None:
         return None
-    return students_for_tenant(tenant, deleted=deleted).filter(user=user).first()
+    students = students_for_tenant(tenant, deleted=deleted).filter(user=user)
+    if for_update:
+        students = students.select_for_update()
+    return students.first()
 
 
 def active_students_for_parent(tenant, parent) -> QuerySet[Student]:
