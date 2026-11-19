@@ -11667,7 +11667,7 @@
           },
           "ps_number": {
             "description": "PS 번호 (학원 학생 ID)",
-            "maxLength": 50,
+            "maxLength": 75,
             "minLength": 1,
             "type": "string"
           },
@@ -19480,6 +19480,7 @@
           },
           "ps_number": {
             "description": "미입력 시 임의 6자리 자동 부여 (학생이 추후 변경 가능)",
+            "maxLength": 50,
             "type": "string"
           },
           "schedule_hidden_before": {
@@ -19674,6 +19675,7 @@
           },
           "ps_number": {
             "description": "미입력 시 임의 6자리 자동 부여 (학생이 추후 변경 가능)",
+            "maxLength": 50,
             "type": "string"
           },
           "schedule_hidden_before": {
@@ -19919,7 +19921,7 @@
           },
           "ps_number": {
             "description": "PS 번호 (학원 학생 ID)",
-            "maxLength": 50,
+            "maxLength": 75,
             "type": "string"
           },
           "school_type": {
@@ -20072,7 +20074,7 @@
           },
           "ps_number": {
             "description": "PS 번호 (학원 학생 ID)",
-            "maxLength": 50,
+            "maxLength": 75,
             "minLength": 1,
             "type": "string"
           },
@@ -20747,7 +20749,7 @@
           },
           "ps_number": {
             "description": "PS 번호 (학원 학생 ID)",
-            "maxLength": 50,
+            "maxLength": 75,
             "type": "string"
           },
           "school_type": {
