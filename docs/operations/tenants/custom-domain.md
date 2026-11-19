@@ -10,7 +10,7 @@
 - 운영 DB에서 ID 충돌을 먼저 확인하고 비어 있는 ID를 명시한다.
 - 비밀번호는 채팅 외 문서·Git·셸 명령·감사 로그에 저장하지 않는다.
 - 가비아 네임서버 위임 전에는 Pages CNAME을 만들지 않는다.
-- 운영 DB에는 코드가 배포된 뒤 `provision_tenant`로 반영한다.
+- 운영 DB는 대상 도메인과 명령을 지원하는 운영 백엔드 revision에서 `provision_tenant`로 반영한다.
 - 백엔드 배포는 상시 격리 development, 임시 격리 preproduction,
   ASG 무중단 교체를 순서대로 통과해야 한다.
 - 같은 명령을 다시 실행해도 중복 생성되지 않아야 한다.
@@ -26,9 +26,9 @@
 ## 운영자 빠른 실행표
 
 매번 [onboarding-run-sheet.md](onboarding-run-sheet.md)를 테넌트별 메모로
-복사하고 아래 게이트를 위에서부터 실행한다. 작업이 중단되면 첫 번째 미완료
-게이트부터 재개하되, 변경 명령을 반복하기 전에 읽기 전용 확인과 dry-run을 다시
-실행한다.
+복사한다. G 번호는 증거를 기록하는 항목이다. G1에서 대상을 확정하면 zone·위임, 코드·브랜딩과 배포 준비, 운영 명령·구독·계정 입력 및 충돌 점검을 병행한다. 위임과 Pages 대상이 확인되면 G6 연결을 즉시 시작해 인증서 발급 시간을 확보한다. 중단 후에는 완료 증거를 재사용하고, 운영 변경을 재시도하기 전에 대상과 현재 상태를 다시 읽는다.
+
+고객이 처음 여는 주소는 실제 운영 도메인이다. 별도 랜딩 페이지, 데모 화면, 프리뷰를 만들지 않는다. G5~G8의 운영 테넌트·승인된 계정·구독과 권한이 준비되면 해당 도메인에서 로그인하고 역할별 기본 화면과 격리를 확인해 먼저 안내한다. 추가 워커·기능별 실사용 점검과 G9 봉인은 계속 진행한다. 배포 자체에 필요한 격리·실사용·무중단 게이트는 해당 배포 전에 통과한다.
 
 | 게이트 | 실행 | 통과 증거 |
 |---|---|---|
@@ -36,16 +36,16 @@
 | G1 충돌 확인 | `check_tenants`, 호스트·코드 검색 | 사용할 ID·코드·도메인 확정 |
 | G2 DNS 준비 | Cloudflare zone 생성, NS 1·2차 전달 | zone과 발급 NS |
 | G3 소스 준비 | 개별 등록 경계와 공유 서비스 안전 기본값 | 로컬 검사와 시각 검증 |
-| G4 위임·배포 | 공용 DNS NS 확인, 양쪽 정식 배포 | 배포 revision과 성공 run |
+| G4 운영 호환성·배포 | 대상 도메인과 기능에 필요한 변경을 정식 배포 | 정확한 운영 revision과 해당 배포 증거 |
 | G5 운영 DB | 프로비저닝·구독·메시징·안전 기본값 감사 | owner 전 audit PASS |
-| G6 Pages·HTTPS | apex/`www` Pages·CNAME 활성화 | 두 URL HTTP 200 |
+| G6 Pages·HTTPS | G2 위임 확인 직후 apex/`www` Pages·CNAME 연결 | Pages 상태·DNS 대상·인증서와 두 URL의 응답 |
 | G7 대표 계정 | 개발자 콘솔 소유자 탭에서 1회 생성 | 소유자 수와 role `owner` |
 | G8 실제 인계 | 커스텀 도메인 로그인·최초 비밀번호 변경·격리 확인 | owner 화면과 빈 초기 데이터 |
 | G9 최종 봉인 | owner 포함 audit와 외부 probe 재실행 | audit PASS와 증거 링크 |
 
 운영 신규 테넌트에는 개발자 콘솔의 목록 화면에 있는 간편 생성 폼을 사용하지
 않는다. 이 폼만으로는 명시적 운영 ID, 양쪽 코드 배포, DNS, 구독, 전체 브랜딩을
-완료할 수 없다. 운영 DB 생성은 G4 이후 범용 `provision_tenant`만 사용하고,
+완료할 수 없다. 운영 DB 생성은 명시한 운영 백엔드 호환성을 확인한 뒤 범용 `provision_tenant`만 사용하고,
 개발자 콘솔은 G7의 대표 계정 등록에만 사용한다.
 
 목록의 간편 생성 폼은 개발·QA의 최소 Tenant·Domain·Program 레코드만 원자적으로
@@ -122,13 +122,13 @@ cd C:\academy\backend
 
 ### 수동 중단 게이트
 
-가비아 저장 완료 확인 전에는 다음 작업을 실행하지 않는다.
+공용 DNS에서 발급 NS 위임을 확인하기 전에는 다음 작업을 실행하지 않는다.
 
 - `pages-add-custom-domain.ps1` 실제 실행
 - apex/`www` CNAME 생성
 - 외부 HTTPS 성공 판정
 
-코드와 로고 준비는 병행할 수 있지만, DNS 활성화로 오인해 완료 처리하지 않는다.
+위임을 기다리는 동안 운영 DB 충돌 확인, 프로비저닝 dry-run 준비, 구독·owner 입력 확인과 필요한 코드 변경·검증을 진행한다.
 
 ### 메일 발신과 도메인 사칭 방지
 
@@ -320,7 +320,7 @@ Resolve-DnsName -Type NS saebom.com -Server 8.8.8.8
 ```
 
 두 조회 모두 Phase 1에서 발급한 값이어야 한다. 가비아 기본
-`ns.gabia.*`가 보이면 전파를 기다리고 중단한다.
+`ns.gabia.*`가 보이면 위임을 다시 확인하는 동안 다른 준비를 계속한다. 두 조회가 맞으면 아래 7절의 Pages·DNS 연결을 바로 실행한다.
 
 ## 5. 배포
 
@@ -339,8 +339,7 @@ Resolve-DnsName -Type NS saebom.com -Server 8.8.8.8
   - typecheck/lint/build/E2E gate
   - GitHub Actions가 Cloudflare Pages의 단일 production deploy owner인지 확인
 
-배포된 revision에 신규 도메인 설정과 `provision_tenant` 명령이 포함됐는지
-확인한 뒤 운영 DB를 변경한다.
+운영 백엔드 revision에서 신규 도메인의 host/CORS/CSRF와 범용 명령의 호환성을 확인한 뒤 운영 DB를 변경한다. 이미 충족된 경계는 그 revision의 증거를 사용한다. 독립적인 프런트 배포나 기능별 추가 QA가 진행되는 동안 G5와 조건이 충족된 G7을 수행할 수 있다. 고객 로그인 확인에는 실제 서비스 중인 프런트와 백엔드가 모두 호환돼야 한다.
 
 ## 6. 운영 DB 프로비저닝
 
@@ -456,7 +455,7 @@ G1·G3·G5 경계를 고친 뒤 같은 읽기 전용 명령을 다시 실행한�
 
 ## 7. Pages·DNS 활성화
 
-DB와 양쪽 배포가 준비된 뒤 실행한다.
+4절의 공용 NS 위임을 확인한 즉시 Cloudflare에서 정확한 zone·계정, Pages 프로젝트와 할당된 target, 기존 apex/`www` 레코드를 읽는다. 대상이 일치하고 기존 서비스와 충돌하지 않으면 DB·애플리케이션 배포와 병행해 아래 명령을 실행한다. 기존 운영 서비스를 교체해야 하거나 소유 관계가 불명확한 레코드는 보존하고 해당 대상의 전환 범위를 먼저 확정한다.
 
 ```powershell
 cd C:\academy\backend
@@ -464,12 +463,9 @@ cd C:\academy\backend
 .\scripts\pages-add-custom-domain.ps1 -Domain "saebom.com" -Confirm:$false
 ```
 
-스크립트가 수행하는 일:
+스크립트는 지정 계정의 활성 zone, 두 공개 DNS의 NS 위임, Pages 프로젝트의 할당 주소를 확인한다. apex와 `www` 양쪽을 먼저 조회해 충돌하는 라우팅 레코드가 있으면 기존 상태를 보존하고 중단한다. 누락된 Pages 등록과 `academy-frontend-26b.pages.dev` 대상의 proxied CNAME만 생성한다. 각 호스트의 `PagesStatus`와 `ProxiedCname` 출력은 공급사에서 다시 읽은 값이다. 전용 인증서 발급이 진행 중이면 발급 후 HTTPS를 다시 확인한다.
 
-1. Pages 프로젝트 `academy-frontend`에 apex와 `www` 등록
-2. 잘못된 apex/`www` CNAME만 제거
-3. 올바른 proxied CNAME은 유지
-4. 누락된 레코드를 `academy-frontend-26b.pages.dev`로 생성
+연결 뒤 공용 NS와 Pages 등록 상태, apex/`www`의 proxied CNAME 대상을 다시 읽고 두 호스트의 HTTPS 인증서를 확인한다. DNS·TLS가 먼저 준비돼도 계정과 역할별 화면이 확인되기 전까지는 고객 로그인 준비 중으로 기록한다.
 
 ## 8. 완료 검증과 G9 봉인
 
