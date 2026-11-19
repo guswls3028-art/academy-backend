@@ -68,6 +68,8 @@ ALLOWED_HOSTS = [
     "www.movementhui.com",
     "godmin.kr",
     "www.godmin.kr",
+    "xn--oj4bo6fugp3an0c.com",
+    "www.xn--oj4bo6fugp3an0c.com",
     "academy-frontend-26b.pages.dev",
     # 로컬/EC2 내부 health check·ALB 타깃·Lambda backlog (Host: private IP)
     "localhost",
@@ -111,6 +113,8 @@ CORS_ALLOWED_ORIGINS = [
     "https://www.movementhui.com",
     "https://godmin.kr",
     "https://www.godmin.kr",
+    "https://xn--oj4bo6fugp3an0c.com",
+    "https://www.xn--oj4bo6fugp3an0c.com",
     "https://dev-web.hakwonplus.com",
     # 로컬 개발용 (프론트엔드 localhost:5174에서 배포된 API 서버 사용)
     "http://localhost:5174",
@@ -155,6 +159,8 @@ CSRF_TRUSTED_ORIGINS = [
     "https://www.movementhui.com",
     "https://godmin.kr",
     "https://www.godmin.kr",
+    "https://xn--oj4bo6fugp3an0c.com",
+    "https://www.xn--oj4bo6fugp3an0c.com",
 ]
 
 # ==================================================
