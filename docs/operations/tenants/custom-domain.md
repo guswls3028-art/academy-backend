@@ -405,17 +405,15 @@ cd C:\academy\backend
 로그인 가능한 owner 수로 간주하지 않는다.
 
 소유자 목록 응답의 `handoffStatus`가 인계 상태의 서버 단일 계약이다. 값은 비활성
-사용자 `account_inactive`, usable password 없음 `password_setup_required`, 강제
-최초 변경 대기 `first_login_pending`, 인계 완료 `complete` 중 하나다. 판단 순서는
+사용자 `account_inactive`, usable password 없음 `password_setup_required`, 최초
+비밀번호 변경 대기 `first_login_pending`, 인계 완료 `complete` 중 하나다. 판단 순서는
 이 순서대로 fail-closed이며, `isActive`·`hasUsablePassword`·`mustChangePassword`는
 기존 소비자 호환과 운영 근거를 위해 함께 제공한다. 개발자 콘솔은 이 값으로 가장
 먼저 처리할 owner의 다음 동작과 2단계 진행률을 표시하고, 상태 새로고침으로
 대표자의 외부 비밀번호 변경을 다시 읽는다.
 
-신규 owner는 첫 로그인 후 비밀번호 변경이 강제된다. 비밀번호 원문은 문서·Git·
-셸 명령·스크린샷·작업 결과에 기록하지 않고, 감사 로그에는
-`password_changed=true`만 남긴다. 초기 비밀번호 변경 전에는 로그인 인증만
-통과한 상태이며 G8 완료로 표시하지 않는다.
+신규 owner가 로그인하면 비밀번호 변경을 권유한다. 현재 로그인 세션에서 안내를 미루고 원장 권한으로 업무를 계속할 수 있다. API도 최초 변경 여부로 업무 접근을 차단하지 않는다.
+G7의 `--require-owner`는 활성 owner 멤버십 한 건, 활성 사용자와 사용 가능한 비밀번호를 검사한다. G8은 대표자의 실제 변경과 새 비밀번호 재로그인·격리 확인까지 기록한다. G9의 `--require-owner-handoff`는 owner 준비 상태와 `must_change_password=false`를 검사한다. 플래그만으로 변경 주체를 확인할 수 없으므로 대표자의 실제 인계 증거도 보존한다. 비밀번호 원문은 문서·Git·셸 명령·스크린샷·작업 결과에 남기지 않는다.
 
 Program 생성 직후에는 이용기간이 비어 있어 로그인 화면에 이용 연장 안내가 뜬다.
 입력 시트에서 확정한 기간으로 공식 구독 명령을 dry-run한 뒤 적용한다. 아래 30일은
