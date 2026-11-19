@@ -77,6 +77,12 @@ PERMANENT_DELETE_ENROLLMENT_TENANT_PATHS = {
     "progress.LectureProgress": (("lecture__tenant_id", False),),
     "progress.RiskLog": (("session__lecture__tenant_id", True),),
     "progress.SessionProgress": (("session__lecture__tenant_id", False),),
+    "results.HomeworkInspection": (
+        ("tenant_id", False),
+        ("session__lecture__tenant_id", False),
+        ("homework__tenant_id", False),
+        ("homework__session__lecture__tenant_id", False),
+    ),
     "results.ParentAssessmentComment": (("tenant_id", False), ("session__lecture__tenant_id", False)),
     "results.ExamAttempt": (("exam__tenant_id", False),),
     "results.Result": (("attempt__exam__tenant_id", True),),
@@ -1144,6 +1150,9 @@ def _permanently_delete_selected_students(
             # Scope validation above covers both comment tenant and session tenant;
             # ORM deletion here also removes every immutable edit revision.
             apps.get_model("results", "ParentAssessmentComment")._base_manager.filter(
+                tenant=tenant, enrollment_id__in=enrollment_ids,
+            ).delete()
+            apps.get_model("results", "HomeworkInspection")._base_manager.filter(
                 tenant=tenant, enrollment_id__in=enrollment_ids,
             ).delete()
             enrollment_id_clause, enrollment_id_params = _in_clause(enrollment_ids)

@@ -1900,6 +1900,89 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
                     transaction.savepoint_rollback(savepoint)
                     delete_object_r2_ai.reset_mock()
 
+    def test_permanent_delete_preserves_namesakes_homework_inspections(self):
+        Inspection = django_apps.get_model("results", "HomeworkInspection")
+        Session = django_apps.get_model("lectures", "Session")
+        Homework = django_apps.get_model("homework_results", "Homework")
+        session = Session.objects.create(lecture=self.lecture_a, order=1)
+        homework = Homework.objects.create(tenant=self.tenant_a, session=session, title="Practice")
+        owned = Inspection.objects.create(tenant=self.tenant_a, enrollment=self.enrollment_a, session=session,
+                                          homework=homework, solved=0, total=5, feedback="Target")
+        foreign_lecture = Lecture.objects.create(tenant=self.tenant_b, name="Foreign practice")
+        foreign_session = Session.objects.create(lecture=foreign_lecture, order=1)
+        foreign_homework = Homework.objects.create(tenant=self.tenant_b, session=foreign_session, title="Practice")
+        preserved = []
+        for tenant, other_session, other_homework in (
+            (self.tenant_a, session, homework),
+            (self.tenant_b, foreign_session, foreign_homework),
+        ):
+            user = User.objects.create_user(username=f"inspection-namesake-{tenant.pk}", tenant=tenant)
+            student = Student.objects.create(tenant=tenant, user=user, ps_number="OTHER01", name=self.student_a.name)
+            enrollment = Enrollment.objects.create(tenant=tenant, student=student, lecture=other_session.lecture)
+            preserved.append(Inspection.objects.create(
+                tenant=tenant, session=other_session, homework=other_homework, enrollment=enrollment,
+                solved=3, total=5, feedback="Keep",
+            ).pk)
+        response = self._call(self.tenant_a, self.admin_a, [self.student_a.pk])
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["deleted"], 1)
+        self.assertFalse(Inspection.objects.filter(pk=owned.pk).exists())
+        self.assertEqual(Inspection.objects.filter(pk__in=preserved, solved=3, total=5, feedback="Keep").count(), 2)
+        self.assertTrue(Homework.objects.filter(pk=homework.pk).exists())
+
+    def test_permanent_delete_blocks_inconsistent_homework_inspections_before_cleanup(self):
+        Inspection = django_apps.get_model("results", "HomeworkInspection")
+        Session = django_apps.get_model("lectures", "Session")
+        Homework = django_apps.get_model("homework_results", "Homework")
+        session = Session.objects.create(lecture=self.lecture_a, order=1)
+        other_lecture = Lecture.objects.create(tenant=self.tenant_b, name="Foreign practice")
+        other_session = Session.objects.create(lecture=other_lecture, order=1)
+        homework = Homework.objects.create(tenant=self.tenant_a, session=session, title="Practice")
+        for field, value in (
+            ("tenant", self.tenant_b),
+            ("session", other_session),
+            ("homework", Homework.objects.create(tenant=self.tenant_b, session=session, title="Wrong owner")),
+            ("homework", Homework.objects.create(tenant=self.tenant_a, session=other_session, title="Wrong session")),
+        ):
+            with self.subTest(field=field, value=value.pk):
+                fields = {"tenant": self.tenant_a, "session": session, "homework": homework}
+                fields[field] = value
+                record = Inspection.objects.create(**fields, enrollment=self.enrollment_a, feedback="Keep")
+                with self.assertRaises(StudentLifecycleError) as caught:
+                    permanently_delete_students(tenant=self.tenant_a, student_ids=[self.student_a.pk])
+                self.assertEqual(caught.exception.code, "cross_tenant_reference")
+                self.assertTrue(Inspection.objects.filter(pk=record.pk, feedback="Keep").exists())
+                self.assertTrue(Student.objects.filter(pk=self.student_a.pk).exists())
+                self.assertTrue(Submission.objects.filter(pk=self.sub_a.pk).exists())
+                record.delete()
+
+    def test_homework_inspection_author_and_direct_enrollment_deletion(self):
+        Inspection = django_apps.get_model("results", "HomeworkInspection")
+        Session = django_apps.get_model("lectures", "Session")
+        Homework = django_apps.get_model("homework_results", "Homework")
+        session = Session.objects.create(lecture=self.lecture_a, order=1)
+        homework = Homework.objects.create(tenant=self.tenant_a, session=session, title="Practice")
+        author = User.objects.create_user(username="inspection-author", tenant=self.tenant_a)
+        user = User.objects.create_user(username="inspection-direct-delete", tenant=self.tenant_a)
+        student = Student.objects.create(tenant=self.tenant_a, user=user, ps_number="DIRECT01", name="Practice")
+        enrollment = Enrollment.objects.create(tenant=self.tenant_a, student=student, lecture=self.lecture_a)
+        inspection = Inspection.objects.create(
+            tenant=self.tenant_a, session=session, homework=homework, enrollment=enrollment,
+            updated_by=author, solved=2, total=5, feedback="Keep after author deletion",
+        )
+
+        author.delete()
+        inspection.refresh_from_db()
+        self.assertIsNone(inspection.updated_by_id)
+        self.assertEqual((inspection.solved, inspection.total, inspection.feedback), (
+            2, 5, "Keep after author deletion",
+        ))
+
+        enrollment.delete()
+        self.assertFalse(Inspection.objects.filter(pk=inspection.pk).exists())
+        self.assertTrue(Homework.objects.filter(pk=homework.pk).exists())
+        self.assertTrue(Student.objects.filter(pk=student.pk).exists())
+
     def _parent_comment(self, *, tenant, lecture, enrollment, suffix):
         Session = django_apps.get_model("lectures", "Session")
         Comment = django_apps.get_model("results", "ParentAssessmentComment")
