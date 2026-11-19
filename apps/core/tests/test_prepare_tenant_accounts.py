@@ -143,3 +143,33 @@ class PrepareTenantAccountsTests(TestCase):
                 billing_mode="contract",
                 messaging_mode="disabled",
             )
+
+    def test_owner_without_profile_uses_login_for_empty_tenant_display(self):
+        self.body = {"owner": {"username": "qa-owner", "password": "QA-initial"}}
+        self.tenant.owner_name = ""
+        self.tenant.save(update_fields=["owner_name"])
+        self.run_accounts()
+        owner = get_user_model().objects.get(tenant=self.tenant)
+        self.tenant.refresh_from_db()
+        self.assertEqual((owner.name, owner.phone, self.tenant.owner_name), ("", "", "qa-owner"))
+        self.body["owner"].update(name=None, phone=" ")
+        self.assertIn("owner=existing", self.run_accounts())
+
+    def test_existing_owner_omitted_or_blank_profile_is_preserved_and_conflict_refused(self):
+        del self.body["student"]
+        self.run_accounts()
+        user = get_user_model().objects.get(tenant=self.tenant)
+        self.tenant.refresh_from_db()
+        saved = (user.name, user.phone, user.password, self.tenant.owner_name)
+        self.body["owner"] = {"username": "qa-owner", "password": "different"}
+        self.assertIn("owner=existing", self.run_accounts())
+        self.body["owner"].update(name="  ", phone=None)
+        self.assertIn("owner=existing", self.run_accounts())
+        for key, value in (("name", "another"), ("phone", "01000000003")):
+            with self.subTest(field=key), self.assertRaises(CommandError):
+                self.body["owner"].update({key: value})
+                self.run_accounts()
+            del self.body["owner"][key]
+        user.refresh_from_db()
+        self.tenant.refresh_from_db()
+        self.assertEqual((user.name, user.phone, user.password, self.tenant.owner_name), saved)

@@ -65,10 +65,15 @@ def audit_creation(tenant, user, action):
 
 
 def prepare_owner(tenant, raw):
-    fields(raw, ("username", "password", "name", "phone"))
+    require(
+        isinstance(raw, dict) and {"username", "password"} <= raw.keys() <= {"username", "password", "name", "phone"}
+    )
+    require(all(isinstance(raw[key], str) and raw[key].strip() for key in ("username", "password")))
+    require(all(raw.get(key) is None or isinstance(raw[key], str) for key in ("name", "phone")))
     serializer = TenantOwnerRegistrationSerializer(data=raw, context={"tenant": tenant})
     require(serializer.is_valid())
     data = serializer.validated_data
+    profile = {key: data[key] for key in ("name", "phone") if data.get(key)}
     username = data["username"]
     require(username == normalize_login_identifier(username))
     owners = list(TenantMembership.objects.select_for_update().filter(tenant=tenant, role="owner"))
@@ -81,19 +86,21 @@ def prepare_owner(tenant, raw):
     if ids or owners:
         require(len(ids) == len(owners) == 1 and owners[0].user_id in ids)
         user = User.objects.select_for_update().get(pk=owners[0].user_id)
-        require(valid_role(tenant, user, "owner") and user.name == data["name"] and user.phone == data["phone"])
+        require(
+            valid_role(tenant, user, "owner") and all(getattr(user, key) == value for key, value in profile.items())
+        )
         return "existing"
     user = User.objects.create_user(
         tenant=tenant,
         username=user_internal_username(tenant, username),
-        name=data["name"],
-        phone=data["phone"],
+        name=profile.get("name", ""),
+        phone=profile.get("phone", ""),
         password=data["password"],
         must_change_password=True,
     )
     core_repo.membership_ensure_active(tenant=tenant, user=user, role="owner")
     if not (tenant.owner_name or "").strip():
-        tenant.owner_name = data["name"]
+        tenant.owner_name = (profile.get("name") or username)[:100]
         tenant.save(update_fields=["owner_name"])
     audit_creation(tenant, user, "owner.register")
     return "created"
