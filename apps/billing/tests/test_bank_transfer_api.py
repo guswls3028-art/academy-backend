@@ -1,5 +1,6 @@
 """계좌이체 입금 신고와 세금계산서 대기열 API 통합 테스트."""
 
+import os
 from datetime import date, timedelta
 from unittest.mock import patch
 
@@ -158,7 +159,7 @@ class BankTransferApiTests(APITestCase):
             {
                 "business_name": "테스트학원",
                 "representative_name": "홍길동",
-                "business_registration_number": "608-35-75724",
+                "business_registration_number": "000-00-00107",
                 "address": "서울시 송파구",
                 "business_type": "교육서비스업",
                 "business_item": "학원",
@@ -230,7 +231,7 @@ class BankTransferApiTests(APITestCase):
 
         self.assertEqual(
             response.data["business_registration_number"],
-            "6083575724",
+            "0000000107",
         )
         profile = BusinessProfile.objects.get(tenant=self.tenant)
         self.assertEqual(profile.manager_email, "owner@example.com")
@@ -432,6 +433,16 @@ class BankTransferApiTests(APITestCase):
         config.enable()
         self.addCleanup(config.disable)
 
+    def test_preprod_never_issues_with_the_production_settings_module(self):
+        from apps.billing.services.popbill_receipts import enabled
+
+        self._enable_popbill()
+        with (
+            override_settings(SETTINGS_MODULE="apps.api.config.settings.prod", BILLING_POPBILL_MODE="live"),
+            patch.dict(os.environ, {"ACADEMY_RUNTIME_ENV": "preprod"}),
+        ):
+            self.assertFalse(enabled())
+
     def _popbill_notice(self, kind, **fields):
         self.client.force_authenticate(self.owner)
         return self.client.post("/api/v1/billing/bank-transfer/notices/", {
@@ -503,6 +514,17 @@ class BankTransferApiTests(APITestCase):
         self.assertEqual(record.recipient_ciphertext, "")
         self.assertIsNotNone(record.next_attempt_at)
 
+    def test_first_remote_read_can_be_an_nts_rejection(self):
+        self._enable_popbill()
+        self._activate()
+        notice = self._popbill_notice("CASH", recipient_identifier="01000000000")
+        self.assertEqual(notice.status_code, 201)
+        with patch("apps.billing.services.popbill_receipts._exchange", return_value={"state": 305}):
+            self._confirm_receipt(notice.data["id"])
+        record = PopbillReceipt.objects.get()
+        self.assertEqual((record.issue.status, record.recipient_ciphertext), ("FAILED", ""))
+        self.assertEqual(record.issue.invoice.status, "PAID")
+
     def test_only_first_confirmation_promotes_an_older_business_request(self):
         from apps.billing.services.popbill_receipts import _document
         self._activate()
@@ -511,7 +533,7 @@ class BankTransferApiTests(APITestCase):
         self._enable_popbill()
         def gateway(row):
             document = _document(row)
-            self.assertEqual(document["invoiceeCorpNum"], "6083575724")
+            self.assertEqual(document["invoiceeCorpNum"], "0000000107")
             self.assertEqual(document["invoicerCorpNum"], "1234567890")
             return {"state": 304, "number": "2026111910000000ab000002"}
 

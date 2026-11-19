@@ -1,6 +1,7 @@
 """Durable Popbill issue requests, payment-scoped recipients and provider reconciliation."""
 
 import json
+import os
 import re
 import secrets
 import subprocess
@@ -28,6 +29,8 @@ def enabled():
         return False
     # A production rollout may only record real documents. Isolated deployments may only test.
     production = settings.SETTINGS_MODULE == "apps.api.config.settings.prod"
+    if os.getenv("ACADEMY_RUNTIME_ENV", "").strip().lower() == "preprod":
+        return False
     if (mode == "live") != production:
         return False
     try:
@@ -216,6 +219,8 @@ def dispatch(issue_id, *, retry=False):
             if state == 304:
                 current.next_attempt_at = None
         else:
+            if state == 305:
+                current.recipient_ciphertext = ""
             if state or not (current.cash_approval_number or issue.issue_number):
                 issue.status = "FAILED" if state or isinstance(result_error, int) else "READY"
             issue.failure_reason = reason
