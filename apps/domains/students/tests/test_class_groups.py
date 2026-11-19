@@ -36,7 +36,7 @@ class ClassGroupTests(TestCase):
 
     def test_teaching_returns_assigned_groups_all_their_courses_and_latest_held_lesson(self):
         from datetime import timedelta
-        from apps.domains.lectures.models import Lecture, Session
+        from apps.domains.lectures.models import Lecture, Session, SessionSchedule
         from apps.domains.students.models import ClassGroupLecture
 
         teacher = get_user_model().objects.create_user(username="qa-teaching", tenant=self.tenant)
@@ -68,10 +68,33 @@ class ClassGroupTests(TestCase):
         self.assertEqual(set(rows), {assigned.pk, upcoming.pk})
         self.assertCountEqual(rows[assigned.pk]["courses"], [lead.pk, shared.pk])
         self.assertEqual(rows[assigned.pk]["recent"], {
-            "id": recent.pk, "lecture_id": shared.pk, "title": "오늘 수업", "date": today,
+            "id": recent.pk, "lecture_id": shared.pk, "title": "오늘 수업", "date": today, "schedule_id": None,
         })
         self.assertEqual(rows[upcoming.pk]["courses"], [future.pk])
         self.assertIsNone(rows[upcoming.pk]["recent"])
+
+        def day_sessions(group):
+            path = "/api/v1/lectures/sessions/"
+            request = self.factory.get(path, {"date": today.isoformat(), "class_group": group.pk})
+            request.tenant = self.tenant
+            force_authenticate(request, user=teacher)
+            result = resolve(path).func(request)
+            self.assertEqual(result.status_code, 200, result.data)
+            return [row["id"] for row in result.data]
+
+        self.assertEqual(day_sessions(assigned), [recent.pk])
+        self.assertEqual(day_sessions(unrelated), [])
+        foreign = ClassGroup.objects.create(tenant=self.other, name="다른 학원 반", kind="union", track="SKY")
+        self.assertEqual(day_sessions(foreign), [])
+        SessionSchedule.objects.create(session=recent, label="다음 주", date=today + timedelta(days=7))
+        actual = Session.objects.create(lecture=shared, order=2, title="분반 수업", date=today + timedelta(days=3))
+        held = SessionSchedule.objects.create(session=actual, label="A조", date=today)
+        SessionSchedule.objects.create(session=actual, label="B조", date=today + timedelta(days=1))
+        self.assertEqual(day_sessions(assigned), [actual.pk])
+        rows = {row["id"]: row for row in self.call("get", "teaching/", actor=teacher).data}
+        self.assertEqual(rows[assigned.pk]["recent"], {
+            "id": actual.pk, "lecture_id": shared.pk, "title": actual.title, "date": today, "schedule_id": held.pk,
+        })
 
     def test_school_roster_atomic_and_native_lecture(self):
         one = self.pupil("first", " Ａ고 ")

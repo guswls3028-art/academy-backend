@@ -15,6 +15,8 @@ _teacher_write_domains = re.compile(r"^/api/v1/(students|lectures|enrollments|at
 _restricted_actions = re.compile(r"(password|support-session|rotate|delete|purge|archive|send|contact|notify|billing|payment)", re.I)
 _qr_point_change = re.compile(r"^/api/v1/lectures/attendance-qr/[1-9]\d*/?$")
 _dawon_counsel_reply = re.compile(r"/api/v1/community/posts/([1-9]\d{0,17})/replies/")
+_dawon_homework_edit = re.compile(r"/api/v1/homeworks/[1-9]\d{0,17}/(?:question-grading/)?")
+_dawon_homework_create_resource = re.compile(r"/api/v1/homeworks/[1-9]\d{0,17}/(?:source-exam|save-as-template)/")
 _dawon_video_action = re.compile(r"/api/v1/student/video/videos/([1-9]\d{0,17})/(playback|progress|review-watch)/")
 _dawon_video_path = "assets/dawon-lesson-r13/master.m3u8"
 _dawon_counsel_examples = {
@@ -36,6 +38,13 @@ def _allows_dawon_workflow_write(request, role):
     tenant = getattr(request, "tenant", None)
     if not is_demo_tenant(tenant):
         return False
+    if role == "teacher":
+        if request.method == "PATCH" and _dawon_homework_edit.fullmatch(request.path):
+            return True
+        if request.method == "POST" and (
+            request.path == "/api/v1/homeworks/" or _dawon_homework_create_resource.fullmatch(request.path)
+        ):
+            return True
     if allows_demo_clinic_write(request, role):
         return True
     if request.method != "POST":

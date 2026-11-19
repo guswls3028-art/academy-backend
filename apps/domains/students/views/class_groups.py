@@ -3,7 +3,8 @@ import unicodedata
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Exists, F, OuterRef, Q, Subquery
+from django.db.models import Count, Exists, F, OuterRef, Q, Window
+from django.db.models.functions import Coalesce, RowNumber
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import serializers, viewsets
@@ -12,7 +13,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.support.lectures.class_group_cycles import assign_cycle_status, class_group_cycles
+from apps.support.lectures.class_group_cycles import assigned_class_group_ids, assign_cycle_status, class_group_cycles
 from apps.core.models import TenantMembership
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.students.models import ClassGroup, ClassGroupLecture, Student
@@ -139,23 +140,26 @@ class ClassGroupViewSet(viewsets.ViewSet):
         from apps.domains.lectures.models import Session
 
         tenant = request.tenant
-        assigned = ClassGroupLecture.objects.filter(
-            group__tenant=tenant, lecture__tenant=tenant, reference_teacher=request.user,
-        ).values("group_id")
-        latest = Session.objects.filter(
-            lecture__tenant=tenant, lecture__class_group_link__group_id=OuterRef("pk"), date__lte=timezone.localdate(),
-        ).order_by("-date", "-pk")
+        assigned = assigned_class_group_ids(tenant, request.user)
         groups = ClassGroup.objects.filter(tenant=tenant, pk__in=assigned).annotate(
-            latest_id=Subquery(latest.values("pk")[:1]),
             members=Count("students", filter=Q(students__tenant=tenant, students__deleted_at__isnull=True)),
         ).order_by("name", "pk")
         rows = {g.pk: {"id": g.pk, "name": g.name, "members": g.members, "courses": [], "recent": None} for g in groups}
         links = ClassGroupLecture.objects.filter(group_id__in=rows, lecture__tenant=tenant)
         for group_id, lecture_id in links.values_list("group_id", "lecture_id"):
             rows[group_id]["courses"].append(lecture_id)
-        recent = Session.objects.filter(lecture__tenant=tenant, pk__in=[g.latest_id for g in groups if g.latest_id])
-        for lesson in recent.values("lecture__class_group_link__group_id", "id", "lecture_id", "title", "date"):
-            group_id = lesson.pop("lecture__class_group_link__group_id")
+        recent = Session.objects.filter(lecture__tenant=tenant, lecture__class_group_link__group_id__in=rows).annotate(
+            group_id=F("lecture__class_group_link__group_id"), schedule_id=F("schedules__pk"),
+            held_date=Coalesce("schedules__date", "date"),
+        ).filter(held_date__lte=timezone.localdate()).annotate(
+            position=Window(RowNumber(), partition_by=F("group_id"), order_by=[
+                F("held_date").desc(), F("schedules__start_time").desc(nulls_last=True), F("pk").desc(),
+                F("schedule_id").desc(nulls_last=True),
+            ]),
+        ).filter(position=1).order_by().values("group_id", "id", "lecture_id", "title", "held_date", "schedule_id")
+        for lesson in recent:
+            group_id = lesson.pop("group_id")
+            lesson["date"] = lesson.pop("held_date")
             rows[group_id]["recent"] = lesson
         return Response(list(rows.values()))
 

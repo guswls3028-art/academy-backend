@@ -140,3 +140,30 @@ class DemoOperationsTests(TestCase):
                 read = APIRequestFactory().get(path)
                 read.tenant = self.tenant
                 _validate_dawon_demo_access(read, token)
+
+    def test_teacher_homework_write_methods_and_resources(self):
+        factory = APIRequestFactory()
+        token = {**self.token, "dawon_demo_role": "teacher"}
+        for method, path in (
+            ("post", "/api/v1/homeworks/"), ("patch", "/api/v1/homeworks/2/"),
+            ("patch", "/api/v1/homeworks/2/question-grading/"), ("post", "/api/v1/homeworks/2/source-exam/"),
+            ("post", "/api/v1/homeworks/2/save-as-template/"),
+        ):
+            with self.subTest(method=method, path=path):
+                request = getattr(factory, method)(path)
+                request.tenant = self.tenant
+                _validate_dawon_demo_access(request, token)
+                for role in ("admin", "student", "guardian"):
+                    with self.assertRaises(PermissionDenied):
+                        _validate_dawon_demo_access(request, {**token, "dawon_demo_role": role})
+                request.tenant = self.other
+                with self.assertRaises(PermissionDenied):
+                    _validate_dawon_demo_access(request, token)
+        for method, path in (
+            ("delete", "/api/v1/homeworks/2/"), ("patch", "/api/v1/homeworks/"),
+            ("post", "/api/v1/homeworks/2/question-grading/"), ("patch", "/api/v1/homeworks/2/unknown/"),
+        ):
+            with self.subTest(method=method, path=path), self.assertRaises(PermissionDenied):
+                request = getattr(factory, method)(path)
+                request.tenant = self.tenant
+                _validate_dawon_demo_access(request, token)

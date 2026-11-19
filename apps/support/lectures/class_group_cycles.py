@@ -6,6 +6,15 @@ from django.db.models import F
 from django.utils import timezone
 
 
+def assigned_class_group_ids(tenant, teacher):
+    from apps.domains.students.models import ClassGroupLecture
+
+    links = ClassGroupLecture.objects.filter(group__tenant=tenant, lecture__tenant=tenant, reference_teacher=teacher)
+    if not getattr(settings, "DAWON_REVIEW_CLASS_GROUPS", False) or (tenant.pk, tenant.code) != (719, "dawon"):
+        links = links.none()
+    return links.values("group_id")
+
+
 def assign_cycle_status(rows, today):
     """Rows are newest first, with link creation order breaking same-day ties."""
     started = False

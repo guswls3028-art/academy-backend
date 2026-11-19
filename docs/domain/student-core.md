@@ -1129,3 +1129,7 @@ can consume the new pending credentials during a compatible rolling release.
 공개 달력의 조회 제한은 체험 로그인과 별도 범위를 사용한다. 동시 체험으로 기록 조회가 늘더라도 체험 계정 발급 한도를 쓰지 않는다.
 
 다원 선생님 대시보드는 `GET /api/v1/students/class-groups/teaching/`에서 현재 사용자가 강의 담당자로 연결된 다원 반, 해당 반의 수강 강의 ID와 가장 최근 차시를 조회한다. 기존 데모·테넌트·직원 접근 검사를 사용한다. 담당 반이 없으면 빈 목록을 반환한다. 현재 날짜에 수업이 없는 경우에도 지난 차시 기록에 접근할 수 있다.
+
+날짜별 목록은 `GET /api/v1/lectures/sessions/?date=YYYY-MM-DD&class_group=<반 ID>`로 조회한다. 현재 교사의 담당 반에 속하는 같은 학원 강의만 반환한다. 최근 차시의 `date`와 `schedule_id`는 오늘까지의 실제 수업일을 가리킨다. 수업일을 따로 설정하지 않은 기존 차시는 기준일을 사용하고 `schedule_id`는 null이다.
+
+선생님 체험에서는 차시 과제를 생성하고 이름·정책·문항 채점을 수정할 수 있다. 과제 화면에서 원본 시험 연결과 템플릿 저장도 지원한다. 데모 인증은 해당 생성·수정 경로와 메서드를 개별 확인하며 과제 API의 학원·역할·동시 수정 검증은 그대로 적용한다. 담당 반·실제 수업일과 데모 쓰기 범위는 `test_class_groups`와 `test_demo_operations`에서 검증한다.
