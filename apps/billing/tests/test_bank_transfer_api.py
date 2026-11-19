@@ -1,6 +1,9 @@
 """계좌이체 입금 신고와 세금계산서 대기열 API 통합 테스트."""
 
 from datetime import date, timedelta
+from unittest.mock import patch
+
+from cryptography.fernet import Fernet
 
 from django.contrib.auth import get_user_model
 from django.test import override_settings
@@ -12,6 +15,7 @@ from apps.billing.models import (
     BusinessProfile,
     Invoice,
     PaymentTransaction,
+    PopbillReceipt,
     TaxInvoiceIssue,
 )
 from apps.core.models import Tenant, TenantMembership
@@ -417,6 +421,109 @@ class BankTransferApiTests(APITestCase):
         issue.refresh_from_db()
         self.assertEqual(issue.status, "ISSUED")
         self.assertEqual(issue.issue_number, "202607271234567890123456")
+
+    def _enable_popbill(self):
+        config = override_settings(
+            BILLING_POPBILL_MODE="test", BILLING_POPBILL_CORP_NUM="1234567890",
+            BILLING_POPBILL_LINK_ID="fixture", BILLING_POPBILL_SECRET_KEY="fixture",
+            BILLING_POPBILL_CORP_NAME="QA", BILLING_POPBILL_CEO_NAME="QA",
+            BILLING_POPBILL_RECIPIENT_KEYS=Fernet.generate_key().decode(),
+        )
+        config.enable()
+        self.addCleanup(config.disable)
+
+    def _popbill_notice(self, kind, **fields):
+        self.client.force_authenticate(self.owner)
+        return self.client.post("/api/v1/billing/bank-transfer/notices/", {
+            "invoice_id": self.invoice.pk, "depositor_name": "QA", "deposited_at": timezone.now().isoformat(),
+            "receipt_kind": kind, **fields,
+        }, format="json", **self.headers)
+
+    def _confirm_receipt(self, notice_id):
+        self.client.force_authenticate(self.superuser)
+        with self.captureOnCommitCallbacks(execute=True):
+            return self.client.post(f"/api/v1/billing/admin/bank-transfer/notices/{notice_id}/confirm/",
+                                    format="json", **self.headers)
+
+    def test_cash_receipt_retry_recovers_without_repeating_payment(self):
+        from apps.billing.services.popbill_receipts import _document
+        self._enable_popbill()
+        self._activate()
+        phone = "01000000000"
+        notice = self._popbill_notice("CASH", recipient_identifier=phone)
+        self.assertEqual(notice.status_code, 201, notice.data)
+        record = PopbillReceipt.objects.get()
+        self.assertNotIn(phone, record.recipient_ciphertext)
+        self.assertNotIn(phone, str(notice.data))
+        keys = []
+
+        def gateway(row):
+            keys.append(row.document_key)
+            self.assertEqual(_document(row)["identityNum"], phone)
+            if len(keys) == 1:
+                raise TimeoutError
+            return {"state": 304, "number": "TB0000001"}
+
+        with patch("apps.billing.services.popbill_receipts._exchange", side_effect=gateway):
+            for _ in range(3):
+                response = self._confirm_receipt(notice.data["id"])
+                self.assertEqual(response.status_code, 200)
+        self.assertEqual(keys, [record.document_key, record.document_key])
+        self.assertEqual(PaymentTransaction.objects.filter(invoice=self.invoice).count(), 1)
+        record.refresh_from_db()
+        self.assertEqual(record.cash_approval_number, "TB0000001")
+        self.assertEqual(record.recipient_ciphertext, "")
+        self.assertIsNone(record.next_attempt_at)
+        self.client.force_authenticate(self.owner)
+        readback = self.client.get("/api/v1/billing/bank-transfer/", **self.headers)
+        self.assertEqual(readback.data["invoices"][0]["bank_transfer_notice"]["receipt_kind"], "CASH")
+        self.assertEqual(readback.data["invoices"][0]["bank_transfer_notice"]["tax_invoice_issue_number"], "TB0000001")
+        self.assertNotIn(phone, str(readback.data))
+
+    def test_personal_tax_invoice_uses_encrypted_recipient_and_provider_result(self):
+        from apps.billing.services.popbill_receipts import _document
+        self._enable_popbill()
+        self._activate()
+        number = "0001013000000"
+        notice = self._popbill_notice("PERSONAL_TAX", recipient_identifier=number,
+                                      recipient_name="QA", recipient_email="fixture@example.com")
+        self.assertEqual(notice.status_code, 201, notice.data)
+        self.assertNotIn(number, str(notice.data))
+        def gateway(row):
+            doc = _document(row)
+            self.assertEqual((doc["invoiceeType"], doc["invoiceeCorpNum"]), ("개인", number))
+            self.assertEqual((doc["purposeType"], doc["totalAmount"]), ("영수", str(self.invoice.total_amount)))
+            return {"state": 300, "number": "2026111910000000ab000001"}
+
+        with patch("apps.billing.services.popbill_receipts._exchange", side_effect=gateway) as service:
+            self._confirm_receipt(notice.data["id"])
+            self.assertEqual(service.call_count, 1)
+        record = PopbillReceipt.objects.get()
+        self.assertEqual(record.issue.status, "ISSUED")
+        self.assertEqual(record.recipient_ciphertext, "")
+        self.assertIsNotNone(record.next_attempt_at)
+
+    def test_only_first_confirmation_promotes_an_older_business_request(self):
+        from apps.billing.services.popbill_receipts import _document
+        self._activate()
+        self._save_business_profile()
+        notice = self._submit_notice()
+        self._enable_popbill()
+        def gateway(row):
+            document = _document(row)
+            self.assertEqual(document["invoiceeCorpNum"], "6083575724")
+            self.assertEqual(document["invoicerCorpNum"], "1234567890")
+            return {"state": 304, "number": "2026111910000000ab000002"}
+
+        with patch("apps.billing.services.popbill_receipts._exchange", side_effect=gateway):
+            self._confirm_receipt(notice.data["id"])
+        self.assertEqual(PopbillReceipt.objects.get().issue.status, "ISSUED")
+
+    def test_unconfigured_provider_rejects_personal_data(self):
+        self._activate()
+        notice = self._popbill_notice("CASH", recipient_identifier="01000000000")
+        self.assertEqual(notice.status_code, 503)
+        self.assertFalse(BankTransferNotice.objects.exists())
 
     def test_notice_cannot_cross_tenant_boundary(self):
         self._activate()

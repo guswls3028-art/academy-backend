@@ -433,6 +433,20 @@ class TaxInvoiceIssue(TimestampModel):
         return f"TaxInvoice({self.invoice.invoice_number}, {self.status})"
 
 
+class PopbillReceipt(TimestampModel):
+    """One provider document per confirmed subscription payment."""
+    issue = models.OneToOneField(TaxInvoiceIssue, on_delete=models.CASCADE, related_name="popbill")
+    kind = models.CharField(max_length=16)
+    document_key = models.CharField(max_length=24, unique=True)
+    environment = models.CharField(max_length=10)
+    issuer = models.CharField(max_length=10)
+    recipient_ciphertext = models.TextField(blank=True)
+    cash_approval_number = models.CharField(max_length=9, blank=True)
+    provider_state = models.PositiveSmallIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    claim = models.UUIDField(null=True, blank=True)
+
+
 class BankTransferNotice(TimestampModel):
     """고객이 제출한 계좌이체 입금 확인 요청."""
 

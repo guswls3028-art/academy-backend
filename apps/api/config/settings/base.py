@@ -570,6 +570,15 @@ TOSS_PAYMENTS_SECRET_KEY = os.getenv("TOSS_PAYMENTS_SECRET_KEY", "")
 TOSS_PAYMENTS_CLIENT_KEY = os.getenv("TOSS_PAYMENTS_CLIENT_KEY", "")
 # 자동결제 승인 API 사용 가능 여부 (추가 계약 필요, 계약 전이면 False)
 TOSS_AUTO_BILLING_ENABLED = os.getenv("TOSS_AUTO_BILLING_ENABLED", "").lower() in ("1", "true", "yes")
+# Disabled until the issuer is onboarded. BILLING_ secrets are excluded from isolated candidates.
+BILLING_POPBILL_MODE = os.getenv("BILLING_POPBILL_MODE", "off")
+BILLING_POPBILL_LINK_ID = os.getenv("BILLING_POPBILL_LINK_ID", "")
+BILLING_POPBILL_SECRET_KEY = os.getenv("BILLING_POPBILL_SECRET_KEY", "")
+BILLING_POPBILL_CORP_NUM = os.getenv("BILLING_POPBILL_CORP_NUM", "")
+BILLING_POPBILL_CORP_NAME = os.getenv("BILLING_POPBILL_CORP_NAME", "")
+BILLING_POPBILL_CEO_NAME = os.getenv("BILLING_POPBILL_CEO_NAME", "")
+BILLING_POPBILL_RECIPIENT_KEYS = os.getenv("BILLING_POPBILL_RECIPIENT_KEYS", "")
+
 BILLING_BANK_TRANSFER_ENABLED = os.getenv(
     "BILLING_BANK_TRANSFER_ENABLED", ""
 ).lower() in ("1", "true", "yes")
@@ -641,6 +650,10 @@ if SENTRY_DSN:
 
     def _sentry_before_send(event, hint):
         """노이즈 필터: health check, DisallowedHost, SuspiciousOperation"""
+        # These request bodies and exception frames can contain a taxpayer identifier.
+        url = (event.get("request") or {}).get("url", "")
+        if "/billing/bank-transfer/notices/" in url:
+            return None
         exc = hint.get("exc_info")
         if exc:
             exc_type = exc[0]

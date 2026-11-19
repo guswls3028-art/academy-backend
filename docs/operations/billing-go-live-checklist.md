@@ -136,8 +136,9 @@ UI/API 소비자는 `monthly_supply_amount`, `monthly_tax_amount`,
 4. 플랫폼 superuser가 개발자 결제 콘솔의 `입금 신고` 탭에서 실제 통장 내역과
    금액을 대조한 뒤 `입금 확인` 또는 `반려`를 선택한다.
 5. 입금 확인 시에만 청구서가 `PAID`가 되고 구독과 수납 장부에 반영된다.
-6. 세금계산서 요청 건은 `READY` 대기열에서 홈택스로 실제 발행한 뒤 국세청
-   승인번호를 `발행 완료 기록`에 입력한다.
+6. 팝빌 연동이 개통된 건은 입금 확인 뒤 자동 발행하고 공급사 결과를 기록한다.
+   기존 수동 건은 홈택스에서 실제 발행한 뒤 승인번호를 `발행 완료 기록`에 입력한다.
+   개통과 복구 절차는 아래 팝빌 계좌이체 증빙 자동 발급을 참조한다.
 
 프론트 현재 계약은
 [`frontend/docs/USER-GUIDE-ADMIN.md`](../../../frontend/docs/USER-GUIDE-ADMIN.md#14-4-구독결제)에
@@ -334,26 +335,34 @@ aws ssm list-command-invocations --region ap-northeast-2 --command-id <위_명�
 
 ---
 
-### 5. 전자세금계산서 발행사와 정책 확정
+### 5. 팝빌 계좌이체 증빙 자동 발급
 
-Toss Payments는 카드 자동결제를 담당하며 전자세금계산서 국세청 전송은
-별도 발행사 연동 범위다. 현재 `BusinessProfile`, `BankTransferNotice`,
-`TaxInvoiceIssue`와 홈택스 수동 발행 대기열은 연결되어 있지만 외부 발행
-API는 연결하지 않았다.
+플랫폼 사업자가 공급자다. 선생님은 구독료 입금 신고에서 사업자 명의 세금계산서,
+개인 명의 세금계산서 또는 소득공제용 현금영수증을 선택한다. 다음 순서로 개통한다.
 
-구현 전 오너가 확정할 항목:
+1. [연동신청](https://developers.popbill.com/customer-center/partner-request)에서 전자세금계산서와 현금영수증을 함께 선택한다. 운영자 사업자 정보, 로그인 정보, 담당자 이메일을 등록한다.
+2. 이메일로 받은 LinkID와 SecretKey는 환경별 보안 설정에 넣는다. 채팅·Git·명령 인수로 전송하지 않는다. [회원구조](https://developers.popbill.com/guide/taxinvoice/getting-started/member)에 따라 발행 사업자를 연동회원으로 준비한다.
+3. [테스트 사이트](https://test.popbill.com)에서 테스트 인증서를 등록하고 격리 결제 시나리오를 확인한다. 국세청 신고는 테스트 환경에서 모의 처리된다.
+4. [운영전환](https://developers.popbill.com/customer-center/serviceopen)을 신청해 단가와 계약을 확인한다. 운영 전자세금계산서 메뉴의 관리 → 인증서 관리 → 인증서 등록에서 발행 사업자 명의 전자세금계산서용 또는 지원되는 범용 인증서를 등록한다. 테스트 인증서는 이관되지 않는다. [지원 인증서](https://developers.popbill.com/guide/taxinvoice/introduction/certificate)
+5. 운영 계정에서 발행 상품 이용 권한·포인트·국세청 전송 설정과 개인정보 처리방침의 변경 사전 공지를 확인하고 운영 전환한다. 인증서 갱신 시 팝빌에 다시 등록한다.
 
-1. 발행사: 팝빌/바로빌 등 계약한 전자세금계산서 API 공급사
-2. 발행 기준: `INVOICE_REQUEST`만 발행하고 카드 자동결제에는 발행하지 않을지
-3. 발행 시점: 청구 시점의 `청구` 발행 또는 입금 확인 후 `영수` 발행
-4. 공급자 정보: 사업자등록번호, 상호, 대표자, 주소, 업태, 종목,
-   담당자 이름/이메일/연락처
-5. 공동인증서 등록 및 국세청 전송 설정
-6. 발행사 API 자격증명과 테스트/운영 환경
+API 환경은 `BILLING_POPBILL_MODE`(기본 off, 격리 테스트 test, 운영 live),
+`BILLING_POPBILL_LINK_ID`, `BILLING_POPBILL_SECRET_KEY`, `BILLING_POPBILL_CORP_NUM`
+(숫자 10자리), `BILLING_POPBILL_CORP_NAME`, `BILLING_POPBILL_CEO_NAME`을 사용한다.
+`BILLING_POPBILL_RECIPIENT_KEYS`는 쉼표로 구분한 별도 Fernet 키다. 첫 키로
+암호화하고 회전 중에는 이전 키를 유지한다. 개발·운영 자격증명과 키를 분리한다.
+운영 계좌, 계정, 인증서로 테스트 거래를 생성하지 않는다.
 
-발급시기와 중복 증빙 정책은 세무대리인 확인값을 정본으로 사용한다. 이 결정
-전에는 외부 발행 API를 붙이지 않는다. 수동 경로에서는 홈택스 실제 발행 후
-승인번호를 확인한 운영자만 `TaxInvoiceIssue`를 `ISSUED`로 올린다.
+플랫폼 운영자의 입금 확인으로 실제 수납이 커밋되면 팝빌에서 같은 문서번호를 먼저 조회한다.
+사업자 정보는 기존 발행 스냅샷을 사용한다. 개인은 휴대전화번호(현금영수증)
+또는 성명·주민등록번호·이메일(개인 세금계산서)만 사용한다. 승인번호와 발급 상태를
+소유자 화면에 표시하고 지급 수납과 국세청 전송 결과를 각각 관리한다.
+응답 유실·잔액 부족·인증서 문제는 팝빌에서 원인을 해결한 뒤 운영자 화면에서
+발급 상태 확인·재시도를 누른다. 일일 `process_billing`도 미처리 문서를 다시 조회한다.
+기존 수동 발급 대기열과 발급 기록은 유지한다. 홈택스로 이미 발급한 건을 일괄 전송하지 않는다.
+현금영수증의 거래일시는 팝빌에서 전일·당일만 받으므로 실제 입금일 다음 날까지 확인한다.
+기간을 넘긴 건은 거래일을 바꾸지 않고 공급사의 실패를 표시한다. [현금영수증 API 거래일시 규격](https://developers.popbill.com/api-reference/cashbill/api/issue)
+테스트는 `apps.billing.tests.test_bank_transfer_api`와 팝빌 게이트웨이 테스트로 검증한다.
 
 ---
 
