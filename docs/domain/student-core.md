@@ -1061,3 +1061,22 @@ API, failure/retry, parent sharing and verification contract is owned by
 [parent-account.md](parent-account.md#초기-비밀번호-설정과-실제-로그인-안내-2026-10-01).
 Existing rows/hashes are preserved by additive migrations; old API instances
 can consume the new pending credentials during a compatible rolling release.
+
+### 다원 검토 환경의 반 편성
+
+`/api/v1/students/class-groups/`는 `DAWON_REVIEW_CLASS_GROUPS=True`인 독립 환경에서
+다원 테넌트(719)의 인증된 교직원에게 제공한다. 학생·학부모는 접근할 수 없다. 반 이름은
+같은 테넌트 안에서 유일하다. 연합반은 1%, HYPER, SKY 중 하나를 선택하며 학교별 내신반은
+학교 이름을 지정한다. 학교명은 NFKC와 공백 정규화 후 일치해야 한다.
+
+목록과 상세에서 명부를 확인하고, 반의 `candidates/`에서 이름 또는 소속 학교로 검색한 재원생(최대 50명)을
+`PATCH members/`의 add/remove로 배정한다. 명부 갱신은 한 트랜잭션이며 다른 학원의 학생이나
+추가 자격이 없는 학생이 섞이면 전체 요청이 거부된다. 학교 변경·삭제·관리 해제·사용자 또는 학생 멤버십 비활성으로 자격을 잃은 기존
+구성원은 상세의 eligible=false로 확인하고 제외할 수 있다.
+
+`POST lectures/`는 기간(vacation/midterm/final), 강의명, 시작일과 종료일을 받아 기존 강의와
+재원생 수강을 한 트랜잭션으로 생성한다. 연합반 방학은 전체 명부, 연합반 중간·기말은 입력한 학교의 명부만 사용한다. 중간·기말에는 해당 학교의 재원생이 한 명 이상 있어야 한다. 학교별 내신반은 모든 기간에서 반에 지정한 학교를 사용한다. 강의 연결에 학교를 보존하고 이후 기존 강의의 수강
+명부는 강의 관리에서 변경한다. 중복 강의명이나 자격이 변경된 구성원이 있으면 저장되지 않는다.
+반을 만들거나 학생을 반에 배정하는 것만으로는 강의 수강·차시 출결이 생성되지 않는다.
+검증은 `apps.domains.students.tests.test_class_groups`에서 권한, 명부 원자성, 실제 수강 기록 및
+오류 복구를 확인한다.

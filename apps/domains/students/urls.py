@@ -25,11 +25,13 @@ from .views.enrollment_matrix_view import (
     StudentEnrollmentMatrixView,
     StudentEnrollmentMatrixToggleView,
 )
+from .views.class_groups import ClassGroupViewSet
 from .views.initial_password_settings import InitialPasswordSettingsView
 
 router = DefaultRouter()
 
 # 🔥 basename 명시 (queryset 없는 ViewSet 대응)
+router.register(r"class-groups", ClassGroupViewSet, basename="student-class-group")
 router.register(r"tags", TagViewSet, basename="student-tag")
 router.register(
     r"custom-fields",

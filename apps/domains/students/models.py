@@ -673,3 +673,37 @@ class StudentRegistrationRequest(TimestampModel):
 
     def __str__(self):
         return f"{self.name} ({self.get_status_display()})"
+
+class ClassGroup(models.Model):
+    class Kind(models.TextChoices):
+        UNION = "union", "연합반"
+        SCHOOL = "school", "학교별 내신반"
+
+    class Track(models.TextChoices):
+        TOP = "1%", "1%"
+        HYPER = "HYPER", "HYPER"
+        SKY = "SKY", "SKY"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    name = models.CharField(max_length=100)
+    kind = models.CharField(max_length=8, choices=Kind.choices)
+    track = models.CharField(max_length=5, choices=Track.choices, blank=True)
+    school = models.CharField(max_length=100, blank=True)
+    students = models.ManyToManyField(Student, blank=True, related_name="class_groups")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "name"], name="students_class_group_name"),
+            models.CheckConstraint(
+                condition=(models.Q(kind="union", track__in=["1%", "HYPER", "SKY"], school="")
+                           | (models.Q(kind="school", track="") & ~models.Q(school=""))),
+                name="students_class_group_kind",
+            ),
+        ]
+
+
+class ClassGroupLecture(models.Model):
+    group = models.ForeignKey(ClassGroup, on_delete=models.CASCADE, related_name="course_links")
+    lecture = models.OneToOneField("lectures.Lecture", on_delete=models.CASCADE, related_name="class_group_link")
+    school = models.CharField(max_length=100, blank=True)
+    period = models.CharField(max_length=8, choices=[("vacation", "방학"), ("midterm", "중간"), ("final", "기말")])
