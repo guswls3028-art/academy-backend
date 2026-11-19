@@ -1,6 +1,6 @@
 # apps/domains/student_app/sessions/views.py
 import re
-from datetime import date as dt_date, time as dt_time
+from datetime import date as dt_date
 
 from django.utils import timezone
 
@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
+from apps.support.student_app.schedule_fallback import parse_lecture_start_time
 from apps.support.student_app.session_dependencies import (
     get_active_student_session_ids,
     get_future_hidden_clinic_participant_ids,
@@ -22,19 +23,6 @@ from apps.support.student_app.session_dependencies import (
     student_owns_session,
 )
 from .serializers import StudentSessionSerializer
-
-
-def _parse_lecture_start_time(lecture_time_str: str) -> dt_time | None:
-    """lecture_time CharField (예: '토 12:00 ~ 13:00')에서 시작 시각 추출."""
-    if not lecture_time_str:
-        return None
-    m = re.search(r"(?<!\d)(\d{1,2}):(\d{2})(?!\d)", lecture_time_str)
-    if m:
-        try:
-            return dt_time(int(m.group(1)), int(m.group(2)))
-        except ValueError:
-            return None
-    return None
 
 
 def _parse_schedule_item_id(value) -> int | None:
@@ -93,7 +81,7 @@ class StudentSessionListView(APIView):
                 "status": None,
                 "exam_ids": [],
                 "type": "session",
-                "start_time": s.schedule_start_time if s.schedule_configured else _parse_lecture_start_time(
+                "start_time": s.schedule_start_time if s.schedule_configured else parse_lecture_start_time(
                     getattr(s.lecture, "lecture_time", "") or ""
                 ),
             }
