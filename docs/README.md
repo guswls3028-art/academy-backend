@@ -77,6 +77,7 @@ backend/docs/
 | 학생별 누적 성적·정규/보강 범위 | [domain/student-performance-console.md](domain/student-performance-console.md) |
 | 학교 성적 회차별 직접 제출·선생앱 취합 | [domain/school-report-collection.md](domain/school-report-collection.md) |
 | 학생 성적표 오답 상태·학원별 성장 그래프 구성 | [domain/student-grade-report.md](domain/student-grade-report.md) |
+| 교직원 게시판 권한·글·댓글·비공개 첨부 | [domain/staff-board.md](domain/staff-board.md) |
 | 교직원 저장소·학생 인벤토리 파일과 R2 보상 정리 | [domain/inventory-storage.md](domain/inventory-storage.md) |
 | 보강·클리닉 등원 예정 운영 | [domain/arrival-operations.md](domain/arrival-operations.md) |
 | 현재 클리닉 대상·강의 종료·학생 예약 자격 | [domain/clinic-targets.md](domain/clinic-targets.md) |

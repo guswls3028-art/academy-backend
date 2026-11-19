@@ -92,6 +92,7 @@ STORAGE_OBJECT_REFERENCE_FIELDS = frozenset({
     ("storage", "exams", "ExamQuestionProposal", "problem_image_key"),
     ("storage", "exams", "QuestionExplanation", "image_key"),
     ("storage", "inventory", "InventoryFile", "r2_key"),
+    ("storage", "staffs", "StaffBoardPost", "attachment_key"),
     ("storage", "landing_public", "PublicMatchupShowcase", "snapshot_pdf_key"),
     ("storage", "landing_public", "PublicProblemReviewShowcase", "snapshot_pdf_key"),
     ("storage", "matchup", "MatchupDocument", "r2_key"),
