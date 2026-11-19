@@ -1,24 +1,41 @@
 from collections.abc import Mapping
-from uuid import uuid4
+from functools import cached_property
 
 from django.db import transaction
 from django.db.models import Count
-from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404
+from django.utils.http import content_disposition_header
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import APIException, NotFound, PermissionDenied
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
-from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage, upload_fileobj_to_r2_storage
-from apps.support.inventory.storage_cleanup_dependencies import compensate_unattached_storage_object
+from apps.infrastructure.storage.r2 import (
+    get_object_bytes_r2_storage, put_small_storage_object,
+)
+from apps.support.community.storage_cleanup_dependencies import schedule_detached_storage_cleanup
+from apps.support.inventory.storage_cleanup_dependencies import lock_reserved_upload, reserve_staff_board_upload
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.core.services.tenant_access import get_active_membership_role
 from apps.domains.staffs.models import StaffBoardPost, StaffBoardReply
+from apps.domains.staffs.services.board_writes import BoardWrite
+
+
+FILE_LIMIT = 10 * 1024 * 1024
+REQUEST_KEY = OpenApiParameter("Idempotency-Key", OpenApiTypes.UUID, OpenApiParameter.HEADER)
 
 
 class BoardStorageUnavailable(APIException):
     status_code = 503
     default_detail = "파일 저장소에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요."
+
+
+class StaffBoardErrorSerializer(serializers.Serializer):
+    detail = serializers.CharField()
 
 
 class StaffBoardReplySerializer(serializers.ModelSerializer):
@@ -32,22 +49,26 @@ class StaffBoardPostSerializer(serializers.ModelSerializer):
     file = serializers.FileField(write_only=True, required=False, max_length=255)
     reply_count = serializers.IntegerField(read_only=True, default=0)
     can_edit = serializers.SerializerMethodField()
+    can_remove_attachment = serializers.SerializerMethodField()
 
     class Meta:
         model = StaffBoardPost
         fields = ("id", "category", "title", "body", "author_name", "created_at",
-                  "attachment_name", "file", "reply_count", "can_edit")
+                  "attachment_name", "file", "reply_count", "can_edit", "can_remove_attachment")
         read_only_fields = ("id", "author_name", "created_at", "attachment_name")
 
     def get_can_edit(self, post) -> bool:
         return post.author_id == self.context["request"].user.pk
+
+    def get_can_remove_attachment(self, post) -> bool:
+        return bool(post.attachment_key) and self.context["view"].can_remove_file(post)
 
     def validate(self, attrs):
         file = attrs.get("file")
         if file is not None:
             if attrs.get("category") != StaffBoardPost.Category.RESOURCE:
                 raise serializers.ValidationError({"file": "자료실에만 파일을 첨부할 수 있습니다."})
-            if file.size > 10 * 1024 * 1024:
+            if file.size > FILE_LIMIT:
                 raise serializers.ValidationError({"file": "10 MiB 이하 파일을 선택해 주세요."})
         return attrs
 
@@ -86,6 +107,13 @@ class StaffBoardViewSet(viewsets.GenericViewSet):
     serializer_class = StaffBoardPostSerializer
     pagination_class = BoardPagination
 
+    @cached_property
+    def manages_board(self):
+        return get_active_membership_role(self.request.user, self.request.tenant) in ("owner", "admin")
+
+    def can_remove_file(self, post):
+        return post.author_id == self.request.user.pk or self.manages_board
+
     def get_queryset(self):
         return StaffBoardPost.objects.filter(tenant=self.request.tenant).annotate(
             reply_count=Count("replies")
@@ -111,32 +139,40 @@ class StaffBoardViewSet(viewsets.GenericViewSet):
         serializer = StaffBoardDetailSerializer(self.get_object(), context=self.get_serializer_context())
         return Response(serializer.data)
 
+    @extend_schema(parameters=[REQUEST_KEY], responses={200: StaffBoardPostSerializer, 201: StaffBoardPostSerializer, 409: StaffBoardErrorSerializer})
     def create(self, request):
         if len(request.FILES.getlist("file")) > 1:
             raise serializers.ValidationError({"file": "파일 한 개만 첨부할 수 있습니다."})
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         upload = serializer.validated_data.pop("file", None)
-        key = f"tenants/{request.tenant.pk}/staff-board/{uuid4().hex}" if upload else ""
-        if upload:
-            try:
-                upload_fileobj_to_r2_storage(fileobj=upload, key=key, content_type="application/octet-stream")
-            except Exception as exc:
-                compensate_unattached_storage_object(tenant_id=request.tenant.pk, key=key, uncertain_write=True)
-                raise BoardStorageUnavailable() from exc
-        try:
-            with transaction.atomic():
-                serializer.save(
-                    tenant=request.tenant,
-                    author=request.user,
-                    author_name=author_name(request.user),
-                    attachment_key=key,
-                    attachment_name=upload.name if upload else "",
-                )
-        except Exception:
-            if key:
-                compensate_unattached_storage_object(tenant_id=request.tenant.pk, key=key)
-            raise
+        write = BoardWrite(request, "post", serializer.validated_data, upload)
+        previous = write.existing_result()
+        if previous:
+            return Response(self.get_serializer(self.get_queryset().get(pk=previous)).data)
+        intent = reserve_staff_board_upload(tenant_id=request.tenant.pk) if upload else None
+        with transaction.atomic():
+            receipt = write.reserve()
+            previous = write.result(receipt)
+            if previous:
+                if intent:
+                    intent.delete()
+                return Response(self.get_serializer(self.get_queryset().get(pk=previous)).data)
+            if intent:
+                if lock_reserved_upload(intent) is None:
+                    raise BoardStorageUnavailable()
+                try:
+                    put_small_storage_object(fileobj=upload, key=intent.object_key)
+                except Exception as exc:
+                    raise BoardStorageUnavailable() from exc
+            post = serializer.save(
+                tenant=request.tenant, author=request.user, author_name=author_name(request.user),
+                attachment_key=intent.object_key if intent else "",
+                attachment_name=upload.name if upload else "",
+            )
+            write.finish(receipt, post)
+            if intent:
+                intent.delete()
         return Response(serializer.data, status=201)
 
     @extend_schema(request=StaffBoardEditSerializer, responses=StaffBoardPostSerializer)
@@ -153,28 +189,59 @@ class StaffBoardViewSet(viewsets.GenericViewSet):
         post.save(update_fields=list(serializer.validated_data))
         return Response(self.get_serializer(post).data)
 
-    @extend_schema(request=StaffBoardReplySerializer, responses={201: StaffBoardReplySerializer})
+    @extend_schema(parameters=[REQUEST_KEY], request=StaffBoardReplySerializer,
+                   responses={200: StaffBoardReplySerializer, 201: StaffBoardReplySerializer, 409: StaffBoardErrorSerializer})
     @action(detail=True, methods=["post"])
     def replies(self, request, pk=None):
         post = self.get_object()
         reply = StaffBoardReplySerializer(data=request.data)
         reply.is_valid(raise_exception=True)
-        reply.save(post=post, author_name=author_name(request.user))
+        write = BoardWrite(request, f"post/{post.pk}/reply", reply.validated_data)
+        with transaction.atomic():
+            receipt = write.reserve()
+            previous = write.result(receipt)
+            if previous:
+                return Response(StaffBoardReplySerializer(post.replies.get(pk=previous)).data)
+            write.finish(receipt, reply.save(post=post, author_name=author_name(request.user)))
         return Response(reply.data, status=201)
 
-    @extend_schema(responses=inline_serializer(
-        name="StaffBoardDownload", fields={"url": serializers.URLField()},
-    ))
+    @extend_schema(
+        responses={
+            (200, "application/octet-stream"): OpenApiTypes.BINARY,
+            (404, "application/json"): StaffBoardErrorSerializer,
+            (503, "application/json"): StaffBoardErrorSerializer,
+        },
+        parameters=[OpenApiParameter("Content-Disposition", str, OpenApiParameter.HEADER, response=[200])],
+    )
     @action(detail=True)
-    def download(self, request, pk=None):
+    def attachment(self, request, pk=None):
         post = self.get_object()
         if not post.attachment_key:
-            raise NotFound()
+            raise NotFound("첨부파일을 찾을 수 없습니다.")
         try:
-            url = generate_presigned_get_url_storage(
-                key=post.attachment_key, filename=post.attachment_name,
-                content_type="application/octet-stream", expires_in=120,
-            )
+            data = get_object_bytes_r2_storage(key=post.attachment_key, max_bytes=FILE_LIMIT, timeout_seconds=15)
         except Exception as exc:
             raise BoardStorageUnavailable() from exc
-        return Response({"url": url}, headers={"Cache-Control": "private, no-store"})
+        if data is None:
+            raise NotFound("첨부파일을 찾을 수 없습니다.")
+        return HttpResponse(data, content_type="application/octet-stream", headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": content_disposition_header(True, post.attachment_name),
+            "Content-Length": str(len(data)),
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        })
+
+    @extend_schema(request=None, responses={204: None})
+    @attachment.mapping.delete
+    def remove_attachment(self, request, pk=None):
+        with transaction.atomic():
+            post = get_object_or_404(StaffBoardPost.objects.select_for_update(), tenant=request.tenant, pk=pk)
+            if not self.can_remove_file(post):
+                raise PermissionDenied()
+            if post.attachment_key:
+                key = post.attachment_key
+                post.attachment_key = ""
+                post.attachment_name = ""
+                post.save(update_fields=["attachment_key", "attachment_name"])
+                schedule_detached_storage_cleanup(tenant_id=request.tenant.pk, object_keys=[key])
+        return Response(status=204)

@@ -74,7 +74,7 @@ def test_production_cors_origin_boundary(production_cors, method, origin, allowe
     request = RequestFactory().generic(
         method, "/api/v1/core/me/", HTTP_ORIGIN=origin,
         HTTP_ACCESS_CONTROL_REQUEST_METHOD="GET",
-        HTTP_ACCESS_CONTROL_REQUEST_HEADERS="authorization,x-tenant-code",
+        HTTP_ACCESS_CONTROL_REQUEST_HEADERS="authorization,x-tenant-code,idempotency-key",
     )
     with override_settings(**production_cors):
         # Allowing an origin must not turn an unauthenticated response into success.
@@ -85,6 +85,7 @@ def test_production_cors_origin_boundary(production_cors, method, origin, allowe
         assert response["Access-Control-Allow-Credentials"] == "true"
         if method == "OPTIONS":
             assert "authorization" in response["Access-Control-Allow-Headers"]
+            assert "idempotency-key" in response["Access-Control-Allow-Headers"]
             assert "GET" in response["Access-Control-Allow-Methods"]
     else:
         assert "Access-Control-Allow-Origin" not in response

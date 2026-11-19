@@ -1,13 +1,25 @@
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+from threading import Barrier
+from unittest import skipUnless
 from unittest.mock import patch
+from uuid import uuid4
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.db import close_old_connections, connection, connections
+from django.test import TestCase, TransactionTestCase
 from django.urls import resolve
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.staffs.models import StaffBoardPost
+from apps.domains.staffs.models import StaffBoardPost, StaffBoardWriteReceipt
+from apps.domains.staffs.services.board_writes import BoardWrite
+from apps.support.inventory.storage_cleanup_dependencies import (
+    process_pending_storage_cleanup_intents, uncertain_storage_write_settle_delay,
+)
 
 
 class StaffBoardTests(TestCase):
@@ -25,17 +37,17 @@ class StaffBoardTests(TestCase):
         cls.moderator = get_user_model().objects.create(username="platform", is_staff=True, is_superuser=True)
         TenantMembership.objects.create(user=cls.users["teacher"], role="teacher", tenant=cls.other, is_active=True)
 
-    def request(self, method, suffix="", data=None, user=None, tenant=None, fmt="json"):
+    def request(self, method, suffix="", data=None, user=None, tenant=None, fmt="json", key=None):
         url = self.base + suffix
-        request = getattr(APIRequestFactory(), method)(url, data=data or {}, format=fmt)
+        request = getattr(APIRequestFactory(), method)(url, data=data or {}, format=fmt, **({"HTTP_IDEMPOTENCY_KEY": key} if key else {}))
         request.tenant = tenant or self.tenant
         force_authenticate(request, user=user or self.users["teacher"])
         match = resolve(url.split("?")[0])
         return match.func(request, **match.kwargs)
 
-    def post(self, category="free", **kwargs):
+    def post(self, category="free", key=None, **kwargs):
         return self.request("post", data={"category": category, "title": "공유", "body": "내용", **kwargs},
-                            fmt="multipart" if "file" in kwargs else "json")
+                            fmt="multipart" if "file" in kwargs else "json", key=key)
 
     def test_normal_journey_and_private_role_boundaries(self):
         posted = self.post()
@@ -46,7 +58,7 @@ class StaffBoardTests(TestCase):
             self.assertEqual(self.request("get", detail, user=self.users[role]).status_code, 200)
         for user in (self.users["student"], self.users["parent"], self.moderator):
             for method, path in (("get", ""), ("post", ""), ("get", detail),
-                                 ("post", detail + "replies/"), ("get", detail + "download/")):
+                                 ("post", detail + "replies/"), ("get", detail + "attachment/")):
                 self.assertEqual(self.request(method, path, user=user).status_code, 403)
         self.assertEqual(self.request("get", detail, tenant=self.other).status_code, 404)
         self.assertEqual(self.request("post", detail + "replies/", tenant=self.other,
@@ -67,29 +79,140 @@ class StaffBoardTests(TestCase):
         TenantMembership.objects.filter(tenant=self.tenant, user=self.users["teacher"]).update(is_active=False)
         self.assertEqual(self.request("get", detail).status_code, 403)
 
-    @patch("apps.domains.staffs.views.board.generate_presigned_get_url_storage", return_value="https://example.invalid/private")
-    @patch("apps.domains.staffs.views.board.upload_fileobj_to_r2_storage")
-    def test_private_attachment(self, put, sign):
+    @patch("apps.domains.staffs.views.board.get_object_bytes_r2_storage", return_value=b"private")
+    @patch("apps.domains.staffs.views.board.put_small_storage_object")
+    def test_private_attachment(self, put, read):
         def upload():
             return SimpleUploadedFile("자료.txt", b"private")
         self.assertEqual(self.post(file=upload()).status_code, 400)
         put.assert_not_called()
-        response = self.post("resource", file=upload())
+        key = str(uuid4())
+        response = self.post("resource", file=upload(), key=key)
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(response.data["attachment_name"], "자료.txt")
-        detail = f"{response.data['id']}/download/"
+        replay = self.post("resource", file=upload(), key=key)
+        self.assertEqual(replay.status_code, 200)
+        self.assertEqual(replay.data["id"], response.data["id"])
+        self.assertTrue(response.data["can_remove_attachment"])
+        self.assertEqual(self.post("resource", file=SimpleUploadedFile("자료.txt", b"changed"), key=key).status_code, 409)
+        put.assert_called_once()
+        detail = f"{response.data['id']}/attachment/"
         self.assertEqual(self.request("get", detail, tenant=self.other).status_code, 404)
-        sign.assert_not_called()
+        read.assert_not_called()
         response = self.request("get", detail, user=self.users["staff"])
-        self.assertEqual(response.data, {"url": sign.return_value})
-        key = put.call_args.kwargs["key"]
-        self.assertTrue(key.startswith(f"tenants/{self.tenant.pk}/staff-board/"))
-        self.assertEqual(sign.call_args.kwargs["key"], key)
+        self.assertEqual(response.content, b"private")
+        self.assertEqual(response["Content-Type"], "application/octet-stream")
+        self.assertIn("filename*", response["Content-Disposition"])
+        read.return_value = None
+        self.assertEqual(self.request("get", detail).status_code, 404)
+        read.side_effect = OSError()
+        self.assertEqual(self.request("get", detail).status_code, 503)
+        self.assertEqual(self.request("delete", detail, user=self.users["staff"]).status_code, 403)
+        self.assertEqual(self.request("delete", detail, tenant=self.other).status_code, 404)
+        with patch(
+            "apps.infrastructure.storage.r2.delete_object_r2_storage",
+        ) as delete:
+            # Patch must remain active when Django invokes the commit callback.
+            with self.captureOnCommitCallbacks(execute=True):
+                self.assertEqual(self.request("delete", detail, user=self.users["admin"]).status_code, 204)
+            delete.assert_called_once_with(key=put.call_args.kwargs["key"])
+        self.assertEqual(self.request("delete", detail).status_code, 204)
+        self.assertEqual(self.request("get", detail).status_code, 404)
+        self.assertEqual(self.post("resource", file=upload(), key=key).data["attachment_name"], "")
 
-    @patch("apps.domains.staffs.views.board.compensate_unattached_storage_object")
-    @patch("apps.domains.staffs.views.board.upload_fileobj_to_r2_storage", side_effect=OSError)
-    def test_unconfirmed_upload_rolls_back_and_compensates(self, put, compensate):
+    def test_replay_post_and_reply(self):
+        key = str(uuid4())
+        initial = self.post(key=key)
+        replay = self.post(key=key)
+        self.assertEqual((initial.status_code, replay.status_code), (201, 200))
+        self.assertEqual(initial.data["id"], replay.data["id"])
+        self.assertEqual(self.post(key=key, title="changed").status_code, 409)
+        self.assertEqual(self.post(key="invalid").status_code, 400)
+        detail = f"{initial.data['id']}/replies/"
+        for expected in (201, 200):
+            self.assertEqual(self.request("post", detail, {"body": "first"}, key=key).status_code, expected)
+        self.assertEqual(self.request("post", detail, {"body": "changed"}, key=key).status_code, 409)
+        self.assertEqual(self.request("post", detail, {"body": "second"}, user=self.users["staff"], key=key).status_code, 201)
+        self.assertEqual(StaffBoardWriteReceipt.objects.count(), 3)
+        self.assertEqual(StaffBoardPost.objects.get().replies.count(), 2)
+
+    @patch("apps.infrastructure.storage.r2.delete_object_r2_storage")
+    @patch("apps.domains.staffs.views.board.put_small_storage_object", side_effect=OSError)
+    def test_unconfirmed_upload_leaves_recoverable_intent(self, put, delete):
+        intent_model = apps.get_model("submissions", "SubmissionStorageCleanupIntent")
         response = self.post("resource", file=SimpleUploadedFile("file.txt", b"data"))
         self.assertEqual(response.status_code, 503)
         self.assertFalse(StaffBoardPost.objects.exists())
-        compensate.assert_called_once_with(tenant_id=self.tenant.pk, key=put.call_args.kwargs["key"], uncertain_write=True)
+        intent = intent_model.objects.get(tenant=self.tenant, object_key=put.call_args.kwargs["key"])
+        self.assertEqual(intent.status, "pending")
+        process_pending_storage_cleanup_intents()
+        delete.assert_not_called()
+        intent_model.objects.filter(pk=intent.pk).update(
+            updated_at=timezone.now() - uncertain_storage_write_settle_delay() - timedelta(seconds=1),
+        )
+        process_pending_storage_cleanup_intents()
+        delete.assert_called_once_with(key=intent.object_key)
+        intent.refresh_from_db()
+        self.assertEqual(intent.status, "cleaned")
+
+    def test_interruption_after_put_rolls_back_post_and_preserves_recovery(self):
+        class WorkerInterrupted(BaseException):
+            pass
+
+        intent_model = apps.get_model("submissions", "SubmissionStorageCleanupIntent")
+
+        def accepted_put(*, fileobj, key):
+            self.assertTrue(intent_model.objects.filter(tenant=self.tenant, object_key=key, status="pending").exists())
+
+        token = str(uuid4())
+        with patch("apps.domains.staffs.views.board.put_small_storage_object", side_effect=accepted_put), patch.object(
+            BoardWrite, "finish", side_effect=WorkerInterrupted,
+        ), self.assertRaises(WorkerInterrupted):
+            self.post("resource", file=SimpleUploadedFile("interrupted.txt", b"data"), key=token)
+        self.assertFalse(StaffBoardPost.objects.exists())
+        self.assertFalse(StaffBoardWriteReceipt.objects.exists())
+        self.assertEqual(intent_model.objects.filter(tenant=self.tenant, status="pending").count(), 1)
+        with patch("apps.domains.staffs.views.board.put_small_storage_object"):
+            retry = self.post("resource", file=SimpleUploadedFile("interrupted.txt", b"data"), key=token)
+        self.assertEqual(retry.status_code, 201)
+
+
+@skipUnless(connection.vendor == "postgresql", "Requires independent transactional connections")
+class StaffBoardConcurrentTests(TransactionTestCase):
+    def test_overlapping_resource_submission_retains_one_file_and_post(self):
+        tenant = Tenant.objects.create(name="Board race", code="board-race")
+        user = get_user_model().objects.create(username="race-author")
+        TenantMembership.objects.create(tenant=tenant, user=user, role="staff", is_active=True)
+        token = str(uuid4())
+        barrier = Barrier(2)
+        reserve = BoardWrite.reserve
+
+        def synchronize(write):
+            barrier.wait(timeout=20)
+            return reserve(write)
+
+        def submit():
+            close_old_connections()
+            try:
+                url = "/api/v1/staffs/board/posts/"
+                request = APIRequestFactory().post(url, {
+                    "category": "resource", "title": "자료", "body": "본문",
+                    "file": SimpleUploadedFile("자료.txt", b"private"),
+                }, format="multipart", HTTP_IDEMPOTENCY_KEY=token)
+                request.tenant = tenant
+                force_authenticate(request, user=user)
+                response = resolve(url).func(request)
+                return response.status_code, response.data["id"]
+            finally:
+                connections.close_all()
+
+        with patch.object(BoardWrite, "reserve", synchronize), patch(
+            "apps.domains.staffs.views.board.put_small_storage_object",
+        ) as put, ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: submit(), range(2)))
+        self.assertEqual(sorted(code for code, _ in results), [200, 201])
+        self.assertEqual({pk for _, pk in results}, {StaffBoardPost.objects.get().pk})
+        put.assert_called_once()
+        self.assertEqual(StaffBoardWriteReceipt.objects.count(), 1)
+        intent_model = apps.get_model("submissions", "SubmissionStorageCleanupIntent")
+        self.assertFalse(intent_model.objects.filter(tenant=tenant).exists())

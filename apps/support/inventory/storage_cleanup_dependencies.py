@@ -54,3 +54,15 @@ def process_pending_storage_cleanup_intents():
     )
 
     return process_submission_storage_cleanup_intents()
+
+
+def reserve_staff_board_upload(*, tenant_id: int):
+    from apps.domains.submissions.services.lifecycle import reserve_staff_board_upload as reserve
+
+    return reserve(tenant_id=tenant_id)
+
+
+def lock_reserved_upload(intent):
+    from apps.domains.submissions.services.lifecycle import lock_reserved_upload as lock
+
+    return lock(intent)

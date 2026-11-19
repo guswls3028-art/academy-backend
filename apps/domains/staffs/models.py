@@ -596,3 +596,11 @@ class StaffBoardReply(models.Model):
 
     class Meta:
         ordering = ["id"]
+
+
+class StaffBoardWriteReceipt(models.Model):
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    # Digest of tenant, user, operation target and client UUID.
+    scope_key = models.CharField(max_length=64, unique=True)
+    payload_hash = models.CharField(max_length=64)
+    result_id = models.PositiveBigIntegerField(null=True)
