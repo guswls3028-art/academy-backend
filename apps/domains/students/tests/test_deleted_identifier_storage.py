@@ -37,10 +37,11 @@ class DeletedIdentifierStorageTests(TestCase):
             parent_phone="01098765432", student_name="QA", initial_password="qa-parent-pass").parent
 
     def test_public_delete_restore_preserves_max_identifier_inventory_and_result(self):
-        from apps.domains.enrollment.models import Enrollment
-        from apps.domains.lectures.models import Lecture
-        from apps.domains.inventory.models import InventoryFile, InventoryFolder
-        from apps.domains.results.models import Result
+        Enrollment = apps.get_model("enrollment", "Enrollment")
+        Lecture = apps.get_model("lectures", "Lecture")
+        InventoryFile = apps.get_model("inventory", "InventoryFile")
+        InventoryFolder = apps.get_model("inventory", "InventoryFolder")
+        Result = apps.get_model("results", "Result")
 
         foreign_tenant = Tenant.objects.create(code="qa-deleted-id-foreign", name="Other")
         foreign = _create_student(foreign_tenant, "foreign-id")
@@ -128,7 +129,8 @@ class DeletedIdentifierStorageTests(TestCase):
 
     @skipUnless(connection.vendor == "postgresql", "PostgreSQL varchar expansion and shrink behavior")
     def test_real_expand_and_reverse_guard_prevent_truncation(self):
-        from apps.domains.inventory.models import InventoryFolder, InventoryFile
+        InventoryFolder = apps.get_model("inventory", "InventoryFolder")
+        InventoryFile = apps.get_model("inventory", "InventoryFile")
 
         student = _create_student(self.tenant, "x" * 50)
         folder = InventoryFolder.objects.create(tenant=self.tenant, scope="student", student_ps=student.ps_number, name="Authored")
