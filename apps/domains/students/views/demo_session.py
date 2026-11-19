@@ -88,11 +88,18 @@ class DawonDemoSessionView(APIView):
         response["Cache-Control"] = "no-store"
         return response
 
+class DawonDemoLearningThrottle(AnonRateThrottle):
+    """Calendar browsing must not consume passwordless login capacity."""
+
+    scope = "dawon_demo_learning"
+    rate = "240/minute"
+
+
 class DawonDemoLearningView(APIView):
     """Read-only projection of the designated public sample's enrolled lessons."""
     authentication_classes = []
     permission_classes = [AllowAny]
-    throttle_classes = [AnonRateThrottle]
+    throttle_classes = [DawonDemoLearningThrottle]
 
     def get(self, request):
         from collections import defaultdict
