@@ -101,6 +101,7 @@ backend/docs/
 | 실패 은폐·정상 이용 복구 후보와 수리 상태 | [refactor/failure-transparency-stabilization.md](refactor/failure-transparency-stabilization.md) |
 | 운영 canary·E2E 잔재 정리 | [operations/production-canary.md](operations/production-canary.md) |
 | 개발자 문의 운영함 | [operations/dev-console-inbox.md](operations/dev-console-inbox.md) |
+| 개발자 AI 세션 상황판 | [domain/agent-session-board.md](domain/agent-session-board.md) |
 | 읽기 전용 상태 모순 검사·전달 영수증 | [operations/state-integrity-monitor.md](operations/state-integrity-monitor.md) |
 | 제품 사용 분석 | [domain/product-usage-analytics.md](domain/product-usage-analytics.md) |
 | DB 확장·테넌트 분리 판단 | [infrastructure/database-scaling-and-tenant-isolation.md](infrastructure/database-scaling-and-tenant-isolation.md) |

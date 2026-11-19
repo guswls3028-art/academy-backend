@@ -1,6 +1,7 @@
 # PATH: apps/core/urls.py
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from apps.core.views.dev_agent_sessions import DevAgentSessionsView
 
 from apps.core.views import (
     MeView,
@@ -98,6 +99,7 @@ urlpatterns = [
     path("tenants/<int:tenant_id>/owners/<int:user_id>/password/", TenantOwnerPasswordResetView.as_view(), name="core-tenant-owner-password-reset"),
     # Dev/운영 콘솔
     path("dev/dashboard/", DevDashboardSummaryView.as_view(), name="core-dev-dashboard"),
+    path("dev/agent-sessions/", DevAgentSessionsView.as_view(), name="core-dev-agent-sessions"),
     path("dev/tenants/<int:tenant_id>/usage/", DevTenantUsageView.as_view(), name="core-dev-tenant-usage"),
     path("dev/tenants/<int:tenant_id>/activity/", DevTenantActivityView.as_view(), name="core-dev-tenant-activity"),
     path("dev/tenants/<int:tenant_id>/impersonate/", DevImpersonateView.as_view(), name="core-dev-tenant-impersonate"),

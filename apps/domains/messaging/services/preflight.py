@@ -210,7 +210,7 @@ def _build_manual_preview_recipients(
             {
                 "student_id": recipient.student_id,
                 "student_name": recipient.student_name,
-                "phone": phone[:3] + "****" + phone[-4:] if len(phone) >= 7 else phone,
+                "phone": phone,
                 "excluded": excluded,
                 "exclude_reason": (
                     "전화번호 없음"

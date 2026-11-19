@@ -17,6 +17,7 @@ from apps.core.services.tenant_access import get_authorized_tenant_role
 from apps.domains.messaging.models import NotificationLog, ManualSendRequest
 from apps.domains.messaging.serializers import NotificationLogListResponseSerializer
 from apps.domains.messaging.services.manual_send_requests import request_trace
+from apps.domains.messaging.services.contact_projection import current_recipient_phones
 from apps.domains.messaging.policy import CLINIC_NOTIFICATION_TRIGGERS
 from apps.domains.messaging.provider_delivery import get_provider_delivery_status
 from apps.domains.messaging.security import (
@@ -90,6 +91,7 @@ def _project_log(
     *,
     privileged: bool,
     include_body: bool,
+    current_recipient_phone: str = "",
 ) -> dict[str, object]:
     body_visibility = _body_visibility(log, privileged=privileged)
     stored_body = str(log.message_body or "")
@@ -109,6 +111,7 @@ def _project_log(
         "claimed_at": log.claimed_at,
         "amount_deducted": log.amount_deducted,
         "recipient_summary": log.recipient_summary or "",
+        "current_recipient_phone": current_recipient_phone,
         "template_summary": log.template_summary or "",
         "provider_message_id": provider_id if privileged else "",
         "provider_evidence": bool(provider_id),
@@ -204,11 +207,16 @@ class NotificationLogListView(APIView):
             base_qs = base_qs.filter(status="ambiguous")
         elif status_filter in {choice[0] for choice in NotificationLog._meta.get_field("status").choices}:
             base_qs = base_qs.filter(status=status_filter)
-        qs = base_qs.order_by("-sent_at")[offset : offset + page_size]
+        qs = list(base_qs.order_by("-sent_at")[offset : offset + page_size])
         count = base_qs.count()
         role = get_authorized_tenant_role(request.user, request.tenant)
         privileged = role in _PRIVILEGED_LOG_ROLES
-        items = [_project_log(r, privileged=privileged, include_body=False) for r in qs]
+        contacts = current_recipient_phones(request.tenant, qs)
+        items = [
+            _project_log(r, privileged=privileged, include_body=False,
+                         current_recipient_phone=contacts.get(r.pk, ""))
+            for r in qs
+        ]
         response = {"results": items, "count": count}
         if request_id_param is not None:
             response["request_trace"] = trace
@@ -229,6 +237,7 @@ class NotificationLogDetailView(APIView):
             log,
             privileged=role in _PRIVILEGED_LOG_ROLES,
             include_body=True,
+            current_recipient_phone=current_recipient_phones(request.tenant, [log]).get(log.pk, ""),
         )
         if (request.query_params.get("verify_provider") or "").strip().lower() in {
             "1",

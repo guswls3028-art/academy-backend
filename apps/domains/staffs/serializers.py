@@ -27,6 +27,33 @@ from academy.adapters.db.django import repositories_core as core_repo
 User = get_user_model()
 
 
+class StaffMeAssignedWorkTypeSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    hourly_wage = serializers.IntegerField()
+
+
+class StaffMeSerializer(serializers.Serializer):
+    is_authenticated = serializers.BooleanField()
+    is_superuser = serializers.BooleanField()
+    is_staff = serializers.BooleanField()
+    is_payroll_manager = serializers.BooleanField()
+    is_owner = serializers.BooleanField()
+    owner_display_name = serializers.CharField(allow_null=True)
+    owner_phone = serializers.CharField(allow_null=True)
+    owner_setup_required = serializers.BooleanField(
+        help_text="대표의 기존 자동 연결 준비가 필요하면 true. 명시적인 POST /staffs/me/로 준비합니다.",
+    )
+    staff_id = serializers.IntegerField(required=False)
+    default_work_type_id = serializers.IntegerField(required=False)
+    assigned_work_types = StaffMeAssignedWorkTypeSerializer(many=True, required=False)
+
+
+class StaffMeErrorSerializer(serializers.Serializer):
+    detail = serializers.CharField()
+    code = serializers.CharField(required=False)
+
+
 class StaffWorkRangeQuerySerializer(serializers.Serializer):
     date_from = serializers.DateField(required=True)
     date_to = serializers.DateField(required=True)
