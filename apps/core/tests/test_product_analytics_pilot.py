@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 from datetime import timedelta
 from io import StringIO
 from unittest.mock import patch
@@ -119,9 +121,10 @@ class ProductUsagePilotTests(TestCase):
             max_projected_database_share=1.0,
         )
 
-        self.assertEqual(report["status"], "breach")
+        self.assertEqual(report["status"], "insufficient_observation")
+        self.assertEqual(report["breaches"], [])
         self.assertEqual(report["auto_disable_reasons"], [])
-        self.assertTrue(set(report["breaches"]) <= {
+        self.assertTrue(set(report["readiness_blockers"]) <= {
             "storage_projection_unavailable", "storage_projection_scope_unverified"
         })
         self.assertEqual(report["quality"]["raw_events"], 4)
@@ -129,6 +132,89 @@ class ProductUsagePilotTests(TestCase):
         self.assertEqual(report["quality"]["synthetic_events"], 1)
         self.assertEqual(report["quality"]["impersonated_events"], 1)
         self.assertEqual(report["tasks"]["completion_rate"], 1.0)
+
+    def test_inactive_pilot_completes_maintenance_but_fails_explicit_gate(self):
+        self.program.feature_flags = {"product_usage_analytics_enabled": False}
+        self.program.save(update_fields=["feature_flags"])
+        options = {
+            "tenant_code": "hakwonplus",
+            "disable_on_hard_breach": True,
+            "confirm": "DISABLE hakwonplus ON HARD BREACH",
+        }
+
+        with patch.dict(os.environ, {"ACADEMY_PRODUCT_ANALYTICS_MAINTENANCE": ""}):
+            with self.assertRaisesMessage(CommandError, "not ready (inactive)"):
+                call_command("report_product_usage_pilot", stdout=StringIO(), **options)
+
+        output = StringIO()
+        with patch.dict(os.environ, {"ACADEMY_PRODUCT_ANALYTICS_MAINTENANCE": "1"}):
+            call_command("report_product_usage_pilot", stdout=output, **options)
+
+        report_line, result_line = output.getvalue().splitlines()
+        report = json.loads(report_line.removeprefix("PRODUCT_ANALYTICS_PILOT_REPORT "))
+        self.assertEqual(report["schema_version"], 2)
+        self.assertEqual(report["status"], "inactive")
+        self.assertIn("pilot_inactive", report["readiness_blockers"])
+        self.assertEqual(report["breaches"], [])
+        self.assertFalse(report["failsafe_disabled"])
+        self.assertTrue(result_line.startswith("PRODUCT_ANALYTICS_PILOT_INACTIVE "))
+        self.program.refresh_from_db()
+        self.assertFalse(self.program.feature_flags["product_usage_analytics_enabled"])
+        self.assertFalse(OpsAuditLog.objects.filter(
+            action="product_analytics.failsafe_disable"
+        ).exists())
+
+    @patch.dict(os.environ, {"ACADEMY_PRODUCT_ANALYTICS_MAINTENANCE": "1"})
+    @patch("apps.core.product_analytics.pilot._postgres_storage")
+    def test_active_maintenance_fails_when_db_share_is_missing(self, mock_storage):
+        mock_storage.return_value = {
+            "projection_status": "available", "projected_database_share": 0.01,
+        }
+
+        with self.assertRaisesMessage(CommandError, "db_usage_share_unavailable"):
+            call_command(
+                "report_product_usage_pilot", tenant_code="hakwonplus",
+                db_time_share=0.0, disable_on_hard_breach=True,
+                confirm="DISABLE hakwonplus ON HARD BREACH", stdout=StringIO(),
+            )
+
+        self.program.refresh_from_db()
+        self.assertTrue(self.program.feature_flags["product_usage_analytics_enabled"])
+        self.assertFalse(OpsAuditLog.objects.filter(
+            action="product_analytics.failsafe_disable"
+        ).exists())
+
+    @patch.dict(os.environ, {"ACADEMY_PRODUCT_ANALYTICS_MAINTENANCE": "1"})
+    def test_inactive_maintenance_fails_on_unexpected_scope(self):
+        self.program.feature_flags = {"product_usage_analytics_enabled": False}
+        self.program.save(update_fields=["feature_flags"])
+        other = Tenant.objects.create(code="other", name="Other", is_active=True)
+        other_program = Program.objects.get(tenant=other)
+        other_program.feature_flags = {"product_usage_analytics_enabled": True}
+        other_program.save(update_fields=["feature_flags"])
+        self.event(tenant=other, synthetic=True)
+
+        output = StringIO()
+        with self.assertRaisesMessage(CommandError, "enabled_tenant_scope_mismatch"):
+            call_command(
+                "report_product_usage_pilot", tenant_code="hakwonplus",
+                disable_on_hard_breach=True,
+                confirm="DISABLE hakwonplus ON HARD BREACH", stdout=output,
+            )
+
+        report = json.loads(output.getvalue().removeprefix("PRODUCT_ANALYTICS_PILOT_REPORT "))
+        self.assertEqual(report["status"], "breach")
+        self.assertEqual(report["breaches"], [
+            "enabled_tenant_scope_mismatch", "recent_nonpilot_events",
+        ])
+        self.assertFalse(report["failsafe_disabled"])
+        self.program.refresh_from_db()
+        other_program.refresh_from_db()
+        self.assertFalse(self.program.feature_flags["product_usage_analytics_enabled"])
+        self.assertTrue(other_program.feature_flags["product_usage_analytics_enabled"])
+        self.assertFalse(OpsAuditLog.objects.filter(
+            action="product_analytics.failsafe_disable"
+        ).exists())
 
     @patch("apps.core.product_analytics.pilot._postgres_storage")
     def test_verified_storage_gate_passes_below_limit_and_disables_at_limit(self, mock_storage):

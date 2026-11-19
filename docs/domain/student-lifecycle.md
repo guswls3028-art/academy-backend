@@ -159,6 +159,12 @@ SSOT: `permanently_delete_students(tenant=..., student_ids=[...])`
     ORM cascade로 코멘트와 revision을 정리하며 작성자 계정은 삭제하지 않는다.
     코멘트 tenant 또는 연결 차시의 강의 tenant가 다르면 기존 그래프 검증에서
     `409 cross_tenant_reference`로 전체 작업을 중단하고 원본과 이력을 보존한다.
+  - 학생 영구 삭제 시 과제 검사(`HomeworkInspection`)의 풀이 수·코멘트는
+    삭제 대상 수강에 한해 정리한다.
+    동명이인의 수강 기록과 과제 원본은 보존한다. 검사 기록·검사 차시·과제·과제 차시의
+    학원 중 하나라도 대상 수강의 학원과 다르면 전체 삭제를 중단한다.
+    일반 수강 삭제는 ORM으로 검사 행을 함께 정리하며, 작성자 계정 삭제는
+    검사 기록을 유지하고 작성자 참조만 비운다.
 - lecture section assignment
 - fees: `StudentFee`, `StudentInvoice`, `InvoiceItem`, `FeePayment`
 - submissions/results/homework/progress/video/clinic/community의 학생 참조
@@ -206,6 +212,21 @@ SSOT: `permanently_delete_students(tenant=..., student_ids=[...])`
   삭제를 진행한다. 늦게 끝난 PUT의 finalize는 row와 cleanup intent를 다시 잠가
   확인하며, 소유권을 잃었으면 row를 되살리지 않고 key를 동일 intent로 재정리한다.
 - 현재 cross-domain 정리는 guarded raw SQL graph다. 장기 목표는 각 도메인 cleanup hook/event로 분해하는 것이다.
+
+### 과제 검사 저장과 구·신 버전 호환
+
+1. 먼저 `results.0024_homeworkinspection`, 모델 등록 및 학생 영구 삭제
+   정합성 검사를 배포한다. 이 배포의 새 검사 데이터 생성은 0건이다.
+   기존 학생 영구 삭제와 수강 삭제를 확인하고, 삭제를 수행할 수 있는
+   API·워커·관리 명령이 호환 버전으로 수렴한 실행 기록을 남긴다.
+2. 격리 PostgreSQL에서 새 버전으로 검사 행을 저장한 뒤 호환 버전으로
+   학생 영구 삭제와 수강 직접 삭제를 확인한다. 정상 삭제는 해당 수강의
+   검사 행만 정리하고, 학원이 불일치하는 참조는 작업 전체를 중단한다.
+   작성자 삭제는 검사 값과 코멘트를 유지하고 작성자 참조만 비운다.
+   강의·차시의 물리 삭제와 과제 제거는 각 경로의 기존 차단·보존 규칙을 확인한다.
+3. 호환 버전의 운영 확인과 격리 검증을 통과한 뒤 과제 검사 저장 API와
+   화면을 배포한다. 운영 장애 복구에는 0024와 삭제 호환 코드를 유지한
+   새 커밋을 만들어 [상태 저장 서비스의 roll-forward 절차](../../scripts/v1/README.md#안전-롤백)로 배포한다.
 
 ## 5. Retention 운영
 

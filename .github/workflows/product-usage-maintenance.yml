@@ -108,7 +108,7 @@ jobs:
           if [ -n "${WRITE_SHARE:-}" ]; then
             REPORT_ARGS="$REPORT_ARGS --write-share '$WRITE_SHARE'"
           fi
-          CMD="set -eu; docker inspect academy-api >/dev/null; docker exec academy-api python manage.py rollup_product_usage --date '$TARGET_DATE'; docker exec academy-api python manage.py purge_product_usage --before '$RAW_BEFORE' --daily-before '$DAILY_BEFORE' $EXECUTE; docker exec academy-api python manage.py report_product_usage_pilot --tenant-code hakwonplus --window-days 28 --projection-days 90 --max-db-time-share 0.10 --max-write-share 0.10 --max-projected-database-share 0.20 --disable-on-hard-breach --confirm 'DISABLE hakwonplus ON HARD BREACH' $REPORT_ARGS"
+          CMD="set -eu; docker inspect academy-api >/dev/null; docker exec academy-api python manage.py rollup_product_usage --date '$TARGET_DATE'; docker exec academy-api python manage.py purge_product_usage --before '$RAW_BEFORE' --daily-before '$DAILY_BEFORE' $EXECUTE; docker exec --env ACADEMY_PRODUCT_ANALYTICS_MAINTENANCE=1 academy-api python manage.py report_product_usage_pilot --tenant-code hakwonplus --window-days 28 --projection-days 90 --max-db-time-share 0.10 --max-write-share 0.10 --max-projected-database-share 0.20 --disable-on-hard-breach --confirm 'DISABLE hakwonplus ON HARD BREACH' $REPORT_ARGS"
           PARAMS=$(jq -n --arg cmd "$CMD" '{commands: [$cmd]}')
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ steps.instance.outputs.id }}" \
@@ -139,6 +139,11 @@ jobs:
                   echo "::error::Product analytics pilot report was not captured"
                   exit 1
                 fi
+                case "$(jq -r '.status' "$REPORT_PATH")" in
+                  inactive) echo "::notice::Product analytics pilot is inactive" ;;
+                  pass) ;;
+                  *) echo "::error::Unexpected product analytics pilot report status"; exit 1 ;;
+                esac
                 echo "PRODUCT_ANALYTICS_MAINTENANCE_PASS target=$TARGET_DATE raw_before=$RAW_BEFORE daily_before=$DAILY_BEFORE execute=$([ -n "$EXECUTE" ] && echo true || echo false)"
                 exit 0
                 ;;
