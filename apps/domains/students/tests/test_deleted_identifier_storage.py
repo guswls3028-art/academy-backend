@@ -20,7 +20,7 @@ from apps.domains.students.serializers import StudentCreateSerializer, StudentUp
 from apps.domains.students.services.creation import create_student_account
 from apps.domains.students.services.identity import StudentIdentityError, resolve_student_login_id
 from apps.domains.students.tests.test_identity_lifecycle import _create_student
-from apps.domains.parents.test_support import create_parent_account_fixture
+from apps.support.students.lifecycle_dependencies import ensure_parent_account_for_student
 
 
 class DeletedIdentifierStorageTests(TestCase):
@@ -33,7 +33,7 @@ class DeletedIdentifierStorageTests(TestCase):
         token["token_version"] = self.owner.token_version or 0
         self.client = APIClient(HTTP_HOST="api.hakwonplus.com", HTTP_X_TENANT_CODE=self.tenant.code)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
-        self.parent = create_parent_account_fixture(tenant=self.tenant,
+        self.parent = ensure_parent_account_for_student(tenant=self.tenant,
             parent_phone="01098765432", student_name="QA", initial_password="qa-parent-pass").parent
 
     def test_public_delete_restore_preserves_max_identifier_inventory_and_result(self):
