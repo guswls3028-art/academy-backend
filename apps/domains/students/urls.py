@@ -26,6 +26,7 @@ from .views.enrollment_matrix_view import (
     StudentEnrollmentMatrixToggleView,
 )
 from .views.class_groups import ClassGroupViewSet
+from .views.demo_session import DawonDemoSessionView
 from .views.initial_password_settings import InitialPasswordSettingsView
 
 router = DefaultRouter()
@@ -42,6 +43,7 @@ router.register(r"registration_requests", RegistrationRequestViewSet, basename="
 router.register(r"", StudentViewSet, basename="student")
 
 urlpatterns = [
+    path("demo-session/", DawonDemoSessionView.as_view(), name="dawon-demo-session"),
     path("account-password-settings/", InitialPasswordSettingsView.as_view(), name="student-initial-password-settings"),
     path("me/activity/", StudentActivityRecordView.as_view(), name="student-activity-record"),
     path("me/activity/homework-open/", StudentHomeworkOpenActivityView.as_view(), name="student-homework-open-activity"),

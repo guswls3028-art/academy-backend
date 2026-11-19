@@ -99,3 +99,37 @@ class ClassGroupTests(TestCase):
         for track in ["1%","HYPER","SKY"]:
             self.assertEqual(self.call("post", payload={"name":track,"kind":"union","track":track}).status_code,201)
         self.assertEqual(ClassGroup.objects.filter(tenant=self.tenant).count(),3)
+    def test_late_enrollment_filters_scope_and_preserves_all_prior_statuses(self):
+        initial = self.pupil("first", "A고")
+        late = self.pupil("second", "A고")
+        wrong = self.pupil("third", "B고")
+        outsider = self.pupil("fourth", "A고")
+        Student.objects.filter(pk=late.pk).update(parent_phone="010-1111-2222", phone="01033334444")
+        group = self.call("post", payload={"name": "연합", "kind": "union", "track": "SKY"}).data
+        base = f"{group['id']}/"
+        query = {"search": late.name, "exact": "true", "parent_phone": "01011112222", "phone": "010-3333-4444"}
+        self.assertEqual([s["id"] for s in self.call("get", base+"candidates/", query).data], [late.pk])
+        self.call("patch", base+"members/", {"add": [initial.pk]})
+        created = self.call("post", base+"lectures/", {"title": "중간", "period": "midterm", "school": "A고",
+            "start_date": "2027-01-01", "end_date": "2027-02-01", "name": "강사", "subject": "국어", "description": "설명",
+            "schedule_mode": "SINGLE", "schedule_defaults": []})
+        self.assertEqual(created.status_code, 201, created.data)
+        lecture = Enrollment.objects.get(student=initial).lecture
+        self.assertEqual((lecture.name, lecture.subject, lecture.description), ("강사", "국어", "설명"))
+        metadata = self.call("get", f"for-lecture/{lecture.pk}/")
+        self.assertEqual(metadata.data, {"group_id": group["id"], "name": "연합", "school": "A고"})
+        previous = Enrollment.objects.get(lecture=lecture, student=initial)
+        previous.status = "INACTIVE"
+        previous.save(update_fields=["status"])
+        self.call("patch", base+"members/", {"add": [late.pk, wrong.pk]})
+        route = base+f"lectures/{lecture.pk}/late-students/"
+        self.assertEqual([s["id"] for s in self.call("get", route, query).data], [late.pk])
+        self.assertEqual(self.call("get", route, {**query, "offset": 1}).data, [])
+        self.assertEqual(self.call("get", route, {**query, "parent_phone": "0"}).data, [])
+        for bad in (initial, wrong, outsider):
+            self.assertEqual(self.call("post", route, {"student_ids": [late.pk, bad.pk]}).status_code, 400)
+            self.assertFalse(Enrollment.objects.filter(lecture=lecture, student=late).exists())
+        self.assertEqual(self.call("post", route, {"student_ids": [late.pk]}).data, {"created_count": 1, "student_ids": [late.pk]})
+        self.assertEqual(self.call("post", route, {"student_ids": [late.pk]}).status_code, 400)
+        previous.refresh_from_db()
+        self.assertEqual(previous.status, "INACTIVE")

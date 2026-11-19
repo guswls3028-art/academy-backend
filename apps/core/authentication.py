@@ -1,10 +1,38 @@
 # apps/core/authentication.py
 
+import re
 import uuid
+
+from django.utils import timezone
+from rest_framework.exceptions import PermissionDenied
 
 from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import AuthenticationFailed
+
+
+_teacher_write_domains = re.compile(r"^/api/v1/(students|lectures|enrollments|attendance|exams|homework|results|surveys)/")
+_restricted_actions = re.compile(r"(password|support-session|rotate|delete|purge|archive|send|contact|notify|billing|payment)", re.I)
+_qr_point_change = re.compile(r"^/api/v1/lectures/attendance-qr/[1-9]\d+/?$")
+_student_qr_actions = {"/api/v1/student/attendance/qr/resolve/", "/api/v1/student/attendance/qr/record/"}
+
+
+def _validate_dawon_demo_access(request, token):
+    role = token.get("dawon_demo_role")
+    if role not in {"student", "teacher"} or token.get("dawon_demo_until", 0) <= int(timezone.now().timestamp()):
+        raise AuthenticationFailed("체험 세션이 만료되었습니다. 데모 계정으로 다시 시작해 주세요.")
+
+    path = request.path
+    method = request.method
+    if _restricted_actions.search(path) or (method == "PATCH" and _qr_point_change.fullmatch(path)):
+        raise PermissionDenied("이 작업은 담당자 계정에서 할 수 있습니다.")
+    if method in {"GET", "HEAD", "OPTIONS"}:
+        return
+    if role == "student" and method == "POST" and path in _student_qr_actions:
+        return
+    if role == "teacher" and method in {"POST", "PATCH", "PUT"} and _teacher_write_domains.match(path):
+        return
+    raise PermissionDenied("이 작업은 담당자 계정에서 할 수 있습니다.")
 
 
 class TenantAwareSessionAuthentication(SessionAuthentication):
@@ -96,6 +124,8 @@ class TokenVersionJWTAuthentication(JWTAuthentication):
         if authenticated is None:
             return None
         user, token = authenticated
+        if token.get("dawon_demo_role"):
+            _validate_dawon_demo_access(request, token)
         if not token.get("support_preview"):
             return authenticated
 

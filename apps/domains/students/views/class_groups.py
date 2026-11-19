@@ -1,3 +1,4 @@
+import re
 import unicodedata
 
 from django.conf import settings
@@ -13,7 +14,7 @@ from rest_framework.response import Response
 from apps.core.models import TenantMembership
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.students.models import ClassGroup, ClassGroupLecture, Student
-from apps.support.students.enrollment_matrix_dependencies import create_class_group_lecture
+from apps.support.students.enrollment_matrix_dependencies import create_class_group_lecture, enroll_class_group_members, native_group_lecture
 
 
 def normalized(value):
@@ -82,13 +83,14 @@ def values(schema, request):
     return serializer.validated_data
 
 
-def summary(group, count):
+def summary(group, count, lecture_count):
     return {"id": group.id, "name": group.name, "kind": group.kind, "track": group.track,
-            "school": group.school, "student_count": count}
+            "school": group.school, "student_count": count, "lecture_count": lecture_count}
 
 
 def student_row(student):
-    return {"id": student.id, "name": student.name, "school": school_of(student)}
+    return {"id": student.id, "name": student.name, "school": school_of(student),
+            "phone": student.phone or "", "parent_phone": student.parent_phone or ""}
 
 
 def lecture_row(link, count):
@@ -119,12 +121,15 @@ class ClassGroupViewSet(viewsets.ViewSet):
                 lecture__enrollments__tenant=self.request.tenant, lecture__enrollments__student__tenant=self.request.tenant,
                 lecture__enrollments__student__deleted_at__isnull=True))
         ).order_by("-lecture__start_date", "-pk")
-        return {**summary(group, len(roster)), "students": roster, "lectures": [lecture_row(link, link.active_count) for link in links]}
+        lectures = [lecture_row(link, link.active_count) for link in links]
+        return {**summary(group, len(roster), len(lectures)), "students": roster, "lectures": lectures}
 
     def list(self, request):
         groups = ClassGroup.objects.filter(tenant=request.tenant).annotate(
-            count=Count("students", filter=Q(students__tenant=request.tenant))).order_by("name", "pk")
-        return Response([summary(g, g.count) for g in groups])
+            count=Count("students", filter=Q(students__tenant=request.tenant), distinct=True),
+            course_count=Count("course_links", filter=Q(course_links__lecture__tenant=request.tenant), distinct=True),
+        ).order_by("name", "pk")
+        return Response([summary(g, g.count, g.course_count) for g in groups])
 
     def create(self, request):
         fields = values(GroupInput, request)
@@ -138,18 +143,65 @@ class ClassGroupViewSet(viewsets.ViewSet):
     def retrieve(self, request, pk):
         return Response(self.group_detail(self.group(pk)))
 
+    def candidate_rows(self, group, qs, request, *, school=""):
+        params = request.query_params
+        offset_field = serializers.IntegerField(min_value=0)
+        offset = offset_field.run_validation(params.get("offset", 0))
+        search = normalized(params.get("search", "")).casefold()
+        exact = params.get("exact", "").lower() == "true"
+        phones = {field: re.sub(r"\D", "", params[field]) for field in ("phone", "parent_phone") if params.get(field)}
+        rows = []
+        qs = with_student_access(qs.filter(tenant=request.tenant, deleted_at__isnull=True, is_managed=True),
+                                 request.tenant).filter(active_account=True)
+        for student in qs.only("pk", "name", "school_type", "high_school", "middle_school", "elementary_school",
+                               "deleted_at", "is_managed", "phone", "parent_phone").order_by("name", "pk").iterator(chunk_size=200):
+            if not eligible(group, student) or (school and school_of(student) != school):
+                continue
+            name = normalized(student.name).casefold()
+            if exact and name != search:
+                continue
+            if not exact and search and search not in name and search not in school_of(student).casefold():
+                continue
+            if any(not digits or re.sub(r"\D", "", getattr(student, field) or "") != digits for field, digits in phones.items()):
+                continue
+            if offset:
+                offset -= 1
+                continue
+            rows.append(student_row(student))
+            if len(rows) == 50:
+                break
+        return rows
+
     @action(detail=True, methods=["get"])
     def candidates(self, request, pk):
         group = self.group(pk)
-        qs = with_student_access(Student.objects.filter(tenant=request.tenant, deleted_at__isnull=True, is_managed=True), request.tenant).filter(active_account=True).exclude(class_groups=group)
-        search = normalized(request.query_params.get("search", "")).casefold()
-        rows = []
-        for student in qs.only("pk", "name", "school_type", "high_school", "middle_school", "elementary_school", "deleted_at", "is_managed").order_by("name", "pk").iterator(chunk_size=100):
-            if eligible(group, student) and (not search or search in normalized(student.name).casefold() or search in school_of(student).casefold()):
-                rows.append(student_row(student))
-                if len(rows) == 50:
-                    break
-        return Response(rows)
+        return Response(self.candidate_rows(group, Student.objects.exclude(class_groups=group), request))
+
+    @action(detail=False, methods=["get"], url_path=r"for-lecture/(?P<lecture_id>[1-9]\d*)")
+    def for_lecture(self, request, lecture_id):
+        lecture = native_group_lecture(request.tenant, lecture_id)
+        link = ClassGroupLecture.objects.filter(group__tenant=request.tenant, lecture=lecture).select_related("group").first()
+        return Response({"group_id": link.group_id if link else None, "name": link.group.name if link else "",
+                         "school": link.school if link else ""})
+
+    @action(detail=True, methods=["get", "post"], url_path=r"lectures/(?P<lecture_pk>[1-9]\d*)/late-students")
+    @transaction.atomic
+    def late_students(self, request, pk, lecture_pk):
+        write = request.method == "POST"
+        group = self.group(pk, lock=write)
+        link = get_object_or_404(group.course_links.select_related("lecture"), lecture_id=lecture_pk, lecture__tenant=request.tenant)
+        existing = link.lecture.enrollments.filter(tenant=request.tenant)
+        members = group.students.filter(tenant=request.tenant)
+        if not write:
+            return Response(self.candidate_rows(group, members.exclude(pk__in=existing.values("student_id")), request, school=link.school))
+        field = serializers.ListField(child=serializers.IntegerField(min_value=1), allow_empty=False, max_length=500)
+        ids = sorted(set(field.run_validation(request.data.get("student_ids"))))
+        selected = list(with_student_access(members.select_for_update().filter(pk__in=ids), request.tenant).order_by("pk"))
+        if (len(selected) != len(ids) or any(not eligible(group, s) or (link.school and school_of(s) != link.school)
+                                             for s in selected) or existing.filter(student_id__in=ids).exists()):
+            raise serializers.ValidationError("소속 반, 학교, 재원 상태 또는 기존 수강 이력을 확인하세요.")
+        enroll_class_group_members(tenant=request.tenant, lecture_id=link.lecture_id, student_ids=ids)
+        return Response({"created_count": len(ids), "student_ids": ids}, status=201)
 
     @action(detail=True, methods=["patch"])
     @transaction.atomic
@@ -188,7 +240,9 @@ class ClassGroupViewSet(viewsets.ViewSet):
         try:
             with transaction.atomic():
                 lecture = create_class_group_lecture(tenant=request.tenant, title=fields["title"],
-                    start_date=fields["start_date"], end_date=fields["end_date"], student_ids=[s.pk for s in roster])
+                    start_date=fields["start_date"], end_date=fields["end_date"], student_ids=[s.pk for s in roster],
+                    options={key: request.data[key] for key in ("name", "subject", "description", "lecture_time", "color",
+                             "chip_label", "schedule_mode", "schedule_defaults") if key in request.data})
         except IntegrityError:
             raise serializers.ValidationError({"title": "같은 이름의 강의가 있는지 확인하세요."})
         link = ClassGroupLecture.objects.create(group=group, lecture=lecture, period=fields["period"], school=school)

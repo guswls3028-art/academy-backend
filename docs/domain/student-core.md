@@ -1080,3 +1080,11 @@ can consume the new pending credentials during a compatible rolling release.
 반을 만들거나 학생을 반에 배정하는 것만으로는 강의 수강·차시 출결이 생성되지 않는다.
 검증은 `apps.domains.students.tests.test_class_groups`에서 권한, 명부 원자성, 실제 수강 기록 및
 오류 복구를 확인한다.
+
+강의 화면은 `GET for-lecture/{lecture_id}/`로 현재 테넌트 강의의 연결 반과 학교를 조회한다.
+반 소속 강의에 뒤늦게 수강할 학생은 `{group_id}/lectures/{lecture_id}/late-students/`에서 조회하고
+같은 주소에 `{"student_ids": [...]}`를 POST한다. 현재 반의 재원생, 해당 강의의 학교 조건,
+기존 수강 이력 부재를 저장 시 다시 확인한다. 한 명이라도 조건을 벗어나면 전원 저장하지 않으며,
+비활성 수강 이력은 보존된다. 반 후보와 추가 수강 후보는 offset으로 50명씩 조회할 수 있다.
+엑셀에서 이름·연락처로 대조할 때 exact=true는 이름을 일치시키고 제공된 phone 및 parent_phone은
+숫자만 비교한다. 강의 개설 시 담당자·과목·설명·시간·색상·칩 문구·기본 수업일은 기존 강의 검증을 따른다.
