@@ -17,7 +17,7 @@ from apps.domains.students.models import Student
 
 
 class DemoRoleInput(serializers.Serializer):
-    role = serializers.ChoiceField(choices=["teacher", "student", "guardian"])
+    role = serializers.ChoiceField(choices=["admin", "teacher", "student", "guardian"])
 
 
 class DawonDemoSessionView(APIView):
@@ -33,7 +33,17 @@ class DawonDemoSessionView(APIView):
         intent = DemoRoleInput(data=request.data)
         intent.is_valid(raise_exception=True)
         role = intent.validated_data["role"]
-        if role == "teacher":
+        if role == "admin":
+            user = get_user_model().objects.filter(
+                tenant=tenant, username="t719_dawon-demo-admin", is_active=True,
+                is_staff=False, is_superuser=False,
+            ).first()
+            if user and (user.has_usable_password() or TenantMembership.objects.filter(
+                user=user, is_active=True,
+            ).exclude(tenant=tenant, role="admin").exists()):
+                raise NotFound()
+            expected = "admin"
+        elif role == "teacher":
             user = get_user_model().objects.filter(tenant=tenant, username="t719_dawon-demo-teacher", is_active=True).first()
             expected = "teacher"
         else:
@@ -143,5 +153,8 @@ class DawonDemoLearningView(APIView):
             "attendance": attendances.get(s.pk), "videos": videos[s.pk],
             "exams": exams[s.pk], "homework": homework[s.pk],
         } for s in sessions]})
+        from apps.domains.students.services.dawon_demo_learner import learner_topics
+
+        response.data.update(learner_topics(tenant=tenant, student=sample))
         response["Cache-Control"] = "no-store"
         return response

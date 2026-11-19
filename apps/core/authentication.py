@@ -97,11 +97,25 @@ def _allows_dawon_workflow_write(request, role):
 
 def _validate_dawon_demo_access(request, token):
     role = token.get("dawon_demo_role")
-    if role not in {"student", "guardian", "teacher"} or token.get("dawon_demo_until", 0) <= int(timezone.now().timestamp()):
+    if role not in {"admin", "student", "guardian", "teacher"} or token.get("dawon_demo_until", 0) <= int(timezone.now().timestamp()):
         raise AuthenticationFailed("체험 세션이 만료되었습니다. 데모 계정으로 다시 시작해 주세요.")
 
     path = request.path
     method = request.method
+    if role == "admin":
+        from apps.domains.clinic.dawon_demo import is_demo_tenant
+        if is_demo_tenant(getattr(request, "tenant", None)) and (
+            (method in {"GET", "HEAD"} and path in {
+                "/api/v1/core/me/", "/api/v1/students/demo-operations/",
+            }) or (method == "PATCH" and path == "/api/v1/students/demo-operations/")
+        ):
+            return
+        raise PermissionDenied("체험 관리자는 예시 학원의 운영 데이터만 사용할 수 있습니다.")
+    if role == "teacher" and (
+        path.startswith(("/api/v1/fees/", "/api/v1/billing/", "/api/v1/payroll/", "/api/v1/ops/"))
+        or (path.startswith("/api/v1/staffs/") and path != "/api/v1/staffs/me/")
+    ):
+        raise PermissionDenied("선생님 체험은 수업 업무에만 사용할 수 있습니다.")
     if _restricted_actions.search(path) or (method == "PATCH" and _qr_point_change.fullmatch(path)):
         raise PermissionDenied("이 작업은 담당자 계정에서 할 수 있습니다.")
     if method in {"GET", "HEAD", "OPTIONS"}:
