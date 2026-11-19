@@ -114,7 +114,7 @@
 비우기를 함께 요청하면, 현재 학원에 속한 활성 학생 행에서 먼저 저장된 변경을 읽고
 다음 요청을 적용한다. 다른 일정의 숨김을 보존하고, 지난 일정 비우기는 오늘 이후의
 개별 숨김을 유지한다. 저장에 실패하면 해당 요청의 변경만 되돌려 재시도할 수 있다.
-`test_schedule_write_concurrency_pg.py`는 실제 PostgreSQL 경합에서 두 역할의
+`tests/test_schedule_write_concurrency_pg.py`는 실제 PostgreSQL 경합에서 두 역할의
 저장 결과와 이후 일정 조회가 일치하는지 검증한다.
 
 ## 데이터 소유권
