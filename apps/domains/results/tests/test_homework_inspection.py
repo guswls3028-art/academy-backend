@@ -1,9 +1,11 @@
 from io import BytesIO
+from unittest.mock import Mock, patch
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
 from openpyxl import Workbook, load_workbook
+from openpyxl.worksheet.worksheet import Worksheet
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -23,6 +25,24 @@ def stream(book):
 class HomeworkInspectionWorkbookTests(SimpleTestCase):
     scope = (1, 2, 3)
     item = {"enrollment_id": 10, "student_name": "수강생", "solved": 2, "total": 3, "feedback": "기존", "version": 2}
+
+    def test_template_adds_literal_names_without_rescanning_the_roster(self):
+        items = [{**self.item, "enrollment_id": i, "student_name": f"=학생{i}"} for i in range(1, 31)]
+        scans = Mock(wraps=Worksheet.max_row.fget)
+        with patch.object(Worksheet, "max_row", property(scans)):
+            build_template(self.scope, "과제", items[:1], 15)
+            small_roster_scans = scans.call_count
+            scans.reset_mock()
+            blob = build_template(self.scope, "과제", items, 15)
+            self.assertEqual(scans.call_count, small_roster_scans)
+        book = load_workbook(BytesIO(blob))
+        try:
+            for row_number, item in enumerate(items, start=8):
+                name = book.active.cell(row_number, 2)
+                self.assertEqual((name.value, name.data_type), (item["student_name"], "s"))
+                self.assertEqual(book.active.cell(row_number, 6).value, item["enrollment_id"])
+        finally:
+            book.close()
 
     def test_template_roundtrip_and_blank_preservation(self):
         blob = build_template(self.scope, "과제", [self.item], 12)

@@ -23,9 +23,9 @@ def build_template(scope, title, items, total):
     sheet.append(["학생과 학부모에게 공개됩니다. 동명이인은 수강번호로 구분하세요."])
     sheet.append(list(HEADERS))
     sheet.append(["예시", "예시 학생", 12, 15, "건너뛴 예제를 다음 시간에 확인해요."])
-    for row in items:
+    for row_number, row in enumerate(items, start=sheet.max_row + 1):
         sheet.append([None, row["student_name"], None, total, None, row["enrollment_id"], row["version"]])
-        sheet.cell(sheet.max_row, 2).data_type = "s"
+        sheet.cell(row_number, 2).data_type = "s"
     sheet["A1"].data_type = "s"
     for n in range(1, 6):
         sheet.merge_cells(start_row=n, start_column=1, end_row=n, end_column=7)
