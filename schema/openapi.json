@@ -53717,7 +53717,7 @@
     },
     "/api/v1/student/sessions/clear-past/": {
       "post": {
-        "description": "POST /student/sessions/clear-past/\n학생 본인(또는 학부모 대리 계정)이 \"내 일정\" 휴지통을 눌렀을 때 호출.\n오늘 이전(어제까지) 차시/클리닉 예약을 화면에서 모두 숨김.\n실제 차시/예약 데이터는 학원/선생 소유이므로 절대 삭제하지 않고,\nStudent.schedule_hidden_before 컷오프만 갱신.",
+        "description": "POST /student/sessions/clear-past/\n학생 본인(또는 학부모 대리 계정)이 \"내 일정\" 휴지통을 눌렀을 때 호출.\n오늘 이전(어제까지) 차시/클리닉 예약을 화면에서 모두 숨김.\n실제 차시/예약 데이터는 학원/선생 소유이므로 절대 삭제하지 않고,\n학생의 숨김 컷오프와 그 이후에 숨긴 일정 목록을 저장한다.",
         "operationId": "student_sessions_clear_past_create",
         "responses": {
           "200": {
