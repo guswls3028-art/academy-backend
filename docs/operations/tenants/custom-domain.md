@@ -39,14 +39,14 @@
 | G4 운영 호환성·배포 | 대상 도메인과 기능에 필요한 변경을 정식 배포 | 정확한 운영 revision과 해당 배포 증거 |
 | G5 운영 DB | 프로비저닝·구독·메시징·안전 기본값 감사 | owner 전 audit PASS |
 | G6 Pages·HTTPS | G2 위임 확인 직후 apex/`www` Pages·CNAME 연결 | Pages 상태·DNS 대상·인증서와 두 URL의 응답 |
-| G7 대표 계정 | 개발자 콘솔 소유자 탭에서 1회 생성 | 소유자 수와 role `owner` |
+| G7 대표 계정 | G5 후 관리명령으로 원장과 요청된 학생·보호자 직접 등록 | 소유자 수와 role `owner` |
 | G8 실제 인계 | 커스텀 도메인 로그인·최초 비밀번호 변경·격리 확인 | owner 화면과 빈 초기 데이터 |
 | G9 최종 봉인 | owner 포함 audit와 외부 probe 재실행 | audit PASS와 증거 링크 |
 
 운영 신규 테넌트에는 개발자 콘솔의 목록 화면에 있는 간편 생성 폼을 사용하지
 않는다. 이 폼만으로는 명시적 운영 ID, 양쪽 코드 배포, DNS, 구독, 전체 브랜딩을
 완료할 수 없다. 운영 DB 생성은 명시한 운영 백엔드 호환성을 확인한 뒤 범용 `provision_tenant`만 사용하고,
-개발자 콘솔은 G7의 대표 계정 등록에만 사용한다.
+G7은 운영 관리명령으로 직접 진행한다. 인증된 개발자 콘솔의 소유자 탭도 대표 계정 등록을 지원한다.
 
 목록의 간편 생성 폼은 개발·QA의 최소 Tenant·Domain·Program 레코드만 원자적으로
 만든다. 대표 계정 입력을 받거나 owner 등록 요청을 이어서 보내지 않으며, 생성
@@ -66,7 +66,7 @@
 | 브라우저→Video R2 업로드 | **개별 origin 수렴**: API origin 목록을 R2 bucket CORS에도 적용 | apex/`www` PUT 200, ACAO, ETag, abort 잔여 0 |
 | 프런트 로그인·내부 헤더·학생앱·성적표·OG/PWA | **개별 등록**: tenant registry, 테마, 팔레트, 정적 에셋 | build, 1366/390, 역할별 라이트/다크 |
 | Tenant·Program·구독 | **개별 등록**: `provision_tenant`, `contract` 또는 `exempt` | DB audit와 이용 가능 readback |
-| 대표 계정·권한 | **개별 등록**: 개발자 콘솔에서 기존 owner 0명 확인 후 1회 생성 | active owner 1명, 실제 도메인 로그인 |
+| 대표 계정·권한 | **개별 등록**: G5 감사 후 직접 등록, 기존 원장은 동일 계정·정보 대조 | active owner 1명, 실제 도메인 로그인 |
 | 알림톡 | **기본 활성**: 공용 owner 채널·exact 승인 템플릿 사용. 별도 카카오 채널은 운영자가 provider 실조회와 template fingerprint 검증 후 활성화. 대표·관리자가 제품 화면에서 전체 사용을 끌 수 있음 | `messaging_is_active=true`와 채널/승인 봉투 audit; 공급사 credential을 문서에 남기지 않음 |
 | 결제·청구 | **명시 결정**: 기간 계약 또는 승인된 과금 제외 중 하나만 선택 | 만료·다음 결제일 또는 runtime exempt ID audit |
 | Video Batch·AI·Tools·공용 큐 | **공유형**: 고객별 worker/queue 목록 추가 금지, payload·DB·R2 key의 tenant scope 사용 | 정식 배포 worker/queue gate와 역할별 기능 smoke |
@@ -357,10 +357,34 @@ cd C:\academy\backend
 
 ### 대표 계정 표준 절차
 
-대표 계정은 테넌트·Program·구독이 준비된 뒤 HTTPS 개발자 콘솔에서 만든다.
-`provision_tenant`의 owner 인수나 운영 셸 환경변수는 신규 온보딩의 표준 경로로
-사용하지 않는다. 아래 구독·안전 기본값 설정과 owner 없는 G5 감사를 먼저 통과한
-뒤 이 절차를 시작한다.
+G5 감사 후, 검증된 `prepare_tenant_accounts` 명령을 실행할 수 있는 운영 API 관리 경계에서 직접 등록한다. 대상 테넌트 ID·코드·활성 상태, 기본 apex와 보조 `www`, 과금·메시징 모드를 확인한다. 대표자와 요청된 학생·보호자를 한 트랜잭션으로 처리하며, 사용자 브라우저 세션이나 운영자 로그인 토큰 발급·대리 로그인은 필요하지 않다.
+
+입력은 담당자가 제공한 JSON 한 건이다. `owner`에는 `username`, `name`, `phone`, `password`가 필요하다. 학생도 요청한 경우에만 `student`에 `ps_number`, `name`, `parent_phone`, `initial_password`를 넣는다. 학생 `phone`은 선택이다. 보호자 비밀번호는 별도로 요청할 필요가 없다. 새 보호자는 제품의 초기 비밀번호 정책을 따르며 정책도 지정값도 없으면 명령이 임의 값을 생성한다. 기존 활성 보호자의 자격 증명은 보존한다.
+
+다음은 운영자가 승인된 관리 실행 환경 안에서 **해당 작업 전용 SSM SecureString**의 JSON을 자식 프로세스 stdin에만 전달하는 예다. 관리 경계의 IAM 권한, 실행 대상 revision, 파라미터의 정확한 이름·유형·버전과 대상 테넌트를 먼저 대조한다. 예시의 `parameter_name`, `version`, `tenant_code`, `tenant_id`, `apex`, `billing_mode`, `messaging_mode`는 미리 확인한 비밀값 없는 실행 메타데이터다.
+
+```python
+import subprocess
+import sys
+import boto3
+
+ssm = boto3.client("ssm", region_name="ap-northeast-2")
+item = ssm.get_parameter(Name=f"{parameter_name}:{version}", WithDecryption=True)["Parameter"]
+if (item["Name"], item["Version"], item["Type"]) != (parameter_name, version, "SecureString"):
+    raise RuntimeError("SecureString identity mismatch")
+subprocess.run(
+    [sys.executable, "manage.py", "prepare_tenant_accounts", tenant_code,
+     "--tenant-id", str(tenant_id), "--domain", apex,
+     "--billing-mode", billing_mode, "--messaging-mode", messaging_mode],
+    input=item["Value"].encode("utf-8"), check=True,
+)
+```
+
+비밀값을 파일, 명령 인수, 환경변수, 셸 추적, 로그 또는 문서에 넣지 않는다. 일회용 SecureString은 해당 작업의 보존·삭제 절차에 따라 정리한다. 명령은 생성 여부만 출력하고 생성 감사에는 대상 계정 참조와 실행 출처를 남긴다. 동일 원장·학생의 ID, 프로필과 활성 역할이 일치하면 다시 실행해도 변경하지 않는다. 기존 사용자를 승격하거나 기존 비밀번호를 덮어쓰지 않는다. 신원 충돌이나 학생 생성 실패 시 원장 생성과 감사 기록까지 함께 롤백한다. 담당자는 대상 정보를 대조한 후 재시도한다.
+
+G7 뒤에는 `--require-owner`로 계정 준비를 확인한다. G8의 실제 도메인 인증·대표자 비밀번호 변경·재로그인 및 G9의 인계 감사는 아래 기준을 따른다. G8에서 초기 목록을 확인할 때 직접 등록을 요청한 학생은 승인된 초기 데이터로 대조한다.
+
+#### 인증된 콘솔로 대표 계정을 등록하는 대안
 
 1. 승인된 플랫폼 운영 계정의 기존 브라우저 세션 또는 비밀 저장소를 사용해
    `https://dev.hakwonplus.com/dev/tenants/<tenant-id>`로 이동한다. 플랫폼
@@ -521,7 +545,7 @@ DNS·HTTPS, R2 probe, 1366/390 역할별 화면, 합성 QA tenant/user/object 0 
 | tenant required/404 | 운영 DB의 `TenantDomain` apex/`www`와 활성 상태 확인 |
 | 다른 학원 브랜딩 | frontend registry hostname/code/ID 확인 |
 | 다른 학원 데이터 노출 | 즉시 도메인 비활성화 후 tenant isolation incident로 처리 |
-| 소유자 0명 | 대상 tenant ID 재확인 후 개발자 콘솔 소유자 탭에서 1회 생성 |
+| 소유자 0명 | 대상 tenant ID 재확인 후 G5 후 관리명령으로 원장과 요청된 학생·보호자 직접 등록 |
 | 소유자는 있으나 로그인 실패 | ID를 재생성하지 말고 대상 도메인·테넌트와 계정 활성 상태 확인 |
 | 로그인 후 비밀번호 변경 화면 | 정상 초기 인증 상태. 대표자에게 최종 비밀번호 설정 인계 |
 | 개발자 콘솔 임퍼소네이션만 성공 | 실제 비밀번호·도메인 인증 증거가 아니므로 G8 미완료 |
