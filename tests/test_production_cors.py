@@ -49,6 +49,9 @@ def production_cors():
 @pytest.mark.parametrize("origin,allowed", [
     ("https://hakwonplus.com", True),
     ("https://tchul.com", True),
+    ("https://xn--2e0bx88a3ha28m85ax5c.com", True),
+    ("https://www.xn--2e0bx88a3ha28m85ax5c.com", True),
+    ("https://xn--2e0bx88a3ha28m85ax5c.com.external.example", False),
     ("https://academy-frontend-26b.pages.dev", True),
     ("https://a1b2c3d4.academy-frontend-26b.pages.dev", True),
     ("https://production-candidate-123-1.academy-frontend-26b.pages.dev", True),
@@ -89,8 +92,11 @@ def test_production_cors_origin_boundary(production_cors, method, origin, allowe
 @pytest.mark.parametrize("host,allowed", [
     ("academy-frontend-26b.pages.dev", True),
     ("academy-frontend.pages.dev", False),
+    ("xn--2e0bx88a3ha28m85ax5c.com", True),
+    ("www.xn--2e0bx88a3ha28m85ax5c.com", True),
+    ("xn--2e0bx88a3ha28m85ax5c.com.external.example", False),
 ])
-def test_production_pages_host_and_csrf_boundary(production_cors, host, allowed):
+def test_production_host_and_csrf_boundary(production_cors, host, allowed):
     with override_settings(**production_cors):
         host_request = RequestFactory().get("/", HTTP_HOST=host)
         if allowed:
