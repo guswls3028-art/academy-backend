@@ -30,6 +30,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'ordering': ['-id'],
+                'indexes': [models.Index(fields=['tenant', 'category', '-id'], name='staffboard_category_recent')],
             },
         ),
         migrations.CreateModel(
@@ -44,9 +45,5 @@ class Migration(migrations.Migration):
             options={
                 'ordering': ['id'],
             },
-        ),
-        migrations.AddIndex(
-            model_name='staffboardpost',
-            index=models.Index(fields=['tenant', 'category', '-id'], name='staffboard_category_recent'),
         ),
     ]
