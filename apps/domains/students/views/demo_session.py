@@ -57,3 +57,71 @@ class DawonDemoSessionView(APIView):
         response = Response({"access": str(jwt.access_token), "refresh": str(jwt)})
         response["Cache-Control"] = "no-store"
         return response
+
+class DawonDemoLearningView(APIView):
+    """Read-only projection of the designated public sample's enrolled lessons."""
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [AnonRateThrottle]
+
+    def get(self, request):
+        from collections import defaultdict
+        from django.db.models import F
+        from apps.domains.attendance.models import Attendance
+        from apps.domains.enrollment.selectors import active_enrollments_for_student
+        from apps.support.student_app.results_summary import build_student_grades_summary
+        from apps.domains.video.models import Video
+        from apps.domains.video.services.access_resolver import AccessMode, get_effective_access_mode
+        from apps.support.student_app.session_dependencies import get_active_student_session_ids, get_student_lecture_sessions
+
+        tenant = getattr(request, "tenant", None)
+        if not getattr(settings, "DAWON_REVIEW_CLASS_GROUPS", False) or not tenant or (tenant.pk, tenant.code) != (719, "dawon"):
+            raise NotFound()
+        sample = Student.objects.filter(
+            tenant=tenant, pk=2, name="다원 수업 검수 학생 2", deleted_at__isnull=True, is_managed=True,
+        ).first()
+        if sample is None:
+            raise NotFound()
+        enrollments = {
+            row.lecture_id: row for row in active_enrollments_for_student(tenant=tenant, student=sample)
+        }
+        enrolled_ids = [row.pk for row in enrollments.values()]
+        sessions = get_student_lecture_sessions(
+            session_ids=get_active_student_session_ids(student=sample, tenant=tenant),
+            tenant=tenant, student=sample, hidden_before=sample.schedule_hidden_before,
+            hidden_session_ids=set(sample.schedule_hidden_ids or []),
+        )
+        sessions = [s for s in sessions if s.lecture_id in enrollments]
+        ids = [s.pk for s in sessions]
+        attendances = {
+            a.session_id: a.get_status_display() for a in Attendance.objects.filter(
+                tenant=tenant, session_id__in=ids, enrollment_id__in=enrolled_ids,
+                enrollment__lecture_id=F("session__lecture_id"),
+            ).only("session_id", "status")
+        }
+        grades = build_student_grades_summary(tenant=tenant, student=sample, include_grade_board_details=False)
+        allowed_pairs = {(s.pk, enrollments[s.lecture_id].pk) for s in sessions}
+        homework = defaultdict(list)
+        exams = defaultdict(list)
+        for grade in grades["homeworks"]:
+            if (grade["session_id"], grade["enrollment_id"]) in allowed_pairs:
+                homework[grade["session_id"]].append({
+                    "title": grade["title"], "state": grade["submission_state"],
+                })
+        for grade in grades["exams"]:
+            if (grade["session_id"], grade["enrollment_id"]) in allowed_pairs:
+                exams[grade["session_id"]].append({
+                    "title": grade["title"], "score": grade["total_score"], "max": grade["max_score"],
+                })
+        videos = defaultdict(list)
+        for video in Video.objects.filter(tenant=tenant, session_id__in=ids, status="READY").select_related("session"):
+            if get_effective_access_mode(video=video, enrollment=enrollments[video.session.lecture_id]) != AccessMode.BLOCKED:
+                videos[video.session_id].append(video.title)
+        response = Response({"sessions": [{
+            "id": s.pk, "lecture": s.lecture.title, "title": s.title or s.display_label,
+            "date": s.effective_date, "time": getattr(s, "schedule_start_time", None),
+            "attendance": attendances.get(s.pk), "videos": videos[s.pk],
+            "exams": exams[s.pk], "homework": homework[s.pk],
+        } for s in sessions]})
+        response["Cache-Control"] = "no-store"
+        return response

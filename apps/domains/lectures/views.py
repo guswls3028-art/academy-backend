@@ -4,6 +4,7 @@ from django.db import transaction, IntegrityError
 from django.db.models import Case, Count, F, IntegerField, Max, OuterRef, Q, Subquery, Value, When
 from django.db.models.functions import Coalesce
 from django.db.models.deletion import RestrictedError
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -704,10 +705,27 @@ class SessionViewSet(ModelViewSet):
                 raise ValidationError(
                     {"order": f"차시 배치 순서 계산 중 충돌이 발생했습니다. 다시 시도해 주세요. (강의{section_label})"}
                 )
+            initial_roster = []
+            tenant = self.request.tenant
+            if (
+                getattr(settings, "DAWON_REVIEW_CLASS_GROUPS", False)
+                and (tenant.pk, tenant.code) == (719, "dawon")
+                and session_type == Session.SessionType.REGULAR
+                and section is None
+                and lecture.is_active
+                and Lecture.objects.filter(pk=lecture.pk, class_group_link__group__tenant=tenant).exists()
+            ):
+                from apps.support.enrollment.lifecycle_dependencies import ensure_session_roster_membership
+                enrollments = enroll_repo.enrollment_filter_lecture_active_students(tenant, lecture).filter(
+                    student__tenant=tenant,
+                ).order_by("student_id", "pk")
+                for enrollment in enrollments:
+                    member = ensure_session_roster_membership(tenant=tenant, session=session, enrollment=enrollment)
+                    initial_roster.append(member.session_enrollment)
             if create_request_id is not None:
                 create_initial_schedules(
                     session=session, rows=initial_schedules, actor_id=self.request.user.pk,
-                    request_id=create_request_id, digest=create_digest,
+                    request_id=create_request_id, digest=create_digest, initial_roster=initial_roster,
                 )
 
     def perform_update(self, serializer):

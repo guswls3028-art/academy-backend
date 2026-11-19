@@ -109,12 +109,17 @@ def replay_initial_schedule_create(*, lecture, request_id, digest):
     return receipt.session
 
 
-def create_initial_schedules(*, session, rows, actor_id, request_id, digest):
+def create_initial_schedules(*, session, rows, actor_id, request_id, digest, initial_roster=()):
     """Store the first dates and receipt in the caller's session creation transaction."""
     if len({row["label"] for row in rows}) != len(rows):
         raise ValidationError({"initial_schedules": "수업일마다 다른 이름을 입력해 주세요."})
     before = schedule_state(session)
-    SessionSchedule.objects.bulk_create(SessionSchedule(session=session, **row) for row in rows)
+    schedules = SessionSchedule.objects.bulk_create(SessionSchedule(session=session, **row) for row in rows)
+    if len(schedules) == 1 and initial_roster:
+        SessionScheduleMembership.objects.bulk_create(
+            SessionScheduleMembership(schedule=schedules[0], session_enrollment=membership)
+            for membership in initial_roster
+        )
     after = schedule_state(session)
     after["create_request"] = {"id": str(request_id), "digest": digest}
     SessionScheduleChange.objects.create(session=session, actor_id=actor_id, before=before, after=after)
