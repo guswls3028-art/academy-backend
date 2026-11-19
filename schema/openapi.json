@@ -5143,6 +5143,213 @@
         ],
         "type": "string"
       },
+      "InspectionBatchRequest": {
+        "properties": {
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/InspectionChangeRequest"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "type": "object"
+      },
+      "InspectionChange": {
+        "properties": {
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "feedback": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "solved": {
+            "maximum": 100000,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "total": {
+            "maximum": 100000,
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "InspectionChangeRequest": {
+        "properties": {
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "feedback": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "solved": {
+            "maximum": 100000,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "total": {
+            "maximum": 100000,
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "InspectionPreview": {
+        "properties": {
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/InspectionPreviewRow"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "errors",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "InspectionPreviewRow": {
+        "properties": {
+          "before": {
+            "$ref": "#/components/schemas/InspectionRosterRow"
+          },
+          "change": {
+            "$ref": "#/components/schemas/InspectionChange"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InspectionPreviewRowStatusEnum"
+          }
+        },
+        "required": [
+          "before",
+          "change",
+          "line",
+          "name",
+          "status"
+        ],
+        "type": "object"
+      },
+      "InspectionPreviewRowStatusEnum": {
+        "description": "* `변경` - 변경\n* `새 입력` - 새 입력\n* `동일` - 동일",
+        "enum": [
+          "변경",
+          "새 입력",
+          "동일"
+        ],
+        "type": "string"
+      },
+      "InspectionResult": {
+        "properties": {
+          "changed": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "changed"
+        ],
+        "type": "object"
+      },
+      "InspectionRoster": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InspectionRosterRow"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "InspectionRosterRow": {
+        "properties": {
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "feedback": {
+            "type": "string"
+          },
+          "solved": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "student_name": {
+            "type": "string"
+          },
+          "total": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "feedback",
+          "solved",
+          "student_name",
+          "total",
+          "version"
+        ],
+        "type": "object"
+      },
+      "InspectionUploadRequest": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "type": "object"
+      },
       "IntervalMinutesEnum": {
         "description": "* `30` - 30\n* `60` - 60",
         "enum": [
@@ -49231,6 +49438,225 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/sessions/{session_id}/homework/{homework_id}/inspection/": {
+      "get": {
+        "operationId": "results_admin_sessions_homework_inspection_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "homework_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectionRoster"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      },
+      "post": {
+        "operationId": "results_admin_sessions_homework_inspection_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "homework_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InspectionBatchRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/InspectionBatchRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/InspectionBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectionResult"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/sessions/{session_id}/homework/{homework_id}/inspection/workbook/": {
+      "get": {
+        "operationId": "results_admin_sessions_homework_inspection_workbook_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "homework_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Optional shared problem count for the template.",
+            "in": "query",
+            "name": "total",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      },
+      "post": {
+        "operationId": "results_admin_sessions_homework_inspection_workbook_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "homework_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/InspectionUploadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectionPreview"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
