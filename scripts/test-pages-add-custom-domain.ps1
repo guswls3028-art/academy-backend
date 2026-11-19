@@ -113,7 +113,7 @@ $zoneStatus = 'pending'
 Expect-Failure 'Expected one active zone*'
 $zoneStatus = 'active'
 $zoneAccount = 'other'
-Expect-Failure 'Expected one active zone*'
+Expect-Failure 'Expected one matching zone*'
 $zoneAccount = $account
 $projectTarget = 'other.pages.dev'
 Expect-Failure 'Unexpected Pages project*'

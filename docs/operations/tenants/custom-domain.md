@@ -111,8 +111,7 @@ cd C:\academy\backend
 .\scripts\add-cloudflare-zone.ps1 -Domain "saebom.com" -Confirm:$false
 ```
 
-스크립트는 멱등형이다. 이미 zone이 있으면 새로 만들지 않고 해당 zone의
-네임서버 1·2차를 다시 출력한다.
+zone과 Pages 스크립트는 같은 운영 Cloudflare 인증 설정을 사용한다. 한글 도메인과 퓨니코드 표기를 모두 받는다. zone 생성 또는 재조회 후 계정, 도메인과 할당된 네임서버 두 개를 대조해 1·2차를 출력한다. 이미 등록된 도메인은 `-WhatIf`로 네임서버를 다시 확인할 수 있다.
 
 운영자가 가비아에 전달할 문구:
 
