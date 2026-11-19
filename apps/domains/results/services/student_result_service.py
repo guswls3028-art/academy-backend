@@ -309,9 +309,10 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         tenant=tenant,
         lecture_ids={int(enrollment.lecture_id)},
     )
-    rank_info = {} if is_not_submitted else rank_map.get(enrollment_id, {})
+    rank_info = {} if is_not_submitted or is_provisional else rank_map.get(enrollment_id, {})
     data.update(student_rank_visibility_payload(
         rank_info,
+        include_score_benchmarks=True,
         rank_published=bool(getattr(exam, "student_rank_published", True)),
         cohort_size_published=bool(getattr(exam, "student_cohort_size_published", True)),
     ))

@@ -1,6 +1,7 @@
 # PATH: apps/domains/results/urls.py
 from django.urls import path
 from rest_framework.routers import DefaultRouter
+from apps.domains.results.views.homework_inspection_view import HomeworkInspectionView, HomeworkInspectionWorkbookView
 
 from apps.domains.results.views.student_exam_result_view import MyExamResultView
 from apps.domains.results.views.student_exam_attempts_view import MyExamAttemptsView
@@ -241,6 +242,8 @@ from apps.domains.results.views.parent_assessment_comments_view import (
     AdminParentAssessmentCommentsView, AdminParentAssessmentCommentView, ParentAssessmentCommentsView,
 )
 urlpatterns += [
+    path("admin/sessions/<int:session_id>/homework/<int:homework_id>/inspection/", HomeworkInspectionView.as_view()),
+    path("admin/sessions/<int:session_id>/homework/<int:homework_id>/inspection/workbook/", HomeworkInspectionWorkbookView.as_view()),
     path("admin/sessions/<int:session_id>/<str:kind>/<int:assessment_id>/parent-comments/", AdminParentAssessmentCommentsView.as_view()),
     path("admin/sessions/<int:session_id>/<str:kind>/<int:assessment_id>/parent-comments/<int:enrollment_id>/", AdminParentAssessmentCommentView.as_view()),
     path("parent/assessment-comments/", ParentAssessmentCommentsView.as_view()),
