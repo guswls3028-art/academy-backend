@@ -46,12 +46,33 @@ HTTP와 운영 명령은 생명주기 서비스를 호출하는 compatibility fa
 SSOT: `soft_delete_student(student, tenant=...)`
 
 - `deleted_at`을 기록하고 `ps_number`를 `_del_{student.id}_{old}`로 보존한다.
+  정상 입력 아이디는 기존 DB 한계와 같은 50자이다. 삭제용 내부 저장은 원본
+  50자 + `_del_` 5자 + 양의 bigint ID 최대 19자 + `_` 1자를 모두 보존하도록
+  `Student.ps_number`, Inventory 폴더·파일의 `student_ps`를 75자로 확장한다.
+  원본을 자르거나 해시로 대체하지 않아 단일/일괄 삭제 후 동일 번호 복원·재사용과
+  저장소 소유권 판정이 유지된다. 기존 50자 컬럼에서는 유효한 긴 아이디의 삭제가
+  PostgreSQL DataError/HTTP 500으로 실패할 수 있었다. 생성 serializer와 내부 생성
+  경로에서 50자 초과를 명시적으로 거부하여 기존 DB 오류도 필드 검증으로 바꾼다.
+  기존 학생 자가 변경 `PATCH /students/me/`의 `username`도 기존 공백 제거 후
+  50자를 검사한다. null/누락은 기존처럼 변경하지 않으며, 그 외 비문자열이나
+  50자 초과는 계정/프로필 변경 전에 400으로 거부한다. 정상 50자 입력과
+  tenant 내부 username 동기화·계정 안내/실패 시 rollback은 유지한다.
 - 같은 학생의 Inventory 폴더·파일 `student_ps`도 삭제용 번호로 함께 옮긴다.
   원본 R2 key/내용은 바꾸지 않는다. 원래 번호를 새 학생이 사용해도 이전 자료를
   조회하거나 자기 자료로 가져갈 수 없으며, 복원하면 원래 학생의 metadata만 되돌린다.
   기존 번호에 소유자를 확인할 수 없는 자료가 남아 있으면 신규 생성·복원은
   `student_storage_namespace_conflict` 또는 아이디 필드 오류로 중단한다. 기존 행을
   새 학생에게 자동 배정하거나 삭제하지 않는다.
+
+이 변경의 학생/Inventory expand migration을 새 코드보다 먼저 적용한다. 기존
+이미지는 확장된 문자열을 기존 `_del_{id}_{original}` 계약으로 읽으므로 이미지
+롤백 시 75자 DB를 유지한다. 두 migration은 expand-only이며 역적용을 행 존재 여부와
+관계없이 축소 SQL보다 먼저 `IrreversibleError`로 중단한다. 조회 후 동시 삭제 쓰기와
+축소 사이의 경합도 없다. PostgreSQL의 varchar 축소 cast로
+원본을 절단하거나 사용자 자료를 지워 롤백하지 않는다. 데이터 복사·R2 key 변경은 없다.
+`test_deleted_identifier_storage.py`는 실제 JWT bulk 삭제/반복/복원, 최대 bigint와
+40/50자·한글 아이디, 계정/학부모/성적/수강/저장소 key 보존·다른 학원 보호를 검사한다.
+PostgreSQL에서는 실제 50→75 migration과 역적용 차단도 검증한다.
 - `Parent` 직접 연결을 끊는다.
 - 순수 학생 계정이면 해당 테넌트의 `student` 멤버십을 비활성화하고, 남은 활성 멤버십이 없을 때만 `User.is_active=False`로 둔다.
 - 같은 사용자에게 다른 테넌트 멤버십이나 같은 테넌트의 staff/teacher/admin/owner/parent 역할이 남아 있으면 전역 계정을 잠그지 않는다.

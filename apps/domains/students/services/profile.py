@@ -18,7 +18,7 @@ from django.db import transaction
 from apps.core.models import Program
 from apps.core.models.user import user_display_username
 from apps.core.services.login_identifier import normalize_login_identifier
-from apps.domains.students.models import Student, StudentInventoryNamespaceConflict
+from apps.domains.students.models import STUDENT_LOGIN_ID_MAX_LENGTH, Student, StudentInventoryNamespaceConflict
 from apps.domains.students.services.identity import (
     StudentIdentityError,
     canonical_student_phone,
@@ -170,6 +170,8 @@ def _validate_identity(
     parent_phone: Any = None,
 ) -> str:
     username = normalize_login_identifier(display_username)
+    if len(username) > STUDENT_LOGIN_ID_MAX_LENGTH:
+        raise StudentProfileUpdateError({"ps_number": "학생 아이디는 50자 이하여야 합니다."})
     if not username:
         return ""
     if username == phone_digits(parent_phone if parent_phone is not None else student.parent_phone):

@@ -6,6 +6,7 @@ from drf_spectacular.utils import extend_schema_field
 from apps.core.models import TenantMembership
 from apps.core.services.login_identifier import normalize_login_identifier
 from apps.domains.students.models import (
+    STUDENT_LOGIN_ID_MAX_LENGTH,
     Student,
     StudentCustomFieldDefinition,
     StudentRegistrationRequest,
@@ -436,6 +437,7 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         help_text="True면 식별자로 가입 (uses_identifier=True)",
     )
     ps_number = serializers.CharField(
+        max_length=STUDENT_LOGIN_ID_MAX_LENGTH,
         required=False,
         allow_blank=True,
         help_text="미입력 시 임의 6자리 자동 부여 (학생이 추후 변경 가능)",
@@ -573,6 +575,7 @@ class StudentCreateSerializer(serializers.ModelSerializer):
 
 
 class StudentUpdateSerializer(serializers.ModelSerializer):
+    ps_number = serializers.CharField(max_length=STUDENT_LOGIN_ID_MAX_LENGTH, help_text="PS 번호 (학원 학생 ID)")
     custom_fields = serializers.DictField(required=False)
     parent_initial_password_mode = serializers.ChoiceField(choices=("fixed", "phone_last4", "random"), required=False, write_only=True)
     parent_initial_password = serializers.CharField(
