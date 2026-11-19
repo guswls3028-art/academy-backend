@@ -13,7 +13,7 @@ from rest_framework_simplejwt.exceptions import AuthenticationFailed
 
 _teacher_write_domains = re.compile(r"^/api/v1/(students|lectures|enrollments|attendance|exams|homework|results|surveys)/")
 _restricted_actions = re.compile(r"(password|support-session|rotate|delete|purge|archive|send|contact|notify|billing|payment)", re.I)
-_qr_point_change = re.compile(r"^/api/v1/lectures/attendance-qr/[1-9]\d+/?$")
+_qr_point_change = re.compile(r"^/api/v1/lectures/attendance-qr/[1-9]\d*/?$")
 _student_qr_actions = {"/api/v1/student/attendance/qr/resolve/", "/api/v1/student/attendance/qr/record/"}
 
 
