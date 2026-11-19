@@ -14,9 +14,14 @@ from apps.core.models import Tenant, TenantMembership
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.exams.models import Exam
+from apps.domains.homework.models import HomeworkAssignment
+from apps.domains.homework_results.models.homework import Homework
+from apps.domains.homework_results.models.score import HomeworkScore
+from apps.domains.submissions.models import Submission
 from apps.domains.results.models import ExamAttempt, Result
 from apps.domains.staffs.models import Staff
 from apps.domains.students.models import ClassGroup, ClassGroupLecture, Student
+from apps.domains.teachers.models import Teacher
 from apps.domains.students.views.demo_operations import DawonDemoOperationsView
 from apps.domains.students.views.demo_session import DawonDemoSessionView
 
@@ -73,6 +78,54 @@ class DemoOperationsTests(TestCase):
         self.assertEqual(self.operation().data["exams"], [
             {"id": exam.pk, "title": "중간", "graded": 2, "average": 40},
         ])
+
+    def test_course_detail_scopes_shared_exam_scores_and_homework(self):
+        exam = Exam.objects.create(tenant=self.tenant, title="공통 시험")
+        for i, score in enumerate((40, 80)):
+            Teacher.objects.create(tenant=self.tenant, name=f"담당{i}")
+            course = Lecture.objects.create(tenant=self.tenant, title=f"강의{i}", name=f"담당{i}")
+            session = Session.objects.create(lecture=course, order=1, title=f"수업{i}")
+            exam.sessions.add(session)
+            homework = Homework.objects.create(tenant=self.tenant, session=session, title=f"과제{i}", status="OPEN")
+            Homework.objects.create(tenant=self.other, session=session, title="다른 학원", status="OPEN")
+            user = get_user_model().objects.create_user(username=f"learner{i}", tenant=self.tenant)
+            student = Student.objects.create(tenant=self.tenant, user=user, name="학생", ps_number=f"qa-{i}", omr_code=f"{i:08}")
+            enrollment = Enrollment.objects.create(tenant=self.tenant, lecture=course, student=student)
+            HomeworkAssignment.objects.create(tenant=self.tenant, homework=homework, session=session, enrollment=enrollment)
+            if i == 0:
+                Submission.objects.create(tenant=self.tenant, user=user, enrollment=enrollment, target_type="homework",
+                                          target_id=homework.pk, source="online", status="done")
+                HomeworkScore.objects.create(homework=homework, session=session, enrollment=enrollment, score=0)
+            attempt = ExamAttempt.objects.create(exam=exam, enrollment=enrollment, attempt_index=1)
+            Result.objects.create(target_type="exam", target_id=exam.pk, enrollment=enrollment,
+                                  attempt=attempt, total_score=score, max_score=100)
+        data = self.operation().data
+        self.assertEqual(data["exams"][0]["average"], 60)
+        for i, course in enumerate(data["groups"][0]["courses"]):
+            self.assertEqual(course["homework"][0]["progress"], {
+                "assigned": 1, "submitted": 1 - i, "graded": 1 - i, "missing": i, "deferred": 0,
+            })
+            self.assertEqual(course["instructor"], f"담당{i}")
+            self.assertEqual([s["title"] for s in course["sessions"]], [f"수업{i}"])
+            self.assertEqual([(h["title"], h["status"]) for h in course["homework"]], [(f"과제{i}", "OPEN")])
+            self.assertEqual(course["exams"], [{"id": exam.pk, "title": "공통 시험", "graded": 1, "average": (40, 80)[i]}])
+
+    def test_instructor_uses_tenant_reference_or_recognised_legacy_name(self):
+        reference = get_user_model().objects.create_user(username="qa-reference", tenant=self.tenant, name="현재 강사")
+        foreign = get_user_model().objects.create_user(username="qa-foreign", tenant=self.other, name="타 학원 강사")
+        Teacher.objects.create(tenant=self.tenant, name="기존 강사")
+        Teacher.objects.create(tenant=self.other, name="다른 학원")
+        group = ClassGroup.objects.create(tenant=self.tenant, name="반", kind="union", track="SKY")
+        for title, name, teacher in [
+            ("연결 강의", "기존 강사", reference), ("제목 복사", "제목 복사", None),
+            ("미확인", "다른 학원", None), ("구형 강의", "기존 강사", foreign),
+        ]:
+            course = Lecture.objects.create(tenant=self.tenant, title=title, name=name)
+            ClassGroupLecture.objects.create(group=group, lecture=course, period="vacation", reference_teacher=teacher)
+        courses = self.operation().data["groups"][0]["courses"]
+        self.assertEqual({course["title"]: course["instructor"] for course in courses}, {
+            "연결 강의": "현재 강사", "제목 복사": "", "미확인": "", "구형 강의": "기존 강사",
+        })
 
     def test_admin_token_issuance_and_api_allowlist(self):
         request = APIRequestFactory().post("/api/v1/students/demo-session/", {"role": "admin"}, format="json")

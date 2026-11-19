@@ -3,7 +3,7 @@ import unicodedata
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Exists, F, OuterRef, Q
+from django.db.models import Count, Exists, F, OuterRef, Q, Subquery
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import serializers, viewsets
@@ -133,6 +133,31 @@ class ClassGroupViewSet(viewsets.ViewSet):
             course_count=Count("course_links", filter=Q(course_links__lecture__tenant=request.tenant), distinct=True),
         ).order_by("name", "pk")
         return Response([summary(g, g.count, g.course_count) for g in groups])
+
+    @action(detail=False, methods=["get"])
+    def teaching(self, request):
+        from apps.domains.lectures.models import Session
+
+        tenant = request.tenant
+        assigned = ClassGroupLecture.objects.filter(
+            group__tenant=tenant, lecture__tenant=tenant, reference_teacher=request.user,
+        ).values("group_id")
+        latest = Session.objects.filter(
+            lecture__tenant=tenant, lecture__class_group_link__group_id=OuterRef("pk"), date__lte=timezone.localdate(),
+        ).order_by("-date", "-pk")
+        groups = ClassGroup.objects.filter(tenant=tenant, pk__in=assigned).annotate(
+            latest_id=Subquery(latest.values("pk")[:1]),
+            members=Count("students", filter=Q(students__tenant=tenant, students__deleted_at__isnull=True)),
+        ).order_by("name", "pk")
+        rows = {g.pk: {"id": g.pk, "name": g.name, "members": g.members, "courses": [], "recent": None} for g in groups}
+        links = ClassGroupLecture.objects.filter(group_id__in=rows, lecture__tenant=tenant)
+        for group_id, lecture_id in links.values_list("group_id", "lecture_id"):
+            rows[group_id]["courses"].append(lecture_id)
+        recent = Session.objects.filter(lecture__tenant=tenant, pk__in=[g.latest_id for g in groups if g.latest_id])
+        for lesson in recent.values("lecture__class_group_link__group_id", "id", "lecture_id", "title", "date"):
+            group_id = lesson.pop("lecture__class_group_link__group_id")
+            rows[group_id]["recent"] = lesson
+        return Response(list(rows.values()))
 
     def create(self, request):
         fields = values(GroupInput, request)

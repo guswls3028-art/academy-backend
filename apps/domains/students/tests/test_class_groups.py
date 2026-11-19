@@ -34,6 +34,45 @@ class ClassGroupTests(TestCase):
         return Student.objects.create(tenant=tenant, user=user, name=name, ps_number=name, omr_code=str(user.pk).zfill(8),
                                       school_type="HIGH", high_school=school)
 
+    def test_teaching_returns_assigned_groups_all_their_courses_and_latest_held_lesson(self):
+        from datetime import timedelta
+        from apps.domains.lectures.models import Lecture, Session
+        from apps.domains.students.models import ClassGroupLecture
+
+        teacher = get_user_model().objects.create_user(username="qa-teaching", tenant=self.tenant)
+        TenantMembership.ensure_active(tenant=self.tenant, user=teacher, role="teacher")
+        today = timezone.localdate()
+        assigned, upcoming, unrelated = [
+            ClassGroup.objects.create(tenant=self.tenant, name=name, kind="union", track="SKY")
+            for name in ("담당 반", "개강 예정", "다른 반")
+        ]
+
+        def course(group, title, reference):
+            lecture = Lecture.objects.create(tenant=self.tenant, title=title)
+            ClassGroupLecture.objects.create(group=group, lecture=lecture, period="vacation", reference_teacher=reference)
+            return lecture
+
+        lead = course(assigned, "담당 강의", teacher)
+        shared = course(assigned, "같은 반의 다른 강의", self.actor)
+        future = course(upcoming, "개강 예정 강의", teacher)
+        other = course(unrelated, "다른 반 강의", self.actor)
+        Session.objects.create(lecture=lead, order=1, date=today - timedelta(days=1))
+        recent = Session.objects.create(lecture=shared, order=1, title="오늘 수업", date=today)
+        for lecture in (lead, future):
+            Session.objects.create(lecture=lecture, order=2, date=today + timedelta(days=1))
+        Session.objects.create(lecture=other, order=1, title="다른 반 오늘 수업", date=today)
+
+        response = self.call("get", "teaching/", actor=teacher)
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = {row["id"]: row for row in response.data}
+        self.assertEqual(set(rows), {assigned.pk, upcoming.pk})
+        self.assertCountEqual(rows[assigned.pk]["courses"], [lead.pk, shared.pk])
+        self.assertEqual(rows[assigned.pk]["recent"], {
+            "id": recent.pk, "lecture_id": shared.pk, "title": "오늘 수업", "date": today,
+        })
+        self.assertEqual(rows[upcoming.pk]["courses"], [future.pk])
+        self.assertIsNone(rows[upcoming.pk]["recent"])
+
     def test_school_roster_atomic_and_native_lecture(self):
         one = self.pupil("first", " Ａ고 ")
         wrong = self.pupil("second", "B고")
