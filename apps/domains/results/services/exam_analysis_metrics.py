@@ -7,6 +7,7 @@ from statistics import mean, median, pstdev, quantiles
 from typing import Any
 
 from apps.domains.results.models import ExamAttempt
+from apps.support.results.dawon_reference import reference_percent
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 from apps.domains.results.utils.initial_exam_score import (
     InitialExamScore,
@@ -56,6 +57,14 @@ def recommended_cutoff(average: float | None, maximum: float) -> int | None:
     # Positive half ties round up, even when the multiple of five is odd.
     rounded = math.floor(average / 5 + 0.5) * 5
     return min(rounded, math.floor(maximum / 5) * 5) if rounded > 0 else None
+
+
+def top_reference(confirmed, percent):
+    rates = sorted((score_rate(row.initial.total_score, row.initial.max_score) for row in confirmed.values()
+                    if row.initial.max_score and row.initial.max_score > 0), reverse=True)
+    count = math.ceil(len(rates) * percent / 100)
+    return {"top_reference_percent": percent, "top_reference_average": mean(rates[:count]) if count else None,
+            "top_reference_count": count}
 
 
 def _score_summary(
@@ -225,7 +234,7 @@ def _trends(*, tenant, exam, candidates, scores, current_sessions):
 
 
 def load_exam_analysis(
-    *, exam, tenant, lecture_id: int | None = None, include_items: bool = False,
+    *, exam, tenant, lecture_id: int | None = None, include_items: bool = False, include_trends: bool = True,
 ) -> ExamAnalysis:
     """Read the same roster, confirmed first attempts and trends for web and Excel."""
     candidates = {
@@ -276,6 +285,10 @@ def load_exam_analysis(
     summary = _score_summary(
         confirmed=confirmed, pass_by_enrollment=pass_by_enrollment, roster_count=len(candidates),
     )
+    scope = lecture_id if lecture_id is not None else next(iter(lecture_ids)) if len(lecture_ids) == 1 else None
+    percent = reference_percent(tenant, scope)
+    if percent is not None:
+        summary.update(top_reference(confirmed, percent))
     cutoff = recommended_cutoff(summary["average"], maximum)
     return ExamAnalysis(
         candidates=candidates,
@@ -293,6 +306,6 @@ def load_exam_analysis(
             "trends": _trends(
                 tenant=tenant, exam=exam, candidates=candidates,
                 scores=scores, current_sessions=current_sessions,
-            ) if confirmed else [],
+            ) if confirmed and include_trends else [],
         },
     )

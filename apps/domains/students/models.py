@@ -703,7 +703,23 @@ class ClassGroup(models.Model):
 
 
 class ClassGroupLecture(models.Model):
+    top_reference_percent = models.PositiveSmallIntegerField(default=30, db_default=30)
+    reference_teacher = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                          on_delete=models.SET_NULL, related_name="+")
     group = models.ForeignKey(ClassGroup, on_delete=models.CASCADE, related_name="course_links")
     lecture = models.OneToOneField("lectures.Lecture", on_delete=models.CASCADE, related_name="class_group_link")
     school = models.CharField(max_length=100, blank=True)
     period = models.CharField(max_length=8, choices=[("vacation", "방학"), ("midterm", "중간"), ("final", "기말")])
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(top_reference_percent__range=(1, 100)),
+                                              name="students_group_reference_percent")]
+
+
+class DawonTeacherAlertSettings(models.Model):
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    teacher = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    rules = models.JSONField(default=dict)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("tenant", "teacher"), name="students_dawon_teacher_alerts")]

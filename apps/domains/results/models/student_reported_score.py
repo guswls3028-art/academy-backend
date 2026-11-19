@@ -62,6 +62,8 @@ class StudentReportedScore(TimestampModel):
     )
 
     source = models.CharField(max_length=24, choices=Source.choices, db_index=True)
+    school_at_submission = models.CharField(max_length=100, null=True, blank=True)
+    year_grade_at_submission = models.PositiveSmallIntegerField(null=True, blank=True)
     academic_year = models.PositiveSmallIntegerField(db_index=True)
     semester = models.PositiveSmallIntegerField(
         null=True,

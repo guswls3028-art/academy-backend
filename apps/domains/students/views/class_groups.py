@@ -3,14 +3,16 @@ import unicodedata
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Exists, OuterRef, Q
+from django.db.models import Count, Exists, F, OuterRef, Q
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.support.lectures.class_group_cycles import assign_cycle_status, class_group_cycles
 from apps.core.models import TenantMembership
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.students.models import ClassGroup, ClassGroupLecture, Student
@@ -96,7 +98,8 @@ def student_row(student):
 def lecture_row(link, count):
     lecture = link.lecture
     return {"id": lecture.pk, "title": lecture.title, "period": link.period, "school": link.school, "start_date": lecture.start_date,
-            "end_date": lecture.end_date, "student_count": count}
+            "end_date": lecture.end_date, "is_active": lecture.is_active, "student_count": count, "color": lecture.color,
+            "chip_label": lecture.chip_label, "lecture_time": lecture.lecture_time}
 
 
 class ClassGroupViewSet(viewsets.ViewSet):
@@ -120,8 +123,8 @@ class ClassGroupViewSet(viewsets.ViewSet):
             active_count=Count("lecture__enrollments", filter=Q(lecture__enrollments__status="ACTIVE",
                 lecture__enrollments__tenant=self.request.tenant, lecture__enrollments__student__tenant=self.request.tenant,
                 lecture__enrollments__student__deleted_at__isnull=True))
-        ).order_by("-lecture__start_date", "-pk")
-        lectures = [lecture_row(link, link.active_count) for link in links]
+        ).order_by(F("lecture__start_date").desc(nulls_last=True), "-pk")
+        lectures = assign_cycle_status([lecture_row(link, link.active_count) for link in links], timezone.localdate())
         return {**summary(group, len(roster), len(lectures)), "students": roster, "lectures": lectures}
 
     def list(self, request):
@@ -177,12 +180,22 @@ class ClassGroupViewSet(viewsets.ViewSet):
         group = self.group(pk)
         return Response(self.candidate_rows(group, Student.objects.exclude(class_groups=group), request))
 
-    @action(detail=False, methods=["get"], url_path=r"for-lecture/(?P<lecture_id>[1-9]\d*)")
+    @action(detail=False, methods=["get", "patch"], url_path=r"for-lecture/(?P<lecture_id>[1-9]\d*)")
     def for_lecture(self, request, lecture_id):
         lecture = native_group_lecture(request.tenant, lecture_id)
         link = ClassGroupLecture.objects.filter(group__tenant=request.tenant, lecture=lecture).select_related("group").first()
+        roles = TenantMembership.objects.filter(tenant=request.tenant, user=request.user, is_active=True)
+        can_edit = bool(link and (roles.filter(role__in=("owner", "admin")).exists()
+                        or (link.reference_teacher_id == request.user.pk and roles.filter(role="teacher").exists())))
+        if request.method == "PATCH":
+            if not can_edit:
+                raise PermissionDenied("담당 강사 또는 원장·관리자만 비교 기준을 변경할 수 있습니다.")
+            percent = serializers.IntegerField(min_value=1, max_value=100).run_validation(request.data.get("top_reference_percent"))
+            link.top_reference_percent = percent
+            link.save(update_fields=["top_reference_percent"])
         return Response({"group_id": link.group_id if link else None, "name": link.group.name if link else "",
-                         "school": link.school if link else ""})
+                         "school": link.school if link else "", "can_edit_top_reference": can_edit,
+                         "top_reference_percent": link.top_reference_percent if link else None})
 
     @action(detail=True, methods=["get", "post"], url_path=r"lectures/(?P<lecture_pk>[1-9]\d*)/late-students")
     @transaction.atomic
@@ -237,6 +250,9 @@ class ClassGroupViewSet(viewsets.ViewSet):
             raise serializers.ValidationError({"school": "방학 연합반은 학교를 구분하지 않습니다."})
         if any(not eligible(group, student) for student in roster):
             raise serializers.ValidationError("학교 또는 재원 상태가 바뀐 학생을 명부에서 제외한 뒤 다시 시도하세요.")
+        if group.course_links.filter(lecture__tenant=request.tenant, period=fields["period"], school=school,
+                                     lecture__start_date=fields["start_date"]).exists():
+            raise serializers.ValidationError({"start_date": "같은 학교·기간·시작일의 강의가 이미 있습니다."})
         try:
             with transaction.atomic():
                 lecture = create_class_group_lecture(tenant=request.tenant, title=fields["title"],
@@ -245,5 +261,12 @@ class ClassGroupViewSet(viewsets.ViewSet):
                              "chip_label", "schedule_mode", "schedule_defaults") if key in request.data})
         except IntegrityError:
             raise serializers.ValidationError({"title": "같은 이름의 강의가 있는지 확인하세요."})
-        link = ClassGroupLecture.objects.create(group=group, lecture=lecture, period=fields["period"], school=school)
-        return Response(lecture_row(link, len(roster)), status=201)
+        teachers = TenantMembership.objects.filter(tenant=request.tenant, role="teacher", is_active=True, user__is_active=True)
+        named = list(teachers.filter(user__name=lecture.name).values_list("user_id", flat=True)[:2])
+        teacher_id = named[0] if len(named) == 1 else None
+        if not named and teachers.filter(user=request.user).exists():
+            teacher_id = request.user.pk
+        link = ClassGroupLecture.objects.create(group=group, lecture=lecture, period=fields["period"], school=school,
+                                               reference_teacher_id=teacher_id)
+        cycle = class_group_cycles(request.tenant, group_id=group.pk)[lecture.pk]
+        return Response({**lecture_row(link, len(roster)), **cycle}, status=201)

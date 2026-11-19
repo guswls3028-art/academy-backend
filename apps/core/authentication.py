@@ -30,6 +30,8 @@ def _validate_dawon_demo_access(request, token):
         return
     if role == "student" and method == "POST" and path in _student_qr_actions:
         return
+    if role == "student" and method == "PUT" and path == "/api/v1/results/school-reports/me/":
+        return
     if role == "teacher" and method in {"POST", "PATCH", "PUT"} and _teacher_write_domains.match(path):
         return
     raise PermissionDenied("이 작업은 담당자 계정에서 할 수 있습니다.")

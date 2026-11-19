@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_field
 from rest_framework import serializers
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
 from apps.support.messaging.school_report_requests import school_report_alimtalk_available
+from apps.support.results.dawon_school_report import is_dawon_school_report, school_report_cohorts
 from apps.support.results.school_reports import (
     SchoolReportTerm,
     own_student,
@@ -213,6 +214,16 @@ class SchoolReportRosterView(APIView):
     def get(self, request):
         query = _validated_term(request.query_params, SchoolReportRosterSerializer)
         term = query.term()
+        if request.query_params.get("view") == "cohorts":
+            if not is_dawon_school_report(request.tenant):
+                raise NotFound()
+            school = request.query_params.get("cohort_school")
+            raw_grade = request.query_params.get("cohort_grade")
+            grade = serializers.IntegerField(min_value=1, max_value=12).run_validation(raw_grade) if raw_grade else None
+            if bool(school) != bool(grade):
+                raise serializers.ValidationError("학교와 학년을 함께 선택하세요.")
+            return Response(school_report_cohorts(request.tenant, term, school=school, grade=grade),
+                            headers={"Cache-Control": "private, no-store"})
         roster, counts = roster_query(request.tenant, term, query.validated_data.get("lecture_id"))
         roster = roster_page(
             request.tenant, term, roster, query.validated_data.get("search"), query.validated_data.get("status"),

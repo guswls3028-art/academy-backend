@@ -170,6 +170,16 @@ class LectureViewSet(ModelViewSet):
             )
         ).order_by(F("display_order").asc(nulls_last=True), "id")
 
+    def list(self, request, *args, **kwargs):
+        from apps.support.lectures.class_group_cycles import class_group_cycles
+
+        response = super().list(request, *args, **kwargs)
+        cycles = class_group_cycles(request.tenant)
+        for row in response.data:
+            if row["id"] in cycles:
+                row.update(cycles[row["id"]])
+        return response
+
     @action(detail=False, methods=["post"], url_path="reorder")
     def reorder(self, request):
         """Persist one active/past lecture scope as an exact tenant-local order."""

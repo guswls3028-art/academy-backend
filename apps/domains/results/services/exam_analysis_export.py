@@ -319,7 +319,9 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
         ("응시", f"{scored_count}명"),
         ("미응시·미채점", f"{summary['unscored_count']}명"),
         ("평균", f"{average_score:.1f}/{max_score:g}" if scored_count else "—"),
-        ("상위 10% 평균", f"{summary['top_ten_average']:.1f}/{max_score:g}" if scored_count else "—"),
+        ((f"상위 {summary['top_reference_percent']}% 평균", f"{summary['top_reference_average']:.1f}%" if summary["top_reference_average"] is not None else "—")
+         if "top_reference_percent" in summary else
+         ("상위 10% 평균", f"{summary['top_ten_average']:.1f}/{max_score:g}" if scored_count else "—")),
         ("최고점", f"{summary['highest']:g}/{max_score:g}" if scored_count else "—"),
         ("중앙값", f"{summary['median']:.1f}점" if scored_count else "—"),
         ("표준편차", f"{summary['std_dev']:.1f}점" if scored_count else "—"),

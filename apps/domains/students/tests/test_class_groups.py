@@ -84,6 +84,44 @@ class ClassGroupTests(TestCase):
         self.assertEqual(self.call("get", base+"candidates/").data, [])
         self.assertEqual(self.call("patch", base+"members/", {"add":[inactive.pk]}).status_code, 400)
 
+    def test_course_cycles_follow_start_dates_per_group_and_school(self):
+        from datetime import date
+        from unittest.mock import patch
+
+        members = [self.pupil("alpha", "A고"), self.pupil("beta", "B고")]
+        group = self.call("post", payload={"name": "상설반", "kind": "union", "track": "SKY"}).data
+        base = f"{group['id']}/"
+        self.call("patch", base + "members/", {"add": [s.pk for s in members]})
+        periods = [("winter", "vacation", "", 1), ("A mid", "midterm", "A고", 2),
+                   ("B mid", "midterm", "B고", 3), ("A final", "final", "A고", 4),
+                   ("summer", "vacation", "", 5)]
+        ids = {}
+        for title, period, school, month in reversed(periods):
+            payload = {"title": title, "period": period, "school": school,
+                       "start_date": f"2027-{month:02d}-01", "end_date": "2027-06-30"}
+            response = self.call("post", base + "lectures/", payload)
+            self.assertEqual(response.status_code, 201, response.data)
+            ids[title] = response.data["id"]
+            duplicate = self.call("post", base + "lectures/", {**payload, "title": title + " copy"})
+            self.assertEqual(duplicate.status_code, 400)
+        for month, current in [(1, {"winter"}), (2, {"A mid"}), (3, {"A mid", "B mid"}),
+                               (4, {"A final", "B mid"}), (5, {"summer"}), (7, set())]:
+            with patch("django.utils.timezone.localdate", return_value=date(2027, month, 1)):
+                rows = self.call("get", base).data["lectures"]
+                self.assertEqual({r["title"] for r in rows if r["cycle_status"] == "current"}, current)
+                self.assertEqual({r["title"] for r in rows if r["cycle_status"] == "upcoming"},
+                                 {title for title, _, _, start in periods if start > month})
+                route = "/api/v1/lectures/lectures/"
+                req = self.factory.get(route)
+                req.tenant = self.tenant
+                force_authenticate(req, user=self.actor)
+                view = resolve(route)
+                listing = view.func(req, **view.kwargs)
+                self.assertEqual({r["id"]: r["cycle_status"] for r in listing.data},
+                                 {r["id"]: r["cycle_status"] for r in rows})
+        self.assertEqual(Enrollment.objects.filter(tenant=self.tenant, lecture_id__in=ids.values(),
+                                                    status="ACTIVE").count(), 7)
+
     def test_default_closed_and_staff_only(self):
         with override_settings(DAWON_REVIEW_CLASS_GROUPS=False):
             self.assertEqual(self.call("get").status_code, 404)
@@ -117,7 +155,7 @@ class ClassGroupTests(TestCase):
         lecture = Enrollment.objects.get(student=initial).lecture
         self.assertEqual((lecture.name, lecture.subject, lecture.description), ("강사", "국어", "설명"))
         metadata = self.call("get", f"for-lecture/{lecture.pk}/")
-        self.assertEqual(metadata.data, {"group_id": group["id"], "name": "연합", "school": "A고"})
+        self.assertEqual(metadata.data, {"group_id": group["id"], "name": "연합", "school": "A고", "top_reference_percent": 30, "can_edit_top_reference": True})
         previous = Enrollment.objects.get(lecture=lecture, student=initial)
         previous.status = "INACTIVE"
         previous.save(update_fields=["status"])
@@ -133,3 +171,68 @@ class ClassGroupTests(TestCase):
         self.assertEqual(self.call("post", route, {"student_ids": [late.pk]}).status_code, 400)
         previous.refresh_from_db()
         self.assertEqual(previous.status, "INACTIVE")
+
+    def test_top_reference_persists_and_matches_student_normalized_exam_cohort(self):
+        from types import SimpleNamespace
+        from django.apps import apps
+        from apps.domains.results.models import Result
+        from apps.domains.results.services.exam_analysis_metrics import load_exam_analysis
+        from apps.domains.results.services.student_result_service import get_my_exam_result_data
+        from apps.domains.results.serializers.admin_exam_analysis_insights import AdminExamAnalysisInsightsSerializer
+
+        teacher = get_user_model().objects.create_user(username="responsible", tenant=self.tenant, name="담당")
+        TenantMembership.ensure_active(tenant=self.tenant, user=teacher, role="teacher")
+        other = get_user_model().objects.create_user(username="other", tenant=self.tenant, name="별도")
+        TenantMembership.ensure_active(tenant=self.tenant, user=other, role="teacher")
+        students = [self.pupil("case" + str(i), "A고") for i in range(4)]
+        group = self.call("post", payload={"kind": "union", "track": "1%", "name": "A"}).data
+        base = str(group["id"]) + "/"
+        self.call("patch", base + "members/", {"add": [s.pk for s in students]})
+        result = self.call("post", base + "lectures/", {"period": "midterm", "school": "A고", "title": "기준",
+            "name": teacher.name, "start_date": "2026-10-01", "end_date": "2026-11-01"})
+        lecture = apps.get_model("lectures", "Lecture").objects.get(pk=result.data["id"])
+        endpoint = f"for-lecture/{lecture.pk}/"
+        self.assertEqual(self.call("get", endpoint).data["top_reference_percent"], 30)
+        self.assertEqual(self.call("patch", endpoint, {"top_reference_percent": 100}, actor=other).status_code, 403)
+        self.assertEqual(self.call("patch", endpoint, {"top_reference_percent": 101}, actor=teacher).status_code, 400)
+        self.assertEqual(self.call("patch", endpoint, {"top_reference_percent": 100}, actor=teacher).status_code, 200)
+        exam = apps.get_model("exams", "Exam").objects.create(tenant=self.tenant, title="시험", max_score=100)
+        exam.sessions.add(apps.get_model("lectures", "Session").objects.create(lecture=lecture, order=1, title="시험"))
+        for student, score in zip(students, [20, 10, 0, None]):
+            enrollment = Enrollment.objects.get(lecture=lecture, student=student)
+            apps.get_model("exams", "ExamEnrollment").objects.create(exam=exam, enrollment=enrollment)
+            if score is not None:
+                Result.objects.create(target_type="exam", target_id=exam.pk, enrollment=enrollment, total_score=score, max_score=20)
+        other_lecture = apps.get_model("lectures", "Lecture").objects.create(tenant=self.tenant, title="다른 학교 강의",
+                                                                            name="B고", subject="수학")
+        peer = self.pupil("other-school", "B고")
+        other_enrollment = Enrollment.objects.create(tenant=self.tenant, lecture=other_lecture, student=peer, status="ACTIVE")
+        exam.sessions.add(apps.get_model("lectures", "Session").objects.create(lecture=other_lecture, order=1, title="B고"))
+        apps.get_model("exams", "ExamEnrollment").objects.create(exam=exam, enrollment=other_enrollment)
+        Result.objects.create(target_type="exam", target_id=exam.pk, enrollment=other_enrollment, total_score=20, max_score=20)
+        view = lambda: AdminExamAnalysisInsightsSerializer(load_exam_analysis(exam=exam, tenant=self.tenant,
+            lecture_id=lecture.pk).insights).data["score_summary"]
+        summary = view()
+        self.assertEqual((summary["top_reference_percent"], summary["top_reference_average"], summary["top_reference_count"]), (100, 50, 3))
+        request = SimpleNamespace(user=students[0].user, tenant=self.tenant)
+        student_result = get_my_exam_result_data(request, exam.pk, self.tenant)
+        self.assertEqual((student_result["top_reference_average"], student_result["top_reference_ratio"]), (50, 200))
+        self.call("patch", endpoint, {"top_reference_percent": 34}, actor=teacher)
+        self.assertEqual(view()["top_reference_average"], 75)
+
+        Result.objects.filter(target_id=exam.pk, target_type="exam", enrollment__lecture=lecture).update(total_score=0)
+        zero = get_my_exam_result_data(request, exam.pk, self.tenant)
+        self.assertEqual(zero["top_reference_average"], 0)
+        self.assertIsNone(zero["top_reference_ratio"])
+
+    def test_previous_release_lecture_link_insert_uses_database_default(self):
+        from django.apps import apps
+        from django.db import connection
+
+        group = ClassGroup.objects.create(tenant=self.tenant, kind="union", track="SKY", name="호환성")
+        lecture = apps.get_model("lectures", "Lecture").objects.create(tenant=self.tenant, title="개설", name="강사", subject="수학")
+        with connection.cursor() as cursor:
+            cursor.execute("INSERT INTO students_classgrouplecture (group_id, lecture_id, period, school) "
+                           "VALUES (%s, %s, %s, %s) RETURNING top_reference_percent, reference_teacher_id",
+                           [group.pk, lecture.pk, "vacation", ""])
+            self.assertEqual(cursor.fetchone(), (30, None))

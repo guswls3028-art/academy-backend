@@ -15,6 +15,9 @@ class ExamScoreTrendSerializer(serializers.Serializer):
 
 
 class ExamScoreSummarySerializer(serializers.Serializer):
+    top_reference_percent = serializers.IntegerField(required=False)
+    top_reference_average = serializers.FloatField(required=False)
+    top_reference_count = serializers.IntegerField(required=False)
     average = serializers.FloatField(allow_null=True)
     median = serializers.FloatField(allow_null=True)
     top_ten_average = serializers.FloatField(allow_null=True)

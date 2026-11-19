@@ -3,6 +3,9 @@
 from dataclasses import asdict, dataclass
 
 from django.core.exceptions import ObjectDoesNotExist
+from zoneinfo import ZoneInfo
+
+from django.utils import timezone
 from django.db import transaction
 from django.db.models import Count, Exists, F, OuterRef, Q, Subquery
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -14,6 +17,7 @@ from apps.domains.enrollment.models import Enrollment
 from apps.domains.lectures.models import Lecture
 from apps.domains.results.models import StudentReportedScore
 from apps.domains.students.models import Student
+from apps.support.results.dawon_school_report import school_scope_at_submission
 from apps.support.results.student_reported_scores import (
     lock_student_score_submission_references,
     serialize_reported_score,
@@ -168,6 +172,10 @@ def save_direct_scores(tenant, student, user, term, subjects):
         status=DIRECT_ENTRY_STATUS, **term.as_dict(),
     )
     existing = {row.subject.casefold(): row for row in direct}
+    # Adding a subject later keeps the historical scope of this term, including unknowns.
+    first = next(iter(existing.values()), None)
+    scope = ({"school_at_submission": first.school_at_submission, "year_grade_at_submission": first.year_grade_at_submission}
+             if first else school_scope_at_submission(tenant, locked, term, timezone.localdate(timezone=ZoneInfo("Asia/Seoul"))))
     for index, subject in enumerate(subjects):
         match = existing.pop(subject["subject"].casefold(), None)
         previous = {field: getattr(match, field) for field in OPTIONAL_ENTRY_FIELDS} if match else {}
@@ -185,7 +193,7 @@ def save_direct_scores(tenant, student, user, term, subjects):
         except ValueError as exc:
             raise ValidationError({"subjects": {index: str(exc)}}) from exc
         if match is None:
-            StudentReportedScore.objects.create(**values, direct_entry=True, status=DIRECT_ENTRY_STATUS)
+            StudentReportedScore.objects.create(**values, **scope, direct_entry=True, status=DIRECT_ENTRY_STATUS)
             continue
         changes = [
             key for key in ("subject", "score", "max_score", *OPTIONAL_ENTRY_FIELDS)

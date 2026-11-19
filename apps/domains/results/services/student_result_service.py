@@ -316,4 +316,17 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         cohort_size_published=bool(getattr(exam, "student_cohort_size_published", True)),
     ))
 
+    from apps.support.results.dawon_reference import reference_percent
+    if reference_percent(tenant, enrollment.lecture_id) is not None:
+        from apps.domains.results.services.exam_analysis_metrics import load_exam_analysis, score_rate
+        analysis = load_exam_analysis(exam=exam, tenant=tenant, lecture_id=enrollment.lecture_id, include_trends=False)
+        summary = analysis.insights["score_summary"]
+        if "top_reference_percent" not in summary:
+            return data
+        data.update({key: summary[key] for key in ("top_reference_percent", "top_reference_average", "top_reference_count")})
+        own = analysis.score_by_enrollment.get(enrollment_id)
+        average = summary["top_reference_average"]
+        data["top_reference_ratio"] = (score_rate(own.initial.total_score, own.initial.max_score) * 100 / average
+                                       if own and own.status == "DONE" and own.initial.max_score and average else None)
+
     return data
