@@ -1103,3 +1103,14 @@ API, failure/retry, parent sharing and verification contract is owned by
 [parent-account.md](parent-account.md#초기-비밀번호-설정과-실제-로그인-안내-2026-10-01).
 Existing rows/hashes are preserved by additive migrations; old API instances
 can consume the new pending credentials during a compatible rolling release.
+
+### Home grade rows projection
+
+`GET /api/v1/student/grades/?scope=rows` returns only `exams` and `homeworks`,
+with exactly the full grade board row ordering, history horizon and
+`learning_todo_eligible` rules. Student and selected-parent authorization is unchanged.
+The default (including unknown scope values) remains the full grade board.
+Home avoids board-only session totals, progression, lecture options and report layout;
+the internal analytics projection retains its existing independent behavior.
+Failures use the same endpoint permission/retry contract; no cross-request cache is added.
+Regression coverage compares both roles against full rows and guards analytics parity.
