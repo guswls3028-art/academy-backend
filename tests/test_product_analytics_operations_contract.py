@@ -48,6 +48,13 @@ def test_daily_maintenance_is_oidc_only_fail_closed_and_scope_limited() -> None:
     assert "Product analytics maintenance failed" in workflow
     assert "PRODUCT_ANALYTICS_MAINTENANCE_PASS" in workflow
     assert "report_product_usage_pilot --tenant-code hakwonplus" in workflow
+    assert workflow.count("ACADEMY_PRODUCT_ANALYTICS_MAINTENANCE=1") == 1
+    assert (
+        "docker exec --env ACADEMY_PRODUCT_ANALYTICS_MAINTENANCE=1 academy-api "
+        "python manage.py report_product_usage_pilot --tenant-code hakwonplus"
+    ) in workflow
+    assert "inactive) echo \"::notice::Product analytics pilot is inactive\"" in workflow
+    assert "Unexpected product analytics pilot report status" in workflow
     assert "--disable-on-hard-breach" in workflow
     assert "DISABLE hakwonplus ON HARD BREACH" in workflow
     assert "product-usage-pilot-report-${{ github.run_id }}" in workflow

@@ -500,6 +500,41 @@ Rules:
 - student-facing projections must be verified from the student role after admin
   or teacher writes the state.
 
+### Home schedule projection
+
+`GET /api/v1/student/sessions/me/` without `scope` retains the complete visible
+history array used by the schedule screen. Optional `?scope=home` returns
+`{items: [...], has_any_sessions: boolean}` for Home: the inclusive 28 Korean
+calendar dates from today minus 27 days, plus **all** future dates. Older and
+undated rows are omitted from `items`; the boolean still describes whether the
+unchanged complete visible schedule has any rows. An older-only or undated-only
+account therefore does not become a first-use empty state. Unknown scope is400.
+
+Both modes use the same tenant, active enrollment/session roster, explicit parent
+`X-Student-Id`, configured personal schedule assignment, course dates and hidden
+IDs/cutoff. A configured schedule's date takes precedence over the lecture's
+legacy date. Clinic dates use the saved booking range, including a start after
+midnight on the following day; existing pending/booked/attended labels are kept.
+No access, booking, progress or user-authored schedule is changed by this read.
+
+Home filters old rows in SQL and keeps the roster IDs as a scoped subquery. If
+the returned slice is nonempty, the boolean needs no additional query. Only an
+empty slice checks the full visible lecture/clinic scopes with bounded `EXISTS`
+queries; it never loads the history solely to compute the boolean. There is no
+cross-request cache or new schema/migration. The server derives the rolling
+date boundary for each request; no caller-supplied date or limit changes access.
+
+Clients must keep this projection's cache key separate from the full schedule
+list and retain `has_any_sessions` for Home's learning-history empty state.
+Older clients keep requesting the unchanged array. Failure/retry and selected
+child invalidation follow the existing frontend
+[student/parent contract](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/STUDENT-PARENT-APP-CONTRACT.md).
+Tests: `test_home_schedule_projection.py` covers both real JWT roles, 28-day
+boundaries/rollover, all future dates, assigned/undated/hidden/older-only rows,
+overnight clinic bookings, parent selection and foreign/inconsistent rosters,
+plus deterministic history-size/JSON-byte/query comparisons. These are local
+synthetic API measurements, not a production latency claim.
+
 ## 6. Connected Domains
 
 | Domain | Student contract |
