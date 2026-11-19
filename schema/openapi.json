@@ -20472,6 +20472,24 @@
         ],
         "type": "object"
       },
+      "StudentHomeSchedule": {
+        "properties": {
+          "has_any_sessions": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StudentSession"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "has_any_sessions",
+          "items"
+        ],
+        "type": "object"
+      },
       "StudentHomeworkOpenSchemaRequest": {
         "properties": {
           "homework_id": {
@@ -20882,6 +20900,83 @@
           "tenant",
           "updated_at",
           "user"
+        ],
+        "type": "object"
+      },
+      "StudentScheduleListOrHome": {
+        "oneOf": [
+          {
+            "items": {
+              "$ref": "#/components/schemas/StudentSession"
+            },
+            "type": "array"
+          },
+          {
+            "$ref": "#/components/schemas/StudentHomeSchedule"
+          }
+        ]
+      },
+      "StudentSession": {
+        "properties": {
+          "date": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "display_label": {
+            "nullable": true,
+            "type": "string"
+          },
+          "exam_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "order": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "regular_order": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "schedule_configured": {
+            "default": false,
+            "type": "boolean"
+          },
+          "schedule_label": {
+            "nullable": true,
+            "type": "string"
+          },
+          "session_type": {
+            "nullable": true,
+            "type": "string"
+          },
+          "start_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "default": "session",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title"
         ],
         "type": "object"
       },
@@ -53668,9 +53763,29 @@
       "get": {
         "description": "GET /student/sessions/me/\n학생이 접근 가능한 차시 목록 + 클리닉 예약 (date 기준 정렬).",
         "operationId": "student_sessions_me_retrieve",
+        "parameters": [
+          {
+            "description": "home은 오늘 포함 최근 28일과 모든 미래 일정, 전체 표시 일정 존재 여부를 반환한다. 생략하면 기존 전체 이력 배열을 반환한다.",
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "enum": [
+                "home"
+              ],
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentScheduleListOrHome"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

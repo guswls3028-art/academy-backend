@@ -1,6 +1,4 @@
 # apps/domains/student_app/dashboard/views.py
-import re
-from datetime import time as dt_time
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -13,17 +11,8 @@ from apps.support.student_app.dashboard_dependencies import (
     today_lecture_sessions_for_dashboard,
     upcoming_clinic_count_for_dashboard,
 )
+from apps.support.student_app.schedule_fallback import parse_lecture_start_time
 from .serializers import StudentDashboardSerializer
-
-
-def _parse_lecture_start_time(lecture_time_str: str) -> dt_time | None:
-    """lecture_time CharField (예: '토 12:00 ~ 13:00')에서 시작 시각 추출."""
-    if not lecture_time_str:
-        return None
-    m = re.search(r"(\d{1,2}):(\d{2})", lecture_time_str)
-    if m:
-        return dt_time(int(m.group(1)), int(m.group(2)))
-    return None
 
 
 def _get_tenant_from_request(request):
@@ -113,7 +102,7 @@ class StudentDashboardView(APIView):
                         "schedule_configured": s.schedule_configured,
                         "status": None,
                         "type": "session",
-                        "start_time": s.schedule_start_time if s.schedule_configured else _parse_lecture_start_time(
+                        "start_time": s.schedule_start_time if s.schedule_configured else parse_lecture_start_time(
                             getattr(s.lecture, "lecture_time", "") or ""
                         ),
                     }
