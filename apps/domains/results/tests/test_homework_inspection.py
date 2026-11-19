@@ -131,3 +131,53 @@ class HomeworkInspectionBatchTests(TestCase):
         self.assertEqual(self.save([{**change, "version": 1}]).status_code, 409)
         hidden = build_student_grades_summary(tenant=self.tenant, student=first.student)["homeworks"]
         self.assertFalse(any("practice_inspection" in row for row in hidden))
+
+    def test_home_rows_preserve_zero_inspection_for_absent_student_and_selected_parent(self):
+        from apps.domains.student_app.results.views import MyGradesSummaryView
+
+        enrollment = self.enrollments[0]
+        student = enrollment.student
+        TenantMembership.ensure_active(tenant=self.tenant, user=student.user, role="student")
+        parent_user = get_user_model().objects.create_user(username="inspection-parent", tenant=self.tenant)
+        TenantMembership.ensure_active(tenant=self.tenant, user=parent_user, role="parent")
+        student.parent = apps.get_model("parents", "Parent").objects.create(
+            tenant=self.tenant, user=parent_user, name="Parent", phone="01000000001",
+        )
+        student.save(update_fields=["parent", "updated_at"])
+        apps.get_model("attendance", "Attendance").objects.create(
+            tenant=self.tenant, enrollment=enrollment, session=self.session, status="ABSENT",
+        )
+        self.assertEqual(self.save([{
+            "enrollment_id": enrollment.pk, "version": 0,
+            "solved": 0, "total": 15, "feedback": "Shared inspection",
+        }]).status_code, 200)
+
+        for role, user in (("student", student.user), ("parent", parent_user)):
+            with self.subTest(role=role):
+                responses = []
+                for scope in ("", "rows"):
+                    request = self.factory.get("/api/v1/student/grades/", {"scope": scope},
+                                               HTTP_X_STUDENT_ID=str(student.pk))
+                    request.tenant = self.tenant
+                    force_authenticate(request, user=user)
+                    response = MyGradesSummaryView.as_view()(request)
+                    self.assertEqual(response.status_code, 200)
+                    responses.append(response.data)
+                full, rows = responses
+                self.assertEqual(rows, {key: full[key] for key in ("exams", "homeworks")})
+                self.assertEqual(len(rows["homeworks"]), 1)
+                self.assertEqual(rows["homeworks"][0]["practice_inspection"], {
+                    "solved": 0, "total": 15, "feedback": "Shared inspection",
+                })
+                self.assertEqual(rows["homeworks"][0]["enrollment_id"], enrollment.pk)
+        # Analytics deliberately retains its previous independent projection:
+        # an absent assignment without submission evidence is not resurrected.
+        analytics_rows = build_student_grades_summary(
+            tenant=self.tenant, student=student, include_grade_board_details=False,
+        )
+        self.assertEqual(analytics_rows["homeworks"], [])
+        other = build_student_grades_summary(
+            tenant=self.tenant, student=self.enrollments[1].student,
+            include_grade_board_details=False, include_learning_todo_eligibility=True,
+        )
+        self.assertFalse(any("practice_inspection" in row for row in other["homeworks"]))

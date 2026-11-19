@@ -450,7 +450,7 @@ def build_student_grades_summary(
             homework_retake_counts[(row["enrollment_id"], row["homework_id"])] = row["max_attempt"]
 
     shared_inspections = {}
-    if include_grade_board_details and assigned_homework_ids:
+    if (include_grade_board_details or include_learning_todo_eligibility) and assigned_homework_ids:
         inspections = list(HomeworkInspection.objects.filter(
             tenant=tenant, enrollment_id__in=enrollment_ids, homework_id__in=assigned_homework_ids,
         ).exclude(solved__isnull=True, feedback="").select_related("session__lecture"))

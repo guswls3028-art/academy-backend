@@ -1114,3 +1114,8 @@ Home avoids board-only session totals, progression, lecture options and report l
 the internal analytics projection retains its existing independent behavior.
 Failures use the same endpoint permission/retry contract; no cross-request cache is added.
 Regression coverage compares both roles against full rows and guards analytics parity.
+
+The Home rows projection also preserves explicitly shared `practice_inspection`,
+including real `0/15` values and inspection-only visibility for absent assignments.
+It uses the same live-assignment and selected-child checks as the full board;
+the independent analytics projection does not acquire this board publication data.
