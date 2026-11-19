@@ -1,5 +1,6 @@
 # apps/domains/results/models/__init__.py
 
+from .homework_inspection import HomeworkInspection
 from .result import Result
 from .result_item import ResultItem
 from .result_fact import ResultFact
@@ -12,6 +13,7 @@ from .student_reported_score import StudentReportedScore
 # ❌ SubmissionAnswer 제거됨 (raw input은 submissions 도메인 책임)
 
 __all__ = [
+    "HomeworkInspection",
     "Result",
     "ResultItem",
     "ResultFact",
