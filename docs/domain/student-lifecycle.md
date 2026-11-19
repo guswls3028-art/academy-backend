@@ -66,13 +66,17 @@ SSOT: `soft_delete_student(student, tenant=...)`
 
 이 변경의 학생/Inventory expand migration을 새 코드보다 먼저 적용한다. 기존
 이미지는 확장된 문자열을 기존 `_del_{id}_{original}` 계약으로 읽으므로 이미지
-롤백 시 75자 DB를 유지한다. 두 migration은 expand-only이며 역적용을 행 존재 여부와
-관계없이 축소 SQL보다 먼저 `IrreversibleError`로 중단한다. 조회 후 동시 삭제 쓰기와
-축소 사이의 경합도 없다. PostgreSQL의 varchar 축소 cast로
+롤백 시 75자 DB를 유지한다. 명시적인 스키마 역적용과 과거 migration 호환 검사에서는
+모든 대상 값이 50자 이하일 때만 축소를 허용한다. 각 migration은 같은 원자적 transaction을
+요구하며, PostgreSQL에서는 길이 검사 전에 대상 테이블에 `ACCESS EXCLUSIVE` 잠금을 잡아
+뒤따르는 축소 DDL까지 유지한다. Inventory의 두 테이블은 정해진 테이블명 순서로 한 번에
+잠근 뒤 검사한다. 50자를 넘는 값이 하나라도 있으면 DDL 전에 `IrreversibleError`로
+중단하므로 검사 후 동시 쓰기가 끼어드는 경합도 없다. PostgreSQL의 varchar 축소 cast로
 원본을 절단하거나 사용자 자료를 지워 롤백하지 않는다. 데이터 복사·R2 key 변경은 없다.
 `test_deleted_identifier_storage.py`는 실제 JWT bulk 삭제/반복/복원, 최대 bigint와
 40/50자·한글 아이디, 계정/학부모/성적/수강/저장소 key 보존·다른 학원 보호를 검사한다.
-PostgreSQL에서는 실제 50→75 migration과 역적용 차단도 검증한다.
+PostgreSQL에서는 실제 50→75 확장, 50자 이하 역적용·재확장, 잠금→검사→DDL 순서와
+긴 값의 역적용 차단도 검증한다. 기존 가입 이력 migration 검사도 원래 기대값대로 유지한다.
 - `Parent` 직접 연결을 끊는다.
 - 순수 학생 계정이면 해당 테넌트의 `student` 멤버십을 비활성화하고, 남은 활성 멤버십이 없을 때만 `User.is_active=False`로 둔다.
 - 같은 사용자에게 다른 테넌트 멤버십이나 같은 테넌트의 staff/teacher/admin/owner/parent 역할이 남아 있으면 전역 계정을 잠그지 않는다.

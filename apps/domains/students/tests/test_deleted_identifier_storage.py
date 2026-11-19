@@ -1,5 +1,6 @@
 """Public lifecycle regression for full-length reversible deletion identifiers."""
 from importlib import import_module
+from types import SimpleNamespace
 from unittest import skipUnless
 from unittest.mock import patch
 
@@ -154,6 +155,37 @@ class DeletedIdentifierStorageTests(TestCase):
                                   ("inventory_inventoryfolder", "student_ps"),
                                   ("inventory_inventoryfile", "student_ps")):
                 cursor.execute(f'ALTER TABLE "{table}" ALTER COLUMN "{column}" TYPE varchar(50)')
+        before_states = {}
+        with connection.schema_editor() as editor:
+            for migration in migrations:
+                before_states[migration.app_label] = state.clone()
+                state = migration.apply(state, editor)
+        statements = []
+
+        def record(execute, sql, params, many, context):
+            upper = sql.upper()
+            if upper.startswith("LOCK TABLE") or upper.startswith("ALTER TABLE") or "LENGTH(" in upper:
+                statements.append(upper)
+            return execute(sql, params, many, context)
+
+        with connection.execute_wrapper(record), connection.schema_editor() as editor:
+            for migration in reversed(migrations):
+                migration.unapply(before_states[migration.app_label], editor)
+        # Both inventory tables lock before either length scan, then narrowing.
+        for table in ("students_student", "inventory_inventoryfile", "inventory_inventoryfolder"):
+            lock = next(index for index, sql in enumerate(statements) if sql.startswith("LOCK TABLE") and table.upper() in sql)
+            scan = next(index for index, sql in enumerate(statements) if "LENGTH(" in sql and table.upper() in sql)
+            alter = next(index for index, sql in enumerate(statements) if sql.startswith("ALTER TABLE") and table.upper() in sql)
+            self.assertLess(lock, scan)
+            self.assertLess(scan, alter)
+        inventory_lock = next(sql for sql in statements if sql.startswith("LOCK TABLE") and "INVENTORY_" in sql)
+        self.assertLess(inventory_lock.index("INVENTORY_INVENTORYFILE"), inventory_lock.index("INVENTORY_INVENTORYFOLDER"))
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT character_maximum_length FROM information_schema.columns WHERE "
+                "(table_name = 'students_student' AND column_name = 'ps_number') OR "
+                "(table_name IN ('inventory_inventoryfile', 'inventory_inventoryfolder') AND column_name = 'student_ps')")
+            self.assertEqual(sorted(row[0] for row in cursor.fetchall()), [50, 50, 50])
+        state = before_states["students"].clone()
         with connection.schema_editor() as editor:
             for migration in migrations:
                 state = migration.apply(state, editor)
@@ -163,10 +195,35 @@ class DeletedIdentifierStorageTests(TestCase):
         InventoryFolder.objects.filter(pk=folder.pk).update(student_ps=tombstone)
         InventoryFile.objects.filter(pk=file.pk).update(student_ps=tombstone)
         for migration in migrations:
-            # Expand-only RunPython refuses reversal before any narrowing SQL,
-            # including when no long rows exist; there is no scan/ALTER race.
+            # A long row refuses reversal while exclusive locks prevent a writer
+            # from slipping between the scan and any narrowing SQL.
             with self.assertRaises(IrreversibleError), connection.schema_editor() as editor:
-                migration.unapply(state, editor)
+                migration.unapply(before_states[migration.app_label], editor)
         student.refresh_from_db(); folder.refresh_from_db(); file.refresh_from_db()
         self.assertEqual((student.ps_number, folder.student_ps, file.student_ps), (tombstone,) * 3)
         self.assertEqual(file.r2_key, "qa/migration-unchanged")
+
+    def test_reverse_guard_allows_short_values_and_refuses_each_long_namespace(self):
+        InventoryFolder = apps.get_model("inventory", "InventoryFolder")
+        InventoryFile = apps.get_model("inventory", "InventoryFile")
+        student = _create_student(self.tenant, "x" * 50)
+        folder = InventoryFolder.objects.create(tenant=self.tenant, scope="student", student_ps=student.ps_number, name="Authored")
+        file = InventoryFile.objects.create(tenant=self.tenant, scope="student", student_ps=student.ps_number,
+            folder=folder, display_name="Authored", original_name="saved.pdf", r2_key="qa/guard-unchanged")
+        student_guard = import_module("apps.domains.students.migrations.0022_student_deleted_identifier_storage").guard_identifier_shrink
+        inventory_guard = import_module("apps.domains.inventory.migrations.0003_student_deleted_identifier_storage").guard_identifier_shrink
+        editor = connection.schema_editor()
+        for model, row, field, guard in ((Student, student, "ps_number", student_guard),
+                                       (InventoryFolder, folder, "student_ps", inventory_guard),
+                                       (InventoryFile, file, "student_ps", inventory_guard)):
+            with self.subTest(model=model.__name__):
+                guard(apps, editor)
+                with self.assertRaises(IrreversibleError):
+                    guard(apps, SimpleNamespace(connection=connection, atomic_migration=False))
+                tombstone = "_del_9223372036854775807_" + "x" * 50
+                model.objects.filter(pk=row.pk).update(**{field: tombstone})
+                with self.assertRaises(IrreversibleError):
+                    guard(apps, editor)
+                self.assertEqual(model.objects.values_list(field, flat=True).get(pk=row.pk), tombstone)
+                model.objects.filter(pk=row.pk).update(**{field: "x" * 50})
+                guard(apps, editor)
