@@ -1,15 +1,17 @@
 # apps/domains/student_app/sessions/views.py
 import re
-from datetime import date as dt_date, time as dt_time
+from datetime import date as dt_date, time as dt_time, timedelta
 
 from django.utils import timezone
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from drf_spectacular.utils import OpenApiParameter, PolymorphicProxySerializer, extend_schema
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
 from apps.support.student_app.session_dependencies import (
+    active_student_session_ids_query,
     get_active_student_session_ids,
     get_future_hidden_clinic_participant_ids,
     get_future_hidden_session_ids,
@@ -18,10 +20,12 @@ from apps.support.student_app.session_dependencies import (
     get_student_detail_session,
     get_student_lecture_sessions,
     student_clinic_schedule_entry,
+    student_clinic_participants_query,
+    student_lecture_sessions_query,
     student_owns_clinic_participant,
     student_owns_session,
 )
-from .serializers import StudentSessionSerializer
+from .serializers import StudentHomeScheduleSerializer, StudentSessionSerializer
 
 
 def _parse_lecture_start_time(lecture_time_str: str) -> dt_time | None:
@@ -56,12 +60,28 @@ class StudentSessionListView(APIView):
 
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
+    @extend_schema(parameters=[OpenApiParameter(
+        "scope", str, enum=["home"], required=False,
+        description="home은 오늘 포함 최근 28일과 모든 미래 일정, 전체 표시 일정 존재 여부를 반환한다. 생략하면 기존 전체 이력 배열을 반환한다.",
+    )], responses={200: PolymorphicProxySerializer(
+        component_name="StudentScheduleListOrHome",
+        serializers=[StudentSessionSerializer(many=True), StudentHomeScheduleSerializer],
+        resource_type_field_name=None, many=False,
+    )})
     def get(self, request):
+        scope = getattr(request, "query_params", {}).get("scope")
+        if scope not in (None, "home"):
+            return Response({"scope": ["지원하지 않는 일정 조회 범위입니다."]}, status=400)
+        on_or_after = timezone.localdate() - timedelta(days=27) if scope == "home" else None
         student = get_request_student(request)
         if not student:
+            if scope == "home":
+                return Response({"items": [], "has_any_sessions": False})
             return Response(StudentSessionSerializer([], many=True).data)
         tenant = getattr(request, "tenant", None)
         if not tenant:
+            if scope == "home":
+                return Response({"items": [], "has_any_sessions": False})
             return Response(StudentSessionSerializer([], many=True).data)
 
         # 학생이 휴지통으로 비운 cutoff (포함, 이 날짜 이하는 숨김)
@@ -73,11 +93,13 @@ class StudentSessionListView(APIView):
 
         # 1) 강의 차시
         sessions = get_student_lecture_sessions(
-            session_ids=get_active_student_session_ids(student=student, tenant=tenant),
+            session_ids=(active_student_session_ids_query(student=student, tenant=tenant)
+                if on_or_after is not None else get_active_student_session_ids(student=student, tenant=tenant)),
             tenant=tenant,
             hidden_before=hidden_before,
             hidden_session_ids=hidden_session_ids,
             student=student,
+            on_or_after=on_or_after,
         )
         data = [
             {
@@ -104,6 +126,9 @@ class StudentSessionListView(APIView):
         clinic_participants = get_student_clinic_participants(
             student=student,
             tenant=tenant,
+            on_or_after=on_or_after,
+            hidden_before=hidden_before if scope == "home" else None,
+            hidden_ids=hidden_clinic_participant_ids if scope == "home" else None,
         )
         for cp in clinic_participants:
             sess = cp.session
@@ -128,6 +153,17 @@ class StudentSessionListView(APIView):
 
         # 날짜 정렬
         data.sort(key=lambda x: x.get("date") or "9999-99-99")
+        if scope == "home":
+            has_any_sessions = bool(data) or student_lecture_sessions_query(
+                session_ids=active_student_session_ids_query(student=student, tenant=tenant),
+                tenant=tenant, student=student, hidden_before=hidden_before,
+                hidden_session_ids=hidden_session_ids,
+            ).exists() or student_clinic_participants_query(
+                student=student, tenant=tenant, hidden_before=hidden_before,
+                hidden_ids=hidden_clinic_participant_ids,
+            ).exists()
+            return Response({"items": StudentSessionSerializer(data, many=True).data,
+                "has_any_sessions": has_any_sessions})
         return Response(StudentSessionSerializer(data, many=True).data)
 
 
