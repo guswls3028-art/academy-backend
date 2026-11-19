@@ -2,6 +2,7 @@
 import re
 from datetime import date as dt_date, time as dt_time
 
+from django.db import transaction
 from django.utils import timezone
 
 from rest_framework.views import APIView
@@ -137,15 +138,16 @@ class StudentSessionClearPastView(APIView):
     학생 본인(또는 학부모 대리 계정)이 "내 일정" 휴지통을 눌렀을 때 호출.
     오늘 이전(어제까지) 차시/클리닉 예약을 화면에서 모두 숨김.
     실제 차시/예약 데이터는 학원/선생 소유이므로 절대 삭제하지 않고,
-    Student.schedule_hidden_before 컷오프만 갱신.
+    학생의 숨김 컷오프와 그 이후에 숨긴 일정 목록을 저장한다.
     """
 
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
+    @transaction.atomic
     def post(self, request):
         from datetime import timedelta
 
-        student = get_request_student(request)
+        student = get_request_student(request, for_update=True)
         if not student:
             return Response({"detail": "Not found."}, status=404)
         tenant = getattr(request, "tenant", None)
@@ -200,8 +202,9 @@ class StudentSessionHideView(APIView):
 
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
+    @transaction.atomic
     def post(self, request):
-        student = get_request_student(request)
+        student = get_request_student(request, for_update=True)
         if not student:
             return Response({"detail": "Not found."}, status=404)
         tenant = getattr(request, "tenant", None)
@@ -244,8 +247,9 @@ class StudentSessionUnhideView(APIView):
 
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
+    @transaction.atomic
     def post(self, request):
-        student = get_request_student(request)
+        student = get_request_student(request, for_update=True)
         if not student:
             return Response({"detail": "Not found."}, status=404)
         tenant = getattr(request, "tenant", None)
