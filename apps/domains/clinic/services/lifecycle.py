@@ -10,6 +10,7 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import APIException, NotFound, PermissionDenied, ValidationError
 
+from apps.domains.clinic.dawon_demo import is_sample_session
 from apps.domains.clinic.models import (
     Session,
     SessionParticipant,
@@ -514,6 +515,8 @@ def session_change_notice_student_ids(*, tenant, session) -> list[int]:
 
 
 def _reservation_notification(participant: SessionParticipant) -> ClinicNotificationEvent | None:
+    if is_sample_session(participant.session):
+        return None
     if participant.status not in (
         SessionParticipant.Status.BOOKED,
         SessionParticipant.Status.PENDING,
@@ -538,8 +541,10 @@ def _booking_change_notification(
     new_booking: SessionParticipant,
     old_session,
     actor,
-) -> ClinicNotificationEvent:
+) -> ClinicNotificationEvent | None:
     new_session = new_booking.session
+    if is_sample_session(new_session):
+        return None
     return ClinicNotificationEvent(
         trigger="clinic_reservation_changed",
         student=new_booking.student,
@@ -726,7 +731,7 @@ def change_participant_status(
     ):
         return ParticipantTransitionResult(
             participant=participant,
-            notification_result=_already_cancelled_notification_result(),
+            notification_result=None if is_sample_session(participant.session) else _already_cancelled_notification_result(),
         )
     if expected_checked_in_at is not None and (
         next_status != SessionParticipant.Status.BOOKED
@@ -798,6 +803,8 @@ def change_participant_status(
             reason=f"booking_{next_status}",
             removed_at=changed_at,
         )
+    if is_sample_session(participant.session):
+        return ParticipantTransitionResult(participant=participant)
     notification = _status_notification(participant, next_status, actor=actor)
     if request_student and next_status == SessionParticipant.Status.CANCELLED:
         if notification is None:
@@ -1436,7 +1443,7 @@ def create_participant(
             raise ValidationError({"detail": "등록 가능한 클리닉을 선택해주세요. 해당 날짜에 열린 클리닉만 신청할 수 있습니다."})
         _validate_student_session_eligibility(tenant=tenant, student=request_student, session=session)
         requested_status = SessionParticipant.Status.PENDING
-        if getattr(tenant, "clinic_auto_approve_booking", False):
+        if getattr(tenant, "clinic_auto_approve_booking", False) and not is_sample_session(session):
             requested_status = SessionParticipant.Status.BOOKED
         if not student_request_memo:
             student_request_memo = memo
@@ -1819,7 +1826,7 @@ def change_participant_booking(
     )
 
     new_status = SessionParticipant.Status.BOOKED if is_staff_change else SessionParticipant.Status.PENDING
-    if not is_staff_change and getattr(tenant, "clinic_auto_approve_booking", False):
+    if not is_staff_change and getattr(tenant, "clinic_auto_approve_booking", False) and not is_sample_session(new_session):
         new_status = SessionParticipant.Status.BOOKED
 
     if is_staff_change:

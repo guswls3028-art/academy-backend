@@ -834,6 +834,12 @@ class PostViewSet(viewsets.ModelViewSet):
         # 발송 대상은 글 작성자(author_role)에 따라 분기:
         #   - student 작성: QnA→학생, 상담→학생+학부모
         #   - parent 작성: QnA·상담 모두 학부모만 (학부모가 본인 자격으로 쓴 글)
+        demo_counsel_reply = (
+            post.post_type == "counsel"
+            and hasattr(request.auth, "get")
+            and request.auth.get("dawon_demo_role") == "teacher"
+            and (tenant.pk, tenant.code) == (719, "dawon")
+        )
         suppress_qna_notification = False
         if post.post_type == "qna":
             try:
@@ -848,6 +854,7 @@ class PostViewSet(viewsets.ModelViewSet):
             and post.post_type in ("qna", "counsel")
             and post.created_by_id
             and not suppress_qna_notification
+            and not demo_counsel_reply
         ):
             category_fallback = "QnA" if post.post_type == "qna" else "상담"
             ctx = {

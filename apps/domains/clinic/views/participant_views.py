@@ -14,6 +14,7 @@ from rest_framework import serializers
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
+from ..dawon_demo import LOCATION, MEMO, SAMPLE_STUDENT_ID, is_demo_tenant
 from ..models import SessionParticipant, SessionParticipantPlanItem
 from ..serializers import (
     ClinicSessionParticipantBulkCreateResponseSerializer,
@@ -282,6 +283,10 @@ class ParticipantViewSet(
             )
             .prefetch_related(*_participant_plan_prefetches())
         )
+
+        auth = getattr(self.request, "auth", None)
+        if is_demo_tenant(tenant) and hasattr(auth, "get") and auth.get("dawon_demo_role"):
+            qs = qs.filter(session__memo=MEMO, session__location=LOCATION, student_id=SAMPLE_STUDENT_ID)
 
         # 학생이 조회하는 경우: 자신의 예약 신청만 조회
         student = _get_request_student_for_clinic(self.request)

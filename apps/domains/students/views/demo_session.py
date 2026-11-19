@@ -1,3 +1,4 @@
+import re
 from datetime import timedelta
 
 from django.conf import settings
@@ -16,7 +17,7 @@ from apps.domains.students.models import Student
 
 
 class DemoRoleInput(serializers.Serializer):
-    role = serializers.ChoiceField(choices=["teacher", "student"])
+    role = serializers.ChoiceField(choices=["teacher", "student", "guardian"])
 
 
 class DawonDemoSessionView(APIView):
@@ -38,13 +39,32 @@ class DawonDemoSessionView(APIView):
         else:
             sample = Student.objects.filter(
                 tenant=tenant, pk=2, name="다원 수업 검수 학생 2", deleted_at__isnull=True, is_managed=True,
-            ).select_related("user").first()
-            user = sample.user if sample else None
-            expected = "student"
+            ).select_related("user", "parent__user").first()
+            if role == "guardian":
+                parent = sample.parent if sample else None
+                user = parent.user if parent and parent.tenant_id == tenant.pk else None
+                if user:
+                    from apps.domains.parents.services import parent_account_username
+
+                    if (
+                        not re.fullmatch(r"0100000\d{4}", parent.phone)
+                        or user.username != parent_account_username(tenant=tenant, parent_phone=parent.phone)
+                        or user.tenant_id != tenant.pk or user.is_staff or user.is_superuser
+                    ):
+                        raise NotFound()
+                expected = "parent"
+                if user and Student.objects.filter(tenant=tenant, parent=parent, deleted_at__isnull=True).exclude(pk=sample.pk).exists():
+                    raise NotFound()
+            else:
+                user = sample.user if sample else None
+                expected = "student"
         if not user or not user.is_active or not TenantMembership.objects.filter(
             tenant=tenant, user=user, role=expected, is_active=True,
         ).exists():
             raise NotFound("체험 계정을 확인할 수 없습니다.")
+        if role == "student":
+            from apps.domains.clinic.dawon_demo import ensure_demo_clinic_sessions
+            ensure_demo_clinic_sessions(tenant)
 
         end = timezone.now() + timedelta(hours=2)
         jwt = RefreshToken.for_user(user)

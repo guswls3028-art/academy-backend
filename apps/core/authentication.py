@@ -14,12 +14,90 @@ from rest_framework_simplejwt.exceptions import AuthenticationFailed
 _teacher_write_domains = re.compile(r"^/api/v1/(students|lectures|enrollments|attendance|exams|homework|results|surveys)/")
 _restricted_actions = re.compile(r"(password|support-session|rotate|delete|purge|archive|send|contact|notify|billing|payment)", re.I)
 _qr_point_change = re.compile(r"^/api/v1/lectures/attendance-qr/[1-9]\d*/?$")
+_dawon_counsel_reply = re.compile(r"/api/v1/community/posts/([1-9]\d{0,17})/replies/")
+_dawon_video_action = re.compile(r"/api/v1/student/video/videos/([1-9]\d{0,17})/(playback|progress|review-watch)/")
+_dawon_video_path = "assets/dawon-lesson-r13/master.m3u8"
+_dawon_counsel_examples = {
+    "오답 복습 방법": "예시 학생이 틀린 문제를 다시 풀 때 어떤 순서로 복습하면 좋을까요?",
+    "시험 전 학습 계획": "예시 학생이 다음 시험까지 일주일 동안 실천할 학습 계획을 알려 주세요.",
+    "수업 진도 확인": "예시 학생이 이번 주에 배운 내용과 다음 수업 준비물을 알고 싶습니다.",
+}
+_dawon_counsel_answers = {
+    "틀린 이유를 한 줄로 적고, 다음 날 같은 문제를 풀이 없이 다시 풀어 보세요.",
+    "첫 이틀은 개념을 복습하고, 이후에는 유형별 문제와 오답을 번갈아 풀어 보세요.",
+    "이번 주에는 일차방정식을 배웠습니다. 다음 수업에는 오답 노트와 교재를 준비해 주세요.",
+}
 _student_qr_actions = {"/api/v1/student/attendance/qr/resolve/", "/api/v1/student/attendance/qr/record/"}
+
+
+def _allows_dawon_workflow_write(request, role):
+    from apps.domains.clinic.dawon_demo import allows_demo_clinic_write, is_demo_tenant
+
+    tenant = getattr(request, "tenant", None)
+    if not is_demo_tenant(tenant):
+        return False
+    if allows_demo_clinic_write(request, role):
+        return True
+    if request.method != "POST":
+        return False
+
+    path = request.path
+    if role == "guardian" and path == "/api/v1/community/posts/":
+        return (
+            request.headers.get("X-Student-Id") == "2"
+            and isinstance(request.data, dict)
+            and request.data.get("post_type") == "counsel"
+            and str(request.data.get("created_by")) == "2"
+            and not request.data.get("node_ids")
+            and not request.data.get("category_label")
+            and isinstance(request.data.get("title"), str)
+            and request.data.get("title") in _dawon_counsel_examples
+            and request.data.get("content") == _dawon_counsel_examples[request.data["title"]]
+        )
+    reply = _dawon_counsel_reply.fullmatch(path)
+    if role == "teacher" and reply:
+        from apps.domains.community.models import PostEntity
+
+        if not isinstance(request.data, dict):
+            return False
+        content = request.data.get("content")
+        return (
+            isinstance(content, str)
+            and content in _dawon_counsel_answers
+            and not request.data.get("parent_reply")
+            and PostEntity.objects.filter(
+                pk=reply[1], tenant=tenant, post_type="counsel", author_role="parent", created_by_id=2,
+            ).exists()
+        )
+
+    if role not in {"student", "guardian"}:
+        return False
+    video = _dawon_video_action.fullmatch(path)
+    if video:
+        video_id = video[1]
+    elif path == "/api/v1/media/playback/renew/" and isinstance(request.data, dict):
+        from apps.domains.video.drm import verify_playback_token
+
+        playback_token = request.data.get("token")
+        if not isinstance(playback_token, str):
+            return False
+        ok, payload, _ = verify_playback_token(playback_token)
+        if not ok:
+            return False
+        video_id = payload.get("video_id")
+    else:
+        return False
+
+    from apps.domains.video.models import Video
+
+    return Video.objects.filter(
+        pk=video_id, tenant=tenant, hls_path=_dawon_video_path, status=Video.Status.READY,
+    ).exists()
 
 
 def _validate_dawon_demo_access(request, token):
     role = token.get("dawon_demo_role")
-    if role not in {"student", "teacher"} or token.get("dawon_demo_until", 0) <= int(timezone.now().timestamp()):
+    if role not in {"student", "guardian", "teacher"} or token.get("dawon_demo_until", 0) <= int(timezone.now().timestamp()):
         raise AuthenticationFailed("체험 세션이 만료되었습니다. 데모 계정으로 다시 시작해 주세요.")
 
     path = request.path
@@ -33,6 +111,8 @@ def _validate_dawon_demo_access(request, token):
     if role == "student" and method == "PUT" and path == "/api/v1/results/school-reports/me/":
         return
     if role == "teacher" and method in {"POST", "PATCH", "PUT"} and _teacher_write_domains.match(path):
+        return
+    if _allows_dawon_workflow_write(request, role):
         return
     raise PermissionDenied("이 작업은 담당자 계정에서 할 수 있습니다.")
 

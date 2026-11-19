@@ -17,6 +17,7 @@ from rest_framework import serializers
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
+from ..dawon_demo import LOCATION, MEMO, is_demo_tenant
 from ..models import Session, SessionParticipant
 from ..serializers import ClinicSessionSerializer
 from ..filters import SessionFilter
@@ -189,6 +190,10 @@ class SessionViewSet(viewsets.ModelViewSet):
                 ),
             )
         )
+
+        auth = getattr(self.request, "auth", None)
+        if is_demo_tenant(tenant) and hasattr(auth, "get") and auth.get("dawon_demo_role"):
+            qs = qs.filter(memo=MEMO, location=LOCATION)
 
         # 학생 조회 시: 본인 조건에 맞는 세션만 노출
         student = get_student_for_clinic_request(self.request)
