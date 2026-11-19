@@ -20,3 +20,8 @@ class StudentSessionSerializer(serializers.Serializer):
     start_time = serializers.TimeField(allow_null=True, required=False)
     schedule_label = serializers.CharField(allow_null=True, required=False)
     schedule_configured = serializers.BooleanField(required=False, default=False)
+
+
+class StudentHomeScheduleSerializer(serializers.Serializer):
+    items = StudentSessionSerializer(many=True)
+    has_any_sessions = serializers.BooleanField()
