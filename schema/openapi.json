@@ -11713,7 +11713,7 @@
           },
           "ps_number": {
             "description": "PS 번호 (학원 학생 ID)",
-            "maxLength": 50,
+            "maxLength": 75,
             "minLength": 1,
             "type": "string"
           },
@@ -18480,6 +18480,93 @@
         ],
         "type": "object"
       },
+      "StaffMe": {
+        "properties": {
+          "assigned_work_types": {
+            "items": {
+              "$ref": "#/components/schemas/StaffMeAssignedWorkType"
+            },
+            "type": "array"
+          },
+          "default_work_type_id": {
+            "type": "integer"
+          },
+          "is_authenticated": {
+            "type": "boolean"
+          },
+          "is_owner": {
+            "type": "boolean"
+          },
+          "is_payroll_manager": {
+            "type": "boolean"
+          },
+          "is_staff": {
+            "type": "boolean"
+          },
+          "is_superuser": {
+            "type": "boolean"
+          },
+          "owner_display_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "owner_phone": {
+            "nullable": true,
+            "type": "string"
+          },
+          "owner_setup_required": {
+            "description": "대표의 기존 자동 연결 준비가 필요하면 true. 명시적인 POST /staffs/me/로 준비합니다.",
+            "type": "boolean"
+          },
+          "staff_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "is_authenticated",
+          "is_owner",
+          "is_payroll_manager",
+          "is_staff",
+          "is_superuser",
+          "owner_display_name",
+          "owner_phone",
+          "owner_setup_required"
+        ],
+        "type": "object"
+      },
+      "StaffMeAssignedWorkType": {
+        "properties": {
+          "hourly_wage": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hourly_wage",
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "StaffMeError": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "type": "object"
+      },
       "StaffPayrollOverview": {
         "properties": {
           "date_from": {
@@ -19778,6 +19865,7 @@
           },
           "ps_number": {
             "description": "미입력 시 임의 6자리 자동 부여 (학생이 추후 변경 가능)",
+            "maxLength": 50,
             "type": "string"
           },
           "schedule_hidden_before": {
@@ -19972,6 +20060,7 @@
           },
           "ps_number": {
             "description": "미입력 시 임의 6자리 자동 부여 (학생이 추후 변경 가능)",
+            "maxLength": 50,
             "type": "string"
           },
           "schedule_hidden_before": {
@@ -20217,7 +20306,7 @@
           },
           "ps_number": {
             "description": "PS 번호 (학원 학생 ID)",
-            "maxLength": 50,
+            "maxLength": 75,
             "type": "string"
           },
           "school_type": {
@@ -20370,7 +20459,7 @@
           },
           "ps_number": {
             "description": "PS 번호 (학원 학생 ID)",
-            "maxLength": 50,
+            "maxLength": 75,
             "minLength": 1,
             "type": "string"
           },
@@ -21045,7 +21134,7 @@
           },
           "ps_number": {
             "description": "PS 번호 (학원 학생 ID)",
-            "maxLength": 50,
+            "maxLength": 75,
             "type": "string"
           },
           "school_type": {
@@ -29089,6 +29178,165 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "core"
+        ]
+      }
+    },
+    "/api/v1/core/dev/agent-sessions/": {
+      "get": {
+        "description": "Read-only coding-session metadata for tenant 1's admin97. Impersonation and support previews are denied.",
+        "operationId": "core_dev_agent_sessions_retrieve",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "collected_at": {
+                      "format": "date-time",
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "nodes": {
+                      "items": {
+                        "properties": {
+                          "evidence": {
+                            "enum": [
+                              "runtime",
+                              "last_turn",
+                              "closed",
+                              "unknown"
+                            ],
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "parent_id": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "provider": {
+                            "enum": [
+                              "codex",
+                              "claude"
+                            ],
+                            "type": "string"
+                          },
+                          "role": {
+                            "maxLength": 80,
+                            "type": "string"
+                          },
+                          "status": {
+                            "enum": [
+                              "running",
+                              "waiting",
+                              "completed",
+                              "interrupted",
+                              "unknown"
+                            ],
+                            "type": "string"
+                          },
+                          "title": {
+                            "maxLength": 160,
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "format": "date-time",
+                            "nullable": true,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "provider",
+                          "parent_id",
+                          "title",
+                          "role",
+                          "status",
+                          "evidence",
+                          "updated_at"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 600,
+                      "type": "array"
+                    },
+                    "schema": {
+                      "enum": [
+                        1
+                      ],
+                      "type": "integer"
+                    },
+                    "source_errors": {
+                      "items": {
+                        "enum": [
+                          "codex",
+                          "claude"
+                        ],
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "source_status": {
+                      "enum": [
+                        "connected",
+                        "stale",
+                        "unavailable"
+                      ],
+                      "type": "string"
+                    },
+                    "stale_after_seconds": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "schema",
+                    "collected_at",
+                    "source_status",
+                    "stale_after_seconds",
+                    "nodes",
+                    "truncated",
+                    "source_errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -51503,7 +51751,83 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StaffWrite"
+                  "$ref": "#/components/schemas/StaffMe"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      },
+      "post": {
+        "operationId": "staffs_me_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMe"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMeError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMeError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMeError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMeError"
                 }
               }
             },

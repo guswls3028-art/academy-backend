@@ -14,6 +14,7 @@ from apps.support.students.namespace_lock import (
     lock_student_creation_tenant_reference,
 )
 from apps.domains.students.models import (
+    STUDENT_LOGIN_ID_MAX_LENGTH,
     StudentInventoryNamespaceChanged,
     StudentInventoryNamespaceConflict,
 )
@@ -82,6 +83,8 @@ def create_student_account(
     parent_phone = str(data.get("parent_phone") or "").strip()
     name = str(data.get("name") or "").strip()
     ps_number = normalize_login_identifier(data.get("ps_number"))
+    if len(ps_number) > STUDENT_LOGIN_ID_MAX_LENGTH:
+        raise StudentIdentityError({"ps_number": "학생 아이디는 50자 이하여야 합니다."})
     if not ps_number:
         raise ValueError("ps_number is required")
     data["ps_number"] = ps_number

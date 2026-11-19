@@ -602,7 +602,7 @@ class ScheduledNotificationViewTests(TestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self.assertIn("page", response.data)
 
-    def test_list_pending_scheduled_notifications_masks_recipient(self):
+    def test_list_pending_scheduled_notifications_shows_authorized_recipient(self):
         ScheduledNotification.objects.create(
             tenant=self.tenant,
             trigger="manual_send",
@@ -625,7 +625,7 @@ class ScheduledNotificationViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["count"], 1)
         item = response.data["results"][0]
-        self.assertEqual(item["recipient_summary"], "홍길동 / 010****2222")
+        self.assertEqual(item["recipient_summary"], "홍길동 / 01011112222")
         self.assertEqual(item["message_preview"], "예약 본문")
 
     def test_list_redacts_legacy_parent_phone_target_and_sensitive_body(self):

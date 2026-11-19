@@ -31,6 +31,13 @@ only controls staff management classification and must never be described or
 implemented as login suspension. Deletion/restore and enrollment state transfer
 are owned by `student-lifecycle.md`.
 
+Normal student login identifiers remain limited to 50 characters. The internal
+deleted identifier and matching Inventory ownership metadata allow 75 characters
+so the full original plus bigint deletion prefix remains reversible. Public
+create/update validation does not inherit the wider storage limit. Expansion,
+restore/reuse, immutable R2 keys, and safe image rollback are owned by
+[`student-lifecycle.md`](student-lifecycle.md#2-soft-delete).
+
 Tenant-scoped student, lecture-enrollment, and session-enrollment lists use
 student name ascending with stable ID tie-breakers unless the user explicitly
 chooses another supported ordering. Search, deleted-state, lecture, and session
