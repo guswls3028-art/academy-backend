@@ -2,7 +2,7 @@
 
 **확인일** 2026-11-19 KST
 
-**상태** 도메인 등록 및 Cloudflare 위임 확인, 서비스 연결과 운영 테넌트 생성 준비 중
+**상태** 새 도메인 네임서버 확인, 도메인 등록·위임 및 서비스 배포 대기
 
 ## 요청사항
 
@@ -30,7 +30,7 @@
 
 ## 도메인과 진행 상태
 
-- 확정 도메인은 `정성원연구소.com`이며 DNS 표기는 `xn--2e0bx88a3ha28m85ax5c.com`이다.
-- Cloudflare가 발급한 1차는 `lila.ns.cloudflare.com`, 2차는 `woz.ns.cloudflare.com`이다. 2026-11-19 KST에 `.com` 등록부와 Google·Cloudflare 공개 DNS에서 이 두 NS로 위임을 확인했다. Pages와 HTTPS 연결은 정식 배포 및 DB 준비 이후 진행한다.
+- 확정 도메인은 `정성원영어.com`이며 DNS 표기는 `xn--oj4bo6fugp3an0c.com`이다. 2026-11-19 KST에 사용자가 기존 도메인을 환불하고 이 도메인으로 등록하기로 했다. 테넌트의 표시명, 기능과 체험 조건을 새 주소에 적용한다.
+- Cloudflare가 발급한 1차는 `barbara.ns.cloudflare.com`, 2차는 `thaddeus.ns.cloudflare.com`이다. 영역은 위임 대기 상태다. 등록기관 변경 후 Google·Cloudflare 공개 DNS에서 이 두 NS를 확인한다. Pages와 HTTPS 연결은 정식 배포 및 DB 준비 이후 진행한다.
 - 확정 테넌트 코드는 `jeongseongwon-lab`이다. 운영 DB 목록에서 ID `12`의 공석을 확인했으며, 실제 등록 전에 다시 확인한다. 초기 브랜딩은 학원명으로 만든 임시 텍스트 로고를 사용한다.
 - 운영 DB 등록, 계정 생성, 기능 실측은 대기 중이다. 후속 증거는 [커스텀 도메인 온보딩](custom-domain.md)의 해당 단계와 함께 이 문서에 갱신한다.

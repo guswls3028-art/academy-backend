@@ -49,9 +49,11 @@ def production_cors():
 @pytest.mark.parametrize("origin,allowed", [
     ("https://hakwonplus.com", True),
     ("https://tchul.com", True),
-    ("https://xn--2e0bx88a3ha28m85ax5c.com", True),
-    ("https://www.xn--2e0bx88a3ha28m85ax5c.com", True),
-    ("https://xn--2e0bx88a3ha28m85ax5c.com.external.example", False),
+    ("https://xn--oj4bo6fugp3an0c.com", True),
+    ("https://www.xn--oj4bo6fugp3an0c.com", True),
+    ("https://xn--oj4bo6fugp3an0c.com.external.example", False),
+    ("https://xn--2e0bx88a3ha28m85ax5c.com", False),
+    ("https://www.xn--2e0bx88a3ha28m85ax5c.com", False),
     ("https://academy-frontend-26b.pages.dev", True),
     ("https://a1b2c3d4.academy-frontend-26b.pages.dev", True),
     ("https://production-candidate-123-1.academy-frontend-26b.pages.dev", True),
@@ -92,9 +94,11 @@ def test_production_cors_origin_boundary(production_cors, method, origin, allowe
 @pytest.mark.parametrize("host,allowed", [
     ("academy-frontend-26b.pages.dev", True),
     ("academy-frontend.pages.dev", False),
-    ("xn--2e0bx88a3ha28m85ax5c.com", True),
-    ("www.xn--2e0bx88a3ha28m85ax5c.com", True),
-    ("xn--2e0bx88a3ha28m85ax5c.com.external.example", False),
+    ("xn--oj4bo6fugp3an0c.com", True),
+    ("www.xn--oj4bo6fugp3an0c.com", True),
+    ("xn--oj4bo6fugp3an0c.com.external.example", False),
+    ("xn--2e0bx88a3ha28m85ax5c.com", False),
+    ("www.xn--2e0bx88a3ha28m85ax5c.com", False),
 ])
 def test_production_host_and_csrf_boundary(production_cors, host, allowed):
     with override_settings(**production_cors):
