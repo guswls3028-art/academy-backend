@@ -2,11 +2,13 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.cache.backends.locmem import LocMemCache
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.test import APIRequestFactory, force_authenticate
 from rest_framework.throttling import AnonRateThrottle
+from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.core.authentication import _validate_dawon_demo_access
@@ -23,7 +25,7 @@ from apps.domains.staffs.models import Staff
 from apps.domains.students.models import ClassGroup, ClassGroupLecture, Student
 from apps.domains.teachers.models import Teacher
 from apps.domains.students.views.demo_operations import DawonDemoOperationsView
-from apps.domains.students.views.demo_session import DawonDemoSessionView
+from apps.domains.students.views.demo_session import DawonDemoLearningThrottle, DawonDemoSessionView
 
 
 @override_settings(DAWON_REVIEW_CLASS_GROUPS=True)
@@ -140,6 +142,28 @@ class DemoOperationsTests(TestCase):
                 read = APIRequestFactory().get(path)
                 read.tenant = self.tenant
                 _validate_dawon_demo_access(read, token)
+
+    def test_public_reads_do_not_consume_demo_login_quota(self):
+        factory = APIRequestFactory()
+        cache = LocMemCache(self.id(), {})
+        self.addCleanup(cache.clear)
+
+        def login(role):
+            request = factory.post("/api/v1/students/demo-session/", {"role": role}, format="json")
+            request.tenant = self.tenant
+            return DawonDemoSessionView.as_view()(request)
+
+        with patch.object(AnonRateThrottle, "cache", cache), patch.dict(AnonRateThrottle.THROTTLE_RATES, {"anon": "1/minute"}):
+            public = APIView().initialize_request(factory.get("/api/v1/core/program/"))
+            self.assertTrue(AnonRateThrottle().allow_request(public, None))
+            self.assertFalse(AnonRateThrottle().allow_request(public, None))
+            self.assertTrue(DawonDemoLearningThrottle().allow_request(public, None))
+            self.assertEqual(login("admin").status_code, 200)
+            second = login("teacher")
+            self.assertEqual(second.status_code, 429)
+            self.assertIn("Retry-After", second)
+            self.assertFalse(AnonRateThrottle().allow_request(public, None))
+            self.assertTrue(DawonDemoLearningThrottle().allow_request(public, None))
 
     def test_teacher_homework_write_methods_and_resources(self):
         factory = APIRequestFactory()

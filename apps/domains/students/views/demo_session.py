@@ -20,10 +20,15 @@ class DemoRoleInput(serializers.Serializer):
     role = serializers.ChoiceField(choices=["admin", "teacher", "student", "guardian"])
 
 
+class DawonDemoSessionThrottle(AnonRateThrottle):
+    # Keep the configured anon rate and client identity, with a login-only counter.
+    cache_format = "throttle_dawon_demo_session_%(ident)s"
+
+
 class DawonDemoSessionView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
-    throttle_classes = [AnonRateThrottle]
+    throttle_classes = [DawonDemoSessionThrottle]
 
     def post(self, request):
         tenant = getattr(request, "tenant", None)
