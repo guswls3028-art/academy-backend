@@ -1956,6 +1956,33 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
                 self.assertTrue(Submission.objects.filter(pk=self.sub_a.pk).exists())
                 record.delete()
 
+    def test_homework_inspection_author_and_direct_enrollment_deletion(self):
+        Inspection = django_apps.get_model("results", "HomeworkInspection")
+        Session = django_apps.get_model("lectures", "Session")
+        Homework = django_apps.get_model("homework_results", "Homework")
+        session = Session.objects.create(lecture=self.lecture_a, order=1)
+        homework = Homework.objects.create(tenant=self.tenant_a, session=session, title="Practice")
+        author = User.objects.create_user(username="inspection-author", tenant=self.tenant_a)
+        user = User.objects.create_user(username="inspection-direct-delete", tenant=self.tenant_a)
+        student = Student.objects.create(tenant=self.tenant_a, user=user, ps_number="DIRECT01", name="Practice")
+        enrollment = Enrollment.objects.create(tenant=self.tenant_a, student=student, lecture=self.lecture_a)
+        inspection = Inspection.objects.create(
+            tenant=self.tenant_a, session=session, homework=homework, enrollment=enrollment,
+            updated_by=author, solved=2, total=5, feedback="Keep after author deletion",
+        )
+
+        author.delete()
+        inspection.refresh_from_db()
+        self.assertIsNone(inspection.updated_by_id)
+        self.assertEqual((inspection.solved, inspection.total, inspection.feedback), (
+            2, 5, "Keep after author deletion",
+        ))
+
+        enrollment.delete()
+        self.assertFalse(Inspection.objects.filter(pk=inspection.pk).exists())
+        self.assertTrue(Homework.objects.filter(pk=homework.pk).exists())
+        self.assertTrue(Student.objects.filter(pk=student.pk).exists())
+
     def _parent_comment(self, *, tenant, lecture, enrollment, suffix):
         Session = django_apps.get_model("lectures", "Session")
         Comment = django_apps.get_model("results", "ParentAssessmentComment")

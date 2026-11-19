@@ -1,10 +1,13 @@
+from django.apps import apps
 from django.test import TestCase
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import TenantMembership
 from apps.domains.enrollment.test_support import (
     create_enrollment_fixture,
     create_session_enrollment_fixture,
 )
+from apps.domains.student_app.dashboard.views import StudentDashboardView
 from apps.domains.student_app.sessions.views import (
     StudentSessionHideView,
     StudentSessionListView,
@@ -36,24 +39,48 @@ class StudentScheduleInputBoundaryTests(TestCase):
             tenant=cls.tenant, enrollment=cls.enrollment, session=cls.session,
         )
 
-    def test_invalid_free_text_time_does_not_break_student_schedule(self):
+    def test_free_text_time_preserves_schedule_in_student_and_parent_views(self):
+        parent_user = _create_user(self.tenant, "schedule-parent")
+        TenantMembership.ensure_active(tenant=self.tenant, user=parent_user, role="parent")
+        self.student.parent = apps.get_model("parents", "Parent").objects.create(
+            tenant=self.tenant, user=parent_user, phone="01012345678", name="Schedule parent",
+        )
+        self.student.save(update_fields=["parent"])
+        factory = APIRequestFactory()
+
         for lecture_time, expected_start in (
             ("토 25:00 ~ 26:00", None),
             ("일 12:99", None),
             ("토 24:00", None),
             ("토 112:00", None),
             ("일 12:000", None),
+            ("토 112:00 ~ 13:00", None),
+            ("일 12:000 ~ 13:00", None),
             ("시간 협의", None),
             ("토 09:05 ~ 10:00", "09:05:00"),
+            ("토 9:05 ~ 10:00", "09:05:00"),
             ("일 00:00 ~ 01:00", "00:00:00"),
         ):
             with self.subTest(lecture_time=lecture_time):
                 self.lecture.lecture_time = lecture_time
                 self.lecture.save(update_fields=["lecture_time", "updated_at"])
-                response = StudentSessionListView().get(_request(self.user, self.tenant))
-                self.assertEqual(response.status_code, 200)
-                self.assertEqual([item["id"] for item in response.data], [self.session.id])
-                self.assertEqual(response.data[0]["start_time"], expected_start)
+                for user, headers in (
+                    (self.user, {}),
+                    (parent_user, {"HTTP_X_STUDENT_ID": str(self.student.pk)}),
+                ):
+                    for view, path in (
+                        (StudentSessionListView, "/api/v1/student/sessions/me/"),
+                        (StudentDashboardView, "/api/v1/student/dashboard/"),
+                    ):
+                        with self.subTest(user=user.pk, path=path):
+                            request = factory.get(path, **headers)
+                            request.tenant = self.tenant
+                            force_authenticate(request, user=user)
+                            response = view.as_view()(request)
+                            self.assertEqual(response.status_code, 200)
+                            items = response.data["today_sessions"] if view is StudentDashboardView else response.data
+                            self.assertEqual([item["id"] for item in items], [self.session.id])
+                            self.assertEqual(items[0]["start_time"], expected_start)
                 self.lecture.refresh_from_db()
                 self.assertEqual(self.lecture.lecture_time, lecture_time)
 

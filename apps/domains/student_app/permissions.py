@@ -49,12 +49,13 @@ def is_request_parent(request) -> bool:
     return get_authorized_tenant_role(user, tenant) == "parent"
 
 
-def get_request_student(request):
+def get_request_student(request, *, for_update: bool = False):
     """
     요청자에 해당하는 Student 반환
     - 학생: request.tenant 기준 active Student
     - 학부모: X-Student-Id로 명시한 활성 연결 자녀만 허용
     - 명시된 헤더가 비정상/미소유면 다른 자녀로 대체하지 않고 PermissionDenied
+    - for_update: 쓰기 트랜잭션 안에서 권한에 해당하는 학생 행만 잠금
     """
     user = request.user
     tenant = getattr(request, "tenant", None)
@@ -62,7 +63,7 @@ def get_request_student(request):
         return None
     role = get_active_membership_role(user, tenant)
     if role == "student":
-        return student_for_tenant_user(tenant, user, deleted="active")
+        return student_for_tenant_user(tenant, user, deleted="active", for_update=for_update)
     if role != "parent":
         return None
     parent = getattr(user, "parent_profile", None)
@@ -76,7 +77,10 @@ def get_request_student(request):
         sid = int(header_id)
     except (TypeError, ValueError):
         raise PermissionDenied("선택한 자녀 정보를 확인할 수 없습니다.")
-    selected = active_students.filter(id=sid).first()
+    selected_students = active_students.filter(id=sid)
+    if for_update:
+        selected_students = selected_students.select_for_update()
+    selected = selected_students.first()
     if selected is None:
         raise PermissionDenied("선택한 자녀 정보를 확인할 수 없습니다.")
     return selected
