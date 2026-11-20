@@ -54582,64 +54582,58 @@
                   "items": {
                     "anyOf": [
                       {
-                        "items": {
-                          "properties": {
-                            "id": {
-                              "type": "integer"
-                            },
-                            "instructor_name": {
-                              "type": "string"
-                            },
-                            "kind": {
-                              "type": "string"
-                            },
-                            "lecture_count": {
-                              "type": "integer"
-                            },
-                            "name": {
-                              "type": "string"
-                            },
-                            "school": {
-                              "type": "string"
-                            },
-                            "student_count": {
-                              "type": "integer"
-                            },
-                            "track": {
-                              "type": "string"
-                            }
+                        "properties": {
+                          "id": {
+                            "type": "integer"
                           },
-                          "required": [
-                            "id",
-                            "name",
-                            "kind",
-                            "track",
-                            "school",
-                            "student_count",
-                            "lecture_count",
-                            "instructor_name"
-                          ],
-                          "type": "object"
+                          "instructor_name": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "lecture_count": {
+                            "type": "integer"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "school": {
+                            "type": "string"
+                          },
+                          "student_count": {
+                            "type": "integer"
+                          },
+                          "track": {
+                            "type": "string"
+                          }
                         },
-                        "type": "array"
+                        "required": [
+                          "id",
+                          "name",
+                          "kind",
+                          "track",
+                          "school",
+                          "student_count",
+                          "lecture_count",
+                          "instructor_name"
+                        ],
+                        "type": "object"
                       },
                       {
-                        "items": {
-                          "properties": {
-                            "id": {
-                              "type": "integer"
-                            },
-                            "name": {
-                              "type": "string"
-                            }
+                        "properties": {
+                          "id": {
+                            "type": "integer"
                           },
-                          "required": [
-                            "id",
-                            "name"
-                          ],
-                          "type": "object"
+                          "name": {
+                            "type": "string"
+                          }
                         },
-                        "type": "array"
+                        "required": [
+                          "id",
+                          "name"
+                        ],
+                        "type": "object"
                       }
                     ]
                   },

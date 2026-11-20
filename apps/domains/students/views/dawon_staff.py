@@ -5,9 +5,7 @@ from datetime import date
 from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema
-from apps.domains.students import dawon_schema as schema
-from drf_spectacular.utils import OpenApiParameter
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -17,6 +15,7 @@ from apps.core.models import TenantMembership
 from apps.domains.clinic.contracts import is_demo_tenant
 from apps.domains.staffs.models import ExpenseRecord, PayrollSnapshot, StaffWorkType, WorkMonthLock, WorkRecord
 from apps.domains.staffs.services.work_records import end_work_record, start_work_record
+from apps.domains.students import dawon_schema as schema
 from apps.domains.students.models import ClassGroupLecture
 from apps.domains.students.services.dawon_staff import PREFIX, TEACHER, WORK_TYPE, WORK_MARK, sample_staff
 

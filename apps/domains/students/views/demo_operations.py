@@ -3,10 +3,8 @@ from collections import defaultdict
 from statistics import fmean
 
 from django.db.models import Count, Exists, F, OuterRef, Q
-from drf_spectacular.utils import extend_schema
-from apps.domains.students import dawon_schema as schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import OpenApiParameter
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.fields import IntegerField
 from rest_framework.permissions import IsAuthenticated
@@ -25,6 +23,7 @@ from apps.domains.exams.models import Exam
 from apps.domains.results.models import Result
 from apps.domains.results.contracts import load_initial_exam_scores, project_initial_exam_score
 from apps.domains.results.services.omr_subjective_completion import pending_omr_result_ids
+from apps.domains.students import dawon_schema as schema
 from apps.domains.students.models import ClassGroup, DawonExamReview
 from apps.domains.students.services.dawon_daily_attendance import daily_attendance
 from apps.domains.students.services.dawon_exam_reports import admin_exam_detail, exam_for_management

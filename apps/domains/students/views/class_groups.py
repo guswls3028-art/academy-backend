@@ -9,9 +9,7 @@ from django.db.models import Count, Exists, F, OuterRef, Q, Window
 from django.db.models.functions import Coalesce, RowNumber
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema
-from apps.domains.students import dawon_schema as schema
-from drf_spectacular.utils import OpenApiParameter
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied
@@ -21,6 +19,7 @@ from rest_framework.response import Response
 from apps.support.lectures.class_group_cycles import assigned_class_group_ids, assign_cycle_status, class_group_cycles
 from apps.core.models import TenantMembership
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.domains.students import dawon_schema as schema
 from apps.domains.students.models import ClassGroup, ClassGroupLecture, Student
 from apps.support.students.enrollment_matrix_dependencies import create_class_group_lecture, enroll_class_group_members, native_group_lecture
 
@@ -198,7 +197,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
                   "assigned_teacher": {"id":instructor.pk,"name":instructor.name} if instructor else None}
         return result
 
-    @extend_schema(operation_id="students_class_groups_list", responses={200: schema.variants(schema.array(schema.group), schema.array(schema.person))},
+    @extend_schema(operation_id="students_class_groups_list", responses={200: schema.variants(schema.group, schema.person)},
                    parameters=[OpenApiParameter("view", str, enum=["instructors"])])
     def list(self, request):
         if request.query_params.get("view") == "instructors":

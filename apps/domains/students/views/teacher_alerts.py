@@ -5,7 +5,6 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
-from apps.domains.students import dawon_schema as schema
 from rest_framework import serializers
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
@@ -14,6 +13,7 @@ from rest_framework.views import APIView
 
 from apps.core.models import TenantMembership
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.domains.students import dawon_schema as schema
 from apps.domains.students.models import ClassGroupLecture, DawonTeacherAlertSettings
 from apps.support.students.teacher_alert_evidence import DEFAULTS, signals_for_lectures
 
