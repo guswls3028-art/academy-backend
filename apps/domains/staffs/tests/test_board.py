@@ -79,6 +79,39 @@ class StaffBoardTests(TestCase):
         TenantMembership.objects.filter(tenant=self.tenant, user=self.users["teacher"]).update(is_active=False)
         self.assertEqual(self.request("get", detail).status_code, 403)
 
+    def test_search_filters_all_pages_inside_authorized_tenant_and_category(self):
+        def resource(**fields):
+            values = {"tenant": self.tenant, "category": "resource", "title": "공유", "body": "본문"}
+            return StaffBoardPost.objects.create(**{**values, **fields})
+
+        title = resource(title="MathPlan schedule")
+        body = resource(body="첨부는 MATHPLAN 문서입니다.")
+        file = resource(attachment_name="mathplan_100%.pdf")
+        resource(tenant=self.other, title="MathPlan")
+        resource(category="notice", title="MathPlan")
+        for _ in range(21):
+            resource()
+
+        path = "?category=resource"
+        listing = self.request("get", path).data
+        blank = self.request("get", path + "&q=%20%20").data
+        self.assertEqual((listing["count"], listing["results"]), (blank["count"], blank["results"]))
+        self.assertNotIn(title.pk, [row["id"] for row in listing["results"]])
+        result = self.request("get", path + "&q=%20mathplan%20&page_size=2").data
+        self.assertEqual(result["count"], 3)
+        self.assertEqual([row["id"] for row in result["results"]], [file.pk, body.pk])
+        self.assertNotIn("body", result["results"][1])
+        next_page = self.request("get", path + "&q=mathplan&page=2&page_size=2").data
+        self.assertEqual([row["id"] for row in next_page["results"]], [title.pk])
+        self.assertEqual(self.request("get", path + "&q=%25").data["count"], 1)
+        self.assertEqual(self.request("get", path + "&q=mathplan", tenant=self.other).data["count"], 1)
+        for role in ("student", "parent"):
+            self.assertEqual(self.request("get", path + "&q=mathplan", user=self.users[role]).status_code, 403)
+        self.assertEqual(self.request("get", path + "&q=%20" + "a" * 100 + "%20").status_code, 200)
+        too_long = self.request("get", path + "&q=" + "a" * 101)
+        self.assertEqual(too_long.status_code, 400)
+        self.assertIn("q", too_long.data)
+
     @patch("apps.domains.staffs.views.board.get_object_bytes_r2_storage", return_value=b"private")
     @patch("apps.domains.staffs.views.board.put_small_storage_object")
     def test_private_attachment(self, put, read):
