@@ -25,6 +25,20 @@ class PublicPwaBrandTests(TestCase):
         self.assertEqual(push["icon"], f"{root}/pwa-192.png{version}")
         self.assertEqual(push["badge"], f"{root}/apple-touch-icon.png{version}")
 
+    def test_platform_crawler_metadata_resolves_icons_and_preserves_uploaded_art(self):
+        tenant = Tenant.objects.create(name="학원플러스", code="hakwonplus")
+        TenantDomain.objects.filter(tenant=tenant).update(host="hakwonplus.com", is_active=True)
+        request = APIRequestFactory().get("/api/v1/core/og-meta/", {"hostname": "hakwonplus.com"})
+        meta = PublicOgMetaView.as_view()(request).data
+        for key, filename in {
+            "image": "og-image", "favicon": "favicon", "pwa_icon_192": "pwa-192",
+            "pwa_icon_512": "pwa-512", "apple_touch_icon": "apple-touch-icon",
+        }.items():
+            self.assertEqual(meta[key], f"/tenants/hakwonplus/{filename}.png?v=20261119")
+        tenant.og_image_url = "https://cdn.example/custom-share.png"
+        tenant.save(update_fields=["og_image_url"])
+        self.assertEqual(PublicOgMetaView.as_view()(request).data["image"], tenant.og_image_url)
+
     def test_custom_tenant_exposes_its_uploaded_logo_for_pwa_install(self):
         tenant = Tenant.objects.create(
             name="새봄학원",
