@@ -26,7 +26,7 @@
 | clinic_self_study_completed | 클리닉 자율학습 완료 | 학부모 | 자율학습 완료(`completed_at`) 시. 하원과 별도 이벤트 |
 | clinic_result_notification | 클리닉 결과 알림 | 학부모 | 클리닉 결과 확정 시 |
 | counseling_reservation_created | 상담 예약 완료 | 학부모 | 상담 예약 시 |
-| video_encoding_complete | 영상 인코딩 완료 | 스태프(업로더) | 인코딩 완료 시 |
+| video_encoding_complete | 영상 인코딩 완료 | 스태프(업로더) | 인코딩 완료 시. 해당 학원의 알림톡 설정이 활성이고 영상·업로더 소속이 일치해야 한다. 공용 owner의 동일 트리거에서 승인된 ID와 본문을 함께 사용하며 사이트 링크는 발신 학원의 대표 도메인을 따른다. |
 
 ### MANUAL_DEFAULT — 선생 검토 필요 (수동 기본, preview→confirm 또는 설정에서 자동화 가능)
 | Trigger | 설명 | 수신자 | 발송 순간 |

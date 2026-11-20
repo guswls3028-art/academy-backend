@@ -1,94 +1,33 @@
-# Cloudflare API로 zone 추가 후 네임서버 반환
-# 사용: .\scripts\add-cloudflare-zone.ps1 -Domain "example.co.kr"
-# .env의 CLOUDFLARE_EMAIL, CLOUDFLARE_API_KEY, CLOUDFLARE_ACCOUNT_ID 사용
-
+﻿# Register the exact production zone and read its assigned nameservers from Cloudflare.
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
-param(
-    [Parameter(Mandatory = $true)]
-    [string]$Domain
-)
+param([Parameter(Mandatory)][string]$Domain)
 
 $ErrorActionPreference = 'Stop'
-$Domain = $Domain.Trim().ToLower()
-if (-not $Domain) { throw "Domain is required." }
-if ([System.Uri]::CheckHostName($Domain) -ne [System.UriHostNameType]::Dns -or -not $Domain.Contains('.')) {
-    throw "Domain must be an apex hostname such as example.com."
-}
-$envFile = Join-Path $PSScriptRoot '..\.env'
-if (-not (Test-Path $envFile)) {
-    Write-Host "backend\.env not found."
-    exit 1
-}
-Get-Content $envFile | ForEach-Object {
-    if ($_ -match '^CLOUDFLARE_(EMAIL|API_KEY|ACCOUNT_ID)=(.+)$') {
-        [System.Environment]::SetEnvironmentVariable("CLOUDFLARE_$($matches[1])", $matches[2].Trim(), 'Process')
+. (Join-Path $PSScriptRoot 'cloudflare-domain-common.ps1')
+$Domain = Get-CloudflareApex $Domain
+$access = Get-CloudflareAccess
+$zone = Get-ExactCloudflareZone
+if (-not $zone) {
+    if (-not $PSCmdlet.ShouldProcess($Domain, 'Create Cloudflare zone with jump_start enabled')) { return }
+    try {
+        $null = Invoke-Cloudflare 'zones' Post @{ name = $Domain; account = @{ id = $access.Account }; jump_start = $true; type = 'full' }
+    } catch {
+        $zone = Get-ExactCloudflareZone
+        if (-not $zone) { throw }
     }
+    if (-not $zone) { $zone = Get-ExactCloudflareZone }
+    if (-not $zone) { throw "Zone creation for $Domain has not been confirmed. Retry after checking provider state." }
 }
-$email   = $env:CLOUDFLARE_EMAIL
-$key     = $env:CLOUDFLARE_API_KEY
-$account = $env:CLOUDFLARE_ACCOUNT_ID
-if (-not $email -or -not $key -or -not $account) {
-    Write-Host "CLOUDFLARE_EMAIL, CLOUDFLARE_API_KEY, CLOUDFLARE_ACCOUNT_ID must be set in backend\.env"
-    exit 1
+$detail = (Invoke-Cloudflare "zones/$($zone.id)").result
+if ($detail.id -ne $zone.id -or (Get-AsciiHost $detail.name) -ne $Domain -or
+    $detail.account.id -ne $access.Account -or $detail.status -notin 'active','pending','initializing') {
+    throw "Zone identity or status readback failed for $Domain."
 }
-
-$headers = @{
-    'X-Auth-Email' = $email
-    'X-Auth-Key'   = $key
-    'Content-Type'  = 'application/json'
+$servers = @($detail.name_servers | ForEach-Object { Get-AsciiHost $_ })
+if ($servers.Count -ne 2 -or $servers[0] -eq $servers[1] -or
+    @($servers | Where-Object { $_ -notmatch '^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]+$' }).Count) {
+    throw "Expected two distinct assigned nameservers for $Domain. Recheck the zone before delegation."
 }
-$body = @{
-    name        = $Domain
-    account     = @{ id = $account }
-    jump_start  = $true
-    type        = 'full'
-} | ConvertTo-Json
-
-$uri = 'https://api.cloudflare.com/client/v4/zones'
-$encodedDomain = [System.Uri]::EscapeDataString($Domain)
-$existing = Invoke-RestMethod -Uri "${uri}?name=${encodedDomain}&account.id=${account}" -Headers $headers -Method Get
-if (-not $existing.success) {
-    throw "Unable to check whether Cloudflare zone already exists."
-}
-if ($existing.result.Count -gt 0) {
-    $z = $existing.result[0]
-    Write-Host ""
-    Write-Host "=== $Domain already exists. Use these in Gabia (네임서버 설정) ==="
-    Write-Host ""
-    Write-Host "  1차: $($z.name_servers[0])"
-    Write-Host "  2차: $($z.name_servers[1])"
-    Write-Host ""
-    return
-}
-if (-not $PSCmdlet.ShouldProcess($Domain, "Create Cloudflare zone with jump_start enabled")) {
-    return
-}
-try {
-    $r = Invoke-RestMethod -Uri $uri -Headers $headers -Method Post -Body $body
-} catch {
-    $ex = $_.Exception
-    if ($ex.Response) {
-        $reader = New-Object System.IO.StreamReader($ex.Response.GetResponseStream())
-        $reader.BaseStream.Position = 0
-        $errBody = $reader.ReadToEnd()
-        Write-Host "API error response: $errBody"
-    } else {
-        Write-Host "API error: $ex"
-    }
-    exit 1
-}
-
-if (-not $r.success) {
-    Write-Host "API success=false. errors: $($r.errors | ConvertTo-Json -Compress)"
-    exit 1
-}
-
-$z = $r.result
-Write-Host ""
-Write-Host "=== $Domain added. Use these in Gabia (네임서버 설정) ==="
-Write-Host ""
-Write-Host "  1차: $($z.name_servers[0])"
-Write-Host "  2차: $($z.name_servers[1])"
-Write-Host ""
-Write-Host "Copy the two lines above into Gabia domain nameserver settings."
-Write-Host ""
+Write-Host "=== $Domain (네임서버 설정) ==="
+Write-Host "  1차: $($servers[0])"
+Write-Host "  2차: $($servers[1])"

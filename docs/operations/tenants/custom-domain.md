@@ -10,7 +10,7 @@
 - 운영 DB에서 ID 충돌을 먼저 확인하고 비어 있는 ID를 명시한다.
 - 비밀번호는 채팅 외 문서·Git·셸 명령·감사 로그에 저장하지 않는다.
 - 가비아 네임서버 위임 전에는 Pages CNAME을 만들지 않는다.
-- 운영 DB에는 코드가 배포된 뒤 `provision_tenant`로 반영한다.
+- 운영 DB는 대상 도메인과 명령을 지원하는 운영 백엔드 revision에서 `provision_tenant`로 반영한다.
 - 백엔드 배포는 상시 격리 development, 임시 격리 preproduction,
   ASG 무중단 교체를 순서대로 통과해야 한다.
 - 같은 명령을 다시 실행해도 중복 생성되지 않아야 한다.
@@ -26,9 +26,9 @@
 ## 운영자 빠른 실행표
 
 매번 [onboarding-run-sheet.md](onboarding-run-sheet.md)를 테넌트별 메모로
-복사하고 아래 게이트를 위에서부터 실행한다. 작업이 중단되면 첫 번째 미완료
-게이트부터 재개하되, 변경 명령을 반복하기 전에 읽기 전용 확인과 dry-run을 다시
-실행한다.
+복사한다. G 번호는 증거를 기록하는 항목이다. G1에서 대상을 확정하면 zone·위임, 코드·브랜딩과 배포 준비, 운영 명령·구독·계정 입력 및 충돌 점검을 병행한다. 위임과 Pages 대상이 확인되면 G6 연결을 즉시 시작해 인증서 발급 시간을 확보한다. 중단 후에는 완료 증거를 재사용하고, 운영 변경을 재시도하기 전에 대상과 현재 상태를 다시 읽는다.
+
+고객이 처음 여는 주소는 실제 운영 도메인이다. 별도 랜딩 페이지, 데모 화면, 프리뷰를 만들지 않는다. G5~G8의 운영 테넌트·승인된 계정·구독과 권한이 준비되면 해당 도메인에서 로그인하고 역할별 기본 화면과 격리를 확인해 먼저 안내한다. 추가 워커·기능별 실사용 점검과 G9 봉인은 계속 진행한다. 배포 자체에 필요한 격리·실사용·무중단 게이트는 해당 배포 전에 통과한다.
 
 | 게이트 | 실행 | 통과 증거 |
 |---|---|---|
@@ -36,17 +36,17 @@
 | G1 충돌 확인 | `check_tenants`, 호스트·코드 검색 | 사용할 ID·코드·도메인 확정 |
 | G2 DNS 준비 | Cloudflare zone 생성, NS 1·2차 전달 | zone과 발급 NS |
 | G3 소스 준비 | 개별 등록 경계와 공유 서비스 안전 기본값 | 로컬 검사와 시각 검증 |
-| G4 위임·배포 | 공용 DNS NS 확인, 양쪽 정식 배포 | 배포 revision과 성공 run |
+| G4 운영 호환성·배포 | 대상 도메인과 기능에 필요한 변경을 정식 배포 | 정확한 운영 revision과 해당 배포 증거 |
 | G5 운영 DB | 프로비저닝·구독·메시징·안전 기본값 감사 | owner 전 audit PASS |
-| G6 Pages·HTTPS | apex/`www` Pages·CNAME 활성화 | 두 URL HTTP 200 |
-| G7 대표 계정 | 개발자 콘솔 소유자 탭에서 1회 생성 | 소유자 수와 role `owner` |
+| G6 Pages·HTTPS | G2 위임 확인 직후 apex/`www` Pages·CNAME 연결 | Pages 상태·DNS 대상·인증서와 두 URL의 응답 |
+| G7 대표 계정 | G5 후 관리명령으로 원장과 요청된 학생·보호자 직접 등록 | 소유자 수와 role `owner` |
 | G8 실제 인계 | 커스텀 도메인 로그인·최초 비밀번호 변경·격리 확인 | owner 화면과 빈 초기 데이터 |
 | G9 최종 봉인 | owner 포함 audit와 외부 probe 재실행 | audit PASS와 증거 링크 |
 
 운영 신규 테넌트에는 개발자 콘솔의 목록 화면에 있는 간편 생성 폼을 사용하지
 않는다. 이 폼만으로는 명시적 운영 ID, 양쪽 코드 배포, DNS, 구독, 전체 브랜딩을
-완료할 수 없다. 운영 DB 생성은 G4 이후 범용 `provision_tenant`만 사용하고,
-개발자 콘솔은 G7의 대표 계정 등록에만 사용한다.
+완료할 수 없다. 운영 DB 생성은 명시한 운영 백엔드 호환성을 확인한 뒤 범용 `provision_tenant`만 사용하고,
+G7은 운영 관리명령으로 직접 진행한다. 인증된 개발자 콘솔의 소유자 탭도 대표 계정 등록을 지원한다.
 
 목록의 간편 생성 폼은 개발·QA의 최소 Tenant·Domain·Program 레코드만 원자적으로
 만든다. 대표 계정 입력을 받거나 owner 등록 요청을 이어서 보내지 않으며, 생성
@@ -66,7 +66,7 @@
 | 브라우저→Video R2 업로드 | **개별 origin 수렴**: API origin 목록을 R2 bucket CORS에도 적용 | apex/`www` PUT 200, ACAO, ETag, abort 잔여 0 |
 | 프런트 로그인·내부 헤더·학생앱·성적표·OG/PWA | **개별 등록**: tenant registry, 테마, 팔레트, 정적 에셋 | build, 1366/390, 역할별 라이트/다크 |
 | Tenant·Program·구독 | **개별 등록**: `provision_tenant`, `contract` 또는 `exempt` | DB audit와 이용 가능 readback |
-| 대표 계정·권한 | **개별 등록**: 개발자 콘솔에서 기존 owner 0명 확인 후 1회 생성 | active owner 1명, 실제 도메인 로그인 |
+| 대표 계정·권한 | **개별 등록**: G5 감사 후 직접 등록, 기존 원장은 동일 계정·정보 대조 | active owner 1명, 실제 도메인 로그인 |
 | 알림톡 | **기본 활성**: 공용 owner 채널·exact 승인 템플릿 사용. 별도 카카오 채널은 운영자가 provider 실조회와 template fingerprint 검증 후 활성화. 대표·관리자가 제품 화면에서 전체 사용을 끌 수 있음 | `messaging_is_active=true`와 채널/승인 봉투 audit; 공급사 credential을 문서에 남기지 않음 |
 | 결제·청구 | **명시 결정**: 기간 계약 또는 승인된 과금 제외 중 하나만 선택 | 만료·다음 결제일 또는 runtime exempt ID audit |
 | Video Batch·AI·Tools·공용 큐 | **공유형**: 고객별 worker/queue 목록 추가 금지, payload·DB·R2 key의 tenant scope 사용 | 정식 배포 worker/queue gate와 역할별 기능 smoke |
@@ -111,8 +111,7 @@ cd C:\academy\backend
 .\scripts\add-cloudflare-zone.ps1 -Domain "saebom.com" -Confirm:$false
 ```
 
-스크립트는 멱등형이다. 이미 zone이 있으면 새로 만들지 않고 해당 zone의
-네임서버 1·2차를 다시 출력한다.
+zone과 Pages 스크립트는 같은 운영 Cloudflare 인증 설정을 사용한다. 한글 도메인과 퓨니코드 표기를 모두 받는다. zone 생성 또는 재조회 후 계정, 도메인과 할당된 네임서버 두 개를 대조해 1·2차를 출력한다. 이미 등록된 도메인은 `-WhatIf`로 네임서버를 다시 확인할 수 있다.
 
 운영자가 가비아에 전달할 문구:
 
@@ -122,13 +121,13 @@ cd C:\academy\backend
 
 ### 수동 중단 게이트
 
-가비아 저장 완료 확인 전에는 다음 작업을 실행하지 않는다.
+공용 DNS에서 발급 NS 위임을 확인하기 전에는 다음 작업을 실행하지 않는다.
 
 - `pages-add-custom-domain.ps1` 실제 실행
 - apex/`www` CNAME 생성
 - 외부 HTTPS 성공 판정
 
-코드와 로고 준비는 병행할 수 있지만, DNS 활성화로 오인해 완료 처리하지 않는다.
+위임을 기다리는 동안 운영 DB 충돌 확인, 프로비저닝 dry-run 준비, 구독·owner 입력 확인과 필요한 코드 변경·검증을 진행한다.
 
 ### 메일 발신과 도메인 사칭 방지
 
@@ -328,7 +327,7 @@ Resolve-DnsName -Type NS saebom.com -Server 8.8.8.8
 ```
 
 두 조회 모두 Phase 1에서 발급한 값이어야 한다. 가비아 기본
-`ns.gabia.*`가 보이면 전파를 기다리고 중단한다.
+`ns.gabia.*`가 보이면 위임을 다시 확인하는 동안 다른 준비를 계속한다. 두 조회가 맞으면 아래 7절의 Pages·DNS 연결을 바로 실행한다.
 
 ## 5. 배포
 
@@ -347,8 +346,7 @@ Resolve-DnsName -Type NS saebom.com -Server 8.8.8.8
   - typecheck/lint/build/E2E gate
   - GitHub Actions가 Cloudflare Pages의 단일 production deploy owner인지 확인
 
-배포된 revision에 신규 도메인 설정과 `provision_tenant` 명령이 포함됐는지
-확인한 뒤 운영 DB를 변경한다.
+운영 백엔드 revision에서 신규 도메인의 host/CORS/CSRF와 범용 명령의 호환성을 확인한 뒤 운영 DB를 변경한다. 이미 충족된 경계는 그 revision의 증거를 사용한다. 독립적인 프런트 배포나 기능별 추가 QA가 진행되는 동안 G5와 조건이 충족된 G7을 수행할 수 있다. 고객 로그인 확인에는 실제 서비스 중인 프런트와 백엔드가 모두 호환돼야 한다.
 
 ## 6. 운영 DB 프로비저닝
 
@@ -367,17 +365,41 @@ cd C:\academy\backend
 
 ### 대표 계정 표준 절차
 
-대표 계정은 테넌트·Program·구독이 준비된 뒤 HTTPS 개발자 콘솔에서 만든다.
-`provision_tenant`의 owner 인수나 운영 셸 환경변수는 신규 온보딩의 표준 경로로
-사용하지 않는다. 아래 구독·안전 기본값 설정과 owner 없는 G5 감사를 먼저 통과한
-뒤 이 절차를 시작한다.
+G5 감사 후, 검증된 `prepare_tenant_accounts` 명령을 실행할 수 있는 운영 API 관리 경계에서 직접 등록한다. 대상 테넌트 ID·코드·활성 상태, 기본 apex와 보조 `www`, 과금·메시징 모드를 확인한다. 대표자와 요청된 학생·보호자를 한 트랜잭션으로 처리하며, 사용자 브라우저 세션이나 운영자 로그인 토큰 발급·대리 로그인은 필요하지 않다.
+
+입력은 담당자가 제공한 JSON 한 건이다. `owner`에는 `username`과 `password`가 필요하다. `name`과 `phone`은 선택이며 생략하거나 비워 두면 기존 값을 보존한다. 신규 등록 시 테넌트의 대표자 표시명이 비어 있으면 입력한 이름을 쓰고, 이름도 없으면 로그인 ID를 쓴다. 학생도 요청한 경우에만 `student`에 `ps_number`, `name`, `parent_phone`, `initial_password`를 넣는다. 학생 `phone`은 선택이다. 보호자 비밀번호는 별도로 요청할 필요가 없다. 새 보호자는 제품의 초기 비밀번호 정책을 따르며 정책도 지정값도 없으면 명령이 임의 값을 생성한다. 기존 활성 보호자의 자격 증명은 보존한다.
+
+다음은 운영자가 승인된 관리 실행 환경 안에서 **해당 작업 전용 SSM SecureString**의 JSON을 자식 프로세스 stdin에만 전달하는 예다. 관리 경계의 IAM 권한, 실행 대상 revision, 파라미터의 정확한 이름·유형·버전과 대상 테넌트를 먼저 대조한다. 예시의 `parameter_name`, `version`, `tenant_code`, `tenant_id`, `apex`, `billing_mode`, `messaging_mode`는 미리 확인한 비밀값 없는 실행 메타데이터다.
+
+```python
+import subprocess
+import sys
+import boto3
+
+ssm = boto3.client("ssm", region_name="ap-northeast-2")
+item = ssm.get_parameter(Name=f"{parameter_name}:{version}", WithDecryption=True)["Parameter"]
+if (item["Name"], item["Version"], item["Type"]) != (parameter_name, version, "SecureString"):
+    raise RuntimeError("SecureString identity mismatch")
+subprocess.run(
+    [sys.executable, "manage.py", "prepare_tenant_accounts", tenant_code,
+     "--tenant-id", str(tenant_id), "--domain", apex,
+     "--billing-mode", billing_mode, "--messaging-mode", messaging_mode],
+    input=item["Value"].encode("utf-8"), check=True,
+)
+```
+
+비밀값을 파일, 명령 인수, 환경변수, 셸 추적, 로그 또는 문서에 넣지 않는다. 일회용 SecureString은 해당 작업의 보존·삭제 절차에 따라 정리한다. 명령은 생성 여부만 출력하고 생성 감사에는 대상 계정 참조와 실행 출처를 남긴다. 동일 원장·학생의 ID, 프로필과 활성 역할이 일치하면 다시 실행해도 변경하지 않는다. 기존 사용자를 승격하거나 기존 비밀번호를 덮어쓰지 않는다. 신원 충돌이나 학생 생성 실패 시 원장 생성과 감사 기록까지 함께 롤백한다. 담당자는 대상 정보를 대조한 후 재시도한다.
+
+G7 뒤에는 `--require-owner`로 계정 준비를 확인한다. G8의 실제 도메인 인증·대표자 비밀번호 변경·재로그인 및 G9의 인계 감사는 아래 기준을 따른다. G8에서 초기 목록을 확인할 때 직접 등록을 요청한 학생은 승인된 초기 데이터로 대조한다.
+
+#### 인증된 콘솔로 대표 계정을 등록하는 대안
 
 1. 승인된 플랫폼 운영 계정의 기존 브라우저 세션 또는 비밀 저장소를 사용해
    `https://dev.hakwonplus.com/dev/tenants/<tenant-id>`로 이동한다. 플랫폼
    계정 값을 고객에게 다시 요청하거나 작업 기록에 복사하지 않는다.
 2. `소유자` 탭에서 대상 테넌트명·ID와 현재 소유자 수를 먼저 확인한다.
 3. 소유자가 없을 때만 `+ 소유자 추가`를 열고 고객이 전달한 로그인 ID,
-   4~128자의 임시 비밀번호, 표시명, 선택 전화번호를 한 번 입력한다.
+   4~128자의 임시 비밀번호와 선택 항목인 표시명·전화번호를 한 번 입력한다.
 4. 생성 뒤 소유자 수가 1 증가했고 해당 행의 역할이 `소유자`인지 확인한다.
 5. 개발자 콘솔의 `운영 로그인`(임퍼소네이션)이 아니라 인계 체크포인트가 여는
    실제 커스텀 도메인 `/login`에서 임시 비밀번호로 인증한다.
@@ -415,17 +437,15 @@ cd C:\academy\backend
 로그인 가능한 owner 수로 간주하지 않는다.
 
 소유자 목록 응답의 `handoffStatus`가 인계 상태의 서버 단일 계약이다. 값은 비활성
-사용자 `account_inactive`, usable password 없음 `password_setup_required`, 강제
-최초 변경 대기 `first_login_pending`, 인계 완료 `complete` 중 하나다. 판단 순서는
+사용자 `account_inactive`, usable password 없음 `password_setup_required`, 최초
+비밀번호 변경 대기 `first_login_pending`, 인계 완료 `complete` 중 하나다. 판단 순서는
 이 순서대로 fail-closed이며, `isActive`·`hasUsablePassword`·`mustChangePassword`는
 기존 소비자 호환과 운영 근거를 위해 함께 제공한다. 개발자 콘솔은 이 값으로 가장
 먼저 처리할 owner의 다음 동작과 2단계 진행률을 표시하고, 상태 새로고침으로
 대표자의 외부 비밀번호 변경을 다시 읽는다.
 
-신규 owner는 첫 로그인 후 비밀번호 변경이 강제된다. 비밀번호 원문은 문서·Git·
-셸 명령·스크린샷·작업 결과에 기록하지 않고, 감사 로그에는
-`password_changed=true`만 남긴다. 초기 비밀번호 변경 전에는 로그인 인증만
-통과한 상태이며 G8 완료로 표시하지 않는다.
+신규 owner가 로그인하면 비밀번호 변경을 권유한다. 현재 로그인 세션에서 안내를 미루고 원장 권한으로 업무를 계속할 수 있다. API도 최초 변경 여부로 업무 접근을 차단하지 않는다.
+G7의 `--require-owner`는 활성 owner 멤버십 한 건, 활성 사용자와 사용 가능한 비밀번호를 검사한다. G8은 대표자의 실제 변경과 새 비밀번호 재로그인·격리 확인까지 기록한다. G9의 `--require-owner-handoff`는 owner 준비 상태와 `must_change_password=false`를 검사한다. 플래그만으로 변경 주체를 확인할 수 없으므로 대표자의 실제 인계 증거도 보존한다. 비밀번호 원문은 문서·Git·셸 명령·스크린샷·작업 결과에 남기지 않는다.
 
 Program 생성 직후에는 이용기간이 비어 있어 로그인 화면에 이용 연장 안내가 뜬다.
 입력 시트에서 확정한 기간으로 공식 구독 명령을 dry-run한 뒤 적용한다. 아래 30일은
@@ -452,6 +472,10 @@ exact 승인 템플릿을 사용한다. 신규 tenant provider/공급사 키를 
 제한은 `0`으로 먼저 봉인하고 고객별 변경은 기본 온보딩 완료 후 별도 승인으로
 적용한다.
 
+알림톡을 요청한 학원에서는 대표 계정 준비 후 `GET /api/v1/messaging/auto-send/`로 실제 저장된 이벤트 설정을 확인한다. 신규 학원에서 설정이 비어 있으면 대표·관리자 자격으로 `POST /api/v1/messaging/provision-defaults/`에 빈 객체를 보내 기본값을 채운다. 응답의 생성·복원 건수와 GET 재조회 결과를 기록한다. 고객이 지운 문구와 직접 정한 연결은 보존한다. 승인 여부와 활성 상태를 이벤트별로 확인하고, 과거 테스트 발송의 전달 결과는 공용 발신 테넌트와 `source_tenant_id`를 함께 지정해 조회한다.
+
+공유 카드에는 실제 고객 명칭과 설명을 지정한다. 운영 `core/program`의 표시명, `core/og-meta`와 실제 도메인이 반환하는 HTML의 제목·설명·로고를 대조한다. 브라우저에서 보는 로그인 화면과 카카오 스크랩 서버가 받는 HTML을 각각 확인한다.
+
 owner 생성 전 G5 읽기 전용 감사를 실행한다. `contract`/`exempt`와
 기본 `approved`를 사용하되 고객이 명시적으로 전체 사용을 끈 경우에만 `disabled`로 감사한다.
 
@@ -464,7 +488,7 @@ G1·G3·G5 경계를 고친 뒤 같은 읽기 전용 명령을 다시 실행한�
 
 ## 7. Pages·DNS 활성화
 
-DB와 양쪽 배포가 준비된 뒤 실행한다.
+4절의 공용 NS 위임을 확인한 즉시 Cloudflare에서 정확한 zone·계정, Pages 프로젝트와 할당된 target, 기존 apex/`www` 레코드를 읽는다. 대상이 일치하고 기존 서비스와 충돌하지 않으면 DB·애플리케이션 배포와 병행해 아래 명령을 실행한다. 기존 운영 서비스를 교체해야 하거나 소유 관계가 불명확한 레코드는 보존하고 해당 대상의 전환 범위를 먼저 확정한다.
 
 ```powershell
 cd C:\academy\backend
@@ -472,12 +496,9 @@ cd C:\academy\backend
 .\scripts\pages-add-custom-domain.ps1 -Domain "saebom.com" -Confirm:$false
 ```
 
-스크립트가 수행하는 일:
+스크립트는 지정 계정의 활성 zone, 두 공개 DNS의 NS 위임, Pages 프로젝트의 할당 주소를 확인한다. apex와 `www` 양쪽을 먼저 조회해 충돌하는 라우팅 레코드가 있으면 기존 상태를 보존하고 중단한다. 누락된 Pages 등록과 `academy-frontend-26b.pages.dev` 대상의 proxied CNAME만 생성한다. 각 호스트의 `PagesStatus`와 `ProxiedCname` 출력은 공급사에서 다시 읽은 값이다. 전용 인증서 발급이 진행 중이면 발급 후 HTTPS를 다시 확인한다.
 
-1. Pages 프로젝트 `academy-frontend`에 apex와 `www` 등록
-2. 잘못된 apex/`www` CNAME만 제거
-3. 올바른 proxied CNAME은 유지
-4. 누락된 레코드를 `academy-frontend-26b.pages.dev`로 생성
+연결 뒤 공용 NS와 Pages 등록 상태, apex/`www`의 proxied CNAME 대상을 다시 읽고 두 호스트의 HTTPS 인증서를 확인한다. DNS·TLS가 먼저 준비돼도 계정과 역할별 화면이 확인되기 전까지는 고객 로그인 준비 중으로 기록한다.
 
 ## 8. 완료 검증과 G9 봉인
 
@@ -536,7 +557,7 @@ DNS·HTTPS, R2 probe, 1366/390 역할별 화면, 합성 QA tenant/user/object 0 
 | tenant required/404 | 운영 DB의 `TenantDomain` apex/`www`와 활성 상태 확인 |
 | 다른 학원 브랜딩 | frontend registry hostname/code/ID 확인 |
 | 다른 학원 데이터 노출 | 즉시 도메인 비활성화 후 tenant isolation incident로 처리 |
-| 소유자 0명 | 대상 tenant ID 재확인 후 개발자 콘솔 소유자 탭에서 1회 생성 |
+| 소유자 0명 | 대상 tenant ID 재확인 후 G5 후 관리명령으로 원장과 요청된 학생·보호자 직접 등록 |
 | 소유자는 있으나 로그인 실패 | ID를 재생성하지 말고 대상 도메인·테넌트와 계정 활성 상태 확인 |
 | 로그인 후 비밀번호 변경 화면 | 정상 초기 인증 상태. 대표자에게 최종 비밀번호 설정 인계 |
 | 개발자 콘솔 임퍼소네이션만 성공 | 실제 비밀번호·도메인 인증 증거가 아니므로 G8 미완료 |
