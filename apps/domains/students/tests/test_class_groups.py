@@ -34,6 +34,54 @@ class ClassGroupTests(TestCase):
         return Student.objects.create(tenant=tenant, user=user, name=name, ps_number=name, omr_code=str(user.pk).zfill(8),
                                       school_type="HIGH", high_school=school)
 
+    def test_demo_admin_group_creation_assignment_and_member_course_projection(self):
+        from apps.domains.students.models import ClassGroupLecture
+        from apps.domains.lectures.models import Lecture
+        from apps.core.authentication import _validate_dawon_demo_access
+        from rest_framework.exceptions import PermissionDenied
+
+        admin = get_user_model().objects.create_user(tenant=self.tenant, username="t719_dawon-demo-admin")
+        teacher = get_user_model().objects.create_user(tenant=self.tenant, username="t719_dawon-demo-teacher")
+        TenantMembership.ensure_active(tenant=self.tenant,user=admin,role="admin")
+        TenantMembership.ensure_active(tenant=self.tenant,user=teacher,role="teacher")
+        token = {"dawon_demo_role":"admin","dawon_demo_until":timezone.now().timestamp()+900}
+        def admin_call(method,suffix="",data=None):
+            return self.call(method,suffix,data,actor=admin,token=token)
+        form = {"name":"원장 개설반","kind":"union","track":"HYPER","assign_demo_teacher":True}
+        created = admin_call("post",data=form)
+        self.assertEqual(created.status_code,201,created.data)
+        group = ClassGroup.objects.get(pk=created.data["id"])
+        self.assertEqual((group.created_by,group.assigned_teacher),(admin,teacher))
+        self.assertIn(group.pk,[g["id"] for g in self.call("get",actor=teacher,token={"dawon_demo_role":"teacher"}).data])
+        self.assertEqual(self.call("get",actor=self.actor,token=token).status_code,403)
+        prefix = f"{group.pk}/"
+        student = self.pupil("하나","학교")
+        peer = self.pupil("둘","학교")
+        self.assertEqual(admin_call("get",prefix+"candidates/").status_code,200)
+        members = {"add":[student.pk,peer.pk],"remove":[]}
+        self.assertEqual(admin_call("patch",prefix+"members/",members).status_code,200)
+        course=Lecture.objects.create(tenant=self.tenant,title="내 수업",name="교사",subject="수학")
+        other=Lecture.objects.create(tenant=self.tenant,title="다른 반",name="교사",subject="수학")
+        ClassGroupLecture.objects.create(group=group,lecture=course,period="vacation")
+        for lecture in (course,other):
+            Enrollment.objects.create(tenant=self.tenant,lecture=lecture,student=student,status="ACTIVE")
+        rows=admin_call("get",prefix).data["students"]
+        self.assertEqual({r["id"]:r["course_ids"] for r in rows},{student.pk:[course.pk],peer.pk:[]})
+        response=admin_call("patch",prefix+"members/",{"add":[],"remove":[student.pk]})
+        self.assertEqual([r["id"] for r in response.data["students"]],[peer.pk])
+        self.assertTrue(Enrollment.objects.filter(student=student,lecture=course,status="ACTIVE").exists())
+        for method, route, allowed in [("get","",True),("post","",True),("get",prefix,True),
+            ("get",prefix+"candidates/",True),("patch",prefix+"members/",True),("delete",prefix,False),
+            ("patch",prefix,False),("post",prefix+"lectures/",False),("get","teaching/",False),
+            ("post",prefix+"candidates/",False),("get","0/",False)]:
+            req=getattr(self.factory,method)(self.root+route)
+            req.tenant=self.tenant
+            if allowed:
+                _validate_dawon_demo_access(req,token)
+                req.tenant=self.other
+            with self.assertRaises(PermissionDenied):
+                _validate_dawon_demo_access(req,token)
+
     def test_teaching_returns_assigned_groups_all_their_courses_and_latest_held_lesson(self):
         from datetime import timedelta
         from apps.domains.lectures.models import Lecture, Session, SessionSchedule

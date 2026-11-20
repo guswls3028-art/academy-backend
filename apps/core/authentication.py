@@ -114,7 +114,10 @@ def _validate_dawon_demo_access(request, token):
     if role == "admin":
         from apps.domains.clinic.dawon_demo import is_demo_tenant
         if is_demo_tenant(getattr(request, "tenant", None)) and (
-            (method in {"GET", "HEAD"} and path in {
+            (method in {"GET", "HEAD"} and re.fullmatch(r"/api/v1/students/class-groups/(?:[1-9][0-9]*/(?:candidates/)?)?", path))
+            or (method == "POST" and path == "/api/v1/students/class-groups/")
+            or (method == "PATCH" and re.fullmatch(r"/api/v1/students/class-groups/[1-9][0-9]*/members/", path))
+            or (method in {"GET", "HEAD"} and path in {
                 "/api/v1/core/me/", "/api/v1/students/demo-operations/", "/api/v1/students/demo-staff/",
             }) or (method == "PATCH" and path in {"/api/v1/students/demo-operations/", "/api/v1/students/demo-staff/"})
             or (method == "POST" and path == "/api/v1/students/demo-operations/")

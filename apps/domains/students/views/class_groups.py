@@ -1,6 +1,8 @@
 import re
 import unicodedata
 
+from collections import defaultdict
+
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Exists, F, OuterRef, Q, Window
@@ -40,6 +42,7 @@ def eligible(group, student):
 
 
 class GroupInput(serializers.Serializer):
+    assign_demo_teacher = serializers.BooleanField(default=False)
     name = serializers.CharField(max_length=100)
     kind = serializers.ChoiceField(choices=ClassGroup.Kind.choices)
     track = serializers.ChoiceField(choices=ClassGroup.Track.choices, allow_blank=True, default="")
@@ -113,11 +116,17 @@ class ClassGroupViewSet(viewsets.ViewSet):
         if not getattr(settings, "DAWON_REVIEW_CLASS_GROUPS", False) or (tenant.pk, tenant.code) != (719, "dawon"):
             raise NotFound()
 
+        if hasattr(request.auth, "get") and request.auth.get("dawon_demo_role") == "admin":
+            user = request.user
+            if (user.tenant_id != tenant.pk or user.username != "t719_dawon-demo-admin" or user.is_staff or user.is_superuser
+                    or not TenantMembership.objects.filter(tenant=tenant,user=user,role="admin",is_active=True).exists()):
+                raise PermissionDenied()
+
     def groups(self):
         request = self.request
         groups = ClassGroup.objects.filter(tenant=request.tenant)
         if hasattr(request.auth, "get") and request.auth.get("dawon_demo_role") == "teacher":
-            groups = groups.filter(Q(created_by=request.user) | Q(pk__in=assigned_class_group_ids(request.tenant, request.user)))
+            groups = groups.filter(Q(assigned_teacher=request.user) | Q(created_by=request.user) | Q(pk__in=assigned_class_group_ids(request.tenant, request.user)))
         return groups
 
     def group(self, pk, *, lock=False):
@@ -133,6 +142,19 @@ class ClassGroupViewSet(viewsets.ViewSet):
                 lecture__enrollments__student__deleted_at__isnull=True))
         ).order_by(F("lecture__start_date").desc(nulls_last=True), "-pk")
         lectures = assign_cycle_status([lecture_row(link, link.active_count) for link in links], timezone.localdate())
+        if hasattr(self.request.auth, "get") and self.request.auth.get("dawon_demo_role") == "admin":
+            from apps.domains.enrollment.models import Enrollment
+
+            by_student = defaultdict(list)
+            enrolled = Enrollment.objects.filter(
+                tenant=group.tenant, status="ACTIVE", student__tenant=group.tenant, student__deleted_at__isnull=True,
+                student_id__in=[s["id"] for s in roster], lecture__tenant=group.tenant, lecture__is_active=True,
+                lecture_id__in=[course["id"] for course in lectures],
+            ).order_by("lecture__title", "lecture_id").values_list("student_id","lecture_id")
+            for student_id, course_id in enrolled:
+                by_student[student_id].append(course_id)
+            for student in roster:
+                student["course_ids"] = by_student[student["id"]]
         return {**summary(group, len(roster), len(lectures)), "students": roster, "lectures": lectures}
 
     def list(self, request):
@@ -148,7 +170,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
 
         tenant = request.tenant
         assigned = assigned_class_group_ids(tenant, request.user)
-        groups = ClassGroup.objects.filter(Q(pk__in=assigned) | Q(created_by=request.user), tenant=tenant).annotate(
+        groups = ClassGroup.objects.filter(Q(pk__in=assigned) | Q(created_by=request.user) | Q(assigned_teacher=request.user), tenant=tenant).annotate(
             members=Count("students", filter=Q(students__tenant=tenant, students__deleted_at__isnull=True)),
         ).order_by("name", "pk")
         rows = {g.pk: {"id": g.pk, "name": g.name, "kind": g.kind, "track": g.track, "school": g.school, "members": g.members, "courses": [], "recent": None} for g in groups}
@@ -172,6 +194,16 @@ class ClassGroupViewSet(viewsets.ViewSet):
 
     def create(self, request):
         fields = values(GroupInput, request)
+        if fields.pop("assign_demo_teacher"):
+            if not hasattr(request.auth, "get") or request.auth.get("dawon_demo_role") != "admin":
+                raise PermissionDenied()
+            assigned = TenantMembership.objects.filter(
+                tenant=request.tenant, user__tenant=request.tenant, user__username="t719_dawon-demo-teacher",
+                user__is_active=True, user__is_staff=False, user__is_superuser=False, role="teacher", is_active=True,
+            ).values_list("user_id", flat=True).first()
+            if not assigned:
+                raise serializers.ValidationError({"assign_demo_teacher":"체험 강사의 재직 상태를 확인하세요."})
+            fields["assigned_teacher_id"] = assigned
         try:
             with transaction.atomic():
                 group = ClassGroup.objects.create(tenant=request.tenant, created_by=request.user, **fields)
