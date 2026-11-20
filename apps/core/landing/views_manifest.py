@@ -7,18 +7,13 @@ from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
+from apps.core.hakwonplus_assets import PWA_ICON_192, PWA_ICON_512
 from apps.core.models import LandingPage
 
 from ._helpers import tenant_required
 
 
 HAKWONPLUS_FRONTEND_ORIGIN = "https://hakwonplus.com"
-HAKWONPLUS_MANIFEST_ICON_192 = (
-    f"{HAKWONPLUS_FRONTEND_ORIGIN}/tenants/hakwonplus/pwa-192.png?v=20260727"
-)
-HAKWONPLUS_MANIFEST_ICON_512 = (
-    f"{HAKWONPLUS_FRONTEND_ORIGIN}/tenants/hakwonplus/pwa-512.png?v=20260727"
-)
 
 
 @method_decorator([csrf_exempt, tenant_required], name="dispatch")
@@ -43,9 +38,9 @@ class LandingManifestView(View):
             )
         )
         if is_hakwonplus:
-            theme_color = "#37D6F2"
-            icon_192 = HAKWONPLUS_MANIFEST_ICON_192
-            icon_512 = HAKWONPLUS_MANIFEST_ICON_512
+            theme_color = "#293ab0"
+            icon_192 = HAKWONPLUS_FRONTEND_ORIGIN + PWA_ICON_192
+            icon_512 = HAKWONPLUS_FRONTEND_ORIGIN + PWA_ICON_512
         try:
             lp = LandingPage.objects.get(tenant=request.tenant, is_published=True)
             cfg = lp.published_config or {}
@@ -67,7 +62,7 @@ class LandingManifestView(View):
             "scope": "/",
             "display": "standalone",
             "orientation": "portrait",
-            "background_color": "#0A0E1A",
+            "background_color": "#ffffff" if is_hakwonplus else "#0A0E1A",
             "theme_color": theme_color,
             "lang": "ko-KR",
             "categories": ["education", "social"],

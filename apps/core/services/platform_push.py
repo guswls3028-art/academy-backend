@@ -7,6 +7,7 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
+from apps.core.hakwonplus_assets import APPLE_TOUCH_ICON, PWA_ICON_192
 from apps.core.models import PlatformPushOutbox
 
 logger = logging.getLogger(__name__)
@@ -53,8 +54,8 @@ def build_platform_inbox_payload(*, kind: str, count: int) -> dict:
         "body": body,
         "url": "/dev/inbox",
         "tag": f"platform-inbox-{kind}",
-        "icon": "/tenants/hakwonplus/pwa-192.png",
-        "badge": "/tenants/hakwonplus/apple-touch-icon.png",
+        "icon": PWA_ICON_192,
+        "badge": APPLE_TOUCH_ICON,
     }
 
 

@@ -1,11 +1,30 @@
-from django.test import TestCase
+import json
+
+from django.test import RequestFactory, TestCase
 from rest_framework.test import APIRequestFactory
 
+from apps.core.landing.views_manifest import LandingManifestView
 from apps.core.models import Program, Tenant, TenantDomain
+from apps.core.services.platform_push import build_platform_inbox_payload
 from apps.core.views.tenant_info import PublicOgMetaView
 
 
 class PublicPwaBrandTests(TestCase):
+    def test_platform_install_and_push_use_the_current_brand_assets(self):
+        request = RequestFactory().get("/api/v1/core/landing/manifest.json")
+        request.tenant = Tenant.objects.create(name="학원플러스", code="hakwonplus")
+        manifest = json.loads(LandingManifestView.as_view()(request).content)
+        icons = {icon["sizes"]: icon["src"] for icon in manifest["icons"]}
+        push = build_platform_inbox_payload(kind="bug", count=1)
+        root = "/tenants/hakwonplus"
+        version = "?v=20261119"
+        self.assertEqual(icons, {
+            f"{size}x{size}": f"https://hakwonplus.com{root}/pwa-{size}.png{version}"
+            for size in (192, 512)
+        })
+        self.assertEqual(push["icon"], f"{root}/pwa-192.png{version}")
+        self.assertEqual(push["badge"], f"{root}/apple-touch-icon.png{version}")
+
     def test_custom_tenant_exposes_its_uploaded_logo_for_pwa_install(self):
         tenant = Tenant.objects.create(
             name="새봄학원",
