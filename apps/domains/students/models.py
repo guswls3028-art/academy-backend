@@ -723,3 +723,44 @@ class DawonTeacherAlertSettings(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=("tenant", "teacher"), name="students_dawon_teacher_alerts")]
+
+class DawonExamReport(models.Model):
+    """Published assessments belonging to the same course, lesson and report format."""
+    exam = models.OneToOneField("exams.Exam", on_delete=models.CASCADE)
+    session = models.ForeignKey("lectures.Session", on_delete=models.CASCADE)
+    kind = models.CharField(max_length=16, choices=[("level_pair", "빈출·심화"), ("cycle", "공통 회차"), ("school_mock", "학교별 모의시험")])
+    title = models.CharField(max_length=120)
+    section = models.CharField(max_length=80)
+    series = models.CharField(max_length=80)
+    sequence = models.PositiveIntegerField()
+    scope = models.CharField(max_length=180, blank=True)
+    next_homework = models.TextField(blank=True)
+    clinic = models.TextField(blank=True)
+
+
+class DawonReportHomework(models.Model):
+    report = models.ForeignKey(DawonExamReport, on_delete=models.CASCADE)
+    enrollment = models.ForeignKey("enrollment.Enrollment", on_delete=models.CASCADE)
+    title = models.CharField(max_length=160)
+    completion = models.PositiveSmallIntegerField(null=True)
+    wrong = models.JSONField(default=list)
+    unfinished = models.JSONField(default=list)
+
+
+class DawonExamReview(models.Model):
+    exam = models.ForeignKey("exams.Exam", on_delete=models.CASCADE)
+    lecture = models.ForeignKey("lectures.Lecture", on_delete=models.CASCADE)
+    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    reviewed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("exam", "lecture", "reviewer"), name="dawon_exam_reviewer")]
+
+class DawonCounselAppointment(models.Model):
+    enrollment = models.ForeignKey("enrollment.Enrollment", on_delete=models.CASCADE)
+    day = models.DateField()
+    registered_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("enrollment", "day"), name="dawon_counsel_enrollment_day")]

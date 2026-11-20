@@ -92,7 +92,7 @@ def summary(group, count, lecture_count):
 
 
 def student_row(student):
-    return {"id": student.id, "name": student.name, "school": school_of(student),
+    return {"id": student.id, "name": student.name, "school": school_of(student), "grade": student.grade,
             "phone": student.phone or "", "parent_phone": student.parent_phone or ""}
 
 
@@ -144,7 +144,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
         groups = ClassGroup.objects.filter(tenant=tenant, pk__in=assigned).annotate(
             members=Count("students", filter=Q(students__tenant=tenant, students__deleted_at__isnull=True)),
         ).order_by("name", "pk")
-        rows = {g.pk: {"id": g.pk, "name": g.name, "members": g.members, "courses": [], "recent": None} for g in groups}
+        rows = {g.pk: {"id": g.pk, "name": g.name, "kind": g.kind, "track": g.track, "school": g.school, "members": g.members, "courses": [], "recent": None} for g in groups}
         links = ClassGroupLecture.objects.filter(group_id__in=rows, lecture__tenant=tenant)
         for group_id, lecture_id in links.values_list("group_id", "lecture_id"):
             rows[group_id]["courses"].append(lecture_id)
@@ -186,7 +186,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
         qs = with_student_access(qs.filter(tenant=request.tenant, deleted_at__isnull=True, is_managed=True),
                                  request.tenant).filter(active_account=True)
         for student in qs.only("pk", "name", "school_type", "high_school", "middle_school", "elementary_school",
-                               "deleted_at", "is_managed", "phone", "parent_phone").order_by("name", "pk").iterator(chunk_size=200):
+                               "deleted_at", "is_managed", "phone", "parent_phone", "grade").order_by("name", "pk").iterator(chunk_size=200):
             if not eligible(group, student) or (school and school_of(student) != school):
                 continue
             name = normalized(student.name).casefold()

@@ -153,7 +153,8 @@ class DawonDemoLearningView(APIView):
         for grade in grades["exams"]:
             if (grade["session_id"], grade["enrollment_id"]) in allowed_pairs:
                 exams[grade["session_id"]].append({
-                    "title": grade["title"], "score": grade["total_score"], "max": grade["max_score"],
+                    "id": grade["exam_id"], "title": grade["title"], "score": grade["total_score"], "max": grade["max_score"],
+                    "result_available": grade["total_score"] is not None and not grade.get("grading_status"),
                 })
         videos = defaultdict(list)
         for video in Video.objects.filter(tenant=tenant, session_id__in=ids, status="READY").select_related("session"):

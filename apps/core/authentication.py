@@ -115,8 +115,9 @@ def _validate_dawon_demo_access(request, token):
         from apps.domains.clinic.dawon_demo import is_demo_tenant
         if is_demo_tenant(getattr(request, "tenant", None)) and (
             (method in {"GET", "HEAD"} and path in {
-                "/api/v1/core/me/", "/api/v1/students/demo-operations/",
-            }) or (method == "PATCH" and path == "/api/v1/students/demo-operations/")
+                "/api/v1/core/me/", "/api/v1/students/demo-operations/", "/api/v1/students/demo-staff/",
+            }) or (method == "PATCH" and path in {"/api/v1/students/demo-operations/", "/api/v1/students/demo-staff/"})
+            or (method == "POST" and path == "/api/v1/students/demo-operations/")
         ):
             return
         raise PermissionDenied("체험 관리자는 예시 학원의 운영 데이터만 사용할 수 있습니다.")
@@ -132,6 +133,8 @@ def _validate_dawon_demo_access(request, token):
     if role == "student" and method == "POST" and path in _student_qr_actions:
         return
     if role == "student" and method == "PUT" and path == "/api/v1/results/school-reports/me/":
+        return
+    if role == "teacher" and method == "POST" and path == "/api/v1/students/demo-staff/clock/":
         return
     if role == "teacher" and method in {"POST", "PATCH", "PUT"} and _teacher_write_domains.match(path):
         return

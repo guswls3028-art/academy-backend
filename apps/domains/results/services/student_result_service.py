@@ -320,6 +320,10 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     if reference_percent(tenant, enrollment.lecture_id) is not None:
         from apps.domains.results.services.exam_analysis_metrics import load_exam_analysis, score_rate
         analysis = load_exam_analysis(exam=exam, tenant=tenant, lecture_id=enrollment.lecture_id, include_trends=False)
+        from apps.domains.students.services.dawon_exam_reports import report_for_student
+        report = report_for_student(tenant=tenant, exam=exam, session=session, enrollment=enrollment, analysis=analysis)
+        if report:
+            data["dawon_report"] = report
         summary = analysis.insights["score_summary"]
         if "top_reference_percent" not in summary:
             return data
