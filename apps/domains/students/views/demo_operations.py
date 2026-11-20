@@ -22,6 +22,7 @@ from apps.domains.results.models import Result
 from apps.domains.results.utils.initial_exam_score import load_initial_exam_scores, project_initial_exam_score
 from apps.domains.results.services.omr_subjective_completion import pending_omr_result_ids
 from apps.domains.students.models import ClassGroup, DawonExamReview
+from apps.domains.students.services.dawon_daily_attendance import daily_attendance
 from apps.domains.students.services.dawon_exam_reports import admin_exam_detail, exam_for_management
 from apps.domains.students.services.dawon_care_directory import care_directory, learner_directory
 from apps.domains.students.services.dawon_followup import class_alerts, register_followup, student_record
@@ -86,6 +87,8 @@ class DawonDemoOperationsView(APIView):
 
     def get(self, request):
         tenant = request.tenant
+        if request.query_params.get("view") == "attendance":
+            return Response(daily_attendance(tenant, request.query_params), headers={"Cache-Control": "private, no-store"})
         if request.query_params.get("view") in {"care", "learners"}:
             select = care_directory if request.query_params["view"] == "care" else learner_directory
             return Response(select(tenant, request.query_params), headers={"Cache-Control":"private, no-store"})

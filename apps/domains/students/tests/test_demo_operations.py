@@ -46,6 +46,51 @@ class DemoOperationsTests(TestCase):
         force_authenticate(request, user=self.user, token=self.token)
         return DawonDemoOperationsView.as_view()(request)
 
+    def test_daily_attendance_counts_units_and_retains_missing_records(self):
+        from apps.domains.attendance.models import Attendance
+        from apps.domains.enrollment.models import SessionEnrollment
+
+        group = ClassGroup.objects.create(tenant=self.tenant, name="중등", kind="union", track="SKY")
+        course = Lecture.objects.create(tenant=self.tenant, title="수학")
+        ClassGroupLecture.objects.create(group=group, lecture=course, period="vacation")
+        lessons = [Session.objects.create(lecture=course, order=i, date="2026-11-20") for i in (1, 2)]
+        for i in range(2):
+            user = get_user_model().objects.create_user(username=f"day{i}", tenant=self.tenant)
+            student = Student.objects.create(tenant=self.tenant, user=user, name=f"학생{i}",
+                                             ps_number=f"day-{i}", omr_code=f"{i:08}")
+            enrollment = Enrollment.objects.create(tenant=self.tenant, lecture=course, student=student)
+            SessionEnrollment.objects.create(tenant=self.tenant, session=lessons[0], enrollment=enrollment)
+            if i == 0:
+                Attendance.objects.create(tenant=self.tenant, session=lessons[0], enrollment=enrollment, status="UNSET")
+                Attendance.objects.create(tenant=self.tenant, session=lessons[1], enrollment=enrollment, status="ABSENT")
+        query = {"view": "attendance", "date": "2026-11-20"}
+        response = self.operation(data=query)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["groups"], [{"id": group.pk, "name": group.name, "lesson_count": 2,
+                         "total": 3, "marked": 1, "missing": 1, "unset": 1, "absent": 1}])
+        self.assertEqual(response.data["lessons"], [])
+        from apps.domains.students.services.dawon_daily_attendance import daily_attendance
+
+        with self.assertNumQueries(4):
+            detail = daily_attendance(self.tenant, {**query, "group": group.pk})
+        self.assertEqual([[s["status"] for s in lesson["students"]] for lesson in detail["lessons"]],
+                         [["UNSET", None], ["ABSENT"]])
+        self.assertEqual(self.operation(data={**query, "date": "2026-11-19"}).data["groups"], [])
+        self.assertEqual(self.operation(data={**query, "date": "bad"}).status_code, 400)
+        foreign = ClassGroup.objects.create(tenant=self.other, name="외부", kind="union", track="SKY")
+        self.assertEqual(self.operation(data={**query, "group": foreign.pk}).status_code, 404)
+        from apps.domains.lectures.models import SessionSchedule, SessionScheduleMembership
+
+        alternate = SessionSchedule.objects.create(session=lessons[0], label="다른 날", date="2026-11-21")
+        SessionScheduleMembership.objects.create(schedule=alternate, session_enrollment=SessionEnrollment.objects.filter(
+            session=lessons[0]).order_by("pk").first())
+        self.assertEqual(self.operation(data=query).data["groups"][0]["total"], 1)
+        shifted = self.operation(data={**query, "date": "2026-11-21", "group": group.pk}).data
+        self.assertEqual(shifted["groups"][0]["total"], 1)
+        self.assertEqual(shifted["lessons"][0]["students"][0]["status"], "UNSET")
+        self.token["dawon_demo_role"] = "teacher"
+        self.assertEqual(self.operation(data=query).status_code, 404)
+
     def test_read_and_scoped_employee_position(self):
         course = Lecture.objects.create(tenant=self.tenant, title="수학", subject="수학")
         group = ClassGroup.objects.create(tenant=self.tenant, name="중등반", kind="union", track="SKY")
