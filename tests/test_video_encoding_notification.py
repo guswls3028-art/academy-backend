@@ -2,12 +2,13 @@ from unittest.mock import patch
 
 from django.test import TestCase
 
-from academy.adapters.db.django.repositories_video import _notify_video_encoding_complete
+from academy.adapters.db.django.repositories_video import _notify_video_encoding_complete, job_complete
 from apps.core.models import Tenant, TenantDomain
+from apps.core.r2_paths import video_hls_master_path
 from apps.domains.messaging.default_templates import get_default_templates
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, ScheduledNotification
 from apps.domains.staffs.models import Staff
-from apps.domains.video.models import Video
+from apps.domains.video.models import Video, VideoTranscodeJob
 from apps.worker.messaging_worker.sqs_main import _allowed_common_template_ids, _video_encoding_block_reason
 
 
@@ -40,9 +41,19 @@ class VideoEncodingNotificationTests(TestCase):
     @patch("apps.domains.messaging.sqs_queue.MessagingSQSQueue")
     def test_default_content_dispatches_exact_owner_envelope_to_uploader_once(self, queue):
         queue.return_value.enqueue.return_value = True
+        job = VideoTranscodeJob.objects.create(video=self.video, tenant=self.tenant)
+        self.video.current_job = job
+        self.video.save(update_fields=["current_job"])
+        path = video_hls_master_path(tenant_id=self.tenant.id, video_id=self.video.id)
+        self.enterContext(patch("apps.domains.video.services.video_job_lock.release"))
+        self.enterContext(patch("academy.adapters.db.django.repositories_video._cache_video_status_safe"))
+        self.enterContext(patch("apps.domains.video.redis_status_cache.delete_video_progress_key"))
         with self.captureOnCommitCallbacks(execute=True):
-            self.notify()
+            self.assertEqual(job_complete(str(job.id), path), (True, "ok"))
+        with self.captureOnCommitCallbacks(execute=True):
+            self.assertEqual(job_complete(str(job.id), path), (True, "idempotent"))
         queue.return_value.enqueue.assert_called_once()
+        self.assertEqual(ScheduledNotification.objects.filter(trigger=self.trigger).count(), 1)
         payload = queue.return_value.enqueue.call_args.kwargs
         self.assertEqual(payload["tenant_id"], self.owner.id)
         self.assertEqual(payload["source_tenant_id"], self.tenant.id)
@@ -87,6 +98,11 @@ class VideoEncodingNotificationTests(TestCase):
                 setattr(self.config, field, original)
                 self.config.save(update_fields=[field])
         self.video.uploaded_by.tenant_id = self.owner.id
+        self.notify()
+        self.assertFalse(ScheduledNotification.objects.exists())
+
+    def test_no_school_opt_in_does_not_enqueue(self):
+        self.config.delete()
         self.notify()
         self.assertFalse(ScheduledNotification.objects.exists())
 
