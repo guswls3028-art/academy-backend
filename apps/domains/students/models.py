@@ -689,6 +689,7 @@ class ClassGroup(models.Model):
     kind = models.CharField(max_length=8, choices=Kind.choices)
     track = models.CharField(max_length=5, choices=Track.choices, blank=True)
     school = models.CharField(max_length=100, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     students = models.ManyToManyField(Student, blank=True, related_name="class_groups")
 
     class Meta:

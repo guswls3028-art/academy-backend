@@ -113,8 +113,15 @@ class ClassGroupViewSet(viewsets.ViewSet):
         if not getattr(settings, "DAWON_REVIEW_CLASS_GROUPS", False) or (tenant.pk, tenant.code) != (719, "dawon"):
             raise NotFound()
 
+    def groups(self):
+        request = self.request
+        groups = ClassGroup.objects.filter(tenant=request.tenant)
+        if hasattr(request.auth, "get") and request.auth.get("dawon_demo_role") == "teacher":
+            groups = groups.filter(Q(created_by=request.user) | Q(pk__in=assigned_class_group_ids(request.tenant, request.user)))
+        return groups
+
     def group(self, pk, *, lock=False):
-        qs = ClassGroup.objects.filter(tenant=self.request.tenant)
+        qs = self.groups()
         return get_object_or_404(qs.select_for_update() if lock else qs, pk=pk)
 
     def group_detail(self, group):
@@ -129,7 +136,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
         return {**summary(group, len(roster), len(lectures)), "students": roster, "lectures": lectures}
 
     def list(self, request):
-        groups = ClassGroup.objects.filter(tenant=request.tenant).annotate(
+        groups = self.groups().annotate(
             count=Count("students", filter=Q(students__tenant=request.tenant), distinct=True),
             course_count=Count("course_links", filter=Q(course_links__lecture__tenant=request.tenant), distinct=True),
         ).order_by("name", "pk")
@@ -141,7 +148,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
 
         tenant = request.tenant
         assigned = assigned_class_group_ids(tenant, request.user)
-        groups = ClassGroup.objects.filter(tenant=tenant, pk__in=assigned).annotate(
+        groups = ClassGroup.objects.filter(Q(pk__in=assigned) | Q(created_by=request.user), tenant=tenant).annotate(
             members=Count("students", filter=Q(students__tenant=tenant, students__deleted_at__isnull=True)),
         ).order_by("name", "pk")
         rows = {g.pk: {"id": g.pk, "name": g.name, "kind": g.kind, "track": g.track, "school": g.school, "members": g.members, "courses": [], "recent": None} for g in groups}
@@ -167,7 +174,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
         fields = values(GroupInput, request)
         try:
             with transaction.atomic():
-                group = ClassGroup.objects.create(tenant=request.tenant, **fields)
+                group = ClassGroup.objects.create(tenant=request.tenant, created_by=request.user, **fields)
         except IntegrityError:
             raise serializers.ValidationError({"name": "같은 이름의 반이 이미 있습니다."})
         return Response(self.group_detail(group), status=201)
@@ -213,6 +220,8 @@ class ClassGroupViewSet(viewsets.ViewSet):
     def for_lecture(self, request, lecture_id):
         lecture = native_group_lecture(request.tenant, lecture_id)
         link = ClassGroupLecture.objects.filter(group__tenant=request.tenant, lecture=lecture).select_related("group").first()
+        if link and not self.groups().filter(pk=link.group_id).exists():
+            raise NotFound()
         roles = TenantMembership.objects.filter(tenant=request.tenant, user=request.user, is_active=True)
         can_edit = bool(link and (roles.filter(role__in=("owner", "admin")).exists()
                         or (link.reference_teacher_id == request.user.pk and roles.filter(role="teacher").exists())))

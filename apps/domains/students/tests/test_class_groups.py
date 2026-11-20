@@ -19,11 +19,11 @@ class ClassGroupTests(TestCase):
         self.factory = APIRequestFactory()
         self.root = "/api/v1/students/class-groups/"
 
-    def call(self, method, suffix="", payload=None, tenant=None, actor=None):
+    def call(self, method, suffix="", payload=None, tenant=None, actor=None, token=None):
         route = self.root + suffix
         request = getattr(self.factory, method)(route, payload or {}, format="json")
         request.tenant = tenant or self.tenant
-        force_authenticate(request, user=actor or self.actor)
+        force_authenticate(request, user=actor or self.actor, token=token)
         view = resolve(route)
         return view.func(request, **view.kwargs)
 
@@ -95,6 +95,18 @@ class ClassGroupTests(TestCase):
         self.assertEqual(rows[assigned.pk]["recent"], {
             "id": actual.pk, "lecture_id": shared.pk, "title": actual.title, "date": today, "schedule_id": held.pk,
         })
+
+    def test_teacher_directory_and_mutation_only_reach_owned_groups(self):
+        teacher = get_user_model().objects.create_user(username="directory-teacher", tenant=self.tenant)
+        TenantMembership.ensure_active(tenant=self.tenant, user=teacher, role="teacher")
+        role = {"actor": teacher, "token": {"dawon_demo_role": "teacher"}}
+        payload = {"name": "직접 개설한 반", "kind": "union", "track": "SKY"}
+        mine = self.call("post", payload=payload, **role).data["id"]
+        other = self.call("post", payload=dict(payload, name="다른 선생님 반")).data["id"]
+        self.assertEqual([row["id"] for row in self.call("get", **role).data], [mine])
+        self.assertEqual(self.call("get", f"{mine}/", **role).status_code, 200)
+        self.assertEqual(self.call("patch", f"{other}/members/", {"add": []}, **role).status_code, 404)
+        self.assertEqual({row["id"] for row in self.call("get").data}, {mine, other})
 
     def test_school_roster_atomic_and_native_lecture(self):
         one = self.pupil("first", " Ａ고 ")
