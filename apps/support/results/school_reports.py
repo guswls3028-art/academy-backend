@@ -209,8 +209,10 @@ def save_direct_scores(tenant, student, user, term, subjects):
     return term_detail(tenant, locked, term)
 
 
-def roster_query(tenant, term, lecture_id=None):
+def roster_query(tenant, term, lecture_id=None, *, class_group=None):
     roster = _active_students(tenant)
+    if class_group is not None:
+        roster = roster.filter(class_groups=class_group)
     if lecture_id is not None:
         if not Lecture.objects.filter(tenant=tenant, pk=lecture_id, is_system=False).exists():
             raise NotFound("강의를 찾을 수 없습니다.")

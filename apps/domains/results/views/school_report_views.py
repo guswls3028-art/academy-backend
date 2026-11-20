@@ -214,6 +214,15 @@ class SchoolReportRosterView(APIView):
     def get(self, request):
         query = _validated_term(request.query_params, SchoolReportRosterSerializer)
         term = query.term()
+        group = None
+        if "class_group" in request.query_params:
+            from apps.domains.students.models import ClassGroup
+            if not is_dawon_school_report(request.tenant):
+                raise NotFound()
+            group_id = serializers.IntegerField(min_value=1,max_value=2**63-1).run_validation(request.query_params["class_group"])
+            group = ClassGroup.objects.filter(tenant=request.tenant, pk=group_id).first()
+            if group is None:
+                raise NotFound()
         if request.query_params.get("view") == "cohorts":
             if not is_dawon_school_report(request.tenant):
                 raise NotFound()
@@ -222,9 +231,9 @@ class SchoolReportRosterView(APIView):
             grade = serializers.IntegerField(min_value=1, max_value=12).run_validation(raw_grade) if raw_grade else None
             if bool(school) != bool(grade):
                 raise serializers.ValidationError("학교와 학년을 함께 선택하세요.")
-            return Response(school_report_cohorts(request.tenant, term, school=school, grade=grade),
+            return Response(school_report_cohorts(request.tenant, term, school=school, grade=grade, class_group=group),
                             headers={"Cache-Control": "private, no-store"})
-        roster, counts = roster_query(request.tenant, term, query.validated_data.get("lecture_id"))
+        roster, counts = roster_query(request.tenant, term, query.validated_data.get("lecture_id"), class_group=group)
         roster = roster_page(
             request.tenant, term, roster, query.validated_data.get("search"), query.validated_data.get("status"),
         )

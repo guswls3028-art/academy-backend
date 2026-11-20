@@ -4,6 +4,7 @@ from statistics import fmean
 
 from django.db.models import Count, Exists, F, OuterRef, Q
 from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.fields import IntegerField
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -22,6 +23,7 @@ from apps.domains.results.utils.initial_exam_score import load_initial_exam_scor
 from apps.domains.results.services.omr_subjective_completion import pending_omr_result_ids
 from apps.domains.students.models import ClassGroup, DawonExamReview
 from apps.domains.students.services.dawon_exam_reports import admin_exam_detail, exam_for_management
+from apps.domains.students.services.dawon_care_directory import care_directory, learner_directory
 from apps.domains.students.services.dawon_followup import class_alerts, register_followup, student_record
 from apps.domains.teachers.models import Teacher
 
@@ -84,6 +86,9 @@ class DawonDemoOperationsView(APIView):
 
     def get(self, request):
         tenant = request.tenant
+        if request.query_params.get("view") in {"care", "learners"}:
+            select = care_directory if request.query_params["view"] == "care" else learner_directory
+            return Response(select(tenant, request.query_params), headers={"Cache-Control":"private, no-store"})
         if "alerts" in request.query_params:
             return Response(class_alerts(tenant, request.query_params.get("group")), headers={"Cache-Control":"private, no-store"})
         if "student" in request.query_params:
@@ -105,7 +110,12 @@ class DawonDemoOperationsView(APIView):
         instructor_names.update(name.strip() for name in TenantMembership.objects.filter(
             tenant=tenant, user__tenant=tenant, role__in=["owner", "teacher"], is_active=True,
         ).values_list("user__name", flat=True) if name)
-        courses = Lecture.objects.filter(tenant=tenant, is_system=False).annotate(
+        courses = Lecture.objects.filter(tenant=tenant, is_system=False)
+        focused = "course_overview" in request.query_params
+        if focused:
+            course_id = IntegerField(min_value=1, max_value=2**63 - 1).run_validation(request.query_params["course_overview"])
+            courses = courses.filter(pk=course_id)
+        courses = courses.annotate(
             students=Count("enrollments", filter=Q(
                 enrollments__status="ACTIVE", enrollments__tenant=tenant,
                 enrollments__student__tenant=tenant, enrollments__student__deleted_at__isnull=True,
@@ -144,6 +154,8 @@ class DawonDemoOperationsView(APIView):
             tenant=tenant, exam_type=Exam.ExamType.REGULAR, is_active=True,
             sessions__lecture__tenant=tenant,
         ).distinct().order_by("title", "pk")
+        if focused:
+            exams = exams.filter(sessions__lecture_id=course_id)
         linked_exam = Exam.objects.filter(
             tenant=tenant, pk=OuterRef("target_id"), sessions__lecture_id=OuterRef("enrollment__lecture_id"),
         )

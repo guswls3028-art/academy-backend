@@ -64,6 +64,36 @@ class DemoOperationsTests(TestCase):
         self.token["dawon_demo_role"] = "teacher"
         self.assertEqual(self.operation().status_code, 404)
 
+    def test_directories_scope_real_records_to_selected_group_student_and_tenant(self):
+        from apps.domains.community.models import PostEntity
+        from apps.domains.students.models import DawonCounselAppointment
+
+        groups = []
+        for i in range(2):
+            group = ClassGroup.objects.create(tenant=self.tenant, name=f"반{i}", kind="union", track="SKY")
+            groups.append(group)
+            course = Lecture.objects.create(tenant=self.tenant, title=f"강의{i}")
+            ClassGroupLecture.objects.create(group=group, lecture=course, period="vacation")
+            user = get_user_model().objects.create_user(username=f"care{i}", tenant=self.tenant)
+            student = Student.objects.create(tenant=self.tenant, user=user, name=f"학생{i}", ps_number=f"care-{i}", omr_code=f"{i:08}")
+            group.students.add(student)
+            enrollment = Enrollment.objects.create(tenant=self.tenant, lecture=course, student=student)
+            DawonCounselAppointment.objects.create(enrollment=enrollment, day=timezone.localdate(), registered_by=self.user)
+            PostEntity.objects.create(tenant=self.tenant, post_type="counsel", author_role="parent", status="published",
+                                      created_by=student, title=f"상담신청{i}", content=f"상담 내용{i}")
+        foreign = ClassGroup.objects.create(tenant=self.other, name="외부", kind="union", track="SKY")
+        for view in [{"view":"learners"}, {"view":"care","kind":"requests"}, {"view":"care","kind":"appointments"}]:
+            result = self.operation(data={**view, "group":groups[0].pk}).data
+            self.assertEqual((result["count"], result["rows"][0]["name"]), (1, "학생0"))
+            self.assertEqual(self.operation(data={**view, "group":groups[0].pk, "q":"학생1"}).data["count"], 0)
+            self.assertEqual(self.operation(data={**view, "group":foreign.pk}).status_code, 404)
+        query = {"view":"care", "kind":"requests", "group":groups[0].pk}
+        row = self.operation(data=query).data["rows"][0]
+        self.assertNotIn("body", row)
+        self.assertEqual(self.operation(data={**query, "record":row["id"]}).data["rows"][0]["body"], "상담 내용0")
+        self.assertEqual(self.operation(data={**query, "group":groups[1].pk, "record":row["id"]}).status_code, 404)
+        self.assertEqual(self.operation(data={"view":"care","kind":"clinic","group":groups[0].pk}).data["count"], 0)
+
     def test_scores_count_confirmed_initial_results_only_once_per_enrollment(self):
         course = Lecture.objects.create(tenant=self.tenant, title="수학")
         lesson = Session.objects.create(lecture=course, order=1)

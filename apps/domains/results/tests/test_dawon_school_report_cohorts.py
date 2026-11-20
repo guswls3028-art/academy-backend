@@ -54,3 +54,16 @@ class DawonSchoolReportTests(TestCase):
         self.assertEqual(self.cohorts(academic_year=2024).data["cohorts"], [])
         with override_settings(DAWON_REVIEW_CLASS_GROUPS=False):
             self.assertEqual(self.cohorts().status_code, 404)
+
+    def test_roster_and_aggregate_use_same_class_membership(self):
+        from apps.domains.students.models import ClassGroup
+
+        group = ClassGroup.objects.create(tenant=self.tenant, name="연합", kind="union", track="HYPER")
+        group.students.add(self.peer)
+        self.put([collection.MATH])
+        selected = {**self.term, "class_group": group.pk}
+        roster = self.call("school-report-roster", self.teacher, query=selected).data
+        self.assertEqual((roster["total_count"], roster["submitted_count"], roster["missing_count"]), (1, 0, 1))
+        self.assertEqual([r["student_id"] for r in roster["results"]], [self.peer.pk])
+        self.assertEqual(self.cohorts(class_group=group.pk).data["cohorts"], [])
+        self.assertEqual(self.cohorts(class_group=group.pk+1000).status_code, 404)

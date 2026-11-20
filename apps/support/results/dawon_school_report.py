@@ -23,13 +23,15 @@ def school_scope_at_submission(tenant, student, term, today):
     return {"school_at_submission": school, "year_grade_at_submission": student.grade}
 
 
-def school_report_cohorts(tenant, term, *, school=None, grade=None):
+def school_report_cohorts(tenant, term, *, school=None, grade=None, class_group=None):
     from apps.support.results.school_reports import _current_scores, _term_scores
 
     rows = _term_scores(tenant, term).filter(student__tenant=tenant, student__deleted_at__isnull=True).only(
         "id", "student_id", "student__name", "subject", "score", "max_score", "created_at", "updated_at",
         "direct_entry", "school_at_submission", "year_grade_at_submission"
     ).select_related("student").order_by("student_id")
+    if class_group is not None:
+        rows = rows.filter(student__class_groups=class_group)
     groups = {}
     members = []
     for sid, history in groupby(rows.iterator(chunk_size=512), key=attrgetter("student_id")):
