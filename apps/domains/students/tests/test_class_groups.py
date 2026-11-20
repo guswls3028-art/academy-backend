@@ -47,7 +47,10 @@ class ClassGroupTests(TestCase):
         token = {"dawon_demo_role":"admin","dawon_demo_until":timezone.now().timestamp()+900}
         def admin_call(method,suffix="",data=None):
             return self.call(method,suffix,data,actor=admin,token=token)
-        form = {"name":"원장 개설반","kind":"union","track":"HYPER","assign_demo_teacher":True}
+        from apps.domains.staffs.models import Staff
+        from apps.domains.students.services.dawon_staff import FIXTURES, TEACHER
+        Staff.objects.create(tenant=self.tenant,user=teacher,name=FIXTURES[TEACHER][0],position="INSTRUCTOR")
+        form = {"name":"원장 개설반","kind":"union","track":"HYPER","assigned_teacher_id":teacher.pk}
         created = admin_call("post",data=form)
         self.assertEqual(created.status_code,201,created.data)
         group = ClassGroup.objects.get(pk=created.data["id"])

@@ -41,8 +41,19 @@ def eligible(group, student):
             and (group.kind == "union" or school_of(student) == group.school))
 
 
+def assignable_instructors(tenant):
+    from apps.domains.students.services.dawon_staff import sample_staff, TEACHER
+
+    teaching = TenantMembership.objects.filter(
+        tenant=tenant, user_id=OuterRef("user_id"), role="teacher", is_active=True,
+    )
+    return sample_staff(tenant).filter(Exists(teaching), position="INSTRUCTOR").exclude(
+        Q(user__username=TEACHER) & Q(user__is_active=False)
+    )
+
+
 class GroupInput(serializers.Serializer):
-    assign_demo_teacher = serializers.BooleanField(default=False)
+    assigned_teacher_id = serializers.IntegerField(min_value=1, max_value=2**63-1, required=False)
     name = serializers.CharField(max_length=100)
     kind = serializers.ChoiceField(choices=ClassGroup.Kind.choices)
     track = serializers.ChoiceField(choices=ClassGroup.Track.choices, allow_blank=True, default="")
@@ -155,9 +166,20 @@ class ClassGroupViewSet(viewsets.ViewSet):
                 by_student[student_id].append(course_id)
             for student in roster:
                 student["course_ids"] = by_student[student["id"]]
-        return {**summary(group, len(roster), len(lectures)), "students": roster, "lectures": lectures}
+        result = {**summary(group, len(roster), len(lectures)), "students": roster, "lectures": lectures}
+        if hasattr(self.request.auth, "get") and self.request.auth.get("dawon_demo_role") == "admin":
+            result["assigned_teacher"] = None
+            if group.assigned_teacher_id and group.assigned_teacher.tenant_id == group.tenant_id:
+                result["assigned_teacher"] = {"id":group.assigned_teacher_id,"name":group.assigned_teacher.name}
+        return result
 
     def list(self, request):
+        if request.query_params.get("view") == "instructors":
+            if not hasattr(request.auth, "get") or request.auth.get("dawon_demo_role") != "admin":
+                raise PermissionDenied()
+            return Response([{"id":user_id,"name":name} for user_id, name in
+                assignable_instructors(request.tenant).order_by("name","pk").values_list("user_id","name")],
+                headers={"Cache-Control":"private, no-store"})
         groups = self.groups().annotate(
             count=Count("students", filter=Q(students__tenant=request.tenant), distinct=True),
             course_count=Count("course_links", filter=Q(course_links__lecture__tenant=request.tenant), distinct=True),
@@ -194,18 +216,14 @@ class ClassGroupViewSet(viewsets.ViewSet):
 
     def create(self, request):
         fields = values(GroupInput, request)
-        if fields.pop("assign_demo_teacher"):
-            if not hasattr(request.auth, "get") or request.auth.get("dawon_demo_role") != "admin":
-                raise PermissionDenied()
-            assigned = TenantMembership.objects.filter(
-                tenant=request.tenant, user__tenant=request.tenant, user__username="t719_dawon-demo-teacher",
-                user__is_active=True, user__is_staff=False, user__is_superuser=False, role="teacher", is_active=True,
-            ).values_list("user_id", flat=True).first()
-            if not assigned:
-                raise serializers.ValidationError({"assign_demo_teacher":"체험 강사의 재직 상태를 확인하세요."})
-            fields["assigned_teacher_id"] = assigned
+        teacher_id = fields.get("assigned_teacher_id")
         try:
             with transaction.atomic():
+                if teacher_id is not None:
+                    if not hasattr(request.auth, "get") or request.auth.get("dawon_demo_role") != "admin":
+                        raise PermissionDenied()
+                    if not assignable_instructors(request.tenant).select_for_update().filter(user_id=teacher_id).first():
+                        raise serializers.ValidationError({"assigned_teacher_id":"이 지점의 재직 강사를 선택해 주세요."})
                 group = ClassGroup.objects.create(tenant=request.tenant, created_by=request.user, **fields)
         except IntegrityError:
             raise serializers.ValidationError({"name": "같은 이름의 반이 이미 있습니다."})

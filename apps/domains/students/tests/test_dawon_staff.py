@@ -91,3 +91,40 @@ class DawonStaffFlowTest(TestCase):
         result = self.request(DawonStaffView,"admin",data=query).data["payroll"]
         self.assertEqual((result["state"], result["total"]),("confirmed",105000))
         self.assertEqual(self.request(DawonStaffView,"admin",data={**query,"month":"2026-13"}).status_code,400)
+
+    def test_admin_instructor_directory_and_delegation(self):
+        from django.urls import resolve
+        from apps.domains.students.models import ClassGroup
+
+        def request(method,data,actor=None,role="admin",suffix=""):
+            path="/api/v1/students/class-groups/"+suffix
+            req=getattr(APIRequestFactory(),method)(path,data,format="json")
+            req.tenant=self.tenant
+            force_authenticate(req,user=actor or self.people["admin"],token={"dawon_demo_role":role})
+            view=resolve(path)
+            return view.func(req,**view.kwargs)
+
+        options=request("get",{"view":"instructors"})
+        self.assertEqual(options.status_code,200,options.data)
+        self.assertGreaterEqual(len(options.data),10)
+        self.assertTrue(all(set(r)=={"id","name"} for r in options.data))
+        chosen=next(r for r in options.data if r["name"]=="체험 수학강사 01")
+        person=get_user_model().objects.get(pk=chosen["id"])
+        self.assertFalse(person.is_active)
+        self.assertFalse(person.has_usable_password())
+        form={"name":"강사 인계반","kind":"union","track":"HYPER","assigned_teacher_id":person.pk}
+        created=request("post",form)
+        self.assertEqual(created.status_code,201,created.data)
+        self.assertEqual(created.data["assigned_teacher"],chosen)
+        self.assertEqual(request("get",{},suffix=f'{created.data["id"]}/').data["assigned_teacher"],chosen)
+        self.assertFalse(get_user_model().objects.get(pk=person.pk).is_active)
+        self.assertEqual(ClassGroup.objects.get(pk=created.data["id"]).created_by,self.people["admin"])
+        self.assertEqual(request("get",{"view":"instructors"},actor=self.people["teacher"],role="teacher").status_code,403)
+        fixture=Staff.objects.get(tenant=self.tenant,user=person)
+        for pos,active in [("INSTRUCTOR",False),("ASSISTANT",True)]:
+            fixture.position=pos; fixture.is_active=active; fixture.save(update_fields=["position","is_active"])
+            self.assertNotIn(chosen,request("get",{"view":"instructors"}).data)
+            self.assertEqual(request("post",{**form,"name":"권한 확인"}).status_code,400)
+        other=Tenant.objects.create(code="other-placement",name="별도")
+        outsider=get_user_model().objects.create_user(tenant=other,username="other-placement-instructor")
+        self.assertEqual(request("post",{**form,"name":"별도 지점","assigned_teacher_id":outsider.pk}).status_code,400)
