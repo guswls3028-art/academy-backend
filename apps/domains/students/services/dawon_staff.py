@@ -10,7 +10,7 @@ FIXTURES = {
     TEACHER: ("다원 체험 선생님", "INSTRUCTOR"),
     EMPLOYEE: ("다원 체험 강사", "INSTRUCTOR"),
     PREFIX + "branch-director": ("체험 분원장", "DIRECTOR"),
-    **{PREFIX + f"instructor-{i:02}": (f"체험 수학강사 {i:02}", "INSTRUCTOR") for i in range(1, 10)},
+    **{PREFIX + f"instructor-{i:02}": (f"체험 수학강사 {i:02}", "INSTRUCTOR") for i in range(1, 13)},
     **{PREFIX + f"assistant-{i:02}": (f"체험 수업조교 {i:02}", "ASSISTANT") for i in range(1, 3)},
 }
 

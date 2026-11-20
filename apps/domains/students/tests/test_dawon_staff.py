@@ -40,7 +40,8 @@ class DawonStaffFlowTest(TestCase):
         real = Staff.objects.create(tenant=self.tenant,name="별도 직원")
         result = self.request(DawonStaffView,"admin")
         self.assertEqual(result.status_code,200)
-        self.assertEqual(len(result.data["staff"]),14)
+        self.assertEqual(len(result.data["staff"]),len(FIXTURES))
+        self.assertGreaterEqual(len([key for key in FIXTURES if key.startswith(PREFIX + "instructor-")]), 12)
         from apps.support.lectures.class_group_cycles import assigned_class_group_ids
         from apps.domains.students.models import ClassGroup
         assigned = get_user_model().objects.get(tenant=self.tenant, username=PREFIX + "instructor-09")
