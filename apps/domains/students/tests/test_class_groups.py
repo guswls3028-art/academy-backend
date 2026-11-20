@@ -112,7 +112,7 @@ class ClassGroupTests(TestCase):
         override=course("별도 수업",7,11,manual)
         self.assertEqual(self.call("patch",f"{group.pk}/",{"assigned_teacher_id":new.pk},actor=admin,
                          token={"dawon_demo_role":"admin"}).status_code,200)
-        for link,teacher in ((past,old),(current,new),(upcoming,new),(override,manual)):
+        for link,teacher in ((past,old),(current,new),(upcoming,new),(override,new)):
             link.refresh_from_db();self.assertEqual(link.reference_teacher,teacher)
             self.assertEqual(link.lecture.name,teacher.name)
         self.assertEqual(self.call("get",f"{group.pk}/",actor=old,token={"dawon_demo_role":"teacher"}).status_code,404)

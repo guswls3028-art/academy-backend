@@ -270,12 +270,10 @@ class ClassGroupViewSet(viewsets.ViewSet):
         group = self.group(pk,lock=True)
         teacher_id = serializers.IntegerField(min_value=1,max_value=2**63-1).run_validation(request.data["assigned_teacher_id"])
         staff = get_object_or_404(assignable_instructors(request.tenant).select_related("user").select_for_update(),user_id=teacher_id)
-        prior = effective_group_teacher(group)
         links = list(group.course_links.select_related("lecture").select_for_update().filter(lecture__tenant=request.tenant)
                      .order_by(F("lecture__start_date").desc(nulls_last=True),"-pk"))
         cycles = assign_cycle_status([lecture_row(link,0) for link in links],timezone.localdate())
-        targets = [link for link,cycle in zip(links,cycles) if cycle["cycle_status"] != "past"
-                   and link.reference_teacher_id in (None,prior.pk if prior else None)]
+        targets = [link for link,cycle in zip(links,cycles) if cycle["cycle_status"] != "past"]
         group.assigned_teacher = staff.user
         group.save(update_fields=["assigned_teacher"])
         if targets:
