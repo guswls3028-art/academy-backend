@@ -368,7 +368,7 @@
 - 저장 문구가 다른 카테고리에서 만들어졌더라도 현재 발송 화면의 봉투를 바꾸지 않는다. 예를 들어 성적 화면에서 클리닉 문구를 재사용해도 preflight와 실발송은 모두 `score` 봉투를 사용한다.
 - `payment`처럼 본문과 봉투가 고정된 시스템 템플릿은 다른 진입 화면의 봉투로 fallback하지 않으며, 승인 SID가 없으면 발송을 차단한다.
 - 클라이언트가 샘플 학원명·강의명·차시·날짜를 임의로 조립하지 않는다. `preview_recipients` 또는 `full_message_body`가 없거나 수신자 수와 맞지 않으면 발송을 fail-close한다.
-- 전화번호는 마스킹해 반환하고, 유효한 학생/학부모 번호가 없는 대상은 `excluded`와 `exclude_reason`으로 구분한다.
+- 발송 권한이 있는 원장·관리자·강사에게 같은 학원의 수신 번호 전체를 `preview_recipients[].phone`으로 반환한다. 유효한 학생·학부모 번호가 없는 대상은 `excluded`와 `exclude_reason`으로 구분한다.
 - 여러 학생을 선택한 경우 학생 선택은 표시할 `full_message_body`만 바꾸며, 실제 발송 대상 집합은 바꾸지 않는다.
 - 공용 `preview -> confirm` 경로도 `full_message_body`를 표시한다. 1회용 confirm 토큰에는 발송에 불필요한 이 표시 전용 필드를 저장하지 않는다.
 - `grades` 수동 발송은 해석된 전체 학생 ID 집합과 `alimtalk_extra_vars_per_student` 키 집합이 정확히 같고, 모든 학생 항목에 비어 있지 않은 `_body_subst`가 있어야 한다. preflight와 confirm이 같은 검사를 수행하며, 한 명이라도 누락·초과·형식 오류이면 `grade_personalization_incomplete`로 실패 폐쇄한다.
