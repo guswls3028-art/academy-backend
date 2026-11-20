@@ -33,6 +33,22 @@ class DawonStaffFlowTest(TestCase):
         force_authenticate(request,user=user or self.people[role],token={"dawon_demo_role":role})
         return view.as_view()(request)
 
+    def test_seed_repairs_only_reserved_public_teacher_with_teaching_assignment(self):
+        from apps.domains.students.models import ClassGroup, ClassGroupLecture
+        from apps.domains.lectures.models import Lecture
+        staff=Staff.objects.get(user=self.people["teacher"])
+        Staff.objects.filter(pk=staff.pk).update(position="ASSISTANT")
+        other=Staff.objects.get(tenant=self.tenant,name="체험 수학강사 01")
+        Staff.objects.filter(pk=other.pk).update(position="ASSISTANT")
+        call_command("seed_dawon_staff",stdout=StringIO())
+        staff.refresh_from_db();self.assertEqual(staff.position,"ASSISTANT")
+        group=ClassGroup.objects.create(tenant=self.tenant,name="공개 강사 담당반",kind="union",track="HYPER")
+        course=Lecture.objects.create(tenant=self.tenant,title="공개 수업",name=staff.name,subject="수학")
+        ClassGroupLecture.objects.create(group=group,lecture=course,period="vacation",reference_teacher=self.people["teacher"])
+        call_command("seed_dawon_staff",stdout=StringIO())
+        staff.refresh_from_db();other.refresh_from_db()
+        self.assertEqual(staff.position,"INSTRUCTOR");self.assertEqual(other.position,"ASSISTANT")
+
     def test_seed_and_isolation(self):
         before = WorkRecord.objects.filter(tenant=self.tenant,memo=WORK_MARK).count()
         call_command("seed_dawon_staff", stdout=StringIO())

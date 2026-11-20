@@ -52,6 +52,22 @@ def assignable_instructors(tenant):
     )
 
 
+def effective_group_teacher(group):
+    if group.assigned_teacher_id:
+        return group.assigned_teacher if group.assigned_teacher.tenant_id == group.tenant_id else None
+    links = group.course_links.filter(lecture__tenant_id=group.tenant_id, reference_teacher__tenant_id=group.tenant_id)
+    from django.contrib.auth import get_user_model
+    candidates = list(get_user_model().objects.filter(tenant_id=group.tenant_id,
+        pk__in=links.values("reference_teacher_id")).only("pk","name").order_by("pk")[:2])
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates and group.created_by_id and TenantMembership.objects.filter(
+        tenant_id=group.tenant_id,user_id=group.created_by_id,user__tenant_id=group.tenant_id,role="teacher",is_active=True
+    ).exists():
+        return group.created_by
+    return None
+
+
 class GroupInput(serializers.Serializer):
     assigned_teacher_id = serializers.IntegerField(min_value=1, max_value=2**63-1, required=False)
     name = serializers.CharField(max_length=100)
@@ -127,7 +143,15 @@ class ClassGroupViewSet(viewsets.ViewSet):
         if not getattr(settings, "DAWON_REVIEW_CLASS_GROUPS", False) or (tenant.pk, tenant.code) != (719, "dawon"):
             raise NotFound()
 
-        if hasattr(request.auth, "get") and request.auth.get("dawon_demo_role") == "admin":
+        role = request.auth.get("dawon_demo_role") if hasattr(request.auth, "get") else None
+        if role is None:
+            memberships = set(TenantMembership.objects.filter(tenant=tenant,user=request.user,is_active=True).values_list("role",flat=True))
+            if "teacher" in memberships and not memberships.intersection({"admin","owner"}):
+                role = "teacher"
+        self.teacher_scope = role == "teacher"
+        if self.teacher_scope and self.action in {"create","partial_update","members","candidates"}:
+            raise PermissionDenied("반 편성은 원장 업무입니다.")
+        if role == "admin":
             user = request.user
             if (user.tenant_id != tenant.pk or user.username != "t719_dawon-demo-admin" or user.is_staff or user.is_superuser
                     or not TenantMembership.objects.filter(tenant=tenant,user=user,role="admin",is_active=True).exists()):
@@ -136,8 +160,8 @@ class ClassGroupViewSet(viewsets.ViewSet):
     def groups(self):
         request = self.request
         groups = ClassGroup.objects.filter(tenant=request.tenant)
-        if hasattr(request.auth, "get") and request.auth.get("dawon_demo_role") == "teacher":
-            groups = groups.filter(Q(assigned_teacher=request.user) | Q(created_by=request.user) | Q(pk__in=assigned_class_group_ids(request.tenant, request.user)))
+        if self.teacher_scope:
+            groups = groups.filter(pk__in=assigned_class_group_ids(request.tenant, request.user))
         return groups
 
     def group(self, pk, *, lock=False):
@@ -166,11 +190,9 @@ class ClassGroupViewSet(viewsets.ViewSet):
                 by_student[student_id].append(course_id)
             for student in roster:
                 student["course_ids"] = by_student[student["id"]]
-        result = {**summary(group, len(roster), len(lectures)), "students": roster, "lectures": lectures}
-        if hasattr(self.request.auth, "get") and self.request.auth.get("dawon_demo_role") == "admin":
-            result["assigned_teacher"] = None
-            if group.assigned_teacher_id and group.assigned_teacher.tenant_id == group.tenant_id:
-                result["assigned_teacher"] = {"id":group.assigned_teacher_id,"name":group.assigned_teacher.name}
+        instructor = effective_group_teacher(group)
+        result = {**summary(group, len(roster), len(lectures)), "students": roster, "lectures": lectures,
+                  "assigned_teacher": {"id":instructor.pk,"name":instructor.name} if instructor else None}
         return result
 
     def list(self, request):
@@ -184,7 +206,16 @@ class ClassGroupViewSet(viewsets.ViewSet):
             count=Count("students", filter=Q(students__tenant=request.tenant), distinct=True),
             course_count=Count("course_links", filter=Q(course_links__lecture__tenant=request.tenant), distinct=True),
         ).order_by("name", "pk")
-        return Response([summary(g, g.count, g.course_count) for g in groups])
+        groups = list(groups.select_related("assigned_teacher"))
+        legacy = defaultdict(set)
+        for group_id, name in ClassGroupLecture.objects.filter(
+            group_id__in=[g.pk for g in groups if not g.assigned_teacher_id],
+            group__tenant=request.tenant, lecture__tenant=request.tenant, reference_teacher__tenant=request.tenant
+        ).values_list("group_id","reference_teacher__name"):
+            legacy[group_id].add(name)
+        return Response([{**summary(g,g.count,g.course_count),
+            "instructor_name": g.assigned_teacher.name if g.assigned_teacher_id and g.assigned_teacher.tenant_id==request.tenant.pk
+            else ", ".join(sorted(legacy[g.pk]))} for g in groups])
 
     @action(detail=False, methods=["get"])
     def teaching(self, request):
@@ -192,7 +223,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
 
         tenant = request.tenant
         assigned = assigned_class_group_ids(tenant, request.user)
-        groups = ClassGroup.objects.filter(Q(pk__in=assigned) | Q(created_by=request.user) | Q(assigned_teacher=request.user), tenant=tenant).annotate(
+        groups = ClassGroup.objects.filter(pk__in=assigned, tenant=tenant).annotate(
             members=Count("students", filter=Q(students__tenant=tenant, students__deleted_at__isnull=True)),
         ).order_by("name", "pk")
         rows = {g.pk: {"id": g.pk, "name": g.name, "kind": g.kind, "track": g.track, "school": g.school, "members": g.members, "courses": [], "recent": None} for g in groups}
@@ -228,6 +259,30 @@ class ClassGroupViewSet(viewsets.ViewSet):
         except IntegrityError:
             raise serializers.ValidationError({"name": "같은 이름의 반이 이미 있습니다."})
         return Response(self.group_detail(group), status=201)
+
+    @transaction.atomic
+    def partial_update(self, request, pk):
+        if set(request.data) != {"assigned_teacher_id"}:
+            raise serializers.ValidationError("담당 강사를 선택하세요.")
+        roles = TenantMembership.objects.filter(tenant=request.tenant,user=request.user,is_active=True)
+        if not roles.filter(role__in=("admin","owner")).exists():
+            raise PermissionDenied()
+        group = self.group(pk,lock=True)
+        teacher_id = serializers.IntegerField(min_value=1,max_value=2**63-1).run_validation(request.data["assigned_teacher_id"])
+        staff = get_object_or_404(assignable_instructors(request.tenant).select_related("user").select_for_update(),user_id=teacher_id)
+        prior = effective_group_teacher(group)
+        links = list(group.course_links.select_related("lecture").select_for_update().filter(lecture__tenant=request.tenant)
+                     .order_by(F("lecture__start_date").desc(nulls_last=True),"-pk"))
+        cycles = assign_cycle_status([lecture_row(link,0) for link in links],timezone.localdate())
+        targets = [link for link,cycle in zip(links,cycles) if cycle["cycle_status"] != "past"
+                   and link.reference_teacher_id in (None,prior.pk if prior else None)]
+        group.assigned_teacher = staff.user
+        group.save(update_fields=["assigned_teacher"])
+        if targets:
+            ClassGroupLecture.objects.filter(pk__in=[link.pk for link in targets]).update(reference_teacher_id=teacher_id)
+            from apps.domains.lectures.models import Lecture
+            Lecture.objects.filter(tenant=request.tenant,pk__in=[link.lecture_id for link in targets]).update(name=staff.name)
+        return Response(self.group_detail(group))
 
     def retrieve(self, request, pk):
         return Response(self.group_detail(self.group(pk)))
@@ -341,12 +396,18 @@ class ClassGroupViewSet(viewsets.ViewSet):
         if group.course_links.filter(lecture__tenant=request.tenant, period=fields["period"], school=school,
                                      lecture__start_date=fields["start_date"]).exists():
             raise serializers.ValidationError({"start_date": "같은 학교·기간·시작일의 강의가 이미 있습니다."})
+        instructor = effective_group_teacher(group)
+        demo_role = request.auth.get("dawon_demo_role") if hasattr(request.auth,"get") else None
+        if demo_role in ("admin","teacher") and not instructor:
+            raise serializers.ValidationError("수업을 개설하기 전에 반 담당 강사를 지정하세요.")
+        if demo_role == "admin" and not assignable_instructors(request.tenant).filter(user_id=instructor.pk).exists():
+            raise serializers.ValidationError("수업을 개설하기 전에 반 담당 강사를 지정하세요.")
         try:
             with transaction.atomic():
                 lecture = create_class_group_lecture(tenant=request.tenant, title=fields["title"],
                     start_date=fields["start_date"], end_date=fields["end_date"], student_ids=[s.pk for s in roster],
-                    options={key: request.data[key] for key in ("name", "subject", "description", "lecture_time", "color",
-                             "chip_label", "schedule_mode", "schedule_defaults") if key in request.data})
+                    options={**{key: request.data[key] for key in ("name", "subject", "description", "lecture_time", "color",
+                             "chip_label", "schedule_mode", "schedule_defaults") if key in request.data}, **({"name":instructor.name} if instructor else {})})
         except IntegrityError:
             raise serializers.ValidationError({"title": "같은 이름의 강의가 있는지 확인하세요."})
         teachers = TenantMembership.objects.filter(tenant=request.tenant, role="teacher", is_active=True, user__is_active=True)
@@ -355,6 +416,6 @@ class ClassGroupViewSet(viewsets.ViewSet):
         if not named and teachers.filter(user=request.user).exists():
             teacher_id = request.user.pk
         link = ClassGroupLecture.objects.create(group=group, lecture=lecture, period=fields["period"], school=school,
-                                               reference_teacher_id=teacher_id)
+                                               reference_teacher_id=instructor.pk if instructor else teacher_id)
         cycle = class_group_cycles(request.tenant, group_id=group.pk)[lecture.pk]
         return Response({**lecture_row(link, len(roster)), **cycle}, status=201)

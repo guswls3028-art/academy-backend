@@ -2,17 +2,19 @@ from itertools import groupby
 from operator import itemgetter
 
 from django.conf import settings
-from django.db.models import F
+from django.db.models import F, Q
 from django.utils import timezone
 
 
 def assigned_class_group_ids(tenant, teacher):
-    from apps.domains.students.models import ClassGroupLecture
+    from apps.domains.students.models import ClassGroup
 
-    links = ClassGroupLecture.objects.filter(group__tenant=tenant, lecture__tenant=tenant, reference_teacher=teacher)
+    groups = ClassGroup.objects.filter(tenant=tenant)
     if not getattr(settings, "DAWON_REVIEW_CLASS_GROUPS", False) or (tenant.pk, tenant.code) != (719, "dawon"):
-        links = links.none()
-    return links.values("group_id")
+        groups = groups.none()
+    legacy = Q(created_by=teacher) | Q(course_links__lecture__tenant=tenant, course_links__reference_teacher=teacher)
+    return groups.filter(Q(assigned_teacher=teacher) | (Q(assigned_teacher__isnull=True) & legacy)).annotate(
+        group_id=F("pk")).order_by().values("group_id").distinct()
 
 
 def assign_cycle_status(rows, today):

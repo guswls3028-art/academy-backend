@@ -67,6 +67,14 @@ class Command(BaseCommand):
                 defaults={"name": name, "phone": "", "position": position})
             if staff.name != name or staff.phone or not staff.is_active or staff.is_manager:
                 raise CommandError("Unexpected staff fixture profile.")
+            if username == TEACHER and user.is_active and staff.position == "ASSISTANT":
+                teacher_member = TenantMembership.objects.filter(tenant=tenant,user=user,role="teacher",is_active=True).exists()
+                teaching = ClassGroupLecture.objects.filter(group__tenant=tenant,lecture__tenant=tenant,
+                    lecture__is_active=True,reference_teacher=user).exists() or ClassGroup.objects.filter(
+                        tenant=tenant,assigned_teacher=user).exists()
+                if teacher_member and teaching:
+                    staff.position = "INSTRUCTOR"
+                    staff.save(update_fields=["position"])
             if username.startswith("t719_dawon-demo-instructor-"):
                 seed_secondary_class(tenant, user)
             StaffWorkType.objects.get_or_create(tenant=tenant, staff=staff, work_type=work)

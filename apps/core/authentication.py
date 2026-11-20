@@ -118,6 +118,9 @@ def _validate_dawon_demo_access(request, token):
             or (method == "POST" and path == "/api/v1/students/class-groups/")
             or (method == "PATCH" and re.fullmatch(r"/api/v1/students/class-groups/[1-9][0-9]*/members/", path))
             or (method in {"GET", "HEAD"} and path in {
+            or (method == "PATCH" and re.fullmatch(r"/api/v1/students/class-groups/[1-9][0-9]*/", path))
+            or (method == "POST" and re.fullmatch(r"/api/v1/students/class-groups/[1-9][0-9]*/lectures/", path))
+            or (method in {"GET","HEAD","POST"} and re.fullmatch(r"/api/v1/students/class-groups/[1-9][0-9]*/lectures/[1-9][0-9]*/late-students/", path))
                 "/api/v1/core/me/", "/api/v1/students/demo-operations/", "/api/v1/students/demo-staff/",
             }) or (method == "PATCH" and path in {"/api/v1/students/demo-operations/", "/api/v1/students/demo-staff/"})
             or (method == "POST" and path == "/api/v1/students/demo-operations/")
@@ -127,6 +130,12 @@ def _validate_dawon_demo_access(request, token):
     if role == "teacher" and (
         path.startswith(("/api/v1/fees/", "/api/v1/billing/", "/api/v1/payroll/", "/api/v1/ops/"))
         or (path.startswith("/api/v1/staffs/") and path != "/api/v1/staffs/me/")
+    if role == "teacher" and (
+        (method == "POST" and path == "/api/v1/students/class-groups/")
+        or (method == "PATCH" and re.fullmatch(r"/api/v1/students/class-groups/[1-9][0-9]*/(?:members/)?", path))
+        or (method in {"GET","HEAD"} and re.fullmatch(r"/api/v1/students/class-groups/[1-9][0-9]*/candidates/", path))
+    ):
+        raise PermissionDenied("반 편성은 원장 업무입니다.")
     ):
         raise PermissionDenied("선생님 체험은 수업 업무에만 사용할 수 있습니다.")
     if _restricted_actions.search(path) or (method == "PATCH" and _qr_point_change.fullmatch(path)):

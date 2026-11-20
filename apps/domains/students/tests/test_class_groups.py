@@ -75,7 +75,7 @@ class ClassGroupTests(TestCase):
         self.assertTrue(Enrollment.objects.filter(student=student,lecture=course,status="ACTIVE").exists())
         for method, route, allowed in [("get","",True),("post","",True),("get",prefix,True),
             ("get",prefix+"candidates/",True),("patch",prefix+"members/",True),("delete",prefix,False),
-            ("patch",prefix,False),("post",prefix+"lectures/",False),("get","teaching/",False),
+            ("patch",prefix,True),("post",prefix+"lectures/",True),("get","teaching/",False),
             ("post",prefix+"candidates/",False),("get","0/",False)]:
             req=getattr(self.factory,method)(self.root+route)
             req.tenant=self.tenant
@@ -84,6 +84,46 @@ class ClassGroupTests(TestCase):
                 req.tenant=self.other
             with self.assertRaises(PermissionDenied):
                 _validate_dawon_demo_access(req,token)
+
+    def test_reassignment_preserves_past_and_explicit_instructors_and_new_course_ownership(self):
+        from datetime import timedelta
+        from apps.domains.lectures.models import Lecture
+        from apps.domains.staffs.models import Staff
+        from apps.domains.students.services.dawon_staff import FIXTURES, PREFIX, TEACHER
+        from apps.domains.students.models import ClassGroupLecture
+        admin=get_user_model().objects.create_user(tenant=self.tenant,username=PREFIX+"admin")
+        TenantMembership.ensure_active(tenant=self.tenant,user=admin,role="admin")
+        people=[]
+        for key in (TEACHER,PREFIX+"instructor-01",PREFIX+"instructor-02"):
+            user=get_user_model().objects.create_user(tenant=self.tenant,username=key,name=FIXTURES[key][0],is_active=key==TEACHER)
+            TenantMembership.ensure_active(tenant=self.tenant,user=user,role="teacher")
+            Staff.objects.create(tenant=self.tenant,user=user,name=user.name,position="INSTRUCTOR")
+            people.append(user)
+        old,new,manual=people
+        group=ClassGroup.objects.create(tenant=self.tenant,assigned_teacher=old,name="인계반",kind="union",track="HYPER")
+        today=timezone.localdate()
+        def course(title,start,end,teacher):
+            lec=Lecture.objects.create(tenant=self.tenant,title=title,name=teacher.name,subject="수학",
+                    start_date=today+timedelta(days=start),end_date=today+timedelta(days=end))
+            return ClassGroupLecture.objects.create(group=group,lecture=lec,period="vacation",reference_teacher=teacher)
+        past=course("지난 수업",-45,-20,old)
+        current=course("진행 수업",-2,5,old)
+        upcoming=course("예정 수업",3,9,old)
+        override=course("별도 수업",7,11,manual)
+        self.assertEqual(self.call("patch",f"{group.pk}/",{"assigned_teacher_id":new.pk},actor=admin,
+                         token={"dawon_demo_role":"admin"}).status_code,200)
+        for link,teacher in ((past,old),(current,new),(upcoming,new),(override,manual)):
+            link.refresh_from_db();self.assertEqual(link.reference_teacher,teacher)
+            self.assertEqual(link.lecture.name,teacher.name)
+        self.assertEqual(self.call("get",f"{group.pk}/",actor=old,token={"dawon_demo_role":"teacher"}).status_code,404)
+        student=self.pupil("인계학생","학교");group.students.add(student)
+        payload={"title":"원장 개설","name":"임의 강사","start_date":str(today+timedelta(days=20)),
+                 "end_date":str(today+timedelta(days=30)),"period":"vacation"}
+        response=self.call("post",f"{group.pk}/lectures/",payload,actor=admin,token={"dawon_demo_role":"admin"})
+        self.assertEqual(response.status_code,201,response.data)
+        link=ClassGroupLecture.objects.get(lecture_id=response.data["id"])
+        self.assertEqual(link.reference_teacher,new);self.assertEqual(link.lecture.name,new.name)
+        self.assertTrue(Enrollment.objects.filter(tenant=self.tenant,lecture=link.lecture,student=student,status="ACTIVE").exists())
 
     def test_teaching_returns_assigned_groups_all_their_courses_and_latest_held_lesson(self):
         from datetime import timedelta
@@ -152,11 +192,13 @@ class ClassGroupTests(TestCase):
         TenantMembership.ensure_active(tenant=self.tenant, user=teacher, role="teacher")
         role = {"actor": teacher, "token": {"dawon_demo_role": "teacher"}}
         payload = {"name": "직접 개설한 반", "kind": "union", "track": "SKY"}
-        mine = self.call("post", payload=payload, **role).data["id"]
+        self.assertEqual(self.call("post",payload=payload,**role).status_code,403)
+        mine = ClassGroup.objects.create(tenant=self.tenant,assigned_teacher=teacher,name=payload["name"],kind="union",track="SKY").pk
         other = self.call("post", payload=dict(payload, name="다른 선생님 반")).data["id"]
         self.assertEqual([row["id"] for row in self.call("get", **role).data], [mine])
         self.assertEqual(self.call("get", f"{mine}/", **role).status_code, 200)
-        self.assertEqual(self.call("patch", f"{other}/members/", {"add": []}, **role).status_code, 404)
+        self.assertEqual(self.call("patch", f"{mine}/members/", {"add": []}, **role).status_code,403)
+        self.assertEqual(self.call("get",f"{other}/",**role).status_code,404)
         self.assertEqual({row["id"] for row in self.call("get").data}, {mine, other})
 
     def test_school_roster_atomic_and_native_lecture(self):
@@ -318,7 +360,7 @@ class ClassGroupTests(TestCase):
         lecture = apps.get_model("lectures", "Lecture").objects.get(pk=result.data["id"])
         endpoint = f"for-lecture/{lecture.pk}/"
         self.assertEqual(self.call("get", endpoint).data["top_reference_percent"], 30)
-        self.assertEqual(self.call("patch", endpoint, {"top_reference_percent": 100}, actor=other).status_code, 403)
+        self.assertEqual(self.call("patch", endpoint, {"top_reference_percent": 100}, actor=other).status_code, 404)
         self.assertEqual(self.call("patch", endpoint, {"top_reference_percent": 101}, actor=teacher).status_code, 400)
         self.assertEqual(self.call("patch", endpoint, {"top_reference_percent": 100}, actor=teacher).status_code, 200)
         exam = apps.get_model("exams", "Exam").objects.create(tenant=self.tenant, title="시험", max_score=100)
