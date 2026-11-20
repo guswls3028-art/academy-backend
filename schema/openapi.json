@@ -9415,6 +9415,37 @@
         ],
         "type": "object"
       },
+      "PaginatedStaffBoardSummaryList": {
+        "properties": {
+          "count": {
+            "example": 123,
+            "type": "integer"
+          },
+          "next": {
+            "example": "http://api.example.org/accounts/?page=4",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "previous": {
+            "example": "http://api.example.org/accounts/?page=2",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/StaffBoardSummary"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "results"
+        ],
+        "type": "object"
+      },
       "PaginatedStaffExpenseRecordList": {
         "properties": {
           "count": {
@@ -11544,6 +11575,21 @@
             "maximum": 9223372036854775807,
             "minimum": 0,
             "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedStaffBoardEditRequest": {
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
           }
         },
         "type": "object"
@@ -18088,6 +18134,272 @@
           "youtube"
         ],
         "type": "string"
+      },
+      "StaffBoardCategory": {
+        "description": "* `notice` - 공지사항\n* `resource` - 자료실\n* `free` - 자유게시글",
+        "enum": [
+          "notice",
+          "resource",
+          "free"
+        ],
+        "type": "string"
+      },
+      "StaffBoardDetail": {
+        "properties": {
+          "attachment_name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "author_name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "body": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "can_edit": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "can_remove_attachment": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "category": {
+            "$ref": "#/components/schemas/StaffBoardCategory"
+          },
+          "created_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "replies": {
+            "items": {
+              "$ref": "#/components/schemas/StaffBoardReply"
+            },
+            "readOnly": true,
+            "type": "array"
+          },
+          "reply_count": {
+            "default": 0,
+            "readOnly": true,
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 200,
+            "type": "string"
+          }
+        },
+        "required": [
+          "attachment_name",
+          "author_name",
+          "body",
+          "can_edit",
+          "can_remove_attachment",
+          "category",
+          "created_at",
+          "id",
+          "replies",
+          "reply_count",
+          "title"
+        ],
+        "type": "object"
+      },
+      "StaffBoardError": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "type": "object"
+      },
+      "StaffBoardPost": {
+        "properties": {
+          "attachment_name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "author_name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "body": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "can_edit": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "can_remove_attachment": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "category": {
+            "$ref": "#/components/schemas/StaffBoardCategory"
+          },
+          "created_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "reply_count": {
+            "default": 0,
+            "readOnly": true,
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 200,
+            "type": "string"
+          }
+        },
+        "required": [
+          "attachment_name",
+          "author_name",
+          "body",
+          "can_edit",
+          "can_remove_attachment",
+          "category",
+          "created_at",
+          "id",
+          "reply_count",
+          "title"
+        ],
+        "type": "object"
+      },
+      "StaffBoardPostRequest": {
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "category": {
+            "$ref": "#/components/schemas/StaffBoardCategory"
+          },
+          "file": {
+            "format": "binary",
+            "type": "string",
+            "writeOnly": true
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "body",
+          "category",
+          "title"
+        ],
+        "type": "object"
+      },
+      "StaffBoardReply": {
+        "properties": {
+          "author_name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "body": {
+            "maxLength": 5000,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "author_name",
+          "body",
+          "created_at",
+          "id"
+        ],
+        "type": "object"
+      },
+      "StaffBoardReplyRequest": {
+        "properties": {
+          "body": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "type": "object"
+      },
+      "StaffBoardSummary": {
+        "properties": {
+          "attachment_name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "author_name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "can_edit": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "can_remove_attachment": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "category": {
+            "$ref": "#/components/schemas/StaffBoardCategory"
+          },
+          "created_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "reply_count": {
+            "default": 0,
+            "readOnly": true,
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 200,
+            "type": "string"
+          }
+        },
+        "required": [
+          "attachment_name",
+          "author_name",
+          "can_edit",
+          "can_remove_attachment",
+          "category",
+          "created_at",
+          "id",
+          "reply_count",
+          "title"
+        ],
+        "type": "object"
       },
       "StaffDetail": {
         "properties": {
@@ -51335,6 +51647,421 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StaffWrite"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      }
+    },
+    "/api/v1/staffs/board/posts/": {
+      "get": {
+        "operationId": "staffs_board_posts_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "category",
+            "schema": {
+              "enum": [
+                "free",
+                "notice",
+                "resource"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedStaffBoardSummaryList"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      },
+      "post": {
+        "operationId": "staffs_board_posts_create",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffBoardPostRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffBoardPostRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffBoardPostRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardPost"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardPost"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      }
+    },
+    "/api/v1/staffs/board/posts/{id}/": {
+      "get": {
+        "operationId": "staffs_board_posts_retrieve",
+        "parameters": [
+          {
+            "description": "staff board post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardDetail"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      },
+      "patch": {
+        "operationId": "staffs_board_posts_partial_update",
+        "parameters": [
+          {
+            "description": "staff board post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedStaffBoardEditRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedStaffBoardEditRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedStaffBoardEditRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardPost"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      }
+    },
+    "/api/v1/staffs/board/posts/{id}/attachment/": {
+      "delete": {
+        "operationId": "staffs_board_posts_attachment_destroy",
+        "parameters": [
+          {
+            "description": "staff board post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      },
+      "get": {
+        "operationId": "staffs_board_posts_attachment_retrieve",
+        "parameters": [
+          {
+            "description": "staff board post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "",
+            "headers": {
+              "Content-Disposition": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      }
+    },
+    "/api/v1/staffs/board/posts/{id}/replies/": {
+      "post": {
+        "operationId": "staffs_board_posts_replies_create",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "staff board post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffBoardReplyRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffBoardReplyRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffBoardReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardReply"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardReply"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardError"
                 }
               }
             },
