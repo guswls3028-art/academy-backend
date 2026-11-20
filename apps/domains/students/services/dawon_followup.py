@@ -50,11 +50,14 @@ def class_alerts(tenant, group):
     return {"count":len(alerts),"alerts":alerts}
 
 
-def selected_enrollment(tenant, data):
+def selected_enrollment(tenant, data, *, include_past=False):
     course = positive(data.get("course"))
     student = positive(data.get("student"))
-    row = Enrollment.objects.filter(tenant=tenant,lecture_id=course,student_id=student,status="ACTIVE",
-        lecture__tenant=tenant,lecture__is_active=True,student__tenant=tenant,student__deleted_at__isnull=True).select_related("student__user","lecture").first()
+    rows = Enrollment.objects.filter(tenant=tenant, lecture_id=course, student_id=student, status="ACTIVE",
+        lecture__tenant=tenant, student__tenant=tenant, student__deleted_at__isnull=True)
+    if not include_past:
+        rows = rows.filter(lecture__is_active=True)
+    row = rows.select_related("student__user", "lecture").first()
     if not row:
         raise NotFound()
     return row
@@ -92,7 +95,7 @@ def followups(tenant, lecture_ids):
 
 
 def student_record(tenant, data):
-    row = selected_enrollment(tenant,data)
+    row = selected_enrollment(tenant, data, include_past=True)
     summary = build_student_grades_summary(tenant=tenant,student=row.student,include_grade_board_details=False)
     dates = dict(row.lecture.sessions.values_list("pk","date"))
     exams, homework = [], []

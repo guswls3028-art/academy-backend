@@ -62,3 +62,13 @@ class DawonFollowupTests(TestCase):
         self.assertTrue(learner_topics(tenant=self.tenant,student=self.student)["clinics"][0]["booked"])
         self.assertFalse(learner_topics(tenant=self.tenant,student=other)["clinics"][0]["booked"])
         self.assertEqual(self.call("get",{"alerts":"1","group":self.group.pk}).status_code,200)
+
+    def test_past_course_keeps_readable_learning_record_and_no_new_followup(self):
+        self.course.is_active = False
+        self.course.save(update_fields=["is_active"])
+        ids = {"course":self.course.pk, "student":self.student.pk}
+        record = self.call("get", ids)
+        self.assertEqual(record.status_code, 200)
+        self.assertTrue(record.data["exams"])
+        self.assertFalse(record.data["can_follow"])
+        self.assertEqual(self.call("patch", {**ids,"day":timezone.localdate(),"followup":"counsel"}).status_code,404)

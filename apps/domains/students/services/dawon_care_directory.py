@@ -30,7 +30,7 @@ def learner_directory(tenant, query):
     group = selected_group(tenant, query)
     rows = Enrollment.objects.filter(
         tenant=tenant, student__tenant=tenant, status="ACTIVE", student__deleted_at__isnull=True,
-        lecture__tenant=tenant, lecture__is_active=True, lecture__class_group_link__group__tenant=tenant,
+        lecture__tenant=tenant, lecture__class_group_link__group__tenant=tenant,
     )
     if group:
         rows = rows.filter(lecture__class_group_link__group=group)
