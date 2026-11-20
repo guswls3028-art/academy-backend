@@ -84,12 +84,37 @@ def assessment(tenant, session, roster, *, kind, title, section, series, sequenc
                 completion=75 if unit == 2 else 100, wrong=[2, 5] if unit == 1 else [3], unfinished=[7, 8] if unit == 2 else [])
 
 
+def homework_guidance(sequence):
+    return {
+        "student_instructions": f"모의시험 {sequence}회에서 틀린 함수 문항을 다시 풀고, 틀린 이유와 고친 풀이를 오답 노트에 정리하세요.",
+        "submission_guide": "오답 노트를 담당 선생님께 직접 제출하세요.",
+    }
+
+
 class Command(BaseCommand):
+    def add_arguments(self, parser):
+        parser.add_argument("--homework-guidance-only", action="store_true")
+
     @transaction.atomic
     def handle(self, *args, **options):
         tenant = Tenant._base_manager.select_for_update().get(pk=719, code="dawon")
         if not is_demo_tenant(tenant):
             raise CommandError("Dedicated Dawon review environment required.")
+        if options.get("homework_guidance_only"):
+            changed = 0
+            for sequence in (1, 2):
+                owned = Homework._base_manager.select_for_update().filter(
+                    tenant=tenant, meta__dawon_fixture=MARK, title=f"함수 오답연습 {sequence}",
+                    session__title=f"학교별 모의시험 리포트 {sequence}차시", session__lecture__tenant=tenant,
+                )
+                for item in owned:
+                    updated = {**homework_guidance(sequence), **item.meta}
+                    if updated != item.meta:
+                        item.meta = updated
+                        item.save(update_fields=["meta", "updated_at"])
+                        changed += 1
+            self.stdout.write(f"Updated {changed} owned homework examples.")
+            return
         learner = Student._base_manager.get(tenant=tenant, pk=2, name__in=("다원 수업 검수 학생 2", "김학생 2"))
         vacation = ClassGroupLecture.objects.select_related("lecture", "group").get(
             group__tenant=tenant, group__name__in=("고1 HYPER 연합반", "하이퍼1"), lecture__tenant=tenant, lecture__title="HYPER 방학 수학Ⅱ")
@@ -112,7 +137,8 @@ class Command(BaseCommand):
                             series=label, sequence=sequence, count=count, scope="공통수학 · 함수와 그래프")
                     if kind == "school_mock" and sequence <= 2:
                         hw, added = Homework._base_manager.get_or_create(tenant=tenant, session=session, title=f"함수 오답연습 {sequence}",
-                            defaults={"status": "OPEN", "meta": {"due_date": (day+timedelta(days=1)).isoformat(), "dawon_fixture": MARK}})
+                            defaults={"status": "OPEN", "meta": {"due_date": (day+timedelta(days=1)).isoformat(), "dawon_fixture": MARK,
+                                                                **homework_guidance(sequence)}})
                         if not added and (hw.meta or {}).get("dawon_fixture") != MARK:
                             raise CommandError("Unexpected existing assignment.")
                         for enrollment in roster[:3]:

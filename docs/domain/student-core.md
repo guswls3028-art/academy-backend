@@ -1108,6 +1108,9 @@ can consume the new pending credentials during a compatible rolling release.
 
 ### 다원 예시 수업 조회
 
+학생 달력의 과제 상세는 지정된 다원 예시 학생의 성적 요약에서 수강·차시 짝이 맞는 과제만 표시한다. 과제 이름·검사 상태와 함께 학생용 지시(`meta.student_instructions`), 기존 제출기한(`meta.due_date`), 제출 방법(`meta.submission_guide`)만 반환한다. 직원 메모나 전체 메타데이터는 반환하지 않는다. 기한이 비면 기한 없음, 다른 항목이 비면 안내 미등록으로 표시한다. 기존 과제·성적·제출 기록은 그대로 사용한다. 다원 검수용 예시 두 건에는 `seed_dawon_reports --homework-guidance-only`로 누락된 안내만 채울 수 있다. 이미 입력한 값과 소유 표식이 없는 과제는 보존한다.
+
+
 공개 데모의 학생·학부모 화면은 `GET /api/v1/students/demo-learning/`에서 지정된 합성 학생의 수업을 읽는다. 서버는 `DAWON_REVIEW_CLASS_GROUPS`, 테넌트 ID 719와 코드 dawon, 관리 대상 예시 학생의 ID·이름을 모두 확인한다. 다른 대상을 선택하는 입력은 제공하지 않는다. 활성 수강과 해당 차시 등록, 개인 일정의 숨김 설정을 반영한다. 기간이 지난 강의도 기존 학생 조회 정책에서 허용하는 차시는 조회할 수 있다.
 
 응답에는 강의와 차시의 제목·날짜·시각, 본인의 출결, 권한이 있는 준비 완료 영상의 제목, 학생 성적 조회 정책상 공개된 시험 결과, 배정된 과제와 제출 상태만 포함한다. 조회 실패 시 화면에서 다시 요청할 수 있다. 보호자의 요약 조회에는 학생 토큰을 발급하지 않는다. 실제 영상 진입에는 기존 학생 인증 및 영상 재생 권한 검사를 적용한다. 전용 검증은 `apps.domains.students.tests.test_dawon_demo_learning`을 사용한다.

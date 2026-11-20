@@ -51,6 +51,27 @@ class DawonDemoLearningTests(TestCase):
         membership.save(update_fields=["status"])
         self.assertEqual(self.read(self.tenant).data["sessions"], [])
 
+    def test_homework_guidance_is_limited_to_assigned_homework_and_student_fields(self):
+        from apps.domains.homework.models import HomeworkAssignment
+        from apps.domains.homework_results.models import Homework
+
+        lecture = Lecture.objects.create(tenant=self.tenant, title="수학", subject="수학")
+        enrollment = Enrollment.objects.create(tenant=self.tenant, student=self.sample, lecture=lecture)
+        lesson = Session.objects.create(lecture=lecture, order=1, title="함수", date=date(2026, 11, 15))
+        SessionEnrollment.objects.create(tenant=self.tenant, enrollment=enrollment, session=lesson)
+        meta = {"student_instructions": "오답 풀이 정리", "due_date": "2026-11-17",
+                "submission_guide": "오답 노트 제출", "staff_memo": "private"}
+        task = Homework.objects.create(tenant=self.tenant, session=lesson, title="복습", meta=meta)
+        Homework.objects.create(tenant=self.tenant, session=lesson, title="다른 학생의 과제", meta=meta)
+        HomeworkAssignment.objects.create(tenant=self.tenant, session=lesson, enrollment=enrollment, homework=task)
+        rows = self.read(self.tenant).data["sessions"][0]["homework"]
+        self.assertEqual(rows, [{"id": task.pk, "title": "복습", "state": "needs_submission",
+                                 "student_instructions": "오답 풀이 정리", "due_date": "2026-11-17",
+                                 "submission_guide": "오답 노트 제출"}])
+        task.meta = None
+        task.save(update_fields=["meta"])
+        self.assertIsNone(self.read(self.tenant).data["sessions"][0]["homework"][0]["due_date"])
+
     def test_scope_is_fixed(self):
         other = Tenant.objects.create(code="qa-other", name="other")
         self.assertEqual(self.read(other).status_code, 404)

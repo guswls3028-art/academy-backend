@@ -117,6 +117,7 @@ class DawonDemoLearningView(APIView):
         from collections import defaultdict
         from django.db.models import F
         from apps.domains.attendance.models import Attendance
+        from apps.domains.homework_results.models import Homework
         from apps.support.results.student_result_dependencies import active_enrollments_for_student
         from apps.support.student_app.results_summary import build_student_grades_summary
         from apps.domains.video.models import Video
@@ -152,11 +153,23 @@ class DawonDemoLearningView(APIView):
         allowed_pairs = {(s.pk, enrollments[s.lecture_id].pk) for s in sessions}
         homework = defaultdict(list)
         exams = defaultdict(list)
-        for grade in grades["homeworks"]:
-            if (grade["session_id"], grade["enrollment_id"]) in allowed_pairs:
-                homework[grade["session_id"]].append({
-                    "title": grade["title"], "state": grade["submission_state"],
-                })
+        assigned = [g for g in grades["homeworks"] if (g["session_id"], g["enrollment_id"]) in allowed_pairs]
+        metadata = {
+            (pk, session_id): meta if isinstance(meta, dict) else {}
+            for pk, session_id, meta in Homework.objects.filter(
+                tenant=tenant, session_id__in=ids, pk__in={g["homework_id"] for g in assigned},
+            ).values_list("pk", "session_id", "meta")
+        }
+        for grade in assigned:
+            session_id, pk = grade["session_id"], grade["homework_id"]
+            meta = metadata.get((pk, session_id))
+            if meta is None:
+                continue
+            homework[session_id].append({
+                "id": pk, "title": grade["title"], "state": grade["submission_state"],
+                **{field: meta[field] if isinstance(meta.get(field), str) else None
+                   for field in ("student_instructions", "due_date", "submission_guide")},
+            })
         for grade in grades["exams"]:
             if (grade["session_id"], grade["enrollment_id"]) in allowed_pairs:
                 exams[grade["session_id"]].append({
