@@ -13,7 +13,10 @@ from .views import (
     PayrollSnapshotViewSet,
 )
 
+from .views.board import StaffBoardViewSet
+
 router = DefaultRouter()
+router.register(r"board/posts", StaffBoardViewSet, basename="staff-board-post")
 
 # ===========================
 # 서브 리소스

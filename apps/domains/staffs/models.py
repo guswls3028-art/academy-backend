@@ -566,3 +566,41 @@ class PayrollSnapshot(TimestampModel):
 
     def __str__(self):
         return f"{self.staff.name} {self.year}-{self.month:02d}"
+
+class StaffBoardPost(models.Model):
+    class Category(models.TextChoices):
+        NOTICE = "notice", "공지사항"
+        RESOURCE = "resource", "자료실"
+        FREE = "free", "자유게시글"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
+    author_name = models.CharField(max_length=100)
+    category = models.CharField(max_length=12, choices=Category.choices)
+    title = models.CharField(max_length=200)
+    body = models.TextField(max_length=20000)
+    attachment_name = models.CharField(max_length=255, blank=True)
+    attachment_key = models.CharField(max_length=255, blank=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-id"]
+        indexes = [models.Index(fields=["tenant", "category", "-id"], name="staffboard_category_recent")]
+
+
+class StaffBoardReply(models.Model):
+    post = models.ForeignKey(StaffBoardPost, related_name="replies", on_delete=models.CASCADE)
+    author_name = models.CharField(max_length=100)
+    body = models.TextField(max_length=5000)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+
+class StaffBoardWriteReceipt(models.Model):
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    # Digest of tenant, user, operation target and client UUID.
+    scope_key = models.CharField(max_length=64, unique=True)
+    payload_hash = models.CharField(max_length=64)
+    result_id = models.PositiveBigIntegerField(null=True)

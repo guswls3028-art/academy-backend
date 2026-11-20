@@ -92,6 +92,7 @@ STORAGE_OBJECT_REFERENCE_FIELDS = frozenset({
     ("storage", "exams", "ExamQuestionProposal", "problem_image_key"),
     ("storage", "exams", "QuestionExplanation", "image_key"),
     ("storage", "inventory", "InventoryFile", "r2_key"),
+    ("storage", "staffs", "StaffBoardPost", "attachment_key"),
     ("storage", "landing_public", "PublicMatchupShowcase", "snapshot_pdf_key"),
     ("storage", "landing_public", "PublicProblemReviewShowcase", "snapshot_pdf_key"),
     ("storage", "matchup", "MatchupDocument", "r2_key"),
@@ -259,6 +260,24 @@ def ensure_storage_inventory_key_attachable(*, tenant_id: int, key: str) -> None
         key=key,
     ):
         raise ValueError("inventory object key already has a canonical owner")
+
+
+def reserve_staff_board_upload(*, tenant_id: int):
+    """Commit recovery ownership before any bytes are sent to Storage."""
+    with transaction.atomic(durable=True):
+        return SubmissionStorageCleanupIntent.objects.create(
+            tenant_id=tenant_id,
+            bucket=SubmissionStorageCleanupIntent.Bucket.STORAGE,
+            object_key=f"tenants/{tenant_id}/staff-board/{uuid.uuid4().hex}",
+            last_error=UNCERTAIN_STORAGE_WRITE_ERROR_PREFIX,
+        )
+
+
+def lock_reserved_upload(intent):
+    """Exclude the cleanup processor until the post and intent removal commit."""
+    return SubmissionStorageCleanupIntent.objects.select_for_update().filter(
+        pk=intent.pk, status=SubmissionStorageCleanupIntent.Status.PENDING,
+    ).first()
 
 
 def compensate_unattached_storage_object(

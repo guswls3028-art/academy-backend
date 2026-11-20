@@ -619,3 +619,19 @@ version과 일치할 때만 저장한다. 다른 화면이 같은 셀을 먼저 
   apps/domains/results/tests/test_session_scores_roster_scope.py `
   -q --reuse-db
 ```
+
+## 공개 과제 검사 기록
+
+교직원은 차시 성적표의 과제별 검사에서 배정 학생의 풀이 수·전체 문제 수와 가족용 코멘트를 작성한다.
+풀이량은 학습 관찰 값으로 원점수·통과·제출·클리닉 정책과 독립적이다. 기존 학부모 전용 코멘트와
+내부 메모는 공개용으로 변환하지 않는다. 검사 기록은 학원·차시·과제·수강별로 저장한다.
+`results/admin/sessions/{session_id}/homework/{homework_id}/inspection/`의 GET은 유효 명단,
+POST는 버전이 있는 단건 또는 배치 입력이다. 같은 결과의 재시도는 무해하다. 오래된 변경이나
+배정 해제는 409이며 일부 학생만 저장하지 않는다. workbook/ 하위 GET은 명단 양식, multipart POST는
+저장 없는 미리보기이다. 전용 양식은 학원·차시·과제·수강번호·버전을 확인하고, 기존 양식은
+현재 배정 명단 내 유일한 이름만 자동 매칭한다. 예시는 건너뛰고 빈 셀은 기존 값을 보존한다.
+
+학생 성적 요약은 해당 학생 또는 학부모가 선택한 자녀의 현재 유효한 과제·명단 기록만
+practice_inspection으로 제공한다. 기존 검사 기록은 배정 해제 시 숨기며 기존 점수·학부모 전용 글과
+독립적으로 보존한다. API 검증은 test_homework_inspection, 역할별 화면 경로는 프런트
+`docs/HOMEWORK-SCORING.md`와 격리 homework real-use가 소유한다.
