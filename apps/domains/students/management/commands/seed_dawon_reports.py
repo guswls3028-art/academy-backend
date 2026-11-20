@@ -21,23 +21,23 @@ from apps.domains.students.models import ClassGroupLecture, DawonExamReport, Daw
 MARK = "dawon-demo:assessment-report:1"
 TOPICS = ("함수의 정의", "정의역과 치역", "합성함수", "역함수", "그래프의 이동",
           "유리식", "유리함수의 점근선", "무리함수", "함수의 교점", "조건의 해석")
-NAMES = ("가온", "나래", "다빈", "라온", "서우", "도윤", "예린", "은솔")
 
 
 def sample_roster(tenant, group, learner):
     result = [learner]
     for n in range(32):
-        name = ("김", "윤", "서", "정")[n // 8] + NAMES[n % 8]
+        name = f"김학생 {n+3}"
+        old = ("김", "윤", "서", "정")[n // 8] + ("가온", "나래", "다빈", "라온", "서우", "도윤", "예린", "은솔")[n % 8]
         account, new = get_user_model()._base_manager.get_or_create(
             tenant=tenant, username=f"t719_demo-report-student-{n:02}", defaults={"name": name, "password": make_password(None)})
-        if not new and (account.has_usable_password() or account.is_staff or account.is_superuser):
+        if not new and (account.has_usable_password() or account.is_staff or account.is_superuser or account.name not in (name, old)):
             raise CommandError("Reserved demonstration identity already in use.")
         TenantMembership._base_manager.get_or_create(tenant=tenant, user=account, role="student", defaults={"is_active": True})
         student, _ = Student._base_manager.get_or_create(tenant=tenant, user=account, defaults={
             "name": name, "ps_number": f"DW-R-{n:02}", "omr_code": f"709900{n:02}", "school_type": "HIGH",
             "grade": 1, "high_school": learner.high_school if n % 3 else "예시고", "parent_phone": "",
         })
-        if student.ps_number != f"DW-R-{n:02}":
+        if student.ps_number != f"DW-R-{n:02}" or student.omr_code != f"709900{n:02}" or student.name != account.name:
             raise CommandError("Unexpected existing sample student.")
         result.append(student)
     group.students.add(*result)
@@ -90,9 +90,9 @@ class Command(BaseCommand):
         tenant = Tenant._base_manager.select_for_update().get(pk=719, code="dawon")
         if not is_demo_tenant(tenant):
             raise CommandError("Dedicated Dawon review environment required.")
-        learner = Student._base_manager.get(tenant=tenant, pk=2, name="다원 수업 검수 학생 2")
+        learner = Student._base_manager.get(tenant=tenant, pk=2, name__in=("다원 수업 검수 학생 2", "김학생 2"))
         vacation = ClassGroupLecture.objects.select_related("lecture", "group").get(
-            group__tenant=tenant, group__name="고1 HYPER 연합반", lecture__tenant=tenant, lecture__title="HYPER 방학 수학Ⅱ")
+            group__tenant=tenant, group__name__in=("고1 HYPER 연합반", "하이퍼1"), lecture__tenant=tenant, lecture__title="HYPER 방학 수학Ⅱ")
         school = ClassGroupLecture.objects.select_related("lecture").get(
             group=vacation.group, school=learner.high_school, period="midterm", lecture__tenant=tenant)
         students = sample_roster(tenant, vacation.group, learner)

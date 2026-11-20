@@ -71,9 +71,13 @@ def allows_demo_clinic_write(request, role):
             return False
     else:
         return False
-    return SessionParticipant.objects.filter(
+    participant = SessionParticipant.objects.filter(
         tenant=tenant, pk=participant_id, session__in=sessions, student_id=SAMPLE_STUDENT_ID,
         student__tenant=tenant, student__is_managed=True, student__deleted_at__isnull=True,
-        student__name="다원 수업 검수 학생 2", source=SessionParticipant.Source.STUDENT_REQUEST,
+        student__name__in=("다원 수업 검수 학생 2", "김학생 2"), source=SessionParticipant.Source.STUDENT_REQUEST,
         **({"status": SessionParticipant.Status.PENDING} if role == "teacher" else {}),
-    ).exists()
+    ).select_related("student__user").first()
+    if not participant:
+        return False
+    from apps.core.dawon_preview_identity import matches_original
+    return participant.student.name != "김학생 2" or matches_original(participant.student)

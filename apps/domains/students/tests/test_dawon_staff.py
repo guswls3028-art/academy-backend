@@ -38,7 +38,7 @@ class DawonStaffFlowTest(TestCase):
         from apps.domains.lectures.models import Lecture
         staff=Staff.objects.get(user=self.people["teacher"])
         Staff.objects.filter(pk=staff.pk).update(position="ASSISTANT")
-        other=Staff.objects.get(tenant=self.tenant,name="체험 수학강사 01")
+        other=Staff.objects.get(tenant=self.tenant,name="김선생 3")
         Staff.objects.filter(pk=other.pk).update(position="ASSISTANT")
         call_command("seed_dawon_staff",stdout=StringIO())
         staff.refresh_from_db();self.assertEqual(staff.position,"ASSISTANT")
@@ -63,7 +63,7 @@ class DawonStaffFlowTest(TestCase):
         assigned = get_user_model().objects.get(tenant=self.tenant, username=PREFIX + "instructor-09")
         self.assertFalse(assigned.is_active)
         self.assertEqual(list(ClassGroup.objects.filter(pk__in=assigned_class_group_ids(self.tenant, assigned))
-                              .values_list("name",flat=True)), ["D10 체험 수학반"])
+                              .values_list("name",flat=True)), ["스카이반 9"])
         self.assertNotIn(real.pk,[s["id"] for s in result.data["staff"]])
         for method, body in (("get",{"staff":real.pk,"month":"2026-11"}),("patch",{"staff":real.pk,"position":"ASSISTANT"})):
             self.assertEqual(self.request(DawonStaffView,"admin",method,body).status_code,404)
@@ -125,7 +125,7 @@ class DawonStaffFlowTest(TestCase):
         self.assertEqual(options.status_code,200,options.data)
         self.assertGreaterEqual(len(options.data),10)
         self.assertTrue(all(set(r)=={"id","name"} for r in options.data))
-        chosen=next(r for r in options.data if r["name"]=="체험 수학강사 01")
+        chosen=next(r for r in options.data if r["name"]=="김선생 3")
         person=get_user_model().objects.get(pk=chosen["id"])
         self.assertFalse(person.is_active)
         self.assertFalse(person.has_usable_password())

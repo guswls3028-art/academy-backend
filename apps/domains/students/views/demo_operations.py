@@ -29,7 +29,7 @@ from apps.domains.students.services.dawon_daily_attendance import daily_attendan
 from apps.domains.students.services.dawon_exam_reports import admin_exam_detail, exam_for_management
 from apps.domains.students.services.dawon_care_directory import care_directory, learner_directory
 from apps.domains.students.services.dawon_followup import class_alerts, register_followup, student_record
-from apps.domains.teachers.models import Teacher
+from apps.domains.teachers.contracts import active_teachers
 
 
 def homework_progress(tenant, courses):
@@ -83,7 +83,7 @@ class DawonDemoOperationsView(APIView):
 
     def employee(self, tenant):
         return Staff.objects.filter(
-            tenant=tenant, name="다원 체험 강사", phone="", is_manager=False,
+            tenant=tenant, name__in=("다원 체험 강사", "김선생 2"), phone="", is_manager=False,
             user__tenant=tenant, user__username="t719_dawon-demo-employee",
             user__is_staff=False, user__is_superuser=False, is_active=True,
         )
@@ -117,7 +117,7 @@ class DawonDemoOperationsView(APIView):
             ).order_by("name", "pk")
         }
         instructor_names = {
-            name.strip() for name in Teacher.objects.filter(tenant=tenant, is_active=True).values_list("name", flat=True) if name
+            name.strip() for name in active_teachers(tenant).values_list("name", flat=True) if name
         }
         instructor_names.update(name.strip() for name in TenantMembership.objects.filter(
             tenant=tenant, user__tenant=tenant, role__in=["owner", "teacher"], is_active=True,

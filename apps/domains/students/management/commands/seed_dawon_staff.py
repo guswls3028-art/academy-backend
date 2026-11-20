@@ -10,23 +10,28 @@ from apps.domains.lectures.models import Lecture
 from apps.domains.students.models import ClassGroup, ClassGroupLecture
 from apps.domains.clinic.contracts import is_demo_tenant
 from apps.domains.staffs.models import Staff, StaffWorkType, WorkMonthLock, WorkRecord, WorkType
-from apps.domains.students.services.dawon_staff import EMPLOYEE, FIXTURES, TEACHER, WORK_MARK, WORK_TYPE
+from apps.domains.students.services.dawon_staff import EMPLOYEE, FIXTURES, LEGACY_FIXTURES, TEACHER, WORK_MARK, WORK_TYPE
 
 
 def seed_secondary_class(tenant, user):
     number = int(user.username.rsplit("-", 1)[1]) + 1
-    cohort_name = f"D{number:02} 체험 수학반"
+    cohort_name = f"스카이반 {number-1}"
+    legacy_name = f"D{number:02} 체험 수학반"
     title = f"D{number:02} 수학 수업"
     member, _ = TenantMembership.objects.get_or_create(tenant=tenant, user=user,
                                                        defaults={"role": "teacher", "is_active": True})
     if member.role != "teacher" or not member.is_active:
         raise CommandError("Unexpected synthetic teacher membership.")
-    group, new = ClassGroup.objects.get_or_create(tenant=tenant, name=cohort_name,
-                                                  defaults={"kind": "union", "track": "SKY"})
+    matches = list(ClassGroup.objects.filter(tenant=tenant, name__in=(legacy_name, cohort_name))[:2])
+    if len(matches) > 1:
+        raise CommandError("Class label collision.")
+    new = not matches
+    group = (ClassGroup.objects.create(tenant=tenant, name=cohort_name, kind="union", track="SKY")
+             if new else matches[0])
     if not new:
         linked = ClassGroupLecture.objects.filter(group=group, lecture__tenant=tenant, lecture__description=WORK_MARK,
                                                    lecture__title=title, reference_teacher=user)
-        if not linked.exists():
+        if (group.kind, group.track, group.school) != ("union", "SKY", "") or not linked.exists():
             raise CommandError("Existing class does not match the synthetic fixture.")
         return
     if Lecture.objects.filter(tenant=tenant, title=title).exists():
@@ -59,13 +64,13 @@ class Command(BaseCommand):
             if user is None:
                 user = get_user_model().objects.create_user(
                     tenant=tenant, username=username, name=name, password=None, is_active=False)
-            if user.name != name or user.has_usable_password() or user.is_staff or user.is_superuser or (
+            if user.name not in (name, LEGACY_FIXTURES[username][0]) or user.has_usable_password() or user.is_staff or user.is_superuser or (
                 username not in (TEACHER, EMPLOYEE) and user.is_active
             ):
                 raise CommandError("Unexpected staff fixture identity.")
             staff, _ = Staff.objects.get_or_create(tenant=tenant, user=user,
-                defaults={"name": name, "phone": "", "position": position})
-            if staff.name != name or staff.phone or not staff.is_active or staff.is_manager:
+                defaults={"name": user.name, "phone": "", "position": position})
+            if staff.name != user.name or staff.phone or not staff.is_active or staff.is_manager:
                 raise CommandError("Unexpected staff fixture profile.")
             if username == TEACHER and user.is_active and staff.position == "ASSISTANT":
                 teacher_member = TenantMembership.objects.filter(tenant=tenant,user=user,role="teacher",is_active=True).exists()

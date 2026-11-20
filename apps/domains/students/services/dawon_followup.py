@@ -66,7 +66,9 @@ def selected_enrollment(tenant, data, *, include_past=False):
 def is_sample(student):
     if not student.user_id or student.user.tenant_id != student.tenant_id or student.user.is_staff or student.user.is_superuser:
         return False
-    if student.pk == 2 and student.name == "다원 수업 검수 학생 2":
+    from apps.core.dawon_preview_identity import matches_original
+    if student.pk == 2 and (student.name == "다원 수업 검수 학생 2" or
+                            (student.name == "김학생 2" and matches_original(student))):
         return True
     suffix = (student.ps_number or "").removeprefix("DW-R-")
     return (len(suffix) == 2 and suffix.isascii() and suffix.isdigit() and int(suffix) < 32

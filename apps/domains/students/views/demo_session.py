@@ -13,6 +13,7 @@ from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from apps.core.dawon_preview_identity import matches_original
 from apps.core.models import TenantMembership
 from apps.domains.students import dawon_schema as schema
 from apps.domains.students.models import Student
@@ -56,8 +57,10 @@ class DawonDemoSessionView(APIView):
             expected = "teacher"
         else:
             sample = Student.objects.filter(
-                tenant=tenant, pk=2, name="다원 수업 검수 학생 2", deleted_at__isnull=True, is_managed=True,
+                tenant=tenant, pk=2, name__in=("다원 수업 검수 학생 2", "김학생 2"), deleted_at__isnull=True, is_managed=True,
             ).select_related("user", "parent__user").first()
+            if sample and sample.name == "김학생 2" and not matches_original(sample):
+                raise NotFound()
             if role == "guardian":
                 parent = sample.parent if sample else None
                 user = parent.user if parent and parent.tenant_id == tenant.pk else None
@@ -124,9 +127,9 @@ class DawonDemoLearningView(APIView):
         if not getattr(settings, "DAWON_REVIEW_CLASS_GROUPS", False) or not tenant or (tenant.pk, tenant.code) != (719, "dawon"):
             raise NotFound()
         sample = Student.objects.filter(
-            tenant=tenant, pk=2, name="다원 수업 검수 학생 2", deleted_at__isnull=True, is_managed=True,
+            tenant=tenant, pk=2, name__in=("다원 수업 검수 학생 2", "김학생 2"), deleted_at__isnull=True, is_managed=True,
         ).first()
-        if sample is None:
+        if sample is None or (sample.name == "김학생 2" and not matches_original(sample)):
             raise NotFound()
         enrollments = {
             row.lecture_id: row for row in active_enrollments_for_student(tenant=tenant, student=sample)
