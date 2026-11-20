@@ -166,7 +166,7 @@ class ClassGroupTests(TestCase):
 
         def day_sessions(group):
             path = "/api/v1/lectures/sessions/"
-            request = self.factory.get(path, {"date": today.isoformat(), "class_group": group.pk})
+            request = self.factory.get(path, {"date": today.isoformat(), "class_group": getattr(group, "pk", group)})
             request.tenant = self.tenant
             force_authenticate(request, user=teacher)
             result = resolve(path).func(request)
@@ -182,6 +182,8 @@ class ClassGroupTests(TestCase):
         held = SessionSchedule.objects.create(session=actual, label="A조", date=today)
         SessionSchedule.objects.create(session=actual, label="B조", date=today + timedelta(days=1))
         self.assertEqual(day_sessions(assigned), [actual.pk])
+        additional = Session.objects.create(lecture=future, order=3, date=today)
+        self.assertCountEqual(day_sessions("assigned"), [actual.pk, additional.pk])
         rows = {row["id"]: row for row in self.call("get", "teaching/", actor=teacher).data}
         self.assertEqual(rows[assigned.pk]["recent"], {
             "id": actual.pk, "lecture_id": shared.pk, "title": actual.title, "date": today, "schedule_id": held.pk,

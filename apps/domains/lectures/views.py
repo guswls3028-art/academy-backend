@@ -512,7 +512,7 @@ class LectureViewSet(ModelViewSet):
 
 @extend_schema_view(list=extend_schema(parameters=[
     OpenApiParameter("date", OpenApiTypes.DATE, description="실제 수업일. 수업일 미설정 차시는 기존 기준일로 조회합니다."),
-    OpenApiParameter("class_group", OpenApiTypes.INT, description="다원 체험에서 현재 교사가 담당하는 반의 강의로 제한합니다."),
+    OpenApiParameter("class_group", OpenApiTypes.STR, description="다원 체험에서 반 ID 또는 assigned로 현재 교사가 담당하는 반의 차시를 조회합니다."),
 ]))
 class SessionViewSet(ModelViewSet):
     queryset = Session.objects.none()  # Schema model; runtime reads always use the tenant-scoped get_queryset.
@@ -563,10 +563,12 @@ class SessionViewSet(ModelViewSet):
         qs = qs.filter(lecture__tenant=self.request.tenant)
 
         if "class_group" in self.request.query_params:
-            group_id = parse_query_int(self.request.query_params, "class_group", min_value=1, max_value=2**63 - 1)
-            if group_id is None:
-                raise ValidationError({"class_group": "담당 반을 선택해 주세요."})
-            assigned = assigned_class_group_ids(self.request.tenant, self.request.user).filter(group_id=group_id)
+            assigned = assigned_class_group_ids(self.request.tenant, self.request.user)
+            if self.request.query_params["class_group"] != "assigned":
+                group_id = parse_query_int(self.request.query_params, "class_group", min_value=1, max_value=2**63 - 1)
+                if group_id is None:
+                    raise ValidationError({"class_group": "담당 반을 선택해 주세요."})
+                assigned = assigned.filter(group_id=group_id)
             qs = qs.filter(lecture__class_group_link__group_id__in=assigned)
 
         lecture = parse_query_int(self.request.query_params, "lecture", min_value=1)

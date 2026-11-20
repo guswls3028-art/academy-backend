@@ -1144,6 +1144,10 @@ can consume the new pending credentials during a compatible rolling release.
 
 ### 다원 체험 관리자 반 편성과 담당 강사
 
+다원 선생님의 차시 조회는 `GET /api/v1/lectures/sessions/?date=YYYY-MM-DD&class_group=assigned`로 현재 담당 반 전체의 선택일 차시를 조회한다. 반 ID를 지정하면 담당 범위와 교집합을 취한다. 분반 일정이 있으면 차시 대표일 대신 분반의 실제 날짜를 쓴다.
+
+다원 원장의 읽기 전용 일별 출결 조회는 `GET /api/v1/students/demo-operations/?view=attendance&date=YYYY-MM-DD`를 사용한다. `group`을 지정하면 해당 반의 차시별 출결 명단을 반환한다. 0은 반 미지정 강의다. 반 전체 학생 수가 아닌 선택일에 배정된 학생·차시 조합을 집계하며 결석, 미입력 상태, 출결 기록 부재를 구분한다. 반·강의·학생은 같은 테넌트 범위여야 하고 다른 반 ID, 날짜 오류, 원장 권한 부재는 API에서 거부한다. 예전 차시의 기존 출결도 조회할 수 있다. 선생님의 저장은 기존 차시 출결 API를 사용한다. 회귀 검증은 `test_demo_operations`와 `test_class_groups`에서 담당한다.
+
 전용 관리자 세션은 같은 테넌트의 예약된 활성 관리자 계정과 관리자 멤버십을 확인한다. 반 목록·상세·배정 후보 조회, 반 생성, 명단 배정·제외에만 기존 class-groups API를 사용한다. 반에서 학생을 제외해도 기존 수강·출결·성적은 보존한다. 상세 응답의 학생별 course_ids는 같은 반에 연결된 활성 강의와 같은 테넌트의 활성 수강이 모두 존재할 때만 반환한다.
 
 원장은 class-groups/?view=instructors에서 같은 지점의 활성 강사 멤버십과 재직 강사 직위를 모두 충족하는 체험 직원의 사용자 ID·이름만 조회한다. 반 생성 시 선택한 assigned_teacher_id를 같은 조건으로 다시 확인하고 반의 assigned_teacher에 저장한다. 운영 시나리오용 합성 강사는 로그인 비활성 상태를 유지하며, 직원이 퇴직하거나 비강사 직위이면 지정할 수 없다. 생성자(created_by)는 실제 원장으로 유지한다. 강사의 기존 강의 배정과 추가로 보이는 담당 반을 구분한다. 지정한 강사가 비활성 또는 미구성이라면 등록은 실패하고 입력을 수정해 재시도할 수 있다. 기존 반은 assigned_teacher가 비어 있으며 기존 강의 배정으로 계속 조회된다. 검증은 test_class_groups의 관리자 반 생성·배정·강의 조회 범위 및 세션 경로 제한 테스트에서 수행한다.
