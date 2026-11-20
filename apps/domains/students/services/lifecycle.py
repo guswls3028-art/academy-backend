@@ -10,7 +10,7 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.students.models import Student, StudentInventoryNamespaceConflict
+from apps.domains.students.models import ClassGroup, DawonCounselAppointment, DawonReportHomework, Student, StudentInventoryNamespaceConflict
 from apps.domains.students.services.school import is_valid_grade, normalize_school_from_name
 from apps.support.students.lifecycle_dependencies import (
     active_wrong_note_pdf_exists_for_students,
@@ -30,6 +30,7 @@ from apps.support.students.namespace_lock import (
 )
 PERMANENT_DELETE_STUDENT_RELATIONS = frozenset({
     ("students_studenttag", "student_id"),
+    ("students_classgroup", "students"),
     ("student_support_session", "student_id"),
     ("students_studentregistrationrequest", "student_id"),
     ("enrollment_enrollment", "student_id"),
@@ -85,6 +86,8 @@ PERMANENT_DELETE_ENROLLMENT_TENANT_PATHS = {
         ("lecture__tenant_id", True),
         ("exam__tenant_id", True),
     ),
+    "students.DawonReportHomework": (("report__exam__tenant_id", False), ("report__session__lecture__tenant_id", False)),
+    "students.DawonCounselAppointment": (("registered_by__tenant_id", False),),
     "submissions.OMRStudentMatch": (("tenant_id", False),),
     "submissions.Submission": (("tenant_id", False),),
     "video.InactiveVideoEntitlement": (("tenant_id", False),),
@@ -932,6 +935,9 @@ def _permanently_delete_selected_students(
         )
 
         _assert_no_cross_tenant_student_refs(student_id_clause, student_id_params)
+        group_memberships = ClassGroup.students.through.objects.filter(student_id__in=student_ids)
+        if group_memberships.exclude(classgroup__tenant_id=tenant.pk).exists():
+            raise StudentLifecycleError("cross_tenant_reference", "Class membership belongs to a different tenant")
         review_usage = apps.get_model("video", "VideoReviewWatchUsage").objects.filter(student_id__in=student_ids)
         if review_usage.exclude(video__tenant=tenant).exists():
             raise StudentLifecycleError("cross_tenant_reference", "복습 기록의 영상 소유 학원이 일치하지 않습니다.")
@@ -1140,6 +1146,12 @@ def _permanently_delete_selected_students(
                 ).delete()
 
         if enrollment_ids:
+            DawonReportHomework.objects.filter(
+                enrollment_id__in=enrollment_ids, report__exam__tenant=tenant, report__session__lecture__tenant=tenant,
+            ).delete()
+            DawonCounselAppointment.objects.filter(
+                enrollment_id__in=enrollment_ids, registered_by__tenant=tenant,
+            ).delete()
             # Raw enrollment deletion does not run Django's CASCADE collector.
             # Scope validation above covers both comment tenant and session tenant;
             # ORM deletion here also removes every immutable edit revision.
@@ -1224,6 +1236,7 @@ def _permanently_delete_selected_students(
             f"DELETE FROM enrollment_enrollment WHERE student_id IN {student_id_clause} AND tenant_id = %s",
             [*student_id_params, tenant.id],
         )
+        group_memberships.filter(classgroup__tenant_id=tenant.pk).delete()
         cursor.execute(
             f"DELETE FROM students_studenttag WHERE student_id IN {student_id_clause}",
             student_id_params,

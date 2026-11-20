@@ -2009,6 +2009,65 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
         self.assertFalse(stream_model.objects.filter(pk=stream.pk).exists())
         self.assertTrue(Video.objects.filter(pk=foreign.pk).exists())
 
+    def _dawon_links(self):
+        from apps.domains.lectures.models import Session
+        from apps.domains.students.models import ClassGroup, DawonCounselAppointment, DawonExamReport, DawonReportHomework
+
+        group = ClassGroup.objects.create(tenant=self.tenant_a, name="QA 반", kind="union", track="SKY")
+        group.students.add(self.student_a)
+        exam = Exam.objects.create(tenant=self.tenant_a, title="QA 시험")
+        session = Session.objects.create(lecture=self.lecture_a, order=1)
+        report = DawonExamReport.objects.create(exam=exam, session=session, kind="cycle", title="공통 리포트",
+                                                section="공통", series="공통", sequence=1)
+        homework = DawonReportHomework.objects.create(report=report, enrollment=self.enrollment_a, title="개인 과제")
+        appointment = DawonCounselAppointment.objects.create(
+            enrollment=self.enrollment_a, registered_by=self.admin_a, day=timezone.localdate(),
+        )
+        return group, report, homework, appointment
+
+    def test_dawon_permanent_delete_preserves_shared_class_report_and_other_students(self):
+        group, report, homework, appointment = self._dawon_links()
+        user = User.objects.create_user(username="qa-other-member", tenant=self.tenant_a)
+        other = Student.objects.create(tenant=self.tenant_a, user=user, ps_number="QA02", omr_code="12345678", name="학생Y")
+        group.students.add(other)
+        enrollment = Enrollment.objects.create(tenant=self.tenant_a, lecture=self.lecture_a, student=other)
+        other_homework = type(homework).objects.create(report=report, enrollment=enrollment, title="별도 과제")
+        other_appointment = type(appointment).objects.create(
+            enrollment=enrollment, registered_by=self.admin_a, day=timezone.localdate(),
+        )
+
+        response = self._call(self.tenant_a, self.admin_a, [self.student_a.pk])
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(Student.objects.filter(pk=self.student_a.pk).exists())
+        self.assertEqual(list(group.students.values_list("pk", flat=True)), [other.pk])
+        self.assertTrue(type(report).objects.filter(pk=report.pk).exists())
+        self.assertTrue(type(homework).objects.filter(pk=other_homework.pk).exists())
+        self.assertTrue(type(appointment).objects.filter(pk=other_appointment.pk).exists())
+        self.assertFalse(type(homework).objects.filter(pk=homework.pk).exists())
+        self.assertFalse(type(appointment).objects.filter(pk=appointment.pk).exists())
+
+    def test_dawon_permanent_delete_rejects_each_foreign_owner_before_any_cleanup(self):
+        group, report, homework, appointment = self._dawon_links()
+        foreign_user = User.objects.create_user(username="qa-foreign-author", tenant=self.tenant_b)
+        foreign_course = Lecture.objects.create(tenant=self.tenant_b, title="QA 외부 강의")
+        owners = [
+            (type(group).objects.filter(pk=group.pk), {"tenant": self.tenant_b}),
+            (Exam.objects.filter(pk=report.exam_id), {"tenant": self.tenant_b}),
+            (type(report.session).objects.filter(pk=report.session_id), {"lecture": foreign_course}),
+            (type(appointment).objects.filter(pk=appointment.pk), {"registered_by": foreign_user}),
+        ]
+        for owner, change in owners:
+            with self.subTest(model=owner.model._meta.label), transaction.atomic():
+                owner.update(**change)
+                response = self._call(self.tenant_a, self.admin_a, [self.student_a.pk])
+                self.assertEqual(response.status_code, 409, response.data)
+                self.assertEqual(response.data["code"], "cross_tenant_reference")
+                self.assertTrue(group.students.filter(pk=self.student_a.pk).exists())
+                self.assertTrue(Enrollment.objects.filter(pk=self.enrollment_a.pk).exists())
+                self.assertTrue(type(homework).objects.filter(pk=homework.pk).exists())
+                self.assertTrue(type(appointment).objects.filter(pk=appointment.pk).exists())
+                transaction.set_rollback(True)
+
     def test_permanent_delete_relation_contract_matches_model_graph(self):
         """신규 Student/Submission FK가 수동 삭제 그래프에서 누락되지 않게 한다."""
         student_relations = {
