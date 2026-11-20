@@ -13,17 +13,7 @@ from rest_framework.views import APIView
 from apps.core.models import TenantMembership
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.students.models import ClassGroupLecture, DawonTeacherAlertSettings
-from apps.support.students.teacher_alert_evidence import signals_for_lectures
-
-DEFAULTS = {
-    "absence_streak": {"enabled": True, "threshold": 2},
-    "homework_missing": {"enabled": True, "threshold": 2},
-    "exam_drop": {"enabled": True, "threshold": 15},
-    "exam_rise": {"enabled": True, "threshold": 15},
-    "homework_drop": {"enabled": True, "threshold": 15},
-    "video_watch": {"enabled": True, "threshold": 80},
-}
-
+from apps.support.students.teacher_alert_evidence import DEFAULTS, signals_for_lectures
 
 def changes(payload):
     if not isinstance(payload, dict) or set(payload) != {"rules"} or not isinstance(payload["rules"], dict):
@@ -66,6 +56,7 @@ class DawonTeacherAlertsView(APIView):
         return lectures, {pk: lectures[pk]}
 
     def response(self, request, scope, stored):
+        from apps.domains.students.services.dawon_followup import followups
         lectures, selected = scope
         rules = deepcopy(DEFAULTS)
         for key, saved in stored.items():
@@ -73,7 +64,7 @@ class DawonTeacherAlertsView(APIView):
                 rules[key].update(saved)
         return Response({"rules": rules, "lectures": [{"id": pk, "title": title} for pk, title in lectures.items()],
                          "alerts": signals_for_lectures(request.tenant, selected, timezone.localdate(timezone=ZoneInfo("Asia/Seoul")), rules),
-                         "unavailable": []}, headers={"Cache-Control": "private, no-store"})
+                         "followups": followups(request.tenant, selected), "unavailable": []}, headers={"Cache-Control": "private, no-store"})
 
     def get(self, request):
         scope = self.scope(request)

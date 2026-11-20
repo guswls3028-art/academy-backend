@@ -59,6 +59,11 @@ def learner_topics(*, tenant, student):
                                     title__in=_dawon_counsel_examples)
         .annotate(reply_total=Count("replies")).order_by("-created_at")[:100]
         if post.content == _dawon_counsel_examples[post.title]]
+    from apps.domains.students.models import DawonCounselAppointment
+    counsels.extend({"date": day, "title": "학습 상담 예정", "detail": lecture + " · 원장 등록"}
+        for day, lecture in DawonCounselAppointment.objects.filter(
+            enrollment__tenant=tenant, enrollment__student=student, enrollment__lecture__tenant=tenant,
+        ).order_by("-day").values_list("day", "enrollment__lecture__title"))
     school_reports = list({
         (_local_day(score.created_at), score.academic_year, score.semester, score.exam_round): {
             "date": _local_day(score.created_at),

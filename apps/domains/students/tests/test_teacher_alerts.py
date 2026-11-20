@@ -111,3 +111,27 @@ class TeacherAlertsTests(TestCase):
         self.assertEqual(self.alerts(), {"video_watch":0})
         SessionEnrollment.objects.filter(session=session).delete()
         self.assertEqual(self.alerts(), {})
+
+    def test_recent_and_top_reference_thresholds_are_applied_to_same_course(self):
+        peer = Student.objects.create(tenant=self.tenant,user=self.user("student","classmate"),
+                                      name="같은 반 학생",ps_number="002",omr_code="00000002")
+        peer_row = Enrollment.objects.create(tenant=self.tenant,lecture=self.lecture,student=peer,status="ACTIVE")
+        for index in range(4):
+            if index < 2:
+                session = self.sessions[index]
+            else:
+                session = Session.objects.create(lecture=self.lecture,order=index+1,title=str(index+1),date=date(2020,1,index+1))
+                SessionEnrollment.objects.create(tenant=self.tenant,session=session,enrollment=self.enrollment)
+            SessionEnrollment.objects.create(tenant=self.tenant,session=session,enrollment=peer_row)
+            exam = Exam.objects.create(tenant=self.tenant,title=f"exam{index}",max_score=100)
+            exam.sessions.add(session)
+            for enrollment, score in [(self.enrollment, 50 if index==3 else 90),(peer_row,100)]:
+                ExamEnrollment.objects.create(exam=exam,enrollment=enrollment)
+                Result.objects.create(target_type="exam",target_id=exam.pk,enrollment=enrollment,total_score=score,max_score=100)
+        evidence = self.alerts()
+        self.assertEqual(evidence["recent_exam_drop"],40)
+        self.assertEqual(evidence["top_reference_gap"],50)
+        response = self.call("patch",{"rules":{"recent_exam_drop":{"threshold":41},"top_reference_gap":{"threshold":51}}})
+        self.assertEqual(response.status_code,200)
+        self.assertFalse({"recent_exam_drop","top_reference_gap"}.intersection(self.alerts()))
+        self.assertEqual(self.call(actor=self.user("teacher","other-teacher")).data["alerts"],[])

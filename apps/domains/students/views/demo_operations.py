@@ -20,7 +20,9 @@ from apps.domains.exams.models import Exam
 from apps.domains.results.models import Result
 from apps.domains.results.utils.initial_exam_score import load_initial_exam_scores, project_initial_exam_score
 from apps.domains.results.services.omr_subjective_completion import pending_omr_result_ids
-from apps.domains.students.models import ClassGroup
+from apps.domains.students.models import ClassGroup, DawonExamReview
+from apps.domains.students.services.dawon_exam_reports import admin_exam_detail, exam_for_management
+from apps.domains.students.services.dawon_followup import class_alerts, register_followup, student_record
 from apps.domains.teachers.models import Teacher
 
 
@@ -82,6 +84,15 @@ class DawonDemoOperationsView(APIView):
 
     def get(self, request):
         tenant = request.tenant
+        if "alerts" in request.query_params:
+            return Response(class_alerts(tenant, request.query_params.get("group")), headers={"Cache-Control":"private, no-store"})
+        if "student" in request.query_params:
+            return Response(student_record(tenant, request.query_params), headers={"Cache-Control":"private, no-store"})
+        if "exam" in request.query_params:
+            exam, course_id = self.selected_exam(tenant, request.query_params)
+            response = Response(admin_exam_detail(tenant, exam, course_id, request.user))
+            response["Cache-Control"] = "no-store"
+            return response
         groups = {
             group.pk: {"id": group.pk, "name": group.name, "members": group.member_count, "courses": []}
             for group in ClassGroup.objects.filter(tenant=tenant).annotate(
@@ -175,7 +186,27 @@ class DawonDemoOperationsView(APIView):
         response["Cache-Control"] = "no-store"
         return response
 
+    @staticmethod
+    def selected_exam(tenant, data):
+        try:
+            exam_id, course_id = int(data["exam"]), int(data["course"])
+        except (KeyError, ValueError, TypeError):
+            raise ValidationError("반별 강의와 시험을 선택해 주세요.")
+        return exam_for_management(tenant, exam_id, course_id), course_id
+
     def patch(self, request):
+        if isinstance(request.data, dict) and "followup" in request.data:
+            return Response(register_followup(request), headers={"Cache-Control":"private, no-store"})
+        if isinstance(request.data, dict) and set(request.data) == {"exam", "course", "reviewed"}:
+            if type(request.data["reviewed"]) is not bool:
+                raise ValidationError("검토 상태를 확인해 주세요.")
+            exam, course_id = self.selected_exam(request.tenant, request.data)
+            key = {"exam": exam, "lecture_id": course_id, "reviewer": request.user}
+            if request.data["reviewed"]:
+                DawonExamReview.objects.get_or_create(**key)
+            else:
+                DawonExamReview.objects.filter(**key).delete()
+            return Response({"reviewed": request.data["reviewed"]})
         if not isinstance(request.data, dict) or set(request.data) != {"position"} or request.data["position"] not in ("INSTRUCTOR", "ASSISTANT"):
             raise ValidationError("강사 또는 조교 직위를 선택해 주세요.")
         if not self.employee(request.tenant).update(position=request.data["position"]):

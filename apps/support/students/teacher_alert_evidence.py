@@ -1,6 +1,7 @@
 """Read-only, on-demand teacher signals. Never creates events or sends messages."""
 from collections import defaultdict
 from datetime import date
+from statistics import fmean
 
 from django.db.models import Exists, F, OuterRef, Subquery
 
@@ -11,12 +12,24 @@ from apps.domains.exams.models import ExamEnrollment
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import HomeworkScore
 from apps.domains.lectures.models import Session
-from apps.domains.results.services.exam_analysis_metrics import _load_scores, score_rate
+from apps.domains.results.services.exam_analysis_metrics import _load_scores, score_rate, top_reference
 from apps.domains.results.utils.result_queries import latest_results_for_targets_per_enrollment
 from apps.domains.submissions.models import Submission
 from apps.domains.video.models import AccessMode, Video, VideoAccess, VideoProgress
 from apps.domains.video.policy import normalize_video_progress
 from apps.domains.video.services.access_resolver import resolve_access_modes_prefetched
+
+
+DEFAULTS = {
+    "absence_streak": {"enabled": True, "threshold": 2},
+    "homework_missing": {"enabled": True, "threshold": 2},
+    "exam_drop": {"enabled": True, "threshold": 15},
+    "recent_exam_drop": {"enabled": True, "threshold": 10},
+    "top_reference_gap": {"enabled": True, "threshold": 15},
+    "exam_rise": {"enabled": True, "threshold": 15},
+    "homework_drop": {"enabled": True, "threshold": 15},
+    "video_watch": {"enabled": True, "threshold": 80},
+}
 
 
 def attendance_signals(tenant, roster, today, threshold):
@@ -109,6 +122,7 @@ def exam_signals(tenant, roster, today, rules):
         enrollment__tenant=tenant, enrollment_id__in=roster).select_related("attempt")
     scored = _load_scores(results=list(results), exam_maxima=maxima, tenant=tenant)
     history = defaultdict(list)
+    cohorts = defaultdict(dict)
     for eid, exam, title, _ in pairs:
         sessions = dates[exam, roster[eid].lecture_id]
         if len(sessions) != 1:
@@ -120,7 +134,32 @@ def exam_signals(tenant, roster, today, rules):
         rate = (score_rate(entry.initial.total_score, entry.initial.max_score) if entry and entry.status == "DONE"
                 and entry.initial.max_score and entry.initial.max_score > 0 else None)
         history[eid].append((day, order, exam, title, rate))
-    return deltas(history, rules, "exam_drop", "exam_rise")
+        if rate is not None:
+            cohorts[roster[eid].lecture_id, exam][eid] = entry
+    signals = deltas(history, rules, "exam_drop", "exam_rise")
+    from apps.domains.students.models import ClassGroupLecture
+    references = dict(ClassGroupLecture.objects.filter(
+        group__tenant=tenant, lecture__tenant=tenant, lecture_id__in={lecture for lecture, _ in cohorts},
+    ).values_list("lecture_id", "top_reference_percent"))
+    benchmarks = {(lecture, exam): top_reference(rows, references[lecture])["top_reference_average"]
+                  for (lecture, exam), rows in cohorts.items() if lecture in references and len(rows) > 1}
+    for eid, entries in history.items():
+        ordered = sorted(entries)
+        _, _, exam, title, rate = ordered[-1]
+        if rate is None:
+            continue
+        recent = [row[-1] for row in ordered[:-1] if row[-1] is not None][-3:]
+        if len(recent) == 3 and rules["recent_exam_drop"]["enabled"]:
+            baseline = fmean(recent)
+            if baseline - rate >= rules["recent_exam_drop"]["threshold"]:
+                signals.append((eid, "recent_exam_drop", round(baseline-rate, 2),
+                                f"직전 3회 평균 {baseline:.1f}% → {title} {rate:.1f}%"))
+        lecture = roster[eid].lecture_id
+        reference = benchmarks.get((lecture, exam))
+        if reference is not None and rules["top_reference_gap"]["enabled"] and reference-rate >= rules["top_reference_gap"]["threshold"]:
+            signals.append((eid, "top_reference_gap", round(reference-rate, 2),
+                            f"{title} {rate:.1f}% · 강의 상위 {references[lecture]}% 평균 {reference:.1f}%"))
+    return signals
 
 
 def video_signals(tenant, roster, today, threshold):
@@ -177,7 +216,7 @@ def signals_for_lectures(tenant, lectures, today, rules):
         signals.extend(attendance_signals(tenant, roster, today, rules["absence_streak"]["threshold"]))
     if rules["homework_missing"]["enabled"] or rules["homework_drop"]["enabled"]:
         signals.extend(homework_signals(tenant, roster, today, rules))
-    if rules["exam_rise"]["enabled"] or rules["exam_drop"]["enabled"]:
+    if any(rules[key]["enabled"] for key in ("exam_rise", "exam_drop", "recent_exam_drop", "top_reference_gap")):
         signals.extend(exam_signals(tenant, roster, today, rules))
     if rules["video_watch"]["enabled"]:
         signals.extend(video_signals(tenant, roster, today, rules["video_watch"]["threshold"]))
