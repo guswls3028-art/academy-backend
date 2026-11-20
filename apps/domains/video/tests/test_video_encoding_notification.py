@@ -1,90 +1,103 @@
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.test import TestCase
 
 from academy.adapters.db.django.repositories_video import _notify_video_encoding_complete
-from apps.core.models import Tenant
+from apps.core.models import Tenant, TenantDomain
+from apps.domains.messaging.default_templates import get_default_templates
+from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, ScheduledNotification
+from apps.domains.staffs.models import Staff
+from apps.domains.video.models import Video
+from apps.worker.messaging_worker.sqs_main import _allowed_common_template_ids, _video_encoding_block_reason
 
 
 class VideoEncodingNotificationTests(TestCase):
-    def setUp(self) -> None:
-        self.tenant = Tenant.objects.create(name="Hakwon", code="hakwon")
-        staff = SimpleNamespace(id=77, name="홍길동", phone="01012345678")
-        lecture = SimpleNamespace(name="영어")
-        session = SimpleNamespace(title="1차시", lecture=lecture)
-        self.video = SimpleNamespace(
-            id=123,
-            title="문법 영상",
-            uploaded_by=staff,
-            session=session,
+    trigger = "video_encoding_complete"
+
+    def setUp(self):
+        self.owner = Tenant.objects.create(name="공용", code="video-owner")
+        self.tenant = Tenant.objects.create(name="예시학원", code="video-academy", messaging_is_active=True)
+        self.enterContext(self.settings(OWNER_TENANT_ID=self.owner.id))
+        TenantDomain.objects.update_or_create(tenant=self.tenant, is_primary=True, defaults={"host": "video-academy.example.test"})
+        staff = Staff.objects.create(tenant=self.tenant, name="담당자", phone="01012345678")
+        self.video = Video.objects.create(tenant=self.tenant, uploaded_by=staff, title="합성 영상")
+        default = get_default_templates(self.tenant.name)[self.trigger]
+        self.local = MessageTemplate.objects.create(tenant=self.tenant, name=default["name"], body=default["body"])
+        self.config = AutoSendConfig.objects.create(
+            tenant=self.tenant, trigger=self.trigger, template=self.local, enabled=True, message_mode="alimtalk",
+        )
+        self.approved = MessageTemplate.objects.create(
+            tenant=self.owner, name="공용 영상 완료", body="#{선생님이름}님, #{영상명} 완료. #{사이트링크}",
+            solapi_status="APPROVED", solapi_template_id="KA01-VIDEO",
+        )
+        self.owner_config = AutoSendConfig.objects.create(
+            tenant=self.owner, trigger=self.trigger, template=self.approved, enabled=False,
         )
 
-    @patch("apps.domains.messaging.scheduled.dispatch_notification_now")
-    @patch("apps.domains.messaging.alimtalk_content_builders.get_solapi_template_id", return_value=None)
-    @patch("apps.domains.messaging.selectors.get_auto_send_config", return_value=None)
-    def test_video_encoding_complete_without_config_does_not_send_sms(
-        self,
-        mock_config,
-        mock_unified_tid,
-        mock_dispatch,
-    ) -> None:
+    def notify(self):
         _notify_video_encoding_complete(self.video, self.tenant.id)
 
-        mock_dispatch.assert_not_called()
-
-    @patch("apps.domains.messaging.scheduled.dispatch_notification_now")
-    @patch("apps.domains.messaging.alimtalk_content_builders.get_solapi_template_id", return_value=None)
-    @patch("apps.domains.messaging.selectors.get_auto_send_config")
-    def test_video_encoding_complete_without_approved_template_does_not_send_sms(
-        self,
-        mock_config,
-        mock_unified_tid,
-        mock_dispatch,
-    ) -> None:
-        mock_config.return_value = SimpleNamespace(
-            enabled=True,
-            template=SimpleNamespace(
-                body="영상 인코딩이 완료되었습니다.",
-                solapi_status="",
-                solapi_template_id="",
-            ),
-            delay_mode="immediate",
-            delay_value=None,
-        )
-
-        _notify_video_encoding_complete(self.video, self.tenant.id)
-
-        mock_dispatch.assert_not_called()
-
-    @patch("apps.domains.messaging.scheduled.dispatch_notification_now")
-    @patch("apps.domains.messaging.alimtalk_content_builders.get_solapi_template_id", return_value=None)
-    @patch("apps.domains.messaging.selectors.get_auto_send_config")
-    def test_video_encoding_complete_approved_template_uses_alimtalk_only(
-        self,
-        mock_config,
-        mock_unified_tid,
-        mock_dispatch,
-    ) -> None:
-        mock_config.return_value = SimpleNamespace(
-            enabled=True,
-            template=SimpleNamespace(
-                body="#{선생님이름}님, #{영상명} 인코딩 완료",
-                solapi_status="APPROVED",
-                solapi_template_id="KA01VIDEO",
-            ),
-            delay_mode="immediate",
-            delay_value=None,
-        )
-
-        mock_dispatch.return_value = SimpleNamespace(status="pending")
-
-        _notify_video_encoding_complete(self.video, self.tenant.id)
-
-        mock_dispatch.assert_called_once()
-        payload = mock_dispatch.call_args.kwargs["payload"]
+    @patch("apps.domains.messaging.sqs_queue.MessagingSQSQueue")
+    def test_default_content_dispatches_exact_owner_envelope_to_uploader_once(self, queue):
+        queue.return_value.enqueue.return_value = True
+        with self.captureOnCommitCallbacks(execute=True):
+            self.notify()
+        queue.return_value.enqueue.assert_called_once()
+        payload = queue.return_value.enqueue.call_args.kwargs
+        self.assertEqual(payload["tenant_id"], self.owner.id)
+        self.assertEqual(payload["source_tenant_id"], self.tenant.id)
+        self.assertEqual((payload["target_type"], payload["target_id"]), ("staff", self.video.uploaded_by_id))
         self.assertEqual(payload["message_mode"], "alimtalk")
-        self.assertEqual(payload["template_id"], "KA01VIDEO")
-        self.assertEqual(payload["event_type"], "video_encoding_complete")
-        self.assertEqual(payload["source_domain"], "video")
-        self.assertNotEqual(payload["message_mode"], "sms")
+        self.assertEqual(payload["event_type"], self.trigger)
+        self.assertEqual(payload["template_id"], self.approved.solapi_template_id)
+        self.assertEqual(payload["text"], "담당자님, 합성 영상 완료. https://video-academy.example.test")
+        self.assertEqual({r["key"] for r in payload["alimtalk_replacements"]}, {"선생님이름", "영상명", "사이트링크"})
+        self.assertEqual(_allowed_common_template_ids(self.trigger), {payload["template_id"]})
+        self.assertEqual(_video_encoding_block_reason(self.trigger, "alimtalk", payload["template_id"]), "")
+        self.assertTrue(_video_encoding_block_reason(self.trigger, "sms", payload["template_id"]))
+
+    def test_customer_edits_do_not_change_approved_scheduled_content(self):
+        self.local.body = "고객이 작성한 다른 문구"
+        self.local.save(update_fields=["body"])
+        self.config.delay_mode, self.config.delay_value = "delay_minutes", 10
+        self.config.save(update_fields=["delay_mode", "delay_value"])
+        self.notify()
+        payload = ScheduledNotification.objects.get(trigger=self.trigger).payload
+        self.assertNotIn(self.local.body, payload["text"])
+        self.assertEqual(payload["template_id"], self.approved.solapi_template_id)
+
+    def test_local_provider_id_cannot_replace_unapproved_or_missing_owner_envelope(self):
+        self.local.solapi_status, self.local.solapi_template_id = "APPROVED", "KA-OTHER"
+        self.local.save(update_fields=["solapi_status", "solapi_template_id"])
+        self.approved.solapi_status = "PENDING"
+        self.approved.save(update_fields=["solapi_status"])
+        self.notify()
+        self.owner_config.delete()
+        self.notify()
+        self.assertFalse(ScheduledNotification.objects.exists())
+
+    def test_delivery_configuration_and_tenant_ownership_fail_closed(self):
+        for field, value in (("enabled", False), ("message_mode", "sms"), ("template", self.approved)):
+            with self.subTest(field=field):
+                original = getattr(self.config, field)
+                setattr(self.config, field, value)
+                self.config.save(update_fields=[field])
+                self.notify()
+                self.assertFalse(ScheduledNotification.objects.exists())
+                setattr(self.config, field, original)
+                self.config.save(update_fields=[field])
+        self.video.uploaded_by.tenant_id = self.owner.id
+        self.notify()
+        self.assertFalse(ScheduledNotification.objects.exists())
+
+    def test_foreign_owner_template_and_inactive_business_messaging_do_not_enqueue(self):
+        self.owner_config.template = self.local
+        self.owner_config.save(update_fields=["template"])
+        self.notify()
+        self.assertFalse(ScheduledNotification.objects.exists())
+        self.owner_config.template = self.approved
+        self.owner_config.save(update_fields=["template"])
+        self.tenant.messaging_is_active = False
+        self.tenant.save(update_fields=["messaging_is_active"])
+        self.notify()
+        self.assertFalse(ScheduledNotification.objects.exists())
