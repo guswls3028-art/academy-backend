@@ -110,7 +110,10 @@ class StaffBoardTests(TestCase):
         self.assertEqual(self.request("get", path + "&q=%20" + "a" * 100 + "%20").status_code, 200)
         too_long = self.request("get", path + "&q=" + "a" * 101)
         self.assertEqual(too_long.status_code, 400)
-        self.assertIn("q", too_long.data)
+        self.assertEqual(too_long.data["q"], ["검색어는 100자 이하로 입력해 주세요."])
+        malformed = self.request("get", path + "&q=math%00plan")
+        self.assertEqual(malformed.status_code, 400)
+        self.assertEqual(malformed.data["q"][0].code, "null_characters_not_allowed")
 
     @patch("apps.domains.staffs.views.board.get_object_bytes_r2_storage", return_value=b"private")
     @patch("apps.domains.staffs.views.board.put_small_storage_object")

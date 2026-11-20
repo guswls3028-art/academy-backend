@@ -91,6 +91,13 @@ class StaffBoardEditSerializer(serializers.ModelSerializer):
         fields = ("title", "body")
 
 
+class BoardSearchSerializer(serializers.Serializer):
+    q = serializers.CharField(
+        default="", allow_blank=True, max_length=100,
+        error_messages={"max_length": "검색어는 100자 이하로 입력해 주세요."},
+    )
+
+
 class BoardPagination(PageNumberPagination):
     page_size = 20
     page_size_query_param = "page_size"
@@ -134,9 +141,9 @@ class StaffBoardViewSet(viewsets.GenericViewSet):
             if category not in StaffBoardPost.Category.values:
                 raise serializers.ValidationError({"category": "게시판 종류를 확인해 주세요."})
             posts = posts.filter(category=category)
-        keyword = request.query_params.get("q", "").strip()
-        if len(keyword) > 100:
-            raise serializers.ValidationError({"q": ["검색어는 100자 이하로 입력해 주세요."]})
+        search = BoardSearchSerializer(data=request.query_params)
+        search.is_valid(raise_exception=True)
+        keyword = search.validated_data["q"]
         if keyword:
             posts = posts.filter(
                 Q(title__icontains=keyword) | Q(body__icontains=keyword) | Q(attachment_name__icontains=keyword)
