@@ -62,4 +62,3 @@ class DawonFollowupTests(TestCase):
         self.assertTrue(learner_topics(tenant=self.tenant,student=self.student)["clinics"][0]["booked"])
         self.assertFalse(learner_topics(tenant=self.tenant,student=other)["clinics"][0]["booked"])
         self.assertEqual(self.call("get",{"alerts":"1","group":self.group.pk}).status_code,200)
-
