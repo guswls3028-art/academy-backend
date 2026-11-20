@@ -4,6 +4,8 @@ from zoneinfo import ZoneInfo
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
+from apps.domains.students import dawon_schema as schema
 from rest_framework import serializers
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
@@ -66,11 +68,13 @@ class DawonTeacherAlertsView(APIView):
                          "alerts": signals_for_lectures(request.tenant, selected, timezone.localdate(timezone=ZoneInfo("Asia/Seoul")), rules),
                          "followups": followups(request.tenant, selected), "unavailable": []}, headers={"Cache-Control": "private, no-store"})
 
+    @extend_schema(responses={200: schema.teacher_alerts})
     def get(self, request):
         scope = self.scope(request)
         stored = DawonTeacherAlertSettings.objects.filter(tenant=request.tenant, teacher=request.user).values_list("rules", flat=True).first()
         return self.response(request, scope, stored or {})
 
+    @extend_schema(request={"application/json": schema.record(rules=schema.rules)}, responses={200: schema.teacher_alerts})
     def patch(self, request):
         scope = self.scope(request)
         updates = changes(request.data)

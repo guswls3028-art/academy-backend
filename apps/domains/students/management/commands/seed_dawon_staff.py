@@ -8,7 +8,7 @@ from django.utils import timezone
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.lectures.models import Lecture
 from apps.domains.students.models import ClassGroup, ClassGroupLecture
-from apps.domains.clinic.dawon_demo import is_demo_tenant
+from apps.domains.clinic.contracts import is_demo_tenant
 from apps.domains.staffs.models import Staff, StaffWorkType, WorkMonthLock, WorkRecord, WorkType
 from apps.domains.students.services.dawon_staff import EMPLOYEE, FIXTURES, TEACHER, WORK_MARK, WORK_TYPE
 

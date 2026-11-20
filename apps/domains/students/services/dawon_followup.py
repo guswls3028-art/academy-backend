@@ -7,7 +7,7 @@ from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.fields import DateField, IntegerField
 
-from apps.domains.clinic.dawon_demo import LOCATION, MEMO
+from apps.domains.clinic.contracts import DAWON_CLINIC_LOCATION as LOCATION, DAWON_CLINIC_MEMO as MEMO
 from apps.domains.clinic.models import Session as ClinicSession, SessionParticipant
 from apps.domains.clinic.services.lifecycle import create_participants_bulk
 from apps.domains.enrollment.models import Enrollment

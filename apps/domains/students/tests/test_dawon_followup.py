@@ -5,7 +5,7 @@ from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import TenantMembership
-from apps.domains.clinic.dawon_demo import LOCATION, MEMO
+from apps.domains.clinic.contracts import DAWON_CLINIC_LOCATION as LOCATION, DAWON_CLINIC_MEMO as MEMO
 from apps.domains.clinic.models import Session as ClinicSession, SessionParticipant
 from apps.domains.students.models import ClassGroup, DawonCounselAppointment
 from apps.domains.lectures.models import Lecture

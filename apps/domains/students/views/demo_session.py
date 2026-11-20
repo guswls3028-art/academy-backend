@@ -4,6 +4,8 @@ from datetime import timedelta
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
+from apps.domains.students import dawon_schema as schema
 from rest_framework import serializers
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import AllowAny
@@ -30,6 +32,7 @@ class DawonDemoSessionView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [DawonDemoSessionThrottle]
 
+    @extend_schema(request=DemoRoleInput, responses={200: schema.token_pair})
     def post(self, request):
         tenant = getattr(request, "tenant", None)
         if not getattr(settings, "DAWON_REVIEW_CLASS_GROUPS", False) or not tenant or (tenant.pk, tenant.code) != (719, "dawon"):
@@ -78,7 +81,7 @@ class DawonDemoSessionView(APIView):
         ).exists():
             raise NotFound("체험 계정을 확인할 수 없습니다.")
         if role == "student":
-            from apps.domains.clinic.dawon_demo import ensure_demo_clinic_sessions
+            from apps.domains.clinic.contracts import ensure_demo_clinic_sessions
             ensure_demo_clinic_sessions(tenant)
 
         end = timezone.now() + timedelta(hours=2)
@@ -106,11 +109,12 @@ class DawonDemoLearningView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [DawonDemoLearningThrottle]
 
+    @extend_schema(responses={200: schema.learning})
     def get(self, request):
         from collections import defaultdict
         from django.db.models import F
         from apps.domains.attendance.models import Attendance
-        from apps.domains.enrollment.selectors import active_enrollments_for_student
+        from apps.support.results.student_result_dependencies import active_enrollments_for_student
         from apps.support.student_app.results_summary import build_student_grades_summary
         from apps.domains.video.models import Video
         from apps.domains.video.services.access_resolver import AccessMode, get_effective_access_mode

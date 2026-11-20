@@ -3,6 +3,10 @@ from collections import defaultdict
 from statistics import fmean
 
 from django.db.models import Count, Exists, F, OuterRef, Q
+from drf_spectacular.utils import extend_schema
+from apps.domains.students import dawon_schema as schema
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.fields import IntegerField
 from rest_framework.permissions import IsAuthenticated
@@ -10,7 +14,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.models import TenantMembership
-from apps.domains.clinic.dawon_demo import is_demo_tenant
+from apps.domains.clinic.contracts import is_demo_tenant
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models.homework import Homework
 from apps.domains.homework_results.models.score import HomeworkScore
@@ -19,7 +23,7 @@ from apps.domains.lectures.models import Lecture, Session
 from apps.domains.staffs.models import Staff
 from apps.domains.exams.models import Exam
 from apps.domains.results.models import Result
-from apps.domains.results.utils.initial_exam_score import load_initial_exam_scores, project_initial_exam_score
+from apps.domains.results.contracts import load_initial_exam_scores, project_initial_exam_score
 from apps.domains.results.services.omr_subjective_completion import pending_omr_result_ids
 from apps.domains.students.models import ClassGroup, DawonExamReview
 from apps.domains.students.services.dawon_daily_attendance import daily_attendance
@@ -85,6 +89,12 @@ class DawonDemoOperationsView(APIView):
             user__is_staff=False, user__is_superuser=False, is_active=True,
         )
 
+    @extend_schema(responses={200: schema.operations}, parameters=[
+        OpenApiParameter("view", str, enum=["attendance", "care", "learners"]),
+        OpenApiParameter("date", OpenApiTypes.DATE), OpenApiParameter("group", int),
+        OpenApiParameter("course_overview", int), OpenApiParameter("student", int),
+        OpenApiParameter("course", int), OpenApiParameter("exam", int), OpenApiParameter("alerts", str),
+    ])
     def get(self, request):
         tenant = request.tenant
         if request.query_params.get("view") == "attendance":
@@ -209,6 +219,7 @@ class DawonDemoOperationsView(APIView):
             raise ValidationError("반별 강의와 시험을 선택해 주세요.")
         return exam_for_management(tenant, exam_id, course_id), course_id
 
+    @extend_schema(request={"application/json": schema.operation_patch}, responses={200: schema.operation_result})
     def patch(self, request):
         if isinstance(request.data, dict) and "followup" in request.data:
             return Response(register_followup(request), headers={"Cache-Control":"private, no-store"})

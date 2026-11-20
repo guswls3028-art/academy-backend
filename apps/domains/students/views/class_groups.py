@@ -9,6 +9,9 @@ from django.db.models import Count, Exists, F, OuterRef, Q, Window
 from django.db.models.functions import Coalesce, RowNumber
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
+from apps.domains.students import dawon_schema as schema
+from drf_spectacular.utils import OpenApiParameter
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied
@@ -195,6 +198,8 @@ class ClassGroupViewSet(viewsets.ViewSet):
                   "assigned_teacher": {"id":instructor.pk,"name":instructor.name} if instructor else None}
         return result
 
+    @extend_schema(operation_id="students_class_groups_list", responses={200: schema.variants(schema.array(schema.group), schema.array(schema.person))},
+                   parameters=[OpenApiParameter("view", str, enum=["instructors"])])
     def list(self, request):
         if request.query_params.get("view") == "instructors":
             if not hasattr(request.auth, "get") or request.auth.get("dawon_demo_role") != "admin":
@@ -217,6 +222,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
             "instructor_name": g.assigned_teacher.name if g.assigned_teacher_id and g.assigned_teacher.tenant_id==request.tenant.pk
             else ", ".join(sorted(legacy[g.pk]))} for g in groups])
 
+    @extend_schema(responses={200: schema.teaching})
     @action(detail=False, methods=["get"])
     def teaching(self, request):
         from apps.domains.lectures.models import Session
@@ -245,6 +251,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
             rows[group_id]["recent"] = lesson
         return Response(list(rows.values()))
 
+    @extend_schema(request=GroupInput, responses={201: schema.group_detail})
     def create(self, request):
         fields = values(GroupInput, request)
         teacher_id = fields.get("assigned_teacher_id")
@@ -260,6 +267,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
             raise serializers.ValidationError({"name": "같은 이름의 반이 이미 있습니다."})
         return Response(self.group_detail(group), status=201)
 
+    @extend_schema(request={"application/json": schema.record(assigned_teacher_id=schema.integer)}, responses={200: schema.group_detail})
     @transaction.atomic
     def partial_update(self, request, pk):
         if set(request.data) != {"assigned_teacher_id"}:
@@ -282,6 +290,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
             Lecture.objects.filter(tenant=request.tenant,pk__in=[link.lecture_id for link in targets]).update(name=staff.name)
         return Response(self.group_detail(group))
 
+    @extend_schema(responses={200: schema.group_detail})
     def retrieve(self, request, pk):
         return Response(self.group_detail(self.group(pk)))
 
@@ -314,11 +323,14 @@ class ClassGroupViewSet(viewsets.ViewSet):
                 break
         return rows
 
+    @extend_schema(responses={200: schema.array(schema.student)})
     @action(detail=True, methods=["get"])
     def candidates(self, request, pk):
         group = self.group(pk)
         return Response(self.candidate_rows(group, Student.objects.exclude(class_groups=group), request))
 
+    @extend_schema(methods=["GET"], responses={200: schema.reference})
+    @extend_schema(methods=["PATCH"], request={"application/json": schema.record(top_reference_percent=schema.integer)}, responses={200: schema.reference})
     @action(detail=False, methods=["get", "patch"], url_path=r"for-lecture/(?P<lecture_id>[1-9]\d*)")
     def for_lecture(self, request, lecture_id):
         lecture = native_group_lecture(request.tenant, lecture_id)
@@ -338,6 +350,9 @@ class ClassGroupViewSet(viewsets.ViewSet):
                          "school": link.school if link else "", "can_edit_top_reference": can_edit,
                          "top_reference_percent": link.top_reference_percent if link else None})
 
+    @extend_schema(methods=["GET"], responses={200: schema.array(schema.student)})
+    @extend_schema(methods=["POST"], request={"application/json": schema.record(student_ids=schema.array(schema.integer))},
+                   responses={201: schema.record(created_count=schema.integer, student_ids=schema.array(schema.integer))})
     @action(detail=True, methods=["get", "post"], url_path=r"lectures/(?P<lecture_pk>[1-9]\d*)/late-students")
     @transaction.atomic
     def late_students(self, request, pk, lecture_pk):
@@ -357,6 +372,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
         enroll_class_group_members(tenant=request.tenant, lecture_id=link.lecture_id, student_ids=ids)
         return Response({"created_count": len(ids), "student_ids": ids}, status=201)
 
+    @extend_schema(request=MemberInput, responses={200: schema.group_detail})
     @action(detail=True, methods=["patch"])
     @transaction.atomic
     def members(self, request, pk):
@@ -372,6 +388,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
         group.students.add(*add)
         return Response(self.group_detail(group))
 
+    @extend_schema(request=LectureInput, responses={201: schema.course})
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def lectures(self, request, pk):

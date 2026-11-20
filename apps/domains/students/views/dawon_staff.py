@@ -5,13 +5,16 @@ from datetime import date
 from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
+from apps.domains.students import dawon_schema as schema
+from drf_spectacular.utils import OpenApiParameter
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.models import TenantMembership
-from apps.domains.clinic.dawon_demo import is_demo_tenant
+from apps.domains.clinic.contracts import is_demo_tenant
 from apps.domains.staffs.models import ExpenseRecord, PayrollSnapshot, StaffWorkType, WorkMonthLock, WorkRecord
 from apps.domains.staffs.services.work_records import end_work_record, start_work_record
 from apps.domains.students.models import ClassGroupLecture
@@ -49,6 +52,7 @@ def selected_staff(tenant, pk):
 
 
 class DawonStaffView(StaffRequest):
+    @extend_schema(responses={200: schema.staff_directory}, parameters=[OpenApiParameter("staff", int), OpenApiParameter("month", str)])
     def get(self, request):
         tenant = request.tenant
         if "staff" not in request.query_params:
@@ -90,6 +94,8 @@ class DawonStaffView(StaffRequest):
         return Response({"month": month, "payroll": payroll, "open_count": pending, "records": list(
             records.values("id", "date", "start_time", "end_time", "end_date", "work_hours", "amount"))})
 
+    @extend_schema(request={"application/json": schema.record(staff=schema.integer, position=schema.position)},
+                   responses={200: schema.record(id=schema.integer, position=schema.position)})
     def patch(self, request):
         if not isinstance(request.data, dict) or set(request.data) != {"staff", "position"} or request.data.get("position") not in ("INSTRUCTOR", "ASSISTANT"):
             raise ValidationError("직원과 표시할 직위를 선택해 주세요.")
@@ -113,6 +119,7 @@ class DawonStaffClockView(StaffRequest):
     def current(self, staff):
         return WorkRecord.objects.filter(tenant=staff.tenant, staff=staff, end_time__isnull=True).first()
 
+    @extend_schema(responses={200: schema.staff_clock})
     def get(self, request):
         staff = self.staff(request)
         row = self.current(staff)
@@ -120,6 +127,7 @@ class DawonStaffClockView(StaffRequest):
             "id": row.pk, "date": row.date, "start_time": row.start_time
         } if row else None})
 
+    @extend_schema(request={"application/json": schema.clock_request}, responses={200: schema.staff_clock})
     @transaction.atomic
     def post(self, request):
         if not isinstance(request.data, dict):

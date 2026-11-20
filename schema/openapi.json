@@ -2810,6 +2810,27 @@
         ],
         "type": "object"
       },
+      "DemoRoleInputRequest": {
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/DemoRoleInputRoleEnum"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "type": "object"
+      },
+      "DemoRoleInputRoleEnum": {
+        "description": "* `admin` - admin\n* `teacher` - teacher\n* `student` - student\n* `guardian` - guardian",
+        "enum": [
+          "admin",
+          "teacher",
+          "student",
+          "guardian"
+        ],
+        "type": "string"
+      },
       "DeviceClassEnum": {
         "description": "* `mobile` - mobile\n* `tablet` - tablet\n* `desktop` - desktop",
         "enum": [
@@ -3676,6 +3697,16 @@
             "nullable": true,
             "type": "number"
           },
+          "top_reference_average": {
+            "format": "double",
+            "type": "number"
+          },
+          "top_reference_count": {
+            "type": "integer"
+          },
+          "top_reference_percent": {
+            "type": "integer"
+          },
           "top_ten_average": {
             "format": "double",
             "nullable": true,
@@ -4447,6 +4478,53 @@
           "subjective_pending"
         ],
         "type": "string"
+      },
+      "GroupInputKindEnum": {
+        "description": "* `union` - 연합반\n* `school` - 학교별 내신반",
+        "enum": [
+          "union",
+          "school"
+        ],
+        "type": "string"
+      },
+      "GroupInputRequest": {
+        "properties": {
+          "assigned_teacher_id": {
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/GroupInputKindEnum"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "school": {
+            "default": "",
+            "maxLength": 100,
+            "type": "string"
+          },
+          "track": {
+            "default": "",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TrackEnum"
+              },
+              {
+                "$ref": "#/components/schemas/BlankEnum"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "name"
+        ],
+        "type": "object"
       },
       "HandoffStatusEnum": {
         "description": "* `account_inactive` - account_inactive\n* `password_setup_required` - password_setup_required\n* `first_login_pending` - first_login_pending\n* `complete` - complete",
@@ -5728,6 +5806,38 @@
         "required": [
           "enrollment_id",
           "session"
+        ],
+        "type": "object"
+      },
+      "LectureInputRequest": {
+        "properties": {
+          "end_date": {
+            "format": "date",
+            "type": "string"
+          },
+          "period": {
+            "$ref": "#/components/schemas/PeriodEnum"
+          },
+          "school": {
+            "default": "",
+            "maxLength": 100,
+            "type": "string"
+          },
+          "start_date": {
+            "format": "date",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "end_date",
+          "period",
+          "start_date",
+          "title"
         ],
         "type": "object"
       },
@@ -10801,6 +10911,27 @@
         },
         "type": "object"
       },
+      "PatchedMemberInputRequest": {
+        "properties": {
+          "add": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "remove": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 500,
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "PatchedMessageTemplateRequest": {
         "properties": {
           "body": {
@@ -12181,6 +12312,15 @@
           "url"
         ],
         "type": "object"
+      },
+      "PeriodEnum": {
+        "description": "* `vacation` - vacation\n* `midterm` - midterm\n* `final` - final",
+        "enum": [
+          "vacation",
+          "midterm",
+          "final"
+        ],
+        "type": "string"
       },
       "PlaybackRefreshRequestRequest": {
         "properties": {
@@ -22857,6 +22997,15 @@
           "homework_ids"
         ],
         "type": "object"
+      },
+      "TrackEnum": {
+        "description": "* `1%` - 1%\n* `HYPER` - HYPER\n* `SKY` - SKY",
+        "enum": [
+          "1%",
+          "HYPER",
+          "SKY"
+        ],
+        "type": "string"
       },
       "TrustedTimerDistributionRequired": {
         "properties": {
@@ -41080,6 +41229,14 @@
         "operationId": "lectures_sessions_list",
         "parameters": [
           {
+            "description": "다원 체험에서 반 ID 또는 assigned로 현재 교사가 담당하는 반의 차시를 조회합니다.",
+            "in": "query",
+            "name": "class_group",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "description": "실제 수업일. 수업일 미설정 차시는 기존 기준일로 조회합니다.",
             "in": "query",
             "name": "date",
@@ -54402,6 +54559,1553 @@
         ]
       }
     },
+    "/api/v1/students/class-groups/": {
+      "get": {
+        "operationId": "students_class_groups_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "view",
+            "schema": {
+              "enum": [
+                "instructors"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "properties": {
+                            "id": {
+                              "type": "integer"
+                            },
+                            "instructor_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "lecture_count": {
+                              "type": "integer"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "school": {
+                              "type": "string"
+                            },
+                            "student_count": {
+                              "type": "integer"
+                            },
+                            "track": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name",
+                            "kind",
+                            "track",
+                            "school",
+                            "student_count",
+                            "lecture_count",
+                            "instructor_name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "items": {
+                          "properties": {
+                            "id": {
+                              "type": "integer"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    ]
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      },
+      "post": {
+        "operationId": "students_class_groups_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupInputRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupInputRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupInputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "assigned_teacher": {
+                      "nullable": true,
+                      "properties": {
+                        "id": {
+                          "type": "integer"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "id": {
+                      "type": "integer"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "lecture_count": {
+                      "type": "integer"
+                    },
+                    "lectures": {
+                      "items": {
+                        "properties": {
+                          "chip_label": {
+                            "type": "string"
+                          },
+                          "color": {
+                            "type": "string"
+                          },
+                          "cycle_status": {
+                            "enum": [
+                              "upcoming",
+                              "current",
+                              "past"
+                            ],
+                            "type": "string"
+                          },
+                          "end_date": {
+                            "format": "date",
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "integer"
+                          },
+                          "is_active": {
+                            "type": "boolean"
+                          },
+                          "lecture_time": {
+                            "type": "string"
+                          },
+                          "period": {
+                            "type": "string"
+                          },
+                          "school": {
+                            "type": "string"
+                          },
+                          "start_date": {
+                            "format": "date",
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "student_count": {
+                            "type": "integer"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "title",
+                          "period",
+                          "school",
+                          "start_date",
+                          "end_date",
+                          "is_active",
+                          "student_count",
+                          "color",
+                          "chip_label",
+                          "lecture_time",
+                          "cycle_status"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "school": {
+                      "type": "string"
+                    },
+                    "student_count": {
+                      "type": "integer"
+                    },
+                    "students": {
+                      "items": {
+                        "properties": {
+                          "course_ids": {
+                            "items": {
+                              "type": "integer"
+                            },
+                            "type": "array"
+                          },
+                          "eligible": {
+                            "type": "boolean"
+                          },
+                          "grade": {
+                            "nullable": true,
+                            "type": "integer"
+                          },
+                          "id": {
+                            "type": "integer"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "parent_phone": {
+                            "type": "string"
+                          },
+                          "phone": {
+                            "type": "string"
+                          },
+                          "school": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "school",
+                          "grade",
+                          "phone",
+                          "parent_phone",
+                          "eligible"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "track": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "kind",
+                    "track",
+                    "school",
+                    "student_count",
+                    "lecture_count",
+                    "students",
+                    "lectures",
+                    "assigned_teacher"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/class-groups/for-lecture/{lecture_id}/": {
+      "get": {
+        "operationId": "students_class_groups_for_lecture_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lecture_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[1-9]\\d*$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "can_edit_top_reference": {
+                      "type": "boolean"
+                    },
+                    "group_id": {
+                      "nullable": true,
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "school": {
+                      "type": "string"
+                    },
+                    "top_reference_percent": {
+                      "nullable": true,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "group_id",
+                    "name",
+                    "school",
+                    "can_edit_top_reference",
+                    "top_reference_percent"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      },
+      "patch": {
+        "operationId": "students_class_groups_for_lecture_partial_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lecture_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[1-9]\\d*$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "top_reference_percent": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "top_reference_percent"
+                ],
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "can_edit_top_reference": {
+                      "type": "boolean"
+                    },
+                    "group_id": {
+                      "nullable": true,
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "school": {
+                      "type": "string"
+                    },
+                    "top_reference_percent": {
+                      "nullable": true,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "group_id",
+                    "name",
+                    "school",
+                    "can_edit_top_reference",
+                    "top_reference_percent"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/class-groups/teaching/": {
+      "get": {
+        "operationId": "students_class_groups_teaching_retrieve",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "properties": {
+                      "courses": {
+                        "items": {
+                          "type": "integer"
+                        },
+                        "type": "array"
+                      },
+                      "id": {
+                        "type": "integer"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "members": {
+                        "type": "integer"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "recent": {
+                        "nullable": true,
+                        "properties": {
+                          "date": {
+                            "format": "date",
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "integer"
+                          },
+                          "lecture_id": {
+                            "type": "integer"
+                          },
+                          "schedule_id": {
+                            "nullable": true,
+                            "type": "integer"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "lecture_id",
+                          "title",
+                          "date",
+                          "schedule_id"
+                        ],
+                        "type": "object"
+                      },
+                      "school": {
+                        "type": "string"
+                      },
+                      "track": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "kind",
+                      "track",
+                      "school",
+                      "members",
+                      "courses",
+                      "recent"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/class-groups/{id}/": {
+      "get": {
+        "operationId": "students_class_groups_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[1-9]\\d*$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "assigned_teacher": {
+                      "nullable": true,
+                      "properties": {
+                        "id": {
+                          "type": "integer"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "id": {
+                      "type": "integer"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "lecture_count": {
+                      "type": "integer"
+                    },
+                    "lectures": {
+                      "items": {
+                        "properties": {
+                          "chip_label": {
+                            "type": "string"
+                          },
+                          "color": {
+                            "type": "string"
+                          },
+                          "cycle_status": {
+                            "enum": [
+                              "upcoming",
+                              "current",
+                              "past"
+                            ],
+                            "type": "string"
+                          },
+                          "end_date": {
+                            "format": "date",
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "integer"
+                          },
+                          "is_active": {
+                            "type": "boolean"
+                          },
+                          "lecture_time": {
+                            "type": "string"
+                          },
+                          "period": {
+                            "type": "string"
+                          },
+                          "school": {
+                            "type": "string"
+                          },
+                          "start_date": {
+                            "format": "date",
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "student_count": {
+                            "type": "integer"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "title",
+                          "period",
+                          "school",
+                          "start_date",
+                          "end_date",
+                          "is_active",
+                          "student_count",
+                          "color",
+                          "chip_label",
+                          "lecture_time",
+                          "cycle_status"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "school": {
+                      "type": "string"
+                    },
+                    "student_count": {
+                      "type": "integer"
+                    },
+                    "students": {
+                      "items": {
+                        "properties": {
+                          "course_ids": {
+                            "items": {
+                              "type": "integer"
+                            },
+                            "type": "array"
+                          },
+                          "eligible": {
+                            "type": "boolean"
+                          },
+                          "grade": {
+                            "nullable": true,
+                            "type": "integer"
+                          },
+                          "id": {
+                            "type": "integer"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "parent_phone": {
+                            "type": "string"
+                          },
+                          "phone": {
+                            "type": "string"
+                          },
+                          "school": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "school",
+                          "grade",
+                          "phone",
+                          "parent_phone",
+                          "eligible"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "track": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "kind",
+                    "track",
+                    "school",
+                    "student_count",
+                    "lecture_count",
+                    "students",
+                    "lectures",
+                    "assigned_teacher"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      },
+      "patch": {
+        "operationId": "students_class_groups_partial_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[1-9]\\d*$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "assigned_teacher_id": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "assigned_teacher_id"
+                ],
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "assigned_teacher": {
+                      "nullable": true,
+                      "properties": {
+                        "id": {
+                          "type": "integer"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "id": {
+                      "type": "integer"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "lecture_count": {
+                      "type": "integer"
+                    },
+                    "lectures": {
+                      "items": {
+                        "properties": {
+                          "chip_label": {
+                            "type": "string"
+                          },
+                          "color": {
+                            "type": "string"
+                          },
+                          "cycle_status": {
+                            "enum": [
+                              "upcoming",
+                              "current",
+                              "past"
+                            ],
+                            "type": "string"
+                          },
+                          "end_date": {
+                            "format": "date",
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "integer"
+                          },
+                          "is_active": {
+                            "type": "boolean"
+                          },
+                          "lecture_time": {
+                            "type": "string"
+                          },
+                          "period": {
+                            "type": "string"
+                          },
+                          "school": {
+                            "type": "string"
+                          },
+                          "start_date": {
+                            "format": "date",
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "student_count": {
+                            "type": "integer"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "title",
+                          "period",
+                          "school",
+                          "start_date",
+                          "end_date",
+                          "is_active",
+                          "student_count",
+                          "color",
+                          "chip_label",
+                          "lecture_time",
+                          "cycle_status"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "school": {
+                      "type": "string"
+                    },
+                    "student_count": {
+                      "type": "integer"
+                    },
+                    "students": {
+                      "items": {
+                        "properties": {
+                          "course_ids": {
+                            "items": {
+                              "type": "integer"
+                            },
+                            "type": "array"
+                          },
+                          "eligible": {
+                            "type": "boolean"
+                          },
+                          "grade": {
+                            "nullable": true,
+                            "type": "integer"
+                          },
+                          "id": {
+                            "type": "integer"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "parent_phone": {
+                            "type": "string"
+                          },
+                          "phone": {
+                            "type": "string"
+                          },
+                          "school": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "school",
+                          "grade",
+                          "phone",
+                          "parent_phone",
+                          "eligible"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "track": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "kind",
+                    "track",
+                    "school",
+                    "student_count",
+                    "lecture_count",
+                    "students",
+                    "lectures",
+                    "assigned_teacher"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/class-groups/{id}/candidates/": {
+      "get": {
+        "operationId": "students_class_groups_candidates_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[1-9]\\d*$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "properties": {
+                      "grade": {
+                        "nullable": true,
+                        "type": "integer"
+                      },
+                      "id": {
+                        "type": "integer"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "parent_phone": {
+                        "type": "string"
+                      },
+                      "phone": {
+                        "type": "string"
+                      },
+                      "school": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "school",
+                      "grade",
+                      "phone",
+                      "parent_phone"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/class-groups/{id}/lectures/": {
+      "post": {
+        "operationId": "students_class_groups_lectures_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[1-9]\\d*$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureInputRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureInputRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureInputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "chip_label": {
+                      "type": "string"
+                    },
+                    "color": {
+                      "type": "string"
+                    },
+                    "cycle_status": {
+                      "enum": [
+                        "upcoming",
+                        "current",
+                        "past"
+                      ],
+                      "type": "string"
+                    },
+                    "end_date": {
+                      "format": "date",
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "integer"
+                    },
+                    "is_active": {
+                      "type": "boolean"
+                    },
+                    "lecture_time": {
+                      "type": "string"
+                    },
+                    "period": {
+                      "type": "string"
+                    },
+                    "school": {
+                      "type": "string"
+                    },
+                    "start_date": {
+                      "format": "date",
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "student_count": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "period",
+                    "school",
+                    "start_date",
+                    "end_date",
+                    "is_active",
+                    "student_count",
+                    "color",
+                    "chip_label",
+                    "lecture_time",
+                    "cycle_status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/class-groups/{id}/lectures/{lecture_pk}/late-students/": {
+      "get": {
+        "operationId": "students_class_groups_lectures_late_students_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[1-9]\\d*$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "lecture_pk",
+            "required": true,
+            "schema": {
+              "pattern": "^[1-9]\\d*$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "properties": {
+                      "grade": {
+                        "nullable": true,
+                        "type": "integer"
+                      },
+                      "id": {
+                        "type": "integer"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "parent_phone": {
+                        "type": "string"
+                      },
+                      "phone": {
+                        "type": "string"
+                      },
+                      "school": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "school",
+                      "grade",
+                      "phone",
+                      "parent_phone"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      },
+      "post": {
+        "operationId": "students_class_groups_lectures_late_students_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[1-9]\\d*$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "lecture_pk",
+            "required": true,
+            "schema": {
+              "pattern": "^[1-9]\\d*$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "student_ids": {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "student_ids"
+                ],
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "created_count": {
+                      "type": "integer"
+                    },
+                    "student_ids": {
+                      "items": {
+                        "type": "integer"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "created_count",
+                    "student_ids"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/class-groups/{id}/members/": {
+      "patch": {
+        "operationId": "students_class_groups_members_partial_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[1-9]\\d*$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedMemberInputRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedMemberInputRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedMemberInputRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "assigned_teacher": {
+                      "nullable": true,
+                      "properties": {
+                        "id": {
+                          "type": "integer"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "id": {
+                      "type": "integer"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "lecture_count": {
+                      "type": "integer"
+                    },
+                    "lectures": {
+                      "items": {
+                        "properties": {
+                          "chip_label": {
+                            "type": "string"
+                          },
+                          "color": {
+                            "type": "string"
+                          },
+                          "cycle_status": {
+                            "enum": [
+                              "upcoming",
+                              "current",
+                              "past"
+                            ],
+                            "type": "string"
+                          },
+                          "end_date": {
+                            "format": "date",
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "integer"
+                          },
+                          "is_active": {
+                            "type": "boolean"
+                          },
+                          "lecture_time": {
+                            "type": "string"
+                          },
+                          "period": {
+                            "type": "string"
+                          },
+                          "school": {
+                            "type": "string"
+                          },
+                          "start_date": {
+                            "format": "date",
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "student_count": {
+                            "type": "integer"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "title",
+                          "period",
+                          "school",
+                          "start_date",
+                          "end_date",
+                          "is_active",
+                          "student_count",
+                          "color",
+                          "chip_label",
+                          "lecture_time",
+                          "cycle_status"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "school": {
+                      "type": "string"
+                    },
+                    "student_count": {
+                      "type": "integer"
+                    },
+                    "students": {
+                      "items": {
+                        "properties": {
+                          "course_ids": {
+                            "items": {
+                              "type": "integer"
+                            },
+                            "type": "array"
+                          },
+                          "eligible": {
+                            "type": "boolean"
+                          },
+                          "grade": {
+                            "nullable": true,
+                            "type": "integer"
+                          },
+                          "id": {
+                            "type": "integer"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "parent_phone": {
+                            "type": "string"
+                          },
+                          "phone": {
+                            "type": "string"
+                          },
+                          "school": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "school",
+                          "grade",
+                          "phone",
+                          "parent_phone",
+                          "eligible"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "track": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "kind",
+                    "track",
+                    "school",
+                    "student_count",
+                    "lecture_count",
+                    "students",
+                    "lectures",
+                    "assigned_teacher"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
     "/api/v1/students/custom-fields/": {
       "get": {
         "operationId": "students_custom_fields_list",
@@ -54716,6 +56420,1006 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StudentDetail"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/demo-learning/": {
+      "get": {
+        "description": "Read-only projection of the designated public sample's enrolled lessons.",
+        "operationId": "students_demo_learning_retrieve",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "clinics": {
+                      "items": {
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "counsels": {
+                      "items": {
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "notices": {
+                      "items": {
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "school_reports": {
+                      "items": {
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "sessions": {
+                      "items": {
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "sessions",
+                    "notices",
+                    "clinics",
+                    "counsels",
+                    "school_reports"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {}
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/demo-operations/": {
+      "get": {
+        "operationId": "students_demo_operations_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "alerts",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "course",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "course_overview",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date",
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "exam",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "group",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "student",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "view",
+            "schema": {
+              "enum": [
+                "attendance",
+                "care",
+                "learners"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "employee": {
+                          "nullable": true,
+                          "type": "object"
+                        },
+                        "exams": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "groups": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "groups",
+                        "employee",
+                        "exams"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "date": {
+                          "format": "date",
+                          "type": "string"
+                        },
+                        "group_name": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "groups": {
+                          "items": {
+                            "properties": {
+                              "absent": {
+                                "type": "integer"
+                              },
+                              "id": {
+                                "type": "integer"
+                              },
+                              "lesson_count": {
+                                "type": "integer"
+                              },
+                              "marked": {
+                                "type": "integer"
+                              },
+                              "missing": {
+                                "type": "integer"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "total": {
+                                "type": "integer"
+                              },
+                              "unset": {
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "lesson_count",
+                              "total",
+                              "missing",
+                              "unset",
+                              "marked",
+                              "absent"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "lessons": {
+                          "items": {
+                            "properties": {
+                              "course": {
+                                "type": "string"
+                              },
+                              "course_id": {
+                                "type": "integer"
+                              },
+                              "id": {
+                                "type": "integer"
+                              },
+                              "order": {
+                                "type": "integer"
+                              },
+                              "students": {
+                                "items": {
+                                  "properties": {
+                                    "enrollment": {
+                                      "type": "integer"
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "status": {
+                                      "nullable": true,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "enrollment",
+                                    "name",
+                                    "status"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "title": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "order",
+                              "title",
+                              "course_id",
+                              "course",
+                              "students"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "status_labels": {
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "date",
+                        "groups",
+                        "group_name",
+                        "lessons",
+                        "status_labels"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "count": {
+                          "type": "integer"
+                        },
+                        "rows": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "count",
+                        "rows"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "alerts": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "count": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "count",
+                        "alerts"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "can_follow": {
+                          "type": "boolean"
+                        },
+                        "clinic": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "counsel": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "course": {
+                          "type": "string"
+                        },
+                        "exams": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "homework": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "slots": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "student": {
+                          "type": "string"
+                        },
+                        "today": {
+                          "format": "date",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "student",
+                        "course",
+                        "exams",
+                        "homework",
+                        "counsel",
+                        "clinic",
+                        "can_follow",
+                        "today",
+                        "slots"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "assigned": {
+                          "type": "integer"
+                        },
+                        "average": {
+                          "nullable": true,
+                          "type": "number"
+                        },
+                        "distribution": {
+                          "items": {
+                            "type": "integer"
+                          },
+                          "type": "array"
+                        },
+                        "graded": {
+                          "type": "integer"
+                        },
+                        "highest": {
+                          "nullable": true,
+                          "type": "number"
+                        },
+                        "lowest": {
+                          "nullable": true,
+                          "type": "number"
+                        },
+                        "reviewed": {
+                          "type": "boolean"
+                        },
+                        "roster": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "assigned",
+                        "graded",
+                        "average",
+                        "highest",
+                        "lowest",
+                        "distribution",
+                        "roster",
+                        "reviewed"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      },
+      "patch": {
+        "operationId": "students_demo_operations_partial_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "position": {
+                        "enum": [
+                          "INSTRUCTOR",
+                          "ASSISTANT"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "position"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "properties": {
+                      "course": {
+                        "type": "integer"
+                      },
+                      "exam": {
+                        "type": "integer"
+                      },
+                      "reviewed": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "exam",
+                      "course",
+                      "reviewed"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "properties": {
+                      "course": {
+                        "type": "integer"
+                      },
+                      "day": {
+                        "format": "date",
+                        "type": "string"
+                      },
+                      "followup": {
+                        "enum": [
+                          "counsel"
+                        ],
+                        "type": "string"
+                      },
+                      "student": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "followup",
+                      "student",
+                      "course",
+                      "day"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "properties": {
+                      "course": {
+                        "type": "integer"
+                      },
+                      "followup": {
+                        "enum": [
+                          "clinic"
+                        ],
+                        "type": "string"
+                      },
+                      "session": {
+                        "type": "integer"
+                      },
+                      "student": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "followup",
+                      "student",
+                      "course",
+                      "session"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "position": {
+                          "enum": [
+                            "INSTRUCTOR",
+                            "ASSISTANT"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "position"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "reviewed": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "reviewed"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "saved": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "saved"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/demo-session/": {
+      "post": {
+        "operationId": "students_demo_session_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DemoRoleInputRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/DemoRoleInputRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/DemoRoleInputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "access": {
+                      "type": "string"
+                    },
+                    "refresh": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "access",
+                    "refresh"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {}
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/demo-staff/": {
+      "get": {
+        "operationId": "students_demo_staff_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "month",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "staff",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "staff": {
+                          "items": {
+                            "properties": {
+                              "classes": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "id": {
+                                "type": "integer"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "position": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "position",
+                              "classes"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "staff"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "month": {
+                          "type": "string"
+                        },
+                        "open_count": {
+                          "type": "integer"
+                        },
+                        "payroll": {
+                          "type": "object"
+                        },
+                        "records": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "month",
+                        "payroll",
+                        "open_count",
+                        "records"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      },
+      "patch": {
+        "operationId": "students_demo_staff_partial_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "position": {
+                    "enum": [
+                      "INSTRUCTOR",
+                      "ASSISTANT"
+                    ],
+                    "type": "string"
+                  },
+                  "staff": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "staff",
+                  "position"
+                ],
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "position": {
+                      "enum": [
+                        "INSTRUCTOR",
+                        "ASSISTANT"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "position"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/demo-staff/clock/": {
+      "get": {
+        "operationId": "students_demo_staff_clock_retrieve",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "current": {
+                      "nullable": true,
+                      "properties": {
+                        "date": {
+                          "format": "date",
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "integer"
+                        },
+                        "start_time": {
+                          "format": "time",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "date",
+                        "start_time"
+                      ],
+                      "type": "object"
+                    },
+                    "staff": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "staff",
+                    "current"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      },
+      "post": {
+        "operationId": "students_demo_staff_clock_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "action": {
+                        "enum": [
+                          "start"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "properties": {
+                      "action": {
+                        "enum": [
+                          "end"
+                        ],
+                        "type": "string"
+                      },
+                      "record": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "record"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "current": {
+                      "nullable": true,
+                      "properties": {
+                        "date": {
+                          "format": "date",
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "integer"
+                        },
+                        "start_time": {
+                          "format": "time",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "date",
+                        "start_time"
+                      ],
+                      "type": "object"
+                    },
+                    "staff": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "staff",
+                    "current"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -55970,6 +58674,206 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StudentTag"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/teacher-alerts/": {
+      "get": {
+        "operationId": "students_teacher_alerts_retrieve",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "alerts": {
+                      "items": {
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "followups": {
+                      "items": {
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "lectures": {
+                      "items": {
+                        "properties": {
+                          "id": {
+                            "type": "integer"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "title"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "rules": {
+                      "additionalProperties": {
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "threshold": {
+                            "type": "integer"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "type": "object"
+                    },
+                    "unavailable": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "rules",
+                    "lectures",
+                    "alerts",
+                    "followups",
+                    "unavailable"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      },
+      "patch": {
+        "operationId": "students_teacher_alerts_partial_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "rules": {
+                    "additionalProperties": {
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "threshold": {
+                          "type": "integer"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "rules"
+                ],
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "alerts": {
+                      "items": {
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "followups": {
+                      "items": {
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "lectures": {
+                      "items": {
+                        "properties": {
+                          "id": {
+                            "type": "integer"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "title"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "rules": {
+                      "additionalProperties": {
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "threshold": {
+                            "type": "integer"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "type": "object"
+                    },
+                    "unavailable": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "rules",
+                    "lectures",
+                    "alerts",
+                    "followups",
+                    "unavailable"
+                  ],
+                  "type": "object"
                 }
               }
             },

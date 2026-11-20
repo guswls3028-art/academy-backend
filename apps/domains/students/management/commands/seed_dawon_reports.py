@@ -9,7 +9,7 @@ from django.db.models import Max
 from django.utils import timezone
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.clinic.dawon_demo import is_demo_tenant
+from apps.domains.clinic.contracts import is_demo_tenant
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.homework.models import HomeworkAssignment

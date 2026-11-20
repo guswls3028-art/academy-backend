@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .utils.initial_exam_score import load_initial_exam_scores as load_initial_exam_scores
+from .utils.initial_exam_score import project_initial_exam_score as project_initial_exam_score
+
 
 def require_score_edit_lease(request, *, session_id: int, exam_id: int | None = None):
     """Enforce the results domain's score-edit lease contract."""
