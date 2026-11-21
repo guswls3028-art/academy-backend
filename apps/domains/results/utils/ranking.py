@@ -261,33 +261,19 @@ def compute_exam_rankings_batch(
         .annotate(last_id=Max("id"))
         .values("last_id")
     )
-    latest_results = Result.objects.filter(id__in=Subquery(latest_ids))
+    # Reuse the same result rows for grading readiness, the current scores,
+    # and the cohort used to find first-attempt snapshots.
+    latest_rows = list(Result.objects.filter(id__in=Subquery(latest_ids)))
     pending_result_ids = pending_omr_result_ids(
-        latest_results.select_related("attempt"),
-        scoring_details_loader=scoring_details_loader,
+        latest_rows, scoring_details_loader=scoring_details_loader,
     )
-    if pending_result_ids:
-        latest_results = latest_results.exclude(id__in=pending_result_ids)
-
-    # NOT_SUBMITTED attempt 제외
-    attempt_ids = list(
-        latest_results.exclude(attempt_id__isnull=True)
-        .values_list("attempt_id", flat=True)
-    )
-    not_submitted_attempts = _not_submitted_attempt_pairs(attempt_ids)
-    raw_rows = list(
-        latest_results.values(
-            "target_id",
-            "enrollment_id",
-            "total_score",
-            "attempt_id",
-        )
-    )
+    grade_rows = [row for row in latest_rows if row.id not in pending_result_ids]
+    not_submitted_attempts = _not_submitted_attempt_pairs([
+        row.attempt_id for row in grade_rows if row.attempt_id is not None
+    ])
 
     # 1차 점수 override (exam_id × enrollment_id)
-    cohort_enrollment_ids = list(
-        base.values_list("enrollment_id", flat=True).distinct()
-    )
+    cohort_enrollment_ids = {row.enrollment_id for row in latest_rows}
     override_map, first_not_submitted_pairs = _first_attempt_state(
         exam_ids=exam_ids_int,
         enrollment_ids=cohort_enrollment_ids,
@@ -295,17 +281,17 @@ def compute_exam_rankings_batch(
 
     # exam_id별 그룹핑 + score override
     by_exam: Dict[int, list] = {}
-    for r in raw_rows:
-        eid_exam = int(r["target_id"])
-        eid_enroll = int(r["enrollment_id"])
+    for row in grade_rows:
+        eid_exam = int(row.target_id)
+        eid_enroll = int(row.enrollment_id)
         if (eid_exam, eid_enroll) in first_not_submitted_pairs:
             continue
-        attempt_id = int(r["attempt_id"]) if r.get("attempt_id") else None
+        attempt_id = int(row.attempt_id) if row.attempt_id else None
         if attempt_id and not_submitted_attempts.get(attempt_id) == (eid_exam, eid_enroll):
             continue
         score = override_map.get(eid_exam, {}).get(eid_enroll)
         if score is None:
-            score = _safe_nonnegative_score(r.get("total_score"))
+            score = _safe_nonnegative_score(row.total_score)
         if score is None:
             continue
         by_exam.setdefault(eid_exam, []).append({
