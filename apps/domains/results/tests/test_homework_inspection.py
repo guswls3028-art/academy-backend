@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
+from django.urls import resolve
 from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -133,8 +134,6 @@ class HomeworkInspectionBatchTests(TestCase):
         self.assertFalse(any("practice_inspection" in row for row in hidden))
 
     def test_home_rows_preserve_zero_inspection_for_absent_student_and_selected_parent(self):
-        from apps.domains.student_app.results.views import MyGradesSummaryView
-
         enrollment = self.enrollments[0]
         student = enrollment.student
         TenantMembership.ensure_active(tenant=self.tenant, user=student.user, role="student")
@@ -152,15 +151,17 @@ class HomeworkInspectionBatchTests(TestCase):
             "solved": 0, "total": 15, "feedback": "Shared inspection",
         }]).status_code, 200)
 
+        grades_path = "/api/v1/student/grades/"
+        grades_view = resolve(grades_path).func
         for role, user in (("student", student.user), ("parent", parent_user)):
             with self.subTest(role=role):
                 responses = []
                 for scope in ("", "rows"):
-                    request = self.factory.get("/api/v1/student/grades/", {"scope": scope},
+                    request = self.factory.get(grades_path, {"scope": scope},
                                                HTTP_X_STUDENT_ID=str(student.pk))
                     request.tenant = self.tenant
                     force_authenticate(request, user=user)
-                    response = MyGradesSummaryView.as_view()(request)
+                    response = grades_view(request)
                     self.assertEqual(response.status_code, 200)
                     responses.append(response.data)
                 full, rows = responses
