@@ -8016,6 +8016,82 @@
         ],
         "type": "string"
       },
+      "OwnSchoolReportDetailResponse": {
+        "properties": {
+          "academic_year": {
+            "maximum": 2100,
+            "minimum": 2000,
+            "type": "integer"
+          },
+          "direct_scores": {
+            "items": {
+              "$ref": "#/components/schemas/SchoolReportScoreResponse"
+            },
+            "type": "array"
+          },
+          "exam_round": {
+            "$ref": "#/components/schemas/ExamRoundEnum"
+          },
+          "grade": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "school": {
+            "type": "string"
+          },
+          "scores": {
+            "items": {
+              "$ref": "#/components/schemas/SchoolReportScoreResponse"
+            },
+            "type": "array"
+          },
+          "semester": {
+            "maximum": 2,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SchoolReportSubmissionStatus"
+          },
+          "student_id": {
+            "type": "integer"
+          },
+          "student_name": {
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "submitted_periods": {
+            "items": {
+              "$ref": "#/components/schemas/SchoolReportTerm"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "academic_year",
+          "direct_scores",
+          "exam_round",
+          "grade",
+          "requested_at",
+          "school",
+          "scores",
+          "semester",
+          "status",
+          "student_id",
+          "student_name",
+          "submitted_at"
+        ],
+        "type": "object"
+      },
       "PaginatedAnswerKeyList": {
         "properties": {
           "count": {
@@ -16491,6 +16567,29 @@
           "missing"
         ],
         "type": "string"
+      },
+      "SchoolReportTerm": {
+        "properties": {
+          "academic_year": {
+            "maximum": 2100,
+            "minimum": 2000,
+            "type": "integer"
+          },
+          "exam_round": {
+            "$ref": "#/components/schemas/ExamRoundEnum"
+          },
+          "semester": {
+            "maximum": 2,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "academic_year",
+          "exam_round",
+          "semester"
+        ],
+        "type": "object"
       },
       "SchoolTypeEnum": {
         "description": "* `ELEMENTARY` - 초등\n* `MIDDLE` - 중등\n* `HIGH` - 고등",
@@ -50171,7 +50270,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SchoolReportDetailResponse"
+                  "$ref": "#/components/schemas/OwnSchoolReportDetailResponse"
                 }
               }
             },
@@ -50253,7 +50352,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SchoolReportDetailResponse"
+                  "$ref": "#/components/schemas/OwnSchoolReportDetailResponse"
                 }
               }
             },
@@ -54586,6 +54685,13 @@
           },
           {
             "in": "query",
+            "name": "lecture",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "schema": {
               "type": "integer"
@@ -57192,6 +57298,38 @@
                           "nullable": true,
                           "type": "number"
                         },
+                        "questions": {
+                          "items": {
+                            "properties": {
+                              "correct_ids": {
+                                "items": {
+                                  "type": "integer"
+                                },
+                                "type": "array"
+                              },
+                              "graded_ids": {
+                                "items": {
+                                  "type": "integer"
+                                },
+                                "type": "array"
+                              },
+                              "number": {
+                                "type": "integer"
+                              },
+                              "topic": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "number",
+                              "topic",
+                              "graded_ids",
+                              "correct_ids"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
                         "reviewed": {
                           "type": "boolean"
                         },
@@ -57258,6 +57396,7 @@
                         "top_reference_percent",
                         "distribution",
                         "roster",
+                        "questions",
                         "reviewed"
                       ],
                       "type": "object"

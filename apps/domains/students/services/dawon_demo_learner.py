@@ -68,7 +68,8 @@ def learner_topics(*, tenant, student):
         (_local_day(score.created_at), score.academic_year, score.semester, score.exam_round): {
             "date": _local_day(score.created_at),
             "title": f"{score.academic_year}년 {score.semester}학기 {score.get_exam_round_display()}",
-            "detail": "예시 학생 입력 기록",
+            "detail": "학교 성적 제출 기록",
+            "academic_year": score.academic_year, "semester": score.semester, "exam_round": score.exam_round,
         }
         for score in StudentReportedScore.objects.filter(
             tenant=tenant, student=student, direct_entry=True,

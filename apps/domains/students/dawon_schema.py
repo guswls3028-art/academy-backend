@@ -75,7 +75,8 @@ operations = variants(
     record(student=text, course=text, exams=rows, homework=rows, counsel=rows, clinic=rows, can_follow=boolean,
            today=day, slots=rows),
     record(title=text, assigned=integer, graded=integer, average=nullable(number), highest=nullable(number),
-           lowest=nullable(number), top_reference_percent=nullable(integer), distribution=array(integer), roster=array(exam_row), reviewed=boolean),
+           lowest=nullable(number), top_reference_percent=nullable(integer), distribution=array(integer), roster=array(exam_row),
+           questions=array(record(number=integer, topic=text, graded_ids=array(integer), correct_ids=array(integer))), reviewed=boolean),
 )
 operation_patch = variants(
     record(position=position), record(exam=integer, course=integer, reviewed=boolean),

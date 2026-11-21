@@ -68,6 +68,11 @@ def directory(tenant, params):
     qs = Student.objects.all()
     if params.get("id"):
         qs = qs.filter(pk=IntegerField(min_value=1, max_value=2**63 - 1).run_validation(params["id"]))
+    if params.get("lecture"):
+        lecture_id = IntegerField(min_value=1, max_value=2**63 - 1).run_validation(params["lecture"])
+        qs = qs.filter(Exists(Enrollment.objects.filter(
+            student_id=OuterRef("pk"), tenant=tenant, lecture_id=lecture_id, lecture__tenant=tenant, status="ACTIVE",
+        )))
     if params.get("group"):
         group_id = IntegerField(min_value=1, max_value=2**63 - 1).run_validation(params["group"])
         qs = qs.filter(class_groups__tenant=tenant, class_groups__pk=group_id)

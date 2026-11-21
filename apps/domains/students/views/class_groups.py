@@ -208,7 +208,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
 
     @extend_schema(operation_id="students_class_groups_list", responses={200: dawon_schema.variants(dawon_schema.array(dawon_schema.group), dawon_schema.array(dawon_schema.person), dawon_schema.directory_page)},
                    parameters=[OpenApiParameter("view", str, enum=["instructors","students"]), *page_parameters,
-                               OpenApiParameter("id", int), OpenApiParameter("group", int)])
+                               OpenApiParameter("id", int), OpenApiParameter("group", int), OpenApiParameter("lecture", int)])
     def list(self, request):
         if request.query_params.get("view") == "students":
             if not hasattr(request.auth, "get") or request.auth.get("dawon_demo_role") != "admin":

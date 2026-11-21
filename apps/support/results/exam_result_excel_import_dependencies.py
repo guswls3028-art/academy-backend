@@ -93,7 +93,7 @@ def get_result_import_candidates(
     enrollments = (
         Enrollment.objects.filter(
             id__in=enrollment_ids,
-            tenant=tenant,
+            tenant=tenant, lecture__tenant=tenant, student__tenant=tenant,
             status="ACTIVE",
             student__deleted_at__isnull=True,
         )

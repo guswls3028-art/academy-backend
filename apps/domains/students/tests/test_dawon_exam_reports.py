@@ -26,6 +26,18 @@ class DawonExamReportTests(TestCase):
             ClassGroupLecture.objects.create(group=group, lecture=course, period=period, school=school)
         call_command("seed_dawon_reports", stdout=StringIO())
 
+    def test_invalid_cross_tenant_student_link_never_enters_statistics(self):
+        from apps.domains.exams.models import ExamEnrollment
+        other = Tenant.objects.create(code="qa-outside-reports", name="검수")
+        account = get_user_model().objects.create_user(tenant=other, username="outside-report")
+        outside = Student.objects.create(tenant=other, user=account, name="외부", ps_number="qa-outside")
+        report = DawonExamReport.objects.select_related("exam", "session__lecture").first()
+        invalid = Enrollment.objects.create(tenant=self.tenant, lecture=report.session.lecture, student=outside, status="ACTIVE")
+        ExamEnrollment.objects.create(exam=report.exam, enrollment=invalid)
+        data = admin_exam_detail(self.tenant, report.exam, report.session.lecture_id, self.user)
+        self.assertNotIn(invalid.pk, [row["id"] for row in data["roster"]])
+        self.assertTrue(all(invalid.pk not in item["graded_ids"] for item in data["questions"]))
+
     def test_three_reports_and_seed_replay(self):
         call_command("seed_dawon_reports", stdout=StringIO())
         self.assertEqual(DawonExamReport.objects.count(), 10)
@@ -38,12 +50,25 @@ class DawonExamReportTests(TestCase):
                 report = report_for_student(tenant=self.tenant, exam=exam, session=lesson, enrollment=enrollment, analysis=analysis)
                 self.assertEqual([len(s["questions"]) for s in report["sections"]], counts)
                 self.assertEqual(len(report["trend"]), points)
+                self.assertTrue(all(row["exam_id"] for row in report["trend"]))
                 self.assertTrue(report["homework"])
                 self.assertIsInstance(report["sections"][0]["questions"][0]["correct"], bool)
                 self.assertGreaterEqual(report["sections"][0]["questions"][0]["correct_rate"], 0)
                 staff = admin_exam_detail(self.tenant, exam, lesson.lecture_id, self.user)
                 self.assertEqual(staff["assigned"], 22 if kind == "school_mock" else 33)
                 self.assertEqual(sum(staff["distribution"]), staff["graded"])
+                roster_ids = {row["id"] for row in staff["roster"]}
+                for item in staff["questions"]:
+                    self.assertLessEqual(set(item["correct_ids"]), set(item["graded_ids"]))
+                    self.assertLessEqual(set(item["graded_ids"]), roster_ids)
+                for section in report["sections"]:
+                    for item in section["questions"]:
+                        self.assertNotIn("graded_ids", item)
+                        self.assertNotIn("correct_ids", item)
+                    if section["exam_id"] == exam.pk:
+                        for own, aggregate in zip(section["questions"], staff["questions"], strict=True):
+                            self.assertEqual(own["correct"], enrollment.pk in aggregate["correct_ids"])
+                            self.assertEqual(own["correct_rate"], 100 * len(aggregate["correct_ids"]) / len(aggregate["graded_ids"]))
                 self.assertTrue(all(row["student_id"] for row in staff["roster"]))
                 exam.student_results_published = False
                 exam.save(update_fields=["student_results_published"])

@@ -2,7 +2,7 @@
 from collections import defaultdict
 from statistics import fmean
 
-from django.db.models import Count, Exists, F, OuterRef, Q
+from django.db.models import Count, Exists, F, Max, Min, OuterRef, Q
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from drf_spectacular.types import OpenApiTypes
 from rest_framework.exceptions import NotFound, ValidationError
@@ -194,11 +194,11 @@ class DawonDemoOperationsView(APIView):
                 by_course_exam[row.enrollment.lecture_id, row.target_id].append(score.total_score)
         exam_courses = Exam.objects.filter(
             id__in=exams.values("id"), sessions__lecture_id__in=course_details,
-        ).order_by("title", "id").values_list("sessions__lecture_id", "id", "title").distinct()
-        for course_id, exam_id, title in exam_courses:
+        ).values_list("sessions__lecture_id", "id", "title").annotate(first_day=Min("sessions__date"), last_day=Max("sessions__date")).order_by("title", "id")
+        for course_id, exam_id, title, first_day, last_day in exam_courses:
             scores = by_course_exam[course_id, exam_id]
             course_details[course_id]["exams"].append({
-                "id": exam_id, "title": title, "graded": len(scores), "average": fmean(scores) if scores else None,
+                "id": exam_id, "title": title, "date": first_day if first_day == last_day else None, "graded": len(scores), "average": fmean(scores) if scores else None,
             })
         response = Response({
             "groups": list(groups.values()), "employee": self.employee(tenant).values("name", "position").first(),

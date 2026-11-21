@@ -75,17 +75,26 @@ def _account_access(tenant):
     )
 
 
-def _term_scores(tenant, term):
+def _accessible_school_scores(tenant):
     return StudentReportedScore.objects.filter(
         tenant=tenant,
         source=StudentReportedScore.Source.SCHOOL_EXAM,
         status__in=(StudentReportedScore.Status.PENDING, StudentReportedScore.Status.VERIFIED, DIRECT_ENTRY_STATUS),
-        **term.as_dict(),
     ).filter(
         Q(direct_entry=True, evidence_file__isnull=True)
         | Q(evidence_file__tenant=tenant, evidence_file__scope="student",
             evidence_file__student_ps=F("student__ps_number"))
     )
+
+
+def _term_scores(tenant, term):
+    return _accessible_school_scores(tenant).filter(**term.as_dict())
+
+
+def submitted_school_terms(tenant, student):
+    return list(_accessible_school_scores(tenant).filter(
+        student=student, student__tenant=tenant, semester__in=(1, 2), exam_round__in=("first", "second"),
+    ).values("academic_year", "semester", "exam_round").order_by("-academic_year", "-semester", "-exam_round").distinct())
 
 
 def _term_requests(tenant, term):

@@ -58,6 +58,12 @@ class ClassGroupTests(TestCase):
         self.assertEqual(get(view="students", id=other.pk).data["results"][0]["groups"], [])
         self.assertEqual(self.call("get", "", {"view":"students"}).status_code, 403)
         self.assertEqual(get(url, page_info=1, grade="invalid").status_code, 400)
+        from apps.domains.lectures.models import Lecture
+        course = Lecture.objects.create(tenant=self.tenant, name="검수", title="미편성 강의")
+        Enrollment.objects.create(tenant=self.tenant, lecture=course, student=other, status="ACTIVE")
+        Enrollment.objects.create(tenant=self.tenant, lecture=course, student=students[0], status="INACTIVE")
+        self.assertEqual([r["id"] for r in get(view="students", lecture=course.pk).data["results"]], [other.pk])
+        self.assertEqual(get(view="students", lecture=course.pk, group=group.pk).data["count"], 0)
 
     def test_director_picker_counts_all_candidates_before_paging(self):
         admin = get_user_model().objects.create_user(tenant=self.tenant, username="t719_dawon-demo-admin")

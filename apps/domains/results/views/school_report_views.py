@@ -22,6 +22,7 @@ from apps.support.results.school_reports import (
     roster_query,
     save_direct_scores,
     staff_student,
+    submitted_school_terms,
     term_detail,
 )
 
@@ -124,6 +125,10 @@ class SchoolReportDetailResponseSerializer(SchoolReportTermSerializer):
     direct_scores = SchoolReportScoreResponseSerializer(many=True)
 
 
+class OwnSchoolReportDetailResponseSerializer(SchoolReportDetailResponseSerializer):
+    submitted_periods = SchoolReportTermSerializer(many=True, required=False)
+
+
 class SchoolReportRosterStudentSerializer(serializers.Serializer):
     student_id = serializers.IntegerField()
     name = serializers.CharField()
@@ -171,18 +176,18 @@ class MySchoolReportView(APIView):
     @extend_schema(
         operation_id="school_report_student_retrieve",
         parameters=[SchoolReportTermSerializer],
-        responses=SchoolReportDetailResponseSerializer,
+        responses=OwnSchoolReportDetailResponseSerializer,
     )
     def get(self, request):
         student = own_student(request.tenant, request.user)
         term = _validated_term(request.query_params).term()
-        return Response(term_detail(request.tenant, student, term))
+        return self.response(request.tenant, student, term_detail(request.tenant, student, term))
 
     @extend_schema(
         operation_id="school_report_student_update",
         parameters=[SchoolReportTermSerializer],
         request=SchoolReportEntrySerializer,
-        responses=SchoolReportDetailResponseSerializer,
+        responses=OwnSchoolReportDetailResponseSerializer,
     )
     def put(self, request):
         if getattr(request, "student_support_session", None) is not None:
@@ -191,9 +196,16 @@ class MySchoolReportView(APIView):
         term = _validated_term(request.query_params).term()
         body = SchoolReportEntrySerializer(data=request.data)
         body.is_valid(raise_exception=True)
-        return Response(save_direct_scores(
+        return self.response(request.tenant, student, save_direct_scores(
             request.tenant, student, request.user, term, body.validated_data["subjects"],
         ))
+
+
+    @staticmethod
+    def response(tenant, student, detail):
+        if is_dawon_school_report(tenant):
+            detail["submitted_periods"] = submitted_school_terms(tenant, student)
+        return Response(detail)
 
 
 class SchoolReportRosterView(APIView):

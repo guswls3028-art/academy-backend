@@ -91,6 +91,15 @@ class SchoolReportCollectionTests(TestCase):
             **TERM,
         )
 
+    def test_submitted_periods_distinct_order_and_student_isolation(self):
+        from apps.support.results.school_reports import submitted_school_terms
+        self.put([MATH, KOREAN])
+        previous = {**TERM, "academic_year": TERM["academic_year"] - 1}
+        self.put([MATH], query=previous)
+        self.assertEqual(submitted_school_terms(self.tenant, self.student), [TERM, previous])
+        self.assertEqual(submitted_school_terms(self.other, self.student), [])
+        self.assertEqual(submitted_school_terms(self.tenant, self.second), [])
+
     def test_student_save_reload_staff_detail_and_legacy_evidence_preserved(self):
         legacy = self.evidence_score()
         saved = self.put([{**MATH, "grade_rank": 3, "grade_scale": "five"}, KOREAN])

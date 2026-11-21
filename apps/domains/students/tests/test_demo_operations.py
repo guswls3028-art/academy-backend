@@ -185,7 +185,7 @@ class DemoOperationsTests(TestCase):
             self.assertEqual(course["instructor"], f"담당{i}")
             self.assertEqual([s["title"] for s in course["sessions"]], [f"수업{i}"])
             self.assertEqual([(h["title"], h["status"]) for h in course["homework"]], [(f"과제{i}", "OPEN")])
-            self.assertEqual(course["exams"], [{"id": exam.pk, "title": "공통 시험", "graded": 1, "average": (40, 80)[i]}])
+            self.assertEqual(course["exams"], [{"id": exam.pk, "title": "공통 시험", "date": course["sessions"][0]["date"], "graded": 1, "average": (40, 80)[i]}])
 
     def test_instructor_uses_tenant_reference_or_recognised_legacy_name(self):
         reference = get_user_model().objects.create_user(username="qa-reference", tenant=self.tenant, name="현재 강사")

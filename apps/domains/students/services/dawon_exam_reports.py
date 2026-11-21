@@ -22,7 +22,7 @@ def confirmed_scores(analysis):
     }
 
 
-def question_rows(exam, analysis, confirmed, enrollment_id):
+def question_marks(exam, analysis, confirmed):
     questions = ExamQuestion.objects.filter(sheet__exam_id=exam.effective_structure_exam_id,
                                             sheet__exam__tenant_id=exam.tenant_id).order_by("number")
     attempts = {}
@@ -35,14 +35,16 @@ def question_rows(exam, analysis, confirmed, enrollment_id):
         result_id__in=attempts, question__sheet__exam_id=exam.effective_structure_exam_id
     ).values_list("result_id", "question_id", "is_correct"):
         marks[question_id][attempts[result_id]] = correct
-    rows = []
     for question in questions:
         values = marks[question.pk]
         metadata = question.region_meta or {}
-        rows.append({"number": question.number, "topic": metadata.get("topic", "") if isinstance(metadata, dict) else "",
-                     "correct": values.get(enrollment_id),
-                     "correct_rate": 100 * sum(values.values()) / len(values) if values else None})
-    return rows
+        yield {"number": question.number, "topic": metadata.get("topic", "") if isinstance(metadata, dict) else ""}, values
+
+
+def question_rows(exam, analysis, confirmed, enrollment_id):
+    return [{**question, "correct": values.get(enrollment_id),
+             "correct_rate": 100 * sum(values.values()) / len(values) if values else None}
+            for question, values in question_marks(exam, analysis, confirmed)]
 
 
 def report_for_student(*, tenant, exam, session, enrollment, analysis):
@@ -74,7 +76,7 @@ def report_for_student(*, tenant, exam, session, enrollment, analysis):
         point = {"score": own.total_score, "maximum": own.max_score, "average": mean(scores), "highest": max(scores),
                  "percentile": percentile if related.student_rank_published else None}
         if definition.series == primary.series and definition.sequence <= primary.sequence:
-            trend.append({"label": definition.section, **point})
+            trend.append({"label": definition.section, "exam_id": related.pk, **point})
         if definition.session_id == session.pk and definition.title == primary.title:
             sections.append({"exam_id": related.pk, "title": definition.section, "scope": definition.scope,
                              "questions": question_rows(related, own_analysis, confirmed, enrollment.pk), **point})
@@ -119,7 +121,10 @@ def admin_exam_detail(tenant, exam, course_id, reviewer):
                        "maximum": score.max_score if score else None,
                        "status": "채점 완료" if score else "미응시" if row is None or row.status == "NOT_SUBMITTED" else "채점 대기"})
     roster.sort(key=lambda r: (r["score"] is None, -(r["score"] or 0), r["name"], r["id"]))
-    return {"title": exam.title, "assigned": len(roster), "graded": len(confirmed),
+    questions = [{**question, "graded_ids": sorted(values),
+                  "correct_ids": sorted(key for key, correct in values.items() if correct)}
+                 for question, values in question_marks(exam, analysis, confirmed)]
+    return {"title": exam.title, "questions": questions, "assigned": len(roster), "graded": len(confirmed),
             "top_reference_percent": analysis.insights["score_summary"].get("top_reference_percent"),
             "average": mean(values) if values else None, "highest": max(values) if values else None,
             "lowest": min(values) if values else None, "distribution": distribution, "roster": roster,
