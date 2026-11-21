@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from io import StringIO
 import os
 from types import SimpleNamespace
 from unittest.mock import DEFAULT, Mock, patch
+from uuid import uuid4
 
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory
@@ -423,6 +426,7 @@ class ScanStuckVideoJobsTests(TestCase):
         self.assertEqual(self.job.error_code, "BATCH_TERMINATE_FAILED")
 
 
+@override_settings(VIDEO_BATCH_JOB_QUEUE="lecture-videos", VIDEO_BATCH_JOB_DEFINITION="lecture-encode")
 class ReconcileBatchVideoJobsTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(
@@ -447,6 +451,18 @@ class ReconcileBatchVideoJobsTests(TestCase):
 
     def _make_job_reconcileable(self):
         VideoTranscodeJob.objects.filter(pk=self.job.pk).update(updated_at=timezone.now() - timedelta(minutes=10))
+
+    def _targeted_host_failure(self):
+        aws_id = str(uuid4())
+        self.job.aws_batch_job_id = aws_id
+        self.job.save(update_fields=["aws_batch_job_id", "updated_at"])
+        return {
+            "jobId": aws_id, "jobName": f"video-{str(self.job.id)[:8]}",
+            "status": "FAILED", "statusReason": "Host EC2 (instance i-example) terminated.",
+            "jobQueue": "arn:aws:batch:ap-northeast-2:123456789012:job-queue/lecture-videos",
+            "jobDefinition": "arn:aws:batch:ap-northeast-2:123456789012:job-definition/lecture-encode:2",
+            "parameters": {"job_id": str(self.job.id)},
+        }
 
     @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs.Command._run_orphan_terminate")
     @patch(
@@ -476,6 +492,132 @@ class ReconcileBatchVideoJobsTests(TestCase):
         self.assertEqual(self.job.last_counted_failure_aws_batch_job_id, "aws-old")
         self.assertEqual(mock_describe.call_count, 2)
         self.assertEqual(mock_submit.call_count, 2)
+
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs.Command._run_reconcile")
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs._release_reconcile_lock")
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs._acquire_reconcile_lock", return_value=True)
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs.submit_batch_job")
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs._describe_jobs_boto3")
+    def test_targeted_host_failure_recovers_recent_job_and_deduplicates_delivery(
+        self, describe, submit, acquire, release, sweep,
+    ):
+        failed = self._targeted_host_failure()
+        replacement = str(uuid4())
+        describe.return_value = [failed]
+        submit.return_value = (replacement, None)
+
+        for _ in range(2):
+            call_command("reconcile_batch_video_jobs", failed_batch_id=failed["jobId"])
+
+        self.job.refresh_from_db()
+        submit.assert_called_once_with(str(self.job.id), duration_seconds=None)
+        acquire.assert_called_with(require_redis=True)
+        self.assertEqual(release.call_count, 2)
+        self.assertEqual(self.job.aws_batch_job_id, replacement)
+        self.assertEqual(self.job.attempt_count, 3)
+        self.assertEqual(self.job.last_counted_failure_aws_batch_job_id, failed["jobId"])
+        sweep.assert_not_called()
+
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs._release_reconcile_lock")
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs._acquire_reconcile_lock", return_value=True)
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs.submit_batch_job")
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs._describe_jobs_boto3")
+    def test_targeted_recovery_rejects_non_authoritative_and_retired_jobs(self, describe, submit, _acquire, _release):
+        failed = self._targeted_host_failure()
+        for field, value in (
+            ("status", "RUNNING"), ("statusReason", "User cancelled job"), ("jobQueue", "other-queue"),
+            ("jobDefinition", "other-jobdef"), ("jobName", "different-name"), ("jobId", str(uuid4())),
+        ):
+            with self.subTest(field=field):
+                describe.return_value = [{**failed, field: value}]
+                call_command("reconcile_batch_video_jobs", failed_batch_id=failed["jobId"])
+        describe.return_value = [failed]
+        for changes in (
+            {"cancel_requested": True}, {"state": VideoTranscodeJob.State.SUCCEEDED}, {"aws_batch_job_id": str(uuid4())},
+        ):
+            with self.subTest(changes=changes):
+                VideoTranscodeJob.objects.filter(pk=self.job.pk).update(**{
+                    "cancel_requested": False, "state": VideoTranscodeJob.State.RETRY_WAIT,
+                    "aws_batch_job_id": failed["jobId"], **changes,
+                })
+                call_command("reconcile_batch_video_jobs", failed_batch_id=failed["jobId"])
+        self.job.refresh_from_db()
+        self.assertEqual(self.job.attempt_count, 2)
+        submit.assert_not_called()
+
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs._release_reconcile_lock")
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs._acquire_reconcile_lock", return_value=True)
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs.terminate_batch_job")
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs.submit_batch_job")
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs._describe_jobs_boto3")
+    def test_targeted_recovery_does_not_adopt_replacement_after_cancel(
+        self, describe, submit, terminate, _acquire, _release,
+    ):
+        failed = self._targeted_host_failure()
+        replacement = str(uuid4())
+        describe.return_value = [failed]
+
+        def submit_after_cancellation(*_args, **_kwargs):
+            VideoTranscodeJob.objects.filter(pk=self.job.id).update(state=VideoTranscodeJob.State.CANCELLED)
+            return replacement, None
+
+        submit.side_effect = submit_after_cancellation
+        call_command("reconcile_batch_video_jobs", failed_batch_id=failed["jobId"])
+
+        self.job.refresh_from_db()
+        self.assertEqual(self.job.state, VideoTranscodeJob.State.CANCELLED)
+        self.assertEqual(self.job.aws_batch_job_id, failed["jobId"])
+        self.assertEqual(terminate.call_args.kwargs["aws_batch_job_id"], replacement)
+
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs._release_reconcile_lock")
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs._acquire_reconcile_lock", return_value=True)
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs.terminate_batch_job")
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs.submit_batch_job")
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs._describe_jobs_boto3")
+    def test_targeted_recovery_keeps_replacement_that_has_started(
+        self, describe, submit, terminate, _acquire, _release,
+    ):
+        failed = self._targeted_host_failure()
+        replacement = str(uuid4())
+        describe.return_value = [failed]
+
+        def submit_and_start_job(job_id, **_kwargs):
+            self.assertTrue(job_set_running(job_id))
+            return replacement, None
+
+        submit.side_effect = submit_and_start_job
+        call_command("reconcile_batch_video_jobs", failed_batch_id=failed["jobId"])
+
+        self.job.refresh_from_db()
+        self.assertEqual(self.job.state, VideoTranscodeJob.State.RUNNING)
+        self.assertEqual(self.job.aws_batch_job_id, replacement)
+        terminate.assert_not_called()
+
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs._describe_jobs_boto3")
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs.redis_setnx_with_ttl", return_value=None)
+    def test_targeted_recovery_requires_live_lock_and_the_exact_argument(self, _redis, describe):
+        failed = self._targeted_host_failure()
+        with self.assertRaises(CommandError):
+            call_command("reconcile_batch_video_jobs", failed_batch_id="not-a-batch-id")
+        call_command("reconcile_batch_video_jobs", failed_batch_id=failed["jobId"])
+        describe.assert_not_called()
+
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs._acquire_reconcile_lock")
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs.submit_batch_job")
+    @patch("apps.domains.video.management.commands.reconcile_batch_video_jobs._describe_jobs_boto3")
+    def test_targeted_dry_run_reads_current_job_and_preserves_state(self, describe, submit, acquire):
+        failed = self._targeted_host_failure()
+        describe.return_value = [failed]
+        output = StringIO()
+
+        call_command("reconcile_batch_video_jobs", failed_batch_id=failed["jobId"], dry_run=True, stdout=output)
+
+        self.job.refresh_from_db()
+        self.assertIn("current recoverable video job", output.getvalue())
+        self.assertEqual(self.job.attempt_count, 2)
+        self.assertEqual(self.job.aws_batch_job_id, failed["jobId"])
+        submit.assert_not_called()
+        acquire.assert_not_called()
 
 
 @override_settings(VIDEO_RETRY_STALE_QUEUED_HOURS=1)
