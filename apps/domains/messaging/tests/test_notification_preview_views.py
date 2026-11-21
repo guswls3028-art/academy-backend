@@ -370,7 +370,7 @@ class NotificationPreviewViewValidationTests(TestCase):
         self.assertEqual(len(response.data["recipients"]), 1)
         recipient = response.data["recipients"][0]
         self.assertEqual(recipient["student_id"], active_student.id)
-        self.assertEqual(recipient["phone"], "010****6666")
+        self.assertEqual(recipient["phone"], "01055556666")
         self.assertNotIn("phone_raw", recipient)
         self.assertNotIn("alimtalk_replacements", recipient)
         self.assertIn("Msg Preview입니다.", recipient["full_message_body"])

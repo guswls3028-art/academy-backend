@@ -10,6 +10,12 @@ student scope만 사용할 수 있다. 학부모도 현재 tenant의 활성 연�
 R2/DB 쓰기 전에 `403`으로 실패 폐쇄한다. 교직원 조회는 같은 자녀 scope 행을 그대로
 보므로 별도 학부모 전용 사본은 만들지 않는다.
 
+학생 소프트 삭제는 파일·폴더의 `student_ps` 소유권 metadata를 해당 학생의
+`_del_{id}_{original}` namespace로 함께 옮기며 R2 key와 원본 파일은 유지한다.
+정상 학생 아이디는 50자이고 이 가역적인 내부 삭제 namespace는 최대 75자를
+저장한다. 세 컬럼의 일관된 확장, 복원/번호 재사용, 학원 격리와 데이터 손실 없는
+롤백 계약은 [학생 생명주기](student-lifecycle.md#2-soft-delete)가 소유한다.
+
 교직원 접근은 현재 tenant의 활성 membership 역할 `owner/admin/staff/teacher`로
 판정한다. 계정 전역 `is_staff/is_superuser`와 기본 tenant 일치는 역할을 대체하지
 않는다. 학생·학부모 역할로 바뀐 계정에 전역 표시가 남아 있어도 교직원 저장소는

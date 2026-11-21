@@ -568,8 +568,6 @@ class ScheduledNotificationSerializer(serializers.ModelSerializer):
         payload = self._payload(obj)
         target_name = (payload.get("target_name") or "").strip()
         to = (payload.get("to") or "").strip()
-        if to and len(to) >= 7:
-            to = f"{to[:3]}****{to[-4:]}"
         return " / ".join(part for part in [target_name, to] if part)
 
     def get_message_preview(self, obj) -> str:

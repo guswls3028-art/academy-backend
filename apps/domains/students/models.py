@@ -19,6 +19,10 @@ from apps.support.students.namespace_lock import (
     lock_student_ps_namespaces,
 )
 
+STUDENT_LOGIN_ID_MAX_LENGTH = 50
+# _del_ + signed bigint ID (19 digits) + _ + original public login ID.
+STUDENT_PS_STORAGE_MAX_LENGTH = 75
+
 
 def generate_student_custom_field_key() -> str:
     return f"cf_{uuid.uuid4().hex[:12]}"
@@ -111,7 +115,7 @@ class Student(TimestampModel):
 
     # ✅ NEW: PS 번호 (학원 공식 학생 ID)
     ps_number = models.CharField(
-        max_length=50,
+        max_length=STUDENT_PS_STORAGE_MAX_LENGTH,
         null=False,
         blank=False,
         help_text="PS 번호 (학원 학생 ID)",
@@ -290,6 +294,8 @@ class Student(TimestampModel):
         ]
 
     def save(self, *args, **kwargs):
+        if self.deleted_at is None and len(self.ps_number or "") > STUDENT_LOGIN_ID_MAX_LENGTH:
+            raise ValueError("학생 아이디는 50자 이하여야 합니다.")
         if not self.pk:
             target_ps = str(self.ps_number or "").strip()
             max_attempts = (

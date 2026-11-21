@@ -120,6 +120,10 @@ def _competition_rank(
     total = sum(row["total_score"] for row in normalized_rows)
     cohort_avg = round(total / cohort_size, 2) if cohort_size else 0.0
 
+    top_count = (cohort_size + 9) // 10
+    top_decile_avg = round(sum(row["total_score"] for row in normalized_rows[:top_count]) / top_count, 2)
+    highest_score = normalized_rows[0]["total_score"]
+
     result_map: Dict[int, dict] = {}
     prev_score: Optional[float] = None
     current_rank = 0
@@ -136,6 +140,8 @@ def _competition_rank(
             "percentile": percentile,
             "cohort_size": cohort_size,
             "cohort_avg": cohort_avg,
+            "cohort_top_decile_avg": top_decile_avg,
+            "cohort_highest": highest_score,
         }
     return result_map
 
@@ -219,6 +225,7 @@ def compute_exam_rankings_batch(
     exam_ids: List[int],
     tenant: Any,
     enrollment_ids: Optional[List[int]] = None,
+    scoring_details_loader=None,
 ) -> Dict[int, Dict[int, dict]]:
     """
     여러 시험의 석차를 한 번에 계산. N+1 쿼리 방지용.
@@ -256,7 +263,8 @@ def compute_exam_rankings_batch(
     )
     latest_results = Result.objects.filter(id__in=Subquery(latest_ids))
     pending_result_ids = pending_omr_result_ids(
-        latest_results.select_related("attempt")
+        latest_results.select_related("attempt"),
+        scoring_details_loader=scoring_details_loader,
     )
     if pending_result_ids:
         latest_results = latest_results.exclude(id__in=pending_result_ids)

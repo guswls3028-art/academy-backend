@@ -26,7 +26,7 @@
 | clinic_self_study_completed | 클리닉 자율학습 완료 | 학부모 | 자율학습 완료(`completed_at`) 시. 하원과 별도 이벤트 |
 | clinic_result_notification | 클리닉 결과 알림 | 학부모 | 클리닉 결과 확정 시 |
 | counseling_reservation_created | 상담 예약 완료 | 학부모 | 상담 예약 시 |
-| video_encoding_complete | 영상 인코딩 완료 | 스태프(업로더) | 인코딩 완료 시 |
+| video_encoding_complete | 영상 인코딩 완료 | 스태프(업로더) | 인코딩 완료 시. 해당 학원의 알림톡 설정이 활성이고 영상·업로더 소속이 일치해야 한다. 공용 owner의 동일 트리거에서 승인된 ID와 본문을 함께 사용하며 사이트 링크는 발신 학원의 대표 도메인을 따른다. |
 
 ### MANUAL_DEFAULT — 선생 검토 필요 (수동 기본, preview→confirm 또는 설정에서 자동화 가능)
 | Trigger | 설명 | 수신자 | 발송 순간 |
@@ -167,7 +167,9 @@ UUID를 유지한다. 다른 수신 학생, 문구, 양식, 성적 치환값, �
 정확한 요청 필터의 `request_trace`는 로그가 아직 없어도 영속 접수/대기 상태를
 반환한다. 상태·페이지 필터는 결과 행만 제한하고 요청 전체의 접수 단계는 유지한다.
 owner/admin은 허용된 동일 tenant의 요청을, 그 외 직원·강사는 본인 요청만 조회하며
-기존 로그의 본문·번호·공급사 식별자 마스킹을 유지한다. 존재하지 않거나 접근할 수
+기존 로그 저장값의 비식별화와 본문·공급사 식별자 권한을 유지한다. 조회 권한이 있는
+교사·조교의 현재 업무 연락처는 전체 표시하며, 과거 수신 기록과 분리한 API 계약은
+[발송 기록](../domain/messaging-delivery-log.md)을 따른다. 존재하지 않거나 접근할 수
 없는 UUID는 동일한 빈 결과와 `request_trace=null`로 반환한다. 다른 tenant로
 넘어가거나 UUID 접두사로 별도 요청을 합치는 fallback은 없다.
 

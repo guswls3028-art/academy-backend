@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
+from apps.core import hakwonplus_assets
 from apps.core.parsing import parse_bool
 from apps.core.models import Program, Tenant, TenantDomain
 from apps.core.permissions import (
@@ -251,15 +252,16 @@ class PublicOgMetaView(APIView):
             except (AttributeError, ValueError):
                 logo = ""
 
+        platform = tenant.code == "hakwonplus"
         return Response({
             "tenant_code": tenant.code,
             "title": title,
             "description": description or f"{title} 학습 플랫폼",
-            "image": image,
-            "favicon": logo,
-            "pwa_icon_192": logo,
-            "pwa_icon_512": logo,
-            "apple_touch_icon": logo,
+            "image": image or (hakwonplus_assets.SHARE_IMAGE if platform else ""),
+            "favicon": logo or (hakwonplus_assets.FAVICON if platform else ""),
+            "pwa_icon_192": logo or (hakwonplus_assets.PWA_ICON_192 if platform else ""),
+            "pwa_icon_512": logo or (hakwonplus_assets.PWA_ICON_512 if platform else ""),
+            "apple_touch_icon": logo or (hakwonplus_assets.APPLE_TOUCH_ICON if platform else ""),
         }, headers={
             "Cache-Control": "public, max-age=300",
             "Access-Control-Allow-Origin": "*",

@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, time, timedelta
 from typing import Any, Iterable
 
-from django.db.models import BooleanField, Count, F, Q, Value
+from django.db.models import BooleanField, Count, F, Q, QuerySet, Value
 from django.utils import timezone
 from apps.support.lectures.schedule_queries import student_schedule_annotations
 
 
-def get_active_student_session_ids(
+def active_student_session_ids_query(
     *, student: Any, tenant: Any, session_ids: Iterable[int] | None = None,
-) -> list[int]:
+):
     from apps.domains.enrollment.models import SessionEnrollment
 
     memberships = SessionEnrollment.objects.filter(
@@ -27,17 +27,24 @@ def get_active_student_session_ids(
     )
     if session_ids is not None:
         memberships = memberships.filter(session_id__in=session_ids)
-    return list(memberships.values_list("session_id", flat=True).distinct())
+    return memberships.values_list("session_id", flat=True).distinct()
 
 
-def get_student_lecture_sessions(
+def get_active_student_session_ids(
+    *, student: Any, tenant: Any, session_ids: Iterable[int] | None = None,
+) -> list[int]:
+    return list(active_student_session_ids_query(student=student, tenant=tenant, session_ids=session_ids))
+
+
+def student_lecture_sessions_query(
     *,
     session_ids: Iterable[int],
     tenant: Any,
     hidden_before: date | None,
     hidden_session_ids: set[int],
     student: Any = None,
-) -> list[Any]:
+    on_or_after: date | None = None,
+):
     from apps.domains.lectures.models import Session as LectureSession
 
     base = LectureSession.objects.all()
@@ -47,7 +54,7 @@ def get_student_lecture_sessions(
         base = base.annotate(effective_date=F("date"), schedule_configured=Value(False, output_field=BooleanField()))
     sessions = (
         base.filter(
-            id__in=list(session_ids),
+            id__in=session_ids if isinstance(session_ids, QuerySet) else list(session_ids),
             lecture__tenant=tenant,
             lecture__is_active=True,
         )
@@ -67,7 +74,19 @@ def get_student_lecture_sessions(
         sessions = sessions.exclude(effective_date__lte=hidden_before)
     if hidden_session_ids:
         sessions = sessions.exclude(id__in=hidden_session_ids)
-    return list(sessions)
+    if on_or_after is not None:
+        sessions = sessions.filter(effective_date__gte=on_or_after)
+    return sessions
+
+
+def get_student_lecture_sessions(
+    *, session_ids: Iterable[int], tenant: Any, hidden_before: date | None,
+    hidden_session_ids: set[int], student: Any = None, on_or_after: date | None = None,
+) -> list[Any]:
+    return list(student_lecture_sessions_query(
+        session_ids=session_ids, tenant=tenant, hidden_before=hidden_before,
+        hidden_session_ids=hidden_session_ids, student=student, on_or_after=on_or_after,
+    ))
 
 
 def _owned_clinic_participants(*, student: Any, tenant: Any):
@@ -81,10 +100,13 @@ def _owned_clinic_participants(*, student: Any, tenant: Any):
     )
 
 
-def get_student_clinic_participants(*, student: Any, tenant: Any) -> list[Any]:
+def student_clinic_participants_query(
+    *, student: Any, tenant: Any, on_or_after: date | None = None,
+    hidden_before: date | None = None, hidden_ids: set[int] | None = None,
+):
     from apps.domains.clinic.models import SessionParticipant
 
-    return list(
+    participants = (
         _owned_clinic_participants(student=student, tenant=tenant)
         .filter(
             status__in=[
@@ -96,6 +118,33 @@ def get_student_clinic_participants(*, student: Any, tenant: Any) -> list[Any]:
         )
         .select_related("session")
     )
+    if hidden_ids:
+        participants = participants.exclude(pk__in=hidden_ids)
+    if hidden_before is not None:
+        if hidden_before == date.max:
+            return participants.none()
+        visible_from = hidden_before + timedelta(days=1)
+        on_or_after = max(on_or_after, visible_from) if on_or_after is not None else visible_from
+    if on_or_after is not None:
+        # participant_booking_window moves a saved range start to the next day
+        # exactly when both endpoints exist and its start precedes the opening.
+        participants = participants.filter(
+            Q(session__date__gte=on_or_after)
+            | Q(session__date=on_or_after - timedelta(days=1),
+                booking_start_time__isnull=False, booking_end_time__isnull=False,
+                booking_start_time__lt=F("session__start_time"))
+        )
+    return participants
+
+
+def get_student_clinic_participants(
+    *, student: Any, tenant: Any, on_or_after: date | None = None,
+    hidden_before: date | None = None, hidden_ids: set[int] | None = None,
+) -> list[Any]:
+    return list(student_clinic_participants_query(
+        student=student, tenant=tenant, on_or_after=on_or_after,
+        hidden_before=hidden_before, hidden_ids=hidden_ids,
+    ))
 
 
 def student_clinic_schedule_entry(participant) -> tuple[date, time, str]:

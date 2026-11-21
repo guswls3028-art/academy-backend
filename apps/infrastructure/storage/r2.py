@@ -199,6 +199,13 @@ def upload_fileobj_to_r2_storage(
     )
 
 
+def put_small_storage_object(*, key: str, fileobj) -> None:
+    """A bounded single PUT leaves no multipart sessions on worker interruption."""
+    _get_s3_client(timeout_seconds=15).put_object(
+        Bucket=_storage_bucket(), Key=key, Body=fileobj, ContentType="application/octet-stream",
+    )
+
+
 def generate_presigned_get_url_storage(
     *,
     key: str,

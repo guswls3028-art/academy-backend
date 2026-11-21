@@ -20,6 +20,7 @@ SPECTACULAR_SETTINGS = {
     "COMPONENT_SPLIT_REQUEST": True,
     "DISABLE_ERRORS_AND_WARNINGS": True,
     "ENUM_NAME_OVERRIDES": {
+        "StaffBoardCategory": "apps.domains.staffs.models.StaffBoardPost.Category",
         "SurveyKind": "apps.domains.surveys.models.Survey.Kind",
         "SurveyStatus": "apps.domains.surveys.models.Survey.Status",
         "SchoolReportSubmissionStatus": ["submitted", "missing"],

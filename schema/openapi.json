@@ -5211,6 +5211,213 @@
         ],
         "type": "string"
       },
+      "InspectionBatchRequest": {
+        "properties": {
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/InspectionChangeRequest"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "type": "object"
+      },
+      "InspectionChange": {
+        "properties": {
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "feedback": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "solved": {
+            "maximum": 100000,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "total": {
+            "maximum": 100000,
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "InspectionChangeRequest": {
+        "properties": {
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "feedback": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "solved": {
+            "maximum": 100000,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "total": {
+            "maximum": 100000,
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "InspectionPreview": {
+        "properties": {
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/InspectionPreviewRow"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "errors",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "InspectionPreviewRow": {
+        "properties": {
+          "before": {
+            "$ref": "#/components/schemas/InspectionRosterRow"
+          },
+          "change": {
+            "$ref": "#/components/schemas/InspectionChange"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InspectionPreviewRowStatusEnum"
+          }
+        },
+        "required": [
+          "before",
+          "change",
+          "line",
+          "name",
+          "status"
+        ],
+        "type": "object"
+      },
+      "InspectionPreviewRowStatusEnum": {
+        "description": "* `변경` - 변경\n* `새 입력` - 새 입력\n* `동일` - 동일",
+        "enum": [
+          "변경",
+          "새 입력",
+          "동일"
+        ],
+        "type": "string"
+      },
+      "InspectionResult": {
+        "properties": {
+          "changed": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "changed"
+        ],
+        "type": "object"
+      },
+      "InspectionRoster": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InspectionRosterRow"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "InspectionRosterRow": {
+        "properties": {
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "feedback": {
+            "type": "string"
+          },
+          "solved": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "student_name": {
+            "type": "string"
+          },
+          "total": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "feedback",
+          "solved",
+          "student_name",
+          "total",
+          "version"
+        ],
+        "type": "object"
+      },
+      "InspectionUploadRequest": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "type": "object"
+      },
       "IntervalMinutesEnum": {
         "description": "* `30` - 30\n* `60` - 60",
         "enum": [
@@ -9276,6 +9483,37 @@
         ],
         "type": "object"
       },
+      "PaginatedStaffBoardSummaryList": {
+        "properties": {
+          "count": {
+            "example": 123,
+            "type": "integer"
+          },
+          "next": {
+            "example": "http://api.example.org/accounts/?page=4",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "previous": {
+            "example": "http://api.example.org/accounts/?page=2",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/StaffBoardSummary"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "results"
+        ],
+        "type": "object"
+      },
       "PaginatedStaffExpenseRecordList": {
         "properties": {
           "count": {
@@ -11409,6 +11647,21 @@
         },
         "type": "object"
       },
+      "PatchedStaffBoardEditRequest": {
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "PatchedStaffExpenseRecordRequest": {
         "properties": {
           "amount": {
@@ -11735,7 +11988,7 @@
           },
           "ps_number": {
             "description": "PS 번호 (학원 학생 ID)",
-            "maxLength": 50,
+            "maxLength": 75,
             "minLength": 1,
             "type": "string"
           },
@@ -17960,6 +18213,272 @@
         ],
         "type": "string"
       },
+      "StaffBoardCategory": {
+        "description": "* `notice` - 공지사항\n* `resource` - 자료실\n* `free` - 자유게시글",
+        "enum": [
+          "notice",
+          "resource",
+          "free"
+        ],
+        "type": "string"
+      },
+      "StaffBoardDetail": {
+        "properties": {
+          "attachment_name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "author_name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "body": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "can_edit": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "can_remove_attachment": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "category": {
+            "$ref": "#/components/schemas/StaffBoardCategory"
+          },
+          "created_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "replies": {
+            "items": {
+              "$ref": "#/components/schemas/StaffBoardReply"
+            },
+            "readOnly": true,
+            "type": "array"
+          },
+          "reply_count": {
+            "default": 0,
+            "readOnly": true,
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 200,
+            "type": "string"
+          }
+        },
+        "required": [
+          "attachment_name",
+          "author_name",
+          "body",
+          "can_edit",
+          "can_remove_attachment",
+          "category",
+          "created_at",
+          "id",
+          "replies",
+          "reply_count",
+          "title"
+        ],
+        "type": "object"
+      },
+      "StaffBoardError": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "type": "object"
+      },
+      "StaffBoardPost": {
+        "properties": {
+          "attachment_name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "author_name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "body": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "can_edit": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "can_remove_attachment": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "category": {
+            "$ref": "#/components/schemas/StaffBoardCategory"
+          },
+          "created_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "reply_count": {
+            "default": 0,
+            "readOnly": true,
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 200,
+            "type": "string"
+          }
+        },
+        "required": [
+          "attachment_name",
+          "author_name",
+          "body",
+          "can_edit",
+          "can_remove_attachment",
+          "category",
+          "created_at",
+          "id",
+          "reply_count",
+          "title"
+        ],
+        "type": "object"
+      },
+      "StaffBoardPostRequest": {
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "category": {
+            "$ref": "#/components/schemas/StaffBoardCategory"
+          },
+          "file": {
+            "format": "binary",
+            "type": "string",
+            "writeOnly": true
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "body",
+          "category",
+          "title"
+        ],
+        "type": "object"
+      },
+      "StaffBoardReply": {
+        "properties": {
+          "author_name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "body": {
+            "maxLength": 5000,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "author_name",
+          "body",
+          "created_at",
+          "id"
+        ],
+        "type": "object"
+      },
+      "StaffBoardReplyRequest": {
+        "properties": {
+          "body": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "type": "object"
+      },
+      "StaffBoardSummary": {
+        "properties": {
+          "attachment_name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "author_name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "can_edit": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "can_remove_attachment": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "category": {
+            "$ref": "#/components/schemas/StaffBoardCategory"
+          },
+          "created_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "reply_count": {
+            "default": 0,
+            "readOnly": true,
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 200,
+            "type": "string"
+          }
+        },
+        "required": [
+          "attachment_name",
+          "author_name",
+          "can_edit",
+          "can_remove_attachment",
+          "category",
+          "created_at",
+          "id",
+          "reply_count",
+          "title"
+        ],
+        "type": "object"
+      },
       "StaffDetail": {
         "properties": {
           "account_role": {
@@ -18257,6 +18776,93 @@
           "role",
           "staff_work_types",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "StaffMe": {
+        "properties": {
+          "assigned_work_types": {
+            "items": {
+              "$ref": "#/components/schemas/StaffMeAssignedWorkType"
+            },
+            "type": "array"
+          },
+          "default_work_type_id": {
+            "type": "integer"
+          },
+          "is_authenticated": {
+            "type": "boolean"
+          },
+          "is_owner": {
+            "type": "boolean"
+          },
+          "is_payroll_manager": {
+            "type": "boolean"
+          },
+          "is_staff": {
+            "type": "boolean"
+          },
+          "is_superuser": {
+            "type": "boolean"
+          },
+          "owner_display_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "owner_phone": {
+            "nullable": true,
+            "type": "string"
+          },
+          "owner_setup_required": {
+            "description": "대표의 기존 자동 연결 준비가 필요하면 true. 명시적인 POST /staffs/me/로 준비합니다.",
+            "type": "boolean"
+          },
+          "staff_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "is_authenticated",
+          "is_owner",
+          "is_payroll_manager",
+          "is_staff",
+          "is_superuser",
+          "owner_display_name",
+          "owner_phone",
+          "owner_setup_required"
+        ],
+        "type": "object"
+      },
+      "StaffMeAssignedWorkType": {
+        "properties": {
+          "hourly_wage": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hourly_wage",
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "StaffMeError": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
         ],
         "type": "object"
       },
@@ -19558,6 +20164,7 @@
           },
           "ps_number": {
             "description": "미입력 시 임의 6자리 자동 부여 (학생이 추후 변경 가능)",
+            "maxLength": 50,
             "type": "string"
           },
           "schedule_hidden_before": {
@@ -19752,6 +20359,7 @@
           },
           "ps_number": {
             "description": "미입력 시 임의 6자리 자동 부여 (학생이 추후 변경 가능)",
+            "maxLength": 50,
             "type": "string"
           },
           "schedule_hidden_before": {
@@ -19997,7 +20605,7 @@
           },
           "ps_number": {
             "description": "PS 번호 (학원 학생 ID)",
-            "maxLength": 50,
+            "maxLength": 75,
             "type": "string"
           },
           "school_type": {
@@ -20150,7 +20758,7 @@
           },
           "ps_number": {
             "description": "PS 번호 (학원 학생 ID)",
-            "maxLength": 50,
+            "maxLength": 75,
             "minLength": 1,
             "type": "string"
           },
@@ -20458,6 +21066,24 @@
         "required": [
           "fee_template",
           "student"
+        ],
+        "type": "object"
+      },
+      "StudentHomeSchedule": {
+        "properties": {
+          "has_any_sessions": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StudentSession"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "has_any_sessions",
+          "items"
         ],
         "type": "object"
       },
@@ -20825,7 +21451,7 @@
           },
           "ps_number": {
             "description": "PS 번호 (학원 학생 ID)",
-            "maxLength": 50,
+            "maxLength": 75,
             "type": "string"
           },
           "school_type": {
@@ -20871,6 +21497,83 @@
           "tenant",
           "updated_at",
           "user"
+        ],
+        "type": "object"
+      },
+      "StudentScheduleListOrHome": {
+        "oneOf": [
+          {
+            "items": {
+              "$ref": "#/components/schemas/StudentSession"
+            },
+            "type": "array"
+          },
+          {
+            "$ref": "#/components/schemas/StudentHomeSchedule"
+          }
+        ]
+      },
+      "StudentSession": {
+        "properties": {
+          "date": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "display_label": {
+            "nullable": true,
+            "type": "string"
+          },
+          "exam_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "order": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "regular_order": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "schedule_configured": {
+            "default": false,
+            "type": "boolean"
+          },
+          "schedule_label": {
+            "nullable": true,
+            "type": "string"
+          },
+          "session_type": {
+            "nullable": true,
+            "type": "string"
+          },
+          "start_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "default": "session",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title"
         ],
         "type": "object"
       },
@@ -28903,6 +29606,165 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "core"
+        ]
+      }
+    },
+    "/api/v1/core/dev/agent-sessions/": {
+      "get": {
+        "description": "Read-only coding-session metadata for tenant 1's admin97. Impersonation and support previews are denied.",
+        "operationId": "core_dev_agent_sessions_retrieve",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "collected_at": {
+                      "format": "date-time",
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "nodes": {
+                      "items": {
+                        "properties": {
+                          "evidence": {
+                            "enum": [
+                              "runtime",
+                              "last_turn",
+                              "closed",
+                              "unknown"
+                            ],
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "parent_id": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "provider": {
+                            "enum": [
+                              "codex",
+                              "claude"
+                            ],
+                            "type": "string"
+                          },
+                          "role": {
+                            "maxLength": 80,
+                            "type": "string"
+                          },
+                          "status": {
+                            "enum": [
+                              "running",
+                              "waiting",
+                              "completed",
+                              "interrupted",
+                              "unknown"
+                            ],
+                            "type": "string"
+                          },
+                          "title": {
+                            "maxLength": 160,
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "format": "date-time",
+                            "nullable": true,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "provider",
+                          "parent_id",
+                          "title",
+                          "role",
+                          "status",
+                          "evidence",
+                          "updated_at"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 600,
+                      "type": "array"
+                    },
+                    "schema": {
+                      "enum": [
+                        1
+                      ],
+                      "type": "integer"
+                    },
+                    "source_errors": {
+                      "items": {
+                        "enum": [
+                          "codex",
+                          "claude"
+                        ],
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "source_status": {
+                      "enum": [
+                        "connected",
+                        "stale",
+                        "unavailable"
+                      ],
+                      "type": "string"
+                    },
+                    "stale_after_seconds": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "schema",
+                    "collected_at",
+                    "source_status",
+                    "stale_after_seconds",
+                    "nodes",
+                    "truncated",
+                    "source_errors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -49110,6 +49972,225 @@
         ]
       }
     },
+    "/api/v1/results/admin/sessions/{session_id}/homework/{homework_id}/inspection/": {
+      "get": {
+        "operationId": "results_admin_sessions_homework_inspection_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "homework_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectionRoster"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      },
+      "post": {
+        "operationId": "results_admin_sessions_homework_inspection_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "homework_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InspectionBatchRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/InspectionBatchRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/InspectionBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectionResult"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/sessions/{session_id}/homework/{homework_id}/inspection/workbook/": {
+      "get": {
+        "operationId": "results_admin_sessions_homework_inspection_workbook_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "homework_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Optional shared problem count for the template.",
+            "in": "query",
+            "name": "total",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      },
+      "post": {
+        "operationId": "results_admin_sessions_homework_inspection_workbook_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "homework_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/InspectionUploadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectionPreview"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
     "/api/v1/results/admin/sessions/{session_id}/reorder/": {
       "post": {
         "operationId": "results_admin_sessions_reorder_create",
@@ -50697,6 +51778,421 @@
         ]
       }
     },
+    "/api/v1/staffs/board/posts/": {
+      "get": {
+        "operationId": "staffs_board_posts_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "category",
+            "schema": {
+              "enum": [
+                "free",
+                "notice",
+                "resource"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedStaffBoardSummaryList"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      },
+      "post": {
+        "operationId": "staffs_board_posts_create",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffBoardPostRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffBoardPostRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffBoardPostRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardPost"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardPost"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      }
+    },
+    "/api/v1/staffs/board/posts/{id}/": {
+      "get": {
+        "operationId": "staffs_board_posts_retrieve",
+        "parameters": [
+          {
+            "description": "staff board post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardDetail"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      },
+      "patch": {
+        "operationId": "staffs_board_posts_partial_update",
+        "parameters": [
+          {
+            "description": "staff board post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedStaffBoardEditRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedStaffBoardEditRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedStaffBoardEditRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardPost"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      }
+    },
+    "/api/v1/staffs/board/posts/{id}/attachment/": {
+      "delete": {
+        "operationId": "staffs_board_posts_attachment_destroy",
+        "parameters": [
+          {
+            "description": "staff board post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      },
+      "get": {
+        "operationId": "staffs_board_posts_attachment_retrieve",
+        "parameters": [
+          {
+            "description": "staff board post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "",
+            "headers": {
+              "Content-Disposition": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      }
+    },
+    "/api/v1/staffs/board/posts/{id}/replies/": {
+      "post": {
+        "operationId": "staffs_board_posts_replies_create",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "staff board post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffBoardReplyRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffBoardReplyRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffBoardReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardReply"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardReply"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      }
+    },
     "/api/v1/staffs/currently-working/": {
       "get": {
         "description": "현재 근무 중인 직원 목록 (end_time 이 null 인 WorkRecord 가 있는 직원). 직급(role) + 근무 시작 시각·휴식 정보(드롭다운용).",
@@ -51018,7 +52514,83 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StaffWrite"
+                  "$ref": "#/components/schemas/StaffMe"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      },
+      "post": {
+        "operationId": "staffs_me_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMe"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMeError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMeError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMeError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMeError"
                 }
               }
             },
@@ -53410,7 +54982,7 @@
     },
     "/api/v1/student/sessions/clear-past/": {
       "post": {
-        "description": "POST /student/sessions/clear-past/\n학생 본인(또는 학부모 대리 계정)이 \"내 일정\" 휴지통을 눌렀을 때 호출.\n오늘 이전(어제까지) 차시/클리닉 예약을 화면에서 모두 숨김.\n실제 차시/예약 데이터는 학원/선생 소유이므로 절대 삭제하지 않고,\nStudent.schedule_hidden_before 컷오프만 갱신.",
+        "description": "POST /student/sessions/clear-past/\n학생 본인(또는 학부모 대리 계정)이 \"내 일정\" 휴지통을 눌렀을 때 호출.\n오늘 이전(어제까지) 차시/클리닉 예약을 화면에서 모두 숨김.\n실제 차시/예약 데이터는 학원/선생 소유이므로 절대 삭제하지 않고,\n학생의 숨김 컷오프와 그 이후에 숨긴 일정 목록을 저장한다.",
         "operationId": "student_sessions_clear_past_create",
         "responses": {
           "200": {
@@ -53456,9 +55028,29 @@
       "get": {
         "description": "GET /student/sessions/me/\n학생이 접근 가능한 차시 목록 + 클리닉 예약 (date 기준 정렬).",
         "operationId": "student_sessions_me_retrieve",
+        "parameters": [
+          {
+            "description": "home은 오늘 포함 최근 28일과 모든 미래 일정, 전체 표시 일정 존재 여부를 반환한다. 생략하면 기존 전체 이력 배열을 반환한다.",
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "enum": [
+                "home"
+              ],
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentScheduleListOrHome"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

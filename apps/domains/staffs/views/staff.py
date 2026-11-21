@@ -40,6 +40,8 @@ from ..models import (
 )
 from ..serializers import (
     StaffListSerializer,
+    StaffMeSerializer,
+    StaffMeErrorSerializer,
     StaffDetailSerializer,
     StaffCreateUpdateSerializer,
     CurrentlyWorkingStaffSerializer,
@@ -668,115 +670,24 @@ class StaffViewSet(viewsets.ModelViewSet):
         )
         return Response({"detail": "비밀번호가 변경되었습니다."})
 
-    @action(detail=False, methods=["get"], url_path="me", permission_classes=[IsAuthenticated, TenantResolvedAndMember])
+    @extend_schema(methods=["GET"], responses=StaffMeSerializer)
+    @extend_schema(
+        methods=["POST"], request={"application/json": {"type": "object", "additionalProperties": False}},
+        responses={200: StaffMeSerializer, 400: StaffMeErrorSerializer,
+                   401: StaffMeErrorSerializer, 403: StaffMeErrorSerializer, 409: StaffMeErrorSerializer},
+    )
+    @action(detail=False, methods=["get", "post"], url_path="me",
+            permission_classes=[IsAuthenticated, TenantResolvedAndMember])
     def me(self, request):
-        import logging
-        logger = logging.getLogger(__name__)
-        tenant = getattr(request, "tenant", None)
-        try:
-            from academy.adapters.db.django import repositories_core as core_repo
-            is_owner = bool(
-                tenant
-                and request.user.is_authenticated
-                and core_repo.membership_exists_staff(tenant=tenant, user=request.user, staff_roles=("owner",))
-            )
-            owner_display_name = None
-            owner_phone = None
-            if is_owner and request.user:
-                owner_display_name = (getattr(request.user, "name", None) or "").strip() or getattr(request.user, "username", "") or "원장"
-                owner_phone = (getattr(request.user, "phone", None) or "").strip() or None
+        from ..services.identity import ensure_owner_staff_identity, staff_identity_snapshot
 
-            payload = {
-                "is_authenticated": True,
-                "is_superuser": bool(request.user.is_superuser),
-                "is_staff": bool(request.user.is_staff),
-                "is_payroll_manager": can_manage_payroll(request.user, tenant),
-                "is_owner": is_owner,
-                "owner_display_name": owner_display_name,
-                "owner_phone": owner_phone,
-            }
-
-            # 직원(Staff)으로 로그인한 경우: 출근/퇴근용 staff_id, default_work_type_id
-            # 오너여도 동일하게 출퇴근 기록 가능하도록: 오너인데 Staff가 없으면 해당 테넌트에 Staff 생성 후 연결
-            # staff_profile = OneToOneField reverse → 다른 테넌트 Staff일 수 있으므로 tenant_id 확인 필수
-            staff_profile = getattr(request.user, "staff_profile", None)
-            staff_in_tenant = (
-                staff_profile
-                if staff_profile and tenant and getattr(staff_profile, "tenant_id", None) == tenant.id
-                else None
-            )
-            if staff_in_tenant:
-                payload["staff_id"] = staff_in_tenant.id
-                assigned_work_types = list(
-                    staff_in_tenant.staff_work_types.filter(
-                        work_type__is_active=True,
-                    )
-                    .select_related("work_type")
-                    .order_by("id")
-                )
-                payload["assigned_work_types"] = [
-                    {
-                        "id": swt.work_type_id,
-                        "name": swt.work_type.name,
-                        "hourly_wage": swt.effective_hourly_wage,
-                    }
-                    for swt in assigned_work_types
-                ]
-                if len(assigned_work_types) == 1:
-                    payload["default_work_type_id"] = (
-                        assigned_work_types[0].work_type_id
-                    )
-            elif is_owner and tenant and request.user:
-                # staff_profile이 다른 테넌트에 있거나 없을 때: 현재 테넌트에서 Staff 조회/생성
-                from apps.domains.staffs.models import Staff, StaffWorkType, WorkType
-                owner_staff = Staff.objects.filter(tenant=tenant, user=request.user).first()
-                if not owner_staff:
-                    # user OneToOne이 이미 다른 테넌트 Staff에 연결된 경우 user=None으로 생성
-                    can_link_user = staff_profile is None
-                    owner_name = (getattr(request.user, "name", None) or "").strip() or getattr(request.user, "username", "") or "원장"
-                    owner_phone = (getattr(request.user, "phone", None) or "").strip() or ""
-                    with transaction.atomic():
-                        owner_staff, _created = Staff.objects.get_or_create(
-                            tenant=tenant,
-                            name=owner_name,
-                            phone=owner_phone or "",
-                            defaults={
-                                "user": request.user if can_link_user else None,
-                                "is_manager": True,
-                            },
-                        )
-                first_wt = WorkType.objects.filter(tenant=tenant, is_active=True).order_by("id").first()
-                if not first_wt:
-                    first_wt = WorkType.objects.create(
-                        tenant=tenant,
-                        name="기본",
-                        base_hourly_wage=0,
-                        is_active=True,
-                    )
-                if not owner_staff.staff_work_types.exists():
-                    StaffWorkType.objects.get_or_create(
-                        tenant=tenant,
-                        staff=owner_staff,
-                        work_type=first_wt,
-                        defaults={"hourly_wage": None},
-                    )
-                payload["staff_id"] = owner_staff.id
-                payload["default_work_type_id"] = first_wt.id
-
-            return Response(payload)
-        except Exception as e:
-            logger.warning("staffs/me error: %s", e, exc_info=True)
-            return Response(
-                {
-                    "is_authenticated": True,
-                    "is_superuser": bool(getattr(request.user, "is_superuser", False)),
-                    "is_staff": bool(getattr(request.user, "is_staff", False)),
-                    "is_payroll_manager": False,
-                    "is_owner": False,
-                    "owner_display_name": None,
-                    "owner_phone": None,
-                }
-            )
+        if request.method == "POST":
+            if request.data != {}:
+                raise ValidationError({"detail": "직원 연결 준비는 별도의 대상 정보를 받지 않습니다."})
+            payload = ensure_owner_staff_identity(tenant=request.tenant, user=request.user)
+        else:
+            payload = staff_identity_snapshot(tenant=request.tenant, user=request.user)
+        return Response(payload)
 
     def _staff_display_role(
         self,

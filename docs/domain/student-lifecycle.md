@@ -46,12 +46,37 @@ HTTP와 운영 명령은 생명주기 서비스를 호출하는 compatibility fa
 SSOT: `soft_delete_student(student, tenant=...)`
 
 - `deleted_at`을 기록하고 `ps_number`를 `_del_{student.id}_{old}`로 보존한다.
+  정상 입력 아이디는 기존 DB 한계와 같은 50자이다. 삭제용 내부 저장은 원본
+  50자 + `_del_` 5자 + 양의 bigint ID 최대 19자 + `_` 1자를 모두 보존하도록
+  `Student.ps_number`, Inventory 폴더·파일의 `student_ps`를 75자로 확장한다.
+  원본을 자르거나 해시로 대체하지 않아 단일/일괄 삭제 후 동일 번호 복원·재사용과
+  저장소 소유권 판정이 유지된다. 기존 50자 컬럼에서는 유효한 긴 아이디의 삭제가
+  PostgreSQL DataError/HTTP 500으로 실패할 수 있었다. 생성 serializer와 내부 생성
+  경로에서 50자 초과를 명시적으로 거부하여 기존 DB 오류도 필드 검증으로 바꾼다.
+  기존 학생 자가 변경 `PATCH /students/me/`의 `username`도 기존 공백 제거 후
+  50자를 검사한다. null/누락은 기존처럼 변경하지 않으며, 그 외 비문자열이나
+  50자 초과는 계정/프로필 변경 전에 400으로 거부한다. 정상 50자 입력과
+  tenant 내부 username 동기화·계정 안내/실패 시 rollback은 유지한다.
 - 같은 학생의 Inventory 폴더·파일 `student_ps`도 삭제용 번호로 함께 옮긴다.
   원본 R2 key/내용은 바꾸지 않는다. 원래 번호를 새 학생이 사용해도 이전 자료를
   조회하거나 자기 자료로 가져갈 수 없으며, 복원하면 원래 학생의 metadata만 되돌린다.
   기존 번호에 소유자를 확인할 수 없는 자료가 남아 있으면 신규 생성·복원은
   `student_storage_namespace_conflict` 또는 아이디 필드 오류로 중단한다. 기존 행을
   새 학생에게 자동 배정하거나 삭제하지 않는다.
+
+이 변경의 학생/Inventory expand migration을 새 코드보다 먼저 적용한다. 기존
+이미지는 확장된 문자열을 기존 `_del_{id}_{original}` 계약으로 읽으므로 이미지
+롤백 시 75자 DB를 유지한다. 명시적인 스키마 역적용과 과거 migration 호환 검사에서는
+모든 대상 값이 50자 이하일 때만 축소를 허용한다. 각 migration은 같은 원자적 transaction을
+요구하며, PostgreSQL에서는 길이 검사 전에 대상 테이블에 `ACCESS EXCLUSIVE` 잠금을 잡아
+뒤따르는 축소 DDL까지 유지한다. Inventory의 두 테이블은 정해진 테이블명 순서로 한 번에
+잠근 뒤 검사한다. 50자를 넘는 값이 하나라도 있으면 DDL 전에 `IrreversibleError`로
+중단하므로 검사 후 동시 쓰기가 끼어드는 경합도 없다. PostgreSQL의 varchar 축소 cast로
+원본을 절단하거나 사용자 자료를 지워 롤백하지 않는다. 데이터 복사·R2 key 변경은 없다.
+`test_deleted_identifier_storage.py`는 실제 JWT bulk 삭제/반복/복원, 최대 bigint와
+40/50자·한글 아이디, 계정/학부모/성적/수강/저장소 key 보존·다른 학원 보호를 검사한다.
+PostgreSQL에서는 실제 50→75 확장, 50자 이하 역적용·재확장, 잠금→검사→DDL 순서와
+긴 값의 역적용 차단도 검증한다. 기존 가입 이력 migration 검사도 원래 기대값대로 유지한다.
 - `Parent` 직접 연결을 끊는다.
 - 순수 학생 계정이면 해당 테넌트의 `student` 멤버십을 비활성화하고, 남은 활성 멤버십이 없을 때만 `User.is_active=False`로 둔다.
 - 같은 사용자에게 다른 테넌트 멤버십이나 같은 테넌트의 staff/teacher/admin/owner/parent 역할이 남아 있으면 전역 계정을 잠그지 않는다.
@@ -134,6 +159,12 @@ SSOT: `permanently_delete_students(tenant=..., student_ids=[...])`
     ORM cascade로 코멘트와 revision을 정리하며 작성자 계정은 삭제하지 않는다.
     코멘트 tenant 또는 연결 차시의 강의 tenant가 다르면 기존 그래프 검증에서
     `409 cross_tenant_reference`로 전체 작업을 중단하고 원본과 이력을 보존한다.
+  - 학생 영구 삭제 시 과제 검사(`HomeworkInspection`)의 풀이 수·코멘트는
+    삭제 대상 수강에 한해 정리한다.
+    동명이인의 수강 기록과 과제 원본은 보존한다. 검사 기록·검사 차시·과제·과제 차시의
+    학원 중 하나라도 대상 수강의 학원과 다르면 전체 삭제를 중단한다.
+    일반 수강 삭제는 ORM으로 검사 행을 함께 정리하며, 작성자 계정 삭제는
+    검사 기록을 유지하고 작성자 참조만 비운다.
 - lecture section assignment
 - fees: `StudentFee`, `StudentInvoice`, `InvoiceItem`, `FeePayment`
 - submissions/results/homework/progress/video/clinic/community의 학생 참조
@@ -181,6 +212,21 @@ SSOT: `permanently_delete_students(tenant=..., student_ids=[...])`
   삭제를 진행한다. 늦게 끝난 PUT의 finalize는 row와 cleanup intent를 다시 잠가
   확인하며, 소유권을 잃었으면 row를 되살리지 않고 key를 동일 intent로 재정리한다.
 - 현재 cross-domain 정리는 guarded raw SQL graph다. 장기 목표는 각 도메인 cleanup hook/event로 분해하는 것이다.
+
+### 과제 검사 저장과 구·신 버전 호환
+
+1. 먼저 `results.0024_homeworkinspection`, 모델 등록 및 학생 영구 삭제
+   정합성 검사를 배포한다. 이 배포의 새 검사 데이터 생성은 0건이다.
+   기존 학생 영구 삭제와 수강 삭제를 확인하고, 삭제를 수행할 수 있는
+   API·워커·관리 명령이 호환 버전으로 수렴한 실행 기록을 남긴다.
+2. 격리 PostgreSQL에서 새 버전으로 검사 행을 저장한 뒤 호환 버전으로
+   학생 영구 삭제와 수강 직접 삭제를 확인한다. 정상 삭제는 해당 수강의
+   검사 행만 정리하고, 학원이 불일치하는 참조는 작업 전체를 중단한다.
+   작성자 삭제는 검사 값과 코멘트를 유지하고 작성자 참조만 비운다.
+   강의·차시의 물리 삭제와 과제 제거는 각 경로의 기존 차단·보존 규칙을 확인한다.
+3. 호환 버전의 운영 확인과 격리 검증을 통과한 뒤 과제 검사 저장 API와
+   화면을 배포한다. 운영 장애 복구에는 0024와 삭제 호환 코드를 유지한
+   새 커밋을 만들어 [상태 저장 서비스의 roll-forward 절차](../../scripts/v1/README.md#안전-롤백)로 배포한다.
 
 ## 5. Retention 운영
 

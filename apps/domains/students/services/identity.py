@@ -7,7 +7,7 @@ from django.db.models import Q
 
 from apps.core.models.user import user_display_username, user_internal_username
 from apps.core.services.login_identifier import normalize_login_identifier
-from apps.domains.students.models import Student
+from apps.domains.students.models import STUDENT_LOGIN_ID_MAX_LENGTH, Student
 from apps.domains.students.ps_number import _generate_unique_ps_number
 from apps.support.students.lifecycle_dependencies import inventory_student_ps_metadata_exists
 
@@ -153,6 +153,8 @@ def resolve_student_login_id(
     exclude_user_id: int | None = None,
 ) -> str:
     requested = normalize_login_identifier(requested_id)
+    if len(requested) > STUDENT_LOGIN_ID_MAX_LENGTH:
+        raise StudentIdentityError({"ps_number": "학생 아이디는 50자 이하여야 합니다."})
     if requested:
         if not student_login_id_taken(
             tenant=tenant,

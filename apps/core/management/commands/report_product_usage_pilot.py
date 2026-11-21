@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
@@ -13,7 +14,7 @@ from apps.core.product_analytics.pilot import (
 
 
 class Command(BaseCommand):
-    help = "Report and fail closed on exact product-analytics pilot gates."
+    help = "Report and require product-analytics pilot readiness."
 
     def add_arguments(self, parser):
         parser.add_argument("--tenant-code", required=True)
@@ -86,11 +87,25 @@ class Command(BaseCommand):
             path.write_text(encoded + "\n", encoding="utf-8")
         self.stdout.write(f"PRODUCT_ANALYTICS_PILOT_REPORT {encoded}")
 
-        if report["breaches"]:
+        state = report["status"]
+        if state == "breach":
             raise CommandError(
                 "product analytics pilot gate breached: "
                 + ", ".join(report["breaches"])
             )
+        if state != "pass":
+            details = ", ".join(report["readiness_blockers"])
+            # The daily workflow sets this only for this process. Older runtime
+            # revisions ignore it and keep their existing strict exit behavior.
+            if (
+                state != "inactive"
+                or os.environ.get("ACADEMY_PRODUCT_ANALYTICS_MAINTENANCE") != "1"
+            ):
+                raise CommandError(f"product analytics pilot not ready ({state}): {details}")
+            self.stdout.write(
+                f"PRODUCT_ANALYTICS_PILOT_INACTIVE tenant={tenant_code}: {details}"
+            )
+            return
         self.stdout.write(
             self.style.SUCCESS(
                 f"PRODUCT_ANALYTICS_PILOT_PASS tenant={tenant_code} "

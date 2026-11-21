@@ -1018,131 +1018,62 @@ def _notify_video_encoding_complete(video, tenant_id: int) -> None:
     import re
     _log = logging.getLogger(__name__)
 
-    uploaded_by = getattr(video, "uploaded_by", None)
-    if not uploaded_by:
-        # uploaded_by가 없으면 select로 가져오기 시도
-        from apps.domains.video.models import Video
-        v = Video.objects.filter(pk=video.id).select_related("uploaded_by").first()
-        uploaded_by = getattr(v, "uploaded_by", None) if v else None
-    if not uploaded_by:
-        _log.info("video_encoding_complete: no uploaded_by for video_id=%s, skip", video.id)
-        return
-
-    phone = getattr(uploaded_by, "phone", None) or ""
-    phone = phone.replace("-", "").strip()
-    if not phone:
-        _log.info("video_encoding_complete: uploaded_by has no phone, video_id=%s staff_id=%s", video.id, uploaded_by.id)
-        return
-
-    # 강의명/차시명 추출
-    lecture_name = ""
-    session_name = ""
-    try:
-        if video.session:
-            session_name = video.session.title or ""
-            if video.session.lecture:
-                lecture_name = video.session.lecture.name or ""
-    except Exception:
-        pass
-
+    from apps.domains.messaging.effective_templates import resolve_effective_template_status
+    from apps.domains.messaging.policy import get_owner_tenant_id, is_event_dry_run, is_messaging_disabled
     from apps.domains.messaging.selectors import get_auto_send_config
-    from apps.domains.messaging.alimtalk_content_builders import (
-        get_solapi_template_id,
-        build_unified_replacements,
-    )
+    from apps.domains.messaging.services.url_helpers import get_tenant_site_url
 
     trigger = "video_encoding_complete"
+    if not tenant_id or _tenant_id_from_video(video) != tenant_id:
+        return
+    lecture = getattr(getattr(video, "session", None), "lecture", None)
+    if lecture and lecture.tenant_id != tenant_id:
+        return
+    uploaded_by = getattr(video, "uploaded_by", None)
+    if not uploaded_by or uploaded_by.tenant_id != tenant_id or not uploaded_by.is_active:
+        return
+    phone = (uploaded_by.phone or "").replace("-", "").strip()
+    if not phone or is_messaging_disabled(tenant_id) or is_event_dry_run(trigger):
+        return
+
     config = get_auto_send_config(tenant_id, trigger)
-    if not config:
-        _log.info("video_encoding_complete: no auto-send config for tenant %s", tenant_id)
+    if not config or not config.enabled or config.message_mode != "alimtalk":
         return
-    if not config.enabled:
-        _log.info("video_encoding_complete: trigger disabled for tenant %s", tenant_id)
+    if not config.template or config.template.tenant_id != tenant_id or not config.tenant.is_active:
         return
 
-    # 템플릿 body 가져오기
-    template_body = "영상 인코딩이 완료되었습니다.\n앱에서 영상을 확인해 주세요."
-    if config and config.template:
-        template_body = config.template.body or template_body
-
-    # 테넌트 정보
-    tenant_name = ""
-    site_url = "https://hakwonplus.com"
-    try:
-        from apps.core.models import Tenant
-        t = Tenant.objects.filter(pk=tenant_id).first()
-        if t:
-            tenant_name = t.name or ""
-            if t.code:
-                site_url = f"https://{t.code}.hakwonplus.com"
-    except Exception:
-        pass
-
-    staff_name = getattr(uploaded_by, "name", "") or ""
-    context = {
-        "강의명": lecture_name,
-        "차시명": session_name or video.title or "",
+    owner_id = get_owner_tenant_id()
+    owner_config = config if tenant_id == owner_id else get_auto_send_config(owner_id, trigger)
+    if not owner_config:
+        return
+    effective = resolve_effective_template_status(owner_config)
+    if effective.source != "owner_exact" or not effective.is_approved:
+        return
+    # The approved provider envelope owns both the ID and the immutable wording.
+    template_body = (owner_config.template.body or "").strip()
+    if not template_body:
+        return
+    alimtalk_tid = effective.solapi_template_id
+    staff_name = uploaded_by.name or ""
+    values = {
+        "학원명": config.tenant.name,
+        "학원이름": config.tenant.name,
+        "학생이름": staff_name,
+        "학생이름2": staff_name[-2:],
+        "학생이름3": staff_name,
+        "선생님이름": staff_name,
+        "스태프이름": staff_name,
+        "강의명": lecture.name if lecture else "",
+        "차시명": getattr(video.session, "title", "") or video.title or "",
         "영상명": video.title or "",
+        "사이트링크": get_tenant_site_url(config.tenant),
     }
-
-    unified_tid = get_solapi_template_id(trigger)
-    approved_template_id = ""
-    if config and config.template:
-        approved_template_id = (getattr(config.template, "solapi_template_id", "") or "").strip()
-        if getattr(config.template, "solapi_status", "") != "APPROVED":
-            approved_template_id = ""
-
-    alimtalk_tid = unified_tid or approved_template_id
-    if not alimtalk_tid:
-        _log.warning(
-            "video_encoding_complete: approved alimtalk template missing, skip (tenant=%s video_id=%s)",
-            tenant_id,
-            video.id,
-        )
+    keys = list(dict.fromkeys(re.findall(r"#\{([^}]+)\}", template_body)))
+    if any(key not in values or not values[key] for key in keys):
+        _log.warning("video_encoding_complete: missing approved template variable, video_id=%s", video.id)
         return
-
-    # 발송 payload 구성
-    if unified_tid:
-        replacements = build_unified_replacements(
-            trigger=trigger,
-            content_body=template_body,
-            context=context,
-            tenant_name=tenant_name,
-            student_name=staff_name,  # 수신자 이름 (스태프)
-            site_url=site_url,
-        )
-        enqueue_text = template_body
-    else:
-        values = {
-            "학원명": tenant_name,
-            "학원이름": tenant_name,
-            "학생이름": staff_name,
-            "학생이름2": staff_name[-2:] if len(staff_name) >= 2 else staff_name,
-            "학생이름3": staff_name,
-            "선생님이름": staff_name,
-            "스태프이름": staff_name,
-            "강의명": lecture_name,
-            "차시명": session_name or video.title or "",
-            "영상명": video.title or "",
-            "사이트링크": site_url,
-        }
-        enqueue_text = template_body
-        replacements = []
-        for key, value in values.items():
-            text_value = str(value or "")
-            placeholder = f"#{{{key}}}"
-            if placeholder in enqueue_text:
-                replacements.append({"key": key, "value": text_value})
-            enqueue_text = enqueue_text.replace(placeholder, text_value)
-        remaining = re.findall(r"#\{([^}]+)\}", enqueue_text)
-        if remaining:
-            _log.warning(
-                "video_encoding_complete: unresolved template vars, skip (tenant=%s video_id=%s vars=%s)",
-                tenant_id,
-                video.id,
-                ",".join(sorted(set(remaining))),
-            )
-            return
+    replacements = [{"key": key, "value": values[key]} for key in keys]
+    enqueue_text = re.sub(r"#\{([^}]+)\}", lambda match: values[match[1]], template_body)
 
     message_kwargs = dict(
         tenant_id=tenant_id,
