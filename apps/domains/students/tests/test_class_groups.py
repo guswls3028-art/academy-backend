@@ -59,6 +59,20 @@ class ClassGroupTests(TestCase):
         self.assertEqual(self.call("get", "", {"view":"students"}).status_code, 403)
         self.assertEqual(get(url, page_info=1, grade="invalid").status_code, 400)
 
+    def test_director_picker_counts_all_candidates_before_paging(self):
+        admin = get_user_model().objects.create_user(tenant=self.tenant, username="t719_dawon-demo-admin")
+        TenantMembership.ensure_active(tenant=self.tenant, user=admin, role="admin")
+        group = ClassGroup.objects.create(tenant=self.tenant, name="테스트", kind="union", track="SKY")
+        path = f"{group.pk}/candidates/"
+        for number in reversed(range(1, 54)):
+            self.pupil(f"학생 {number}", "학원고")
+        params = {"page_info": 1, "search": "학 원 고", "offset": 50}
+        self.assertEqual(self.call("get", path, params).status_code, 403)
+        response = self.call("get", path, params, actor=admin, token={"dawon_demo_role": "admin"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 53)
+        self.assertEqual([row["name"] for row in response.data["results"]], ["학생 51", "학생 52", "학생 53"])
+
     def test_demo_admin_group_creation_assignment_and_member_course_projection(self):
         from apps.domains.students.models import ClassGroupLecture
         from apps.domains.lectures.models import Lecture

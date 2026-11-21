@@ -42,7 +42,7 @@ def student_page(qs, tenant, params, schools=()):
         qs = qs.filter(grade=IntegerField(min_value=1, max_value=12).run_validation(params["grade"]))
     term = compact(params.get("search", ""))[:100]
     digits = re.sub(r"\D", "", term) if re.fullmatch(r"[\d()+.-]+", term) else ""
-    allowed_schools = [s for s in schools if s]
+    allowed_schools = [s for s in schools if s is not None]
     # School formatting and name normalization must match class eligibility and the Excel picker.
     # Retain ordering keys only, not the full roster and its contact details, while counting.
     matches = []

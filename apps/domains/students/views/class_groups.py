@@ -9,6 +9,7 @@ from django.db.models import Count, Exists, F, OuterRef, Q, Window
 from django.db.models.functions import Coalesce, RowNumber
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_spectacular.openapi import AutoSchema
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
@@ -19,10 +20,18 @@ from rest_framework.response import Response
 from apps.support.lectures.class_group_cycles import assigned_class_group_ids, assign_cycle_status, class_group_cycles
 from apps.core.models import TenantMembership
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.students import dawon_schema as schema
+from apps.domains.students import dawon_schema
 from apps.domains.students.services.dawon_directory_search import directory, student_page, school_of, student_row
 from apps.domains.students.models import ClassGroup, ClassGroupLecture, Student
 from apps.support.students.enrollment_matrix_dependencies import create_class_group_lecture, enroll_class_group_members, native_group_lecture
+
+
+page_parameters = [OpenApiParameter("search", str), OpenApiParameter("grade", int),
+                   OpenApiParameter("offset", int), OpenApiParameter("limit", int)]
+candidate_parameters = [*page_parameters, OpenApiParameter("page_info", int, enum=[1]),
+                        OpenApiParameter("exact", bool), OpenApiParameter("parent_phone", str),
+                        OpenApiParameter("phone", str)]
+candidate_response = dawon_schema.variants(dawon_schema.array(dawon_schema.student), dawon_schema.student_page)
 
 
 def normalized(value):
@@ -126,7 +135,16 @@ def lecture_row(link, count):
             "chip_label": lecture.chip_label, "lecture_time": lecture.lecture_time}
 
 
+class ClassGroupSchema(AutoSchema):
+    def _is_list_view(self, serializer=None):
+        # This action explicitly describes both list responses and a directory page.
+        if self.view.action == "list":
+            return False
+        return super()._is_list_view(serializer)
+
+
 class ClassGroupViewSet(viewsets.ViewSet):
+    schema = ClassGroupSchema()
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     lookup_value_regex = r"[1-9]\d*"
 
@@ -188,8 +206,9 @@ class ClassGroupViewSet(viewsets.ViewSet):
                   "assigned_teacher": {"id":instructor.pk,"name":instructor.name} if instructor else None}
         return result
 
-    @extend_schema(operation_id="students_class_groups_list", responses={200: schema.variants(schema.group, schema.person, schema.student_page)},
-                   parameters=[OpenApiParameter("view", str, enum=["instructors","students"])])
+    @extend_schema(operation_id="students_class_groups_list", responses={200: dawon_schema.variants(dawon_schema.array(dawon_schema.group), dawon_schema.array(dawon_schema.person), dawon_schema.directory_page)},
+                   parameters=[OpenApiParameter("view", str, enum=["instructors","students"]), *page_parameters,
+                               OpenApiParameter("id", int), OpenApiParameter("group", int)])
     def list(self, request):
         if request.query_params.get("view") == "students":
             if not hasattr(request.auth, "get") or request.auth.get("dawon_demo_role") != "admin":
@@ -216,7 +235,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
             "instructor_name": g.assigned_teacher.name if g.assigned_teacher_id and g.assigned_teacher.tenant_id==request.tenant.pk
             else ", ".join(sorted(legacy[g.pk]))} for g in groups])
 
-    @extend_schema(responses={200: schema.teaching})
+    @extend_schema(responses={200: dawon_schema.teaching})
     @action(detail=False, methods=["get"])
     def teaching(self, request):
         from apps.domains.lectures.models import Session
@@ -245,7 +264,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
             rows[group_id]["recent"] = lesson
         return Response(list(rows.values()))
 
-    @extend_schema(request=GroupInput, responses={201: schema.group_detail})
+    @extend_schema(request=GroupInput, responses={201: dawon_schema.group_detail})
     def create(self, request):
         fields = values(GroupInput, request)
         teacher_id = fields.get("assigned_teacher_id")
@@ -261,7 +280,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
             raise serializers.ValidationError({"name": "같은 이름의 반이 이미 있습니다."})
         return Response(self.group_detail(group), status=201)
 
-    @extend_schema(request={"application/json": schema.record(assigned_teacher_id=schema.integer)}, responses={200: schema.group_detail})
+    @extend_schema(request={"application/json": dawon_schema.record(assigned_teacher_id=dawon_schema.integer)}, responses={200: dawon_schema.group_detail})
     @transaction.atomic
     def partial_update(self, request, pk):
         if set(request.data) != {"assigned_teacher_id"}:
@@ -284,14 +303,16 @@ class ClassGroupViewSet(viewsets.ViewSet):
             Lecture.objects.filter(tenant=request.tenant,pk__in=[link.lecture_id for link in targets]).update(name=staff.name)
         return Response(self.group_detail(group))
 
-    @extend_schema(responses={200: schema.group_detail})
+    @extend_schema(responses={200: dawon_schema.group_detail})
     def retrieve(self, request, pk):
         return Response(self.group_detail(self.group(pk)))
 
     def candidate_rows(self, group, qs, request, *, school=""):
         params = request.query_params
         if params.get("page_info") == "1":
-            return student_page(qs, request.tenant, params, (group.school if group.kind == "school" else "", school))
+            if not hasattr(request.auth, "get") or request.auth.get("dawon_demo_role") != "admin":
+                raise PermissionDenied()
+            return student_page(qs, request.tenant, params, (group.school if group.kind == "school" else None, school or None))
         offset_field = serializers.IntegerField(min_value=0)
         offset = offset_field.run_validation(params.get("offset", 0))
         search = normalized(params.get("search", "")).casefold()
@@ -319,14 +340,14 @@ class ClassGroupViewSet(viewsets.ViewSet):
                 break
         return rows
 
-    @extend_schema(responses={200: schema.variants(schema.array(schema.student), schema.student_page)})
+    @extend_schema(responses={200: candidate_response}, parameters=candidate_parameters)
     @action(detail=True, methods=["get"])
     def candidates(self, request, pk):
         group = self.group(pk)
         return Response(self.candidate_rows(group, Student.objects.exclude(class_groups=group), request))
 
-    @extend_schema(methods=["GET"], responses={200: schema.reference})
-    @extend_schema(methods=["PATCH"], request={"application/json": schema.record(top_reference_percent=schema.integer)}, responses={200: schema.reference})
+    @extend_schema(methods=["GET"], responses={200: dawon_schema.reference})
+    @extend_schema(methods=["PATCH"], request={"application/json": dawon_schema.record(top_reference_percent=dawon_schema.integer)}, responses={200: dawon_schema.reference})
     @action(detail=False, methods=["get", "patch"], url_path=r"for-lecture/(?P<lecture_id>[1-9]\d*)")
     def for_lecture(self, request, lecture_id):
         lecture = native_group_lecture(request.tenant, lecture_id)
@@ -346,9 +367,9 @@ class ClassGroupViewSet(viewsets.ViewSet):
                          "school": link.school if link else "", "can_edit_top_reference": can_edit,
                          "top_reference_percent": link.top_reference_percent if link else None})
 
-    @extend_schema(methods=["GET"], responses={200: schema.array(schema.student)})
-    @extend_schema(methods=["POST"], request={"application/json": schema.record(student_ids=schema.array(schema.integer))},
-                   responses={201: schema.record(created_count=schema.integer, student_ids=schema.array(schema.integer))})
+    @extend_schema(methods=["GET"], responses={200: candidate_response}, parameters=candidate_parameters)
+    @extend_schema(methods=["POST"], request={"application/json": dawon_schema.record(student_ids=dawon_schema.array(dawon_schema.integer))},
+                   responses={201: dawon_schema.record(created_count=dawon_schema.integer, student_ids=dawon_schema.array(dawon_schema.integer))})
     @action(detail=True, methods=["get", "post"], url_path=r"lectures/(?P<lecture_pk>[1-9]\d*)/late-students")
     @transaction.atomic
     def late_students(self, request, pk, lecture_pk):
@@ -368,7 +389,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
         enroll_class_group_members(tenant=request.tenant, lecture_id=link.lecture_id, student_ids=ids)
         return Response({"created_count": len(ids), "student_ids": ids}, status=201)
 
-    @extend_schema(request=MemberInput, responses={200: schema.group_detail})
+    @extend_schema(request=MemberInput, responses={200: dawon_schema.group_detail})
     @action(detail=True, methods=["patch"])
     @transaction.atomic
     def members(self, request, pk):
@@ -384,7 +405,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
         group.students.add(*add)
         return Response(self.group_detail(group))
 
-    @extend_schema(request=LectureInput, responses={201: schema.course})
+    @extend_schema(request=LectureInput, responses={201: dawon_schema.course})
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def lectures(self, request, pk):

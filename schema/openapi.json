@@ -54565,10 +54565,53 @@
         "parameters": [
           {
             "in": "query",
+            "name": "grade",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "group",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
             "name": "view",
             "schema": {
               "enum": [
-                "instructors"
+                "instructors",
+                "students"
               ],
               "type": "string"
             }
@@ -54579,9 +54622,9 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "anyOf": [
-                      {
+                  "anyOf": [
+                    {
+                      "items": {
                         "properties": {
                           "id": {
                             "type": "integer"
@@ -54620,7 +54663,10 @@
                         ],
                         "type": "object"
                       },
-                      {
+                      "type": "array"
+                    },
+                    {
+                      "items": {
                         "properties": {
                           "id": {
                             "type": "integer"
@@ -54634,10 +54680,98 @@
                           "name"
                         ],
                         "type": "object"
-                      }
-                    ]
-                  },
-                  "type": "array"
+                      },
+                      "type": "array"
+                    },
+                    {
+                      "properties": {
+                        "count": {
+                          "type": "integer"
+                        },
+                        "results": {
+                          "items": {
+                            "properties": {
+                              "courses": {
+                                "items": {
+                                  "properties": {
+                                    "group": {
+                                      "type": "integer"
+                                    },
+                                    "id": {
+                                      "type": "integer"
+                                    },
+                                    "title": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "title",
+                                    "group"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "grade": {
+                                "nullable": true,
+                                "type": "integer"
+                              },
+                              "groups": {
+                                "items": {
+                                  "properties": {
+                                    "id": {
+                                      "type": "integer"
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "name"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "id": {
+                                "type": "integer"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "parent_phone": {
+                                "type": "string"
+                              },
+                              "phone": {
+                                "type": "string"
+                              },
+                              "school": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "school",
+                              "grade",
+                              "phone",
+                              "parent_phone",
+                              "groups"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "count",
+                        "results"
+                      ],
+                      "type": "object"
+                    }
+                  ]
                 }
               }
             },
@@ -55532,11 +55666,70 @@
         "operationId": "students_class_groups_candidates_retrieve",
         "parameters": [
           {
+            "in": "query",
+            "name": "exact",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "grade",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
               "pattern": "^[1-9]\\d*$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_info",
+            "schema": {
+              "enum": [
+                1
+              ],
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "parent_phone",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "phone",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
               "type": "string"
             }
           }
@@ -55546,39 +55739,90 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "properties": {
-                      "grade": {
-                        "nullable": true,
-                        "type": "integer"
+                  "anyOf": [
+                    {
+                      "items": {
+                        "properties": {
+                          "grade": {
+                            "nullable": true,
+                            "type": "integer"
+                          },
+                          "id": {
+                            "type": "integer"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "parent_phone": {
+                            "type": "string"
+                          },
+                          "phone": {
+                            "type": "string"
+                          },
+                          "school": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "school",
+                          "grade",
+                          "phone",
+                          "parent_phone"
+                        ],
+                        "type": "object"
                       },
-                      "id": {
-                        "type": "integer"
-                      },
-                      "name": {
-                        "type": "string"
-                      },
-                      "parent_phone": {
-                        "type": "string"
-                      },
-                      "phone": {
-                        "type": "string"
-                      },
-                      "school": {
-                        "type": "string"
-                      }
+                      "type": "array"
                     },
-                    "required": [
-                      "id",
-                      "name",
-                      "school",
-                      "grade",
-                      "phone",
-                      "parent_phone"
-                    ],
-                    "type": "object"
-                  },
-                  "type": "array"
+                    {
+                      "properties": {
+                        "count": {
+                          "type": "integer"
+                        },
+                        "results": {
+                          "items": {
+                            "properties": {
+                              "grade": {
+                                "nullable": true,
+                                "type": "integer"
+                              },
+                              "id": {
+                                "type": "integer"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "parent_phone": {
+                                "type": "string"
+                              },
+                              "phone": {
+                                "type": "string"
+                              },
+                              "school": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "school",
+                              "grade",
+                              "phone",
+                              "parent_phone"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "count",
+                        "results"
+                      ],
+                      "type": "object"
+                    }
+                  ]
                 }
               }
             },
@@ -55723,6 +55967,20 @@
         "operationId": "students_class_groups_lectures_late_students_retrieve",
         "parameters": [
           {
+            "in": "query",
+            "name": "exact",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "grade",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
             "in": "path",
             "name": "id",
             "required": true,
@@ -55739,6 +55997,51 @@
               "pattern": "^[1-9]\\d*$",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_info",
+            "schema": {
+              "enum": [
+                1
+              ],
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "parent_phone",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "phone",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -55746,39 +56049,90 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "properties": {
-                      "grade": {
-                        "nullable": true,
-                        "type": "integer"
+                  "anyOf": [
+                    {
+                      "items": {
+                        "properties": {
+                          "grade": {
+                            "nullable": true,
+                            "type": "integer"
+                          },
+                          "id": {
+                            "type": "integer"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "parent_phone": {
+                            "type": "string"
+                          },
+                          "phone": {
+                            "type": "string"
+                          },
+                          "school": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "school",
+                          "grade",
+                          "phone",
+                          "parent_phone"
+                        ],
+                        "type": "object"
                       },
-                      "id": {
-                        "type": "integer"
-                      },
-                      "name": {
-                        "type": "string"
-                      },
-                      "parent_phone": {
-                        "type": "string"
-                      },
-                      "phone": {
-                        "type": "string"
-                      },
-                      "school": {
-                        "type": "string"
-                      }
+                      "type": "array"
                     },
-                    "required": [
-                      "id",
-                      "name",
-                      "school",
-                      "grade",
-                      "phone",
-                      "parent_phone"
-                    ],
-                    "type": "object"
-                  },
-                  "type": "array"
+                    {
+                      "properties": {
+                        "count": {
+                          "type": "integer"
+                        },
+                        "results": {
+                          "items": {
+                            "properties": {
+                              "grade": {
+                                "nullable": true,
+                                "type": "integer"
+                              },
+                              "id": {
+                                "type": "integer"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "parent_phone": {
+                                "type": "string"
+                              },
+                              "phone": {
+                                "type": "string"
+                              },
+                              "school": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "school",
+                              "grade",
+                              "phone",
+                              "parent_phone"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "count",
+                        "results"
+                      ],
+                      "type": "object"
+                    }
+                  ]
                 }
               }
             },
@@ -56843,12 +57197,55 @@
                         },
                         "roster": {
                           "items": {
+                            "properties": {
+                              "grade": {
+                                "nullable": true,
+                                "type": "integer"
+                              },
+                              "id": {
+                                "type": "integer"
+                              },
+                              "maximum": {
+                                "nullable": true,
+                                "type": "number"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "school": {
+                                "type": "string"
+                              },
+                              "score": {
+                                "nullable": true,
+                                "type": "number"
+                              },
+                              "status": {
+                                "type": "string"
+                              },
+                              "student_id": {
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "student_id",
+                              "name",
+                              "school",
+                              "grade",
+                              "score",
+                              "maximum",
+                              "status"
+                            ],
                             "type": "object"
                           },
                           "type": "array"
                         },
                         "title": {
                           "type": "string"
+                        },
+                        "top_reference_percent": {
+                          "nullable": true,
+                          "type": "integer"
                         }
                       },
                       "required": [
@@ -56858,6 +57255,7 @@
                         "average",
                         "highest",
                         "lowest",
+                        "top_reference_percent",
                         "distribution",
                         "roster",
                         "reviewed"
