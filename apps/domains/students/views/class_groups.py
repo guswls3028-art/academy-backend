@@ -20,17 +20,13 @@ from apps.support.lectures.class_group_cycles import assigned_class_group_ids, a
 from apps.core.models import TenantMembership
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.students import dawon_schema as schema
+from apps.domains.students.services.dawon_directory_search import directory, student_page, school_of, student_row
 from apps.domains.students.models import ClassGroup, ClassGroupLecture, Student
 from apps.support.students.enrollment_matrix_dependencies import create_class_group_lecture, enroll_class_group_members, native_group_lecture
 
 
 def normalized(value):
     return " ".join(unicodedata.normalize("NFKC", value or "").split())
-
-
-def school_of(student):
-    field = {"HIGH": "high_school", "MIDDLE": "middle_school", "ELEMENTARY": "elementary_school"}.get(student.school_type)
-    return normalized(getattr(student, field, "") if field else "")
 
 
 def with_student_access(queryset, tenant):
@@ -123,11 +119,6 @@ def summary(group, count, lecture_count):
             "school": group.school, "student_count": count, "lecture_count": lecture_count}
 
 
-def student_row(student):
-    return {"id": student.id, "name": student.name, "school": school_of(student), "grade": student.grade,
-            "phone": student.phone or "", "parent_phone": student.parent_phone or ""}
-
-
 def lecture_row(link, count):
     lecture = link.lecture
     return {"id": lecture.pk, "title": lecture.title, "period": link.period, "school": link.school, "start_date": lecture.start_date,
@@ -197,9 +188,13 @@ class ClassGroupViewSet(viewsets.ViewSet):
                   "assigned_teacher": {"id":instructor.pk,"name":instructor.name} if instructor else None}
         return result
 
-    @extend_schema(operation_id="students_class_groups_list", responses={200: schema.variants(schema.group, schema.person)},
-                   parameters=[OpenApiParameter("view", str, enum=["instructors"])])
+    @extend_schema(operation_id="students_class_groups_list", responses={200: schema.variants(schema.group, schema.person, schema.student_page)},
+                   parameters=[OpenApiParameter("view", str, enum=["instructors","students"])])
     def list(self, request):
+        if request.query_params.get("view") == "students":
+            if not hasattr(request.auth, "get") or request.auth.get("dawon_demo_role") != "admin":
+                raise PermissionDenied()
+            return Response(directory(request.tenant, request.query_params), headers={"Cache-Control":"private, no-store"})
         if request.query_params.get("view") == "instructors":
             if not hasattr(request.auth, "get") or request.auth.get("dawon_demo_role") != "admin":
                 raise PermissionDenied()
@@ -295,6 +290,8 @@ class ClassGroupViewSet(viewsets.ViewSet):
 
     def candidate_rows(self, group, qs, request, *, school=""):
         params = request.query_params
+        if params.get("page_info") == "1":
+            return student_page(qs, request.tenant, params, (group.school if group.kind == "school" else "", school))
         offset_field = serializers.IntegerField(min_value=0)
         offset = offset_field.run_validation(params.get("offset", 0))
         search = normalized(params.get("search", "")).casefold()
@@ -322,7 +319,7 @@ class ClassGroupViewSet(viewsets.ViewSet):
                 break
         return rows
 
-    @extend_schema(responses={200: schema.array(schema.student)})
+    @extend_schema(responses={200: schema.variants(schema.array(schema.student), schema.student_page)})
     @action(detail=True, methods=["get"])
     def candidates(self, request, pk):
         group = self.group(pk)

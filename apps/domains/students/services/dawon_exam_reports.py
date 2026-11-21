@@ -10,6 +10,7 @@ from apps.domains.exams.models import Exam, ExamQuestion
 from apps.domains.results.models import ResultItem
 from apps.domains.results.services.exam_analysis_metrics import load_exam_analysis
 from apps.domains.results.services.omr_subjective_completion import pending_omr_result_ids
+from apps.domains.students.services.dawon_directory_search import school_of
 from apps.domains.students.models import DawonExamReport, DawonExamReview, DawonReportHomework
 
 
@@ -100,8 +101,10 @@ def admin_exam_detail(tenant, exam, course_id, reviewer):
     confirmed = confirmed_scores(analysis)
     values = [score.total_score for score in confirmed.values()]
     distribution = [0] * 5
-    students = dict(Enrollment.objects.filter(pk__in=analysis.candidates, tenant=tenant,
-                                            lecture_id=course_id, student__tenant=tenant).values_list("pk", "student_id"))
+    students = {e.pk: e.student for e in Enrollment.objects.filter(pk__in=analysis.candidates, tenant=tenant,
+                     lecture_id=course_id, student__tenant=tenant).select_related("student").only(
+                         "pk", "student__id", "student__school_type", "student__high_school", "student__middle_school",
+                         "student__elementary_school", "student__grade")}
     roster = []
     for key, candidate in analysis.candidates.items():
         score = confirmed.get(key)
@@ -110,12 +113,14 @@ def admin_exam_detail(tenant, exam, course_id, reviewer):
             # Intervals [0,20), [20,40), [40,60), [60,80), [80,100].
             index = min(4, int(5 * score.total_score / score.max_score))
             distribution[index] += 1
-        roster.append({"id": key, "student_id": students[key], "name": candidate.student_name,
+        roster.append({"id": key, "student_id": students[key].pk, "name": candidate.student_name,
+                       "school": school_of(students[key]), "grade": students[key].grade,
                        "score": score.total_score if score else None,
                        "maximum": score.max_score if score else None,
                        "status": "채점 완료" if score else "미응시" if row is None or row.status == "NOT_SUBMITTED" else "채점 대기"})
     roster.sort(key=lambda r: (r["score"] is None, -(r["score"] or 0), r["name"], r["id"]))
     return {"title": exam.title, "assigned": len(roster), "graded": len(confirmed),
+            "top_reference_percent": analysis.insights["score_summary"].get("top_reference_percent"),
             "average": mean(values) if values else None, "highest": max(values) if values else None,
             "lowest": min(values) if values else None, "distribution": distribution, "roster": roster,
             "reviewed": DawonExamReview.objects.filter(exam=exam, lecture_id=course_id, reviewer=reviewer).exists()}

@@ -32,6 +32,7 @@ group_properties = dict(id=integer, name=text, kind=text, track=text, school=tex
 group_counts = dict(student_count=integer, lecture_count=integer)
 group = record(**group_properties, **group_counts, instructor_name=text)
 student = record(id=integer, name=text, school=text, grade=nullable(integer), phone=text, parent_phone=text)
+student_page = record(count=integer, results=array(student))
 member = record(**student["properties"], eligible=boolean)
 member["properties"]["course_ids"] = array(integer)  # Only shown to a director.
 course = record(id=integer, title=text, period=text, school=text, start_date=nullable(day), end_date=nullable(day),
@@ -69,7 +70,7 @@ operations = variants(
     record(student=text, course=text, exams=rows, homework=rows, counsel=rows, clinic=rows, can_follow=boolean,
            today=day, slots=rows),
     record(title=text, assigned=integer, graded=integer, average=nullable(number), highest=nullable(number),
-           lowest=nullable(number), distribution=array(integer), roster=rows, reviewed=boolean),
+           lowest=nullable(number), top_reference_percent=nullable(integer), distribution=array(integer), roster=rows, reviewed=boolean),
 )
 operation_patch = variants(
     record(position=position), record(exam=integer, course=integer, reviewed=boolean),

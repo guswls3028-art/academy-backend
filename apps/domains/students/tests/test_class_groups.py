@@ -34,6 +34,31 @@ class ClassGroupTests(TestCase):
         return Student.objects.create(tenant=tenant, user=user, name=name, ps_number=name, omr_code=str(user.pk).zfill(8),
                                       school_type="HIGH", high_school=school)
 
+    def test_director_directory_and_paged_picker_keep_eligible_scope(self):
+        admin = get_user_model().objects.create_user(tenant=self.tenant, username="t719_dawon-demo-admin")
+        TenantMembership.ensure_active(tenant=self.tenant, user=admin, role="admin")
+        token = {"dawon_demo_role": "admin"}
+        def get(path="", **query):
+            return self.call("get", path, query, actor=admin, token=token)
+        students = [self.pupil("학생 "+str(n), "샘플고") for n in (10, 2, 1)]
+        Student.objects.filter(pk__in=[s.pk for s in students]).update(grade=2, parent_phone="010-1234-5678")
+        group = ClassGroup.objects.create(tenant=self.tenant, name="내신반", kind="school", school="샘플고")
+        group.students.add(students[0])
+        other = self.pupil("다른 학교", "다른고")
+        self.pupil("다른 학원", "샘플고", self.other)
+        url = f"{group.pk}/candidates/"
+        data = get(url, page_info=1, search="1234-5678", grade=2, offset=1, limit=1).data
+        self.assertEqual((data["count"], [r["id"] for r in data["results"]]), (2, [students[1].pk]))
+        self.assertEqual(get(url, page_info=1, grade=3).data["count"], 0)
+        self.assertIsInstance(get(url).data, list)
+        self.assertEqual(get(view="students", search="학생", limit=2).data["count"], 3)
+        self.assertEqual(get(view="students", search="학생1").data["count"], 2)
+        self.assertEqual(get(view="students", id=students[0].pk).data["results"][0]["groups"],
+                         [{"id":group.pk, "name":group.name}])
+        self.assertEqual(get(view="students", id=other.pk).data["results"][0]["groups"], [])
+        self.assertEqual(self.call("get", "", {"view":"students"}).status_code, 403)
+        self.assertEqual(get(url, page_info=1, grade="invalid").status_code, 400)
+
     def test_demo_admin_group_creation_assignment_and_member_course_projection(self):
         from apps.domains.students.models import ClassGroupLecture
         from apps.domains.lectures.models import Lecture
