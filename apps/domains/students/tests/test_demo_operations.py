@@ -20,7 +20,7 @@ from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models.homework import Homework
 from apps.domains.homework_results.models.score import HomeworkScore
 from apps.domains.submissions.models import Submission
-from apps.domains.results.models import ExamAttempt, Result
+from apps.domains.results.models import ExamAttempt, Result, ScoreEditDraft
 from apps.domains.staffs.models import Staff
 from apps.domains.students.models import ClassGroup, ClassGroupLecture, Student
 from apps.domains.teachers.models import Teacher
@@ -308,7 +308,6 @@ class DemoOperationsTests(TestCase):
         response = operation("get","lectures/attendance/",{"session":lesson.pk})
         entries = response.data.get("results",[]) if isinstance(response.data,dict) else response.data
         self.assertEqual([entry["status"] for entry in entries], ["PRESENT"])
-        from apps.domains.results.models.score_edit_draft import ScoreEditDraft
         homework = Homework.objects.create(tenant=self.tenant, session=lesson, title="차시 과제")
         HomeworkAssignment.objects.create(tenant=self.tenant, homework=homework, session=lesson, enrollment=enrollment)
         ScoreEditDraft.objects.create(tenant=self.tenant, session=lesson, editor_user=self.user,

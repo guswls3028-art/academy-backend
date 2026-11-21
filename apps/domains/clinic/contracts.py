@@ -7,7 +7,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from .dawon_demo import LOCATION as DAWON_CLINIC_LOCATION, MEMO as DAWON_CLINIC_MEMO
-from .dawon_demo import ensure_demo_clinic_sessions, is_demo_tenant
+from .dawon_demo import ensure_demo_clinic_sessions, is_demo_tenant, reviewable_sample_request, visible_to_clinic_teacher
 from apps.domains.clinic.models import SessionParticipant
 from apps.domains.clinic.time_ranges import participant_booking_window, session_window
 
@@ -66,6 +66,7 @@ def is_clinic_booking_reminder_active(*, tenant_id: int, origin_id: str, now=Non
 
 __all__ = [
     "DAWON_CLINIC_LOCATION", "DAWON_CLINIC_MEMO", "ensure_demo_clinic_sessions", "is_demo_tenant",
+    "reviewable_sample_request", "visible_to_clinic_teacher",
     "is_clinic_participant_reminder_active",
     "is_clinic_booking_reminder_active",
     "participant_booking_window",

@@ -54,7 +54,7 @@ def care_directory(tenant, query, *, teacher=None):
         if kind != "clinic" or (group and not visible_groups.filter(pk=group.pk).exists()):
             raise NotFound()
     if kind == "clinic":
-        from apps.domains.clinic.dawon_demo import reviewable_sample_request, visible_to_clinic_teacher
+        from apps.domains.clinic.contracts import reviewable_sample_request, visible_to_clinic_teacher
         source = SessionParticipant.objects.filter(tenant=tenant, student__tenant=tenant, student__deleted_at__isnull=True).filter(
             Q(session__isnull=True) | Q(session__tenant=tenant),
         ).filter(Q(enrollment__isnull=True) | Q(enrollment__tenant=tenant, enrollment__lecture__tenant=tenant, enrollment__student_id=F("student_id")))

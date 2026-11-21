@@ -12,7 +12,7 @@ from apps.domains.clinic.models import Session
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.lectures.models import Lecture
 from apps.domains.students.models import ClassGroup, ClassGroupLecture, Student
-from apps.domains.students.views.demo_operations import DawonDemoOperationsView
+from django.urls import resolve
 
 
 @override_settings(DAWON_REVIEW_CLASS_GROUPS=True)
@@ -80,7 +80,7 @@ class DawonClinicTests(TestCase):
         request=APIRequestFactory().get("/api/v1/students/demo-operations/", {"view":"care","kind":"clinic",**scope})
         request.tenant=self.tenant
         force_authenticate(request,user=self.users[role],token={"dawon_demo_role":role})
-        return DawonDemoOperationsView.as_view()(request)
+        return resolve(request.path).func(request)
 
     def test_director_approval_and_teacher_scope(self):
         from apps.domains.clinic.models import SessionParticipant
