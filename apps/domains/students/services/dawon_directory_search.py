@@ -69,6 +69,7 @@ def directory(tenant, params, *, authorized_groups=None):
     groups = ClassGroup.objects.filter(tenant=tenant)
     if authorized_groups is not None:
         groups = groups.filter(pk__in=authorized_groups.values("pk"))
+    visible_groups = groups
     filtered = authorized_groups is not None
     for key, choices in (("kind", ClassGroup.Kind.values), ("track", ClassGroup.Track.values)):
         if params.get(key):
@@ -92,7 +93,7 @@ def directory(tenant, params, *, authorized_groups=None):
     page = student_page(qs, tenant, params)
     ids = [s["id"] for s in page["results"]]
     labels = defaultdict(list)
-    for student, pk, name in groups.filter(students__in=ids).order_by("name", "pk").values_list("students", "pk", "name"):
+    for student, pk, name in visible_groups.filter(students__in=ids).order_by("name", "pk").values_list("students", "pk", "name"):
         labels[student].append({"id": pk, "name": name})
     for student in page["results"]:
         student["groups"] = labels[student["id"]]
@@ -100,7 +101,7 @@ def directory(tenant, params, *, authorized_groups=None):
         enrollments = Enrollment.objects.filter(tenant=tenant, student_id=ids[0], student__tenant=tenant, status="ACTIVE",
             lecture__tenant=tenant, lecture__class_group_link__group__tenant=tenant).order_by("lecture__title", "pk")
         if authorized_groups is not None:
-            enrollments = enrollments.filter(lecture__class_group_link__group__in=groups)
+            enrollments = enrollments.filter(lecture__class_group_link__group__in=visible_groups)
         page["results"][0]["courses"] = [{"id": course, "title": title, "group": group, "color": color, "chip_label": label}
             for course, title, group, color, label in enrollments.values_list(
                 "lecture_id", "lecture__title", "lecture__class_group_link__group_id", "lecture__color", "lecture__chip_label")]

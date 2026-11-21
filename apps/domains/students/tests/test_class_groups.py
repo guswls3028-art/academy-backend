@@ -280,13 +280,19 @@ class ClassGroupTests(TestCase):
         own_group, foreign_group = ClassGroup.objects.get(pk=mine), ClassGroup.objects.get(pk=other)
         own_group.students.add(child)
         foreign_group.students.add(child, outside)
+        second = ClassGroup.objects.create(tenant=self.tenant, assigned_teacher=teacher, name="원내 내신반", kind="school", school="중앙고")
+        second.students.add(child)
         def directory(**params):
             return self.call("get", "", {"view":"students", **params}, **role).data
         self.assertEqual(directory(kind="union", track="SKY")["count"], 1)
-        self.assertEqual(directory(id=child.pk)["results"][0]["groups"], [{"id":mine, "name":own_group.name}])
+        expected = {mine, second.pk}
+        detail = directory(kind="school", group=second.pk, id=child.pk)
+        self.assertEqual(detail["count"], 1)
+        self.assertEqual({g["id"] for g in detail["results"][0]["groups"]}, expected)
+        self.assertEqual(directory()["count"], 1)
         self.assertEqual(directory(id=outside.pk)["count"], 0)
         self.assertEqual(directory(group=other)["count"], 0)
-        self.assertEqual({row["id"] for row in self.call("get").data}, {mine, other})
+        self.assertEqual({row["id"] for row in self.call("get").data}, {mine, other, second.pk})
 
     def test_school_roster_atomic_and_native_lecture(self):
         one = self.pupil("first", " Ａ고 ")
