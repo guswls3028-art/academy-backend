@@ -107,6 +107,41 @@ class ExamCandidateSessionScopeTests(TestCase):
             [self.first.id],
         )
 
+    def test_unmatched_filter_precedes_limit_and_ignores_archived_and_unassigned_scans(self):
+        for n in range(99):
+            name = f"A{n:02}"
+            enrollment = create_enrollment_fixture(
+                tenant=self.tenant, lecture=self.session.lecture, status="ACTIVE",
+                student=_make_student(self.tenant, name, name=name, phone=f"0108888{n:04}"),
+            )
+            SessionEnrollment.objects.create(tenant=self.tenant, session=self.session, enrollment=enrollment)
+            self.make_scan(enrollment=enrollment)
+        self.make_scan()
+        for status in (Submission.Status.FAILED, Submission.Status.SUPERSEDED):
+            archived = self.make_scan(enrollment=self.first)
+            archived.status = status
+            archived.save(update_fields=["status"])
+
+        for scope in ({}, {"session_id": self.session.id}):
+            def candidates(**query):
+                response = self.candidates(**scope, **query)
+                self.assertEqual(response.status_code, 200, response.data)
+                return response.data["candidates"] if scope else response.data
+
+            self.assertEqual(len(candidates()), 50)
+            self.assertTrue(all(row["already_matched"] for row in candidates(q="A00")))
+            self.assertEqual(candidates(q="A00", unmatched_only=1), [])
+            expected = [self.first.id] if scope else [self.first.id, self.second.id]
+            remaining = candidates(unmatched_only=1)
+            self.assertEqual([row["enrollment_id"] for row in remaining], expected)
+            self.assertFalse(any(row["already_matched"] for row in remaining))
+            self.assertEqual(candidates(q="5678", unmatched_only=1)[0]["enrollment_id"], self.first.id)
+
+        self.make_scan(enrollment=self.first)
+        response = self.candidates(session_id=self.session.id, unmatched_only=1)
+        self.assertEqual(response.data["candidates"], [])
+        self.assertEqual(self.candidates(session_id=self.unlinked_session.id, unmatched_only=1).status_code, 400)
+
     def test_manual_matching_and_duplicate_adoption_reject_other_session(self):
         self.set_explicit_roster()
         submission = Submission.objects.create(
