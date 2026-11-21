@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from django.db.models import F, Q, Value
+from django.db.models import F, Q, QuerySet, Value
 from django.db.models.functions import Replace
 
 
@@ -104,7 +104,9 @@ def active_exam_review_enrollments(*, tenant):
     )
 
 
-def exam_candidate_rows(*, tenant, exam_id: int, q: str, session_id: int | None = None) -> CandidateRows:
+def exam_candidate_rows(
+    *, tenant, exam_id: int, q: str, session_id: int | None = None, exclude_enrollment_ids: QuerySet | None = None,
+) -> CandidateRows:
     from apps.domains.exams.models import Exam, ExamEnrollment
 
     exam_id = int(exam_id)
@@ -128,6 +130,8 @@ def exam_candidate_rows(*, tenant, exam_id: int, q: str, session_id: int | None 
         enrollments = enrollments.filter(exam_review_roster_filter(
             tenant=tenant, exam_id=exam_id, session_id=session_id, include_attendance=has_exam_targets,
         ))
+    if exclude_enrollment_ids is not None:
+        enrollments = enrollments.exclude(id__in=exclude_enrollment_ids)
     enrollments = _filter_enrollments_for_query(
         enrollments, q=q, phone_search="session" if session_id is not None else "exam",
     )
