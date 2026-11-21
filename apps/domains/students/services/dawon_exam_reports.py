@@ -131,7 +131,7 @@ def admin_exam_detail(tenant, exam, course_id, reviewer):
             "lowest": min(values) if values else None, "distribution": distribution, "roster": roster,
             "reviewed": DawonExamReview.objects.filter(exam=exam, lecture_id=course_id, reviewer=reviewer).exists()}
 
-def student_results(tenant, params):
+def student_results(tenant, params, *, enrollment=None):
     """One row per active class-course student; batch-load exam assignments and confirmed first attempts."""
 
     sort = ChoiceField(choices=("name", "recent", "decline", "improvement", "lowest")).run_validation(params.get("sort") or "name")
@@ -139,6 +139,8 @@ def student_results(tenant, params):
     page = IntegerField(min_value=1, max_value=1000000).run_validation(params.get("page", 1))
     scope = Enrollment.objects.filter(tenant=tenant, status="ACTIVE", student__tenant=tenant, student__deleted_at__isnull=True,
                                       lecture__tenant=tenant, lecture__class_group_link__group__tenant=tenant)
+    if enrollment is not None:
+        scope = scope.filter(pk=enrollment.pk)
     for key, field in (("group", "lecture__class_group_link__group_id"), ("lecture", "lecture_id")):
         if params.get(key):
             scope = scope.filter(**{field: IntegerField(min_value=1, max_value=2**63-1).run_validation(params[key])})
@@ -200,6 +202,9 @@ def student_results(tenant, params):
                          and point["date"] and point["date"] < latest["date"] and point["percent"] is not None), None)
         delta = latest["percent"] - previous["percent"] if previous and latest["percent"] is not None and previous["percent"] is not None else None
         row.update(latest=latest, previous=previous, delta_percent=delta, status=latest["status"] if latest else "no_exam")
+        if enrollment is not None:
+            row["exams"] = [{"title": p["title"], "date": p["date"], "score": p["score"],
+                             "maximum": p["max_score"], "state": p["status"]} for p, _ in reversed(points)]
         trend = params.get("trend")
         if trend == "decline" and (delta is None or delta >= 0):
             continue

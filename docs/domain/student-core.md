@@ -1182,3 +1182,5 @@ R25 seed_dawon_staff는 전용 공개 강사 계정의 사번·신원 검증 후
 ### 다원 데모 학생 조회 및 등록 상태
 
 `GET /api/v1/students/class-groups/?view=students`에서 원장은 전체 재원생(미편성 포함), 교사는 담당 반에 속한 학생의 합집합을 조회한다. 상세 반·수강도 교사 담당 반으로 제한한다. `kind`, `track`, `group`, `lecture`, `grade`, `search`, `id`는 함께 적용되며 `count`는 페이지 이전의 중복 없는 학생 수다. 원장 등록 후보의 `page_info=1&include_status=1`은 검색어가 있으면 해당 학교 조건의 기존 배정·수강 이력도 표시한다. 상태는 `eligible/in_group/enrolled/previously_enrolled/needs_group`이며 빈 검색은 등록 가능 대상만 반환한다. 수강 이력이 있는 학생의 중복 등록은 기존 저장 검증에서 거부한다. Excel 정확 일치 요청의 배열 응답은 유지한다.
+
+다원 원장 체험은 전용 반·직원·분석 API와 함께 학원플러스의 차시 운영 API를 사용한다. 격리 다원 테넌트에서만 강의·차시·출결·성적·시험·과제와 영상에 필요한 검증된 요청을 허용하며 각 도메인의 학생·수강·강의 소유권 검증을 거친다. 공개 체험에서 외부 발송, 결제, 계정 관리 및 파일 영상 처리 작업은 차단한다. 기존 강의와 차시 기록을 그대로 사용한다. 관련 권한과 결과는 [학생 성적 콘솔](student-performance-console.md) 및 [클리닉](clinic-booking.md)에서 관리한다.

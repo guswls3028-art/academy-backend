@@ -726,6 +726,19 @@ class DawonTeacherAlertSettings(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=("tenant", "teacher"), name="students_dawon_teacher_alerts")]
 
+class DawonAlertDisposition(models.Model):
+    enrollment = models.ForeignKey("enrollment.Enrollment", on_delete=models.CASCADE)
+    rule = models.CharField(max_length=32)
+    source = models.PositiveBigIntegerField()
+    detail = models.TextField()
+    value = models.FloatField()
+    completed_at = models.DateTimeField(null=True)
+    completed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("enrollment", "rule", "source"), name="dawon_alert_occurrence")]
+
+
 class DawonExamReport(models.Model):
     """Published assessments belonging to the same course, lesson and report format."""
     exam = models.OneToOneField("exams.Exam", on_delete=models.CASCADE)

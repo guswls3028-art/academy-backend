@@ -135,3 +135,33 @@ class TeacherAlertsTests(TestCase):
         self.assertEqual(response.status_code,200)
         self.assertFalse({"recent_exam_drop","top_reference_gap"}.intersection(self.alerts()))
         self.assertEqual(self.call(actor=self.user("teacher","other-teacher")).data["alerts"],[])
+
+    def test_staff_queue_persists_one_occurrence_and_reopens_across_roles(self):
+        for session in self.sessions:
+            Attendance.objects.create(tenant=self.tenant, session=session, enrollment=self.enrollment, status="ABSENT")
+        director = self.user("admin")
+        other = self.user("teacher", "other")
+        def feed(actor, status="pending", **filters):
+            return self.call("get", {"queue":"list", "status":status, **filters}, actor=actor).data
+        def summary(actor):
+            return self.call("get", {"queue":"summary"}, actor=actor).data
+        key = feed(self.teacher)["alerts"][0]["key"]
+        payload = {"key":key, "status":"completed"}
+        self.assertEqual(self.call("patch",payload, actor=other).status_code, 404)
+        self.assertEqual(summary(other)["pending"], 0)
+        self.assertEqual(self.call("patch",payload, actor=director).status_code, 204)
+        first = feed(self.teacher, "completed")["alerts"][0]
+        self.assertEqual(self.call("patch",payload, actor=self.teacher).status_code, 204)
+        self.assertEqual(first["completed_at"], feed(director, "completed")["alerts"][0]["completed_at"])
+        self.assertEqual(summary(self.teacher)["pending"], 0)
+        self.assertEqual(feed(director, "completed", rule="exam_drop")["count"], 0)
+        self.assertEqual(feed(director, "completed", q="학생")["count"], 1)
+        self.assertEqual(feed(other, "completed")["count"], 0)
+        third = Session.objects.create(lecture=self.lecture, order=3, title="3", date=date(2020,1,3))
+        SessionEnrollment.objects.create(tenant=self.tenant,enrollment=self.enrollment,session=third)
+        Attendance.objects.create(tenant=self.tenant,session=third,enrollment=self.enrollment,status="ABSENT")
+        self.assertNotEqual(feed(self.teacher)["alerts"][0]["key"], key)
+        self.assertEqual(summary(director)["pending"], 1)
+        self.assertEqual(self.call("patch",{**payload,"status":"pending"},actor=self.teacher).status_code, 204)
+        self.assertEqual(summary(director)["pending"], 2)
+        self.assertEqual(feed(director,"completed")["count"], 0)

@@ -206,18 +206,37 @@ class ClassGroupViewSet(viewsets.ViewSet):
                   "assigned_teacher": {"id":instructor.pk,"name":instructor.name} if instructor else None}
         return result
 
-    @extend_schema(operation_id="students_class_groups_list", responses={200: dawon_schema.variants(dawon_schema.array(dawon_schema.group), dawon_schema.array(dawon_schema.person), dawon_schema.directory_page)},
-                   parameters=[OpenApiParameter("view", str, enum=["instructors","students"]), *page_parameters,
+    @extend_schema(operation_id="students_class_groups_list", responses={200: dawon_schema.variants(dawon_schema.array(dawon_schema.group), dawon_schema.array(dawon_schema.person), dawon_schema.directory_page, dawon_schema.directory_scores)},
+                   parameters=[OpenApiParameter("view", str, enum=["instructors","students","student_scores"]), *page_parameters,
                                OpenApiParameter("kind", str, enum=ClassGroup.Kind.values), OpenApiParameter("track", str, enum=ClassGroup.Track.values),
-                               OpenApiParameter("id", int), OpenApiParameter("group", int), OpenApiParameter("lecture", int)])
+                               OpenApiParameter("id", int), OpenApiParameter("group", int), OpenApiParameter("lecture", int),
+                               OpenApiParameter("student", int), OpenApiParameter("course", int)])
     def list(self, request):
-        if request.query_params.get("view") == "students":
+        if request.query_params.get("view") in {"students", "student_scores"}:
             role = request.auth.get("dawon_demo_role") if hasattr(request.auth, "get") else None
             if role not in ("admin", "teacher"):
                 raise PermissionDenied()
             if role == "teacher" and (request.user.tenant_id != request.tenant.pk or not
                     TenantMembership.objects.filter(tenant=request.tenant, user=request.user, role="teacher", is_active=True).exists()):
                 raise PermissionDenied()
+            if request.query_params["view"] == "student_scores":
+                from apps.domains.students.services.dawon_directory_search import active_students
+                from apps.domains.students.services.dawon_followup import selected_enrollment
+                from apps.domains.students.services.dawon_exam_reports import student_results
+                row = selected_enrollment(request.tenant, request.query_params, include_past=True)
+                groups = self.groups().filter(course_links__lecture=row.lecture)
+                students = Student.objects.filter(pk=row.student_id)
+                if self.teacher_scope:
+                    students = students.filter(class_groups__in=self.groups())
+                if not groups.exists() or not active_students(students, request.tenant).exists():
+                    raise NotFound()
+                entries = student_results(request.tenant, {}, enrollment=row)["rows"]
+                if not entries:
+                    raise NotFound()
+                result = entries[0]
+                return Response({"exams": result["exams"], "delta_percent": result["delta_percent"],
+                                 "previous_title": (result["previous"] or {}).get("title")},
+                                headers={"Cache-Control": "private, no-store"})
             return Response(directory(request.tenant, request.query_params,
                                       authorized_groups=self.groups() if role == "teacher" else None), headers={"Cache-Control":"private, no-store"})
         if request.query_params.get("view") == "instructors":

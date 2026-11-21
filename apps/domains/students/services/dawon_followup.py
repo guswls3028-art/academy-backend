@@ -24,8 +24,10 @@ def links_for(tenant):
     return ClassGroupLecture.objects.filter(group__tenant=tenant, lecture__tenant=tenant, lecture__is_active=True)
 
 
-def class_alerts(tenant, group):
+def alert_rows(tenant, group=None, lecture_ids=None):
     links = links_for(tenant)
+    if lecture_ids is not None:
+        links = links.filter(lecture_id__in=lecture_ids)
     if group is not None:
         links = links.filter(group_id=positive(group))
     links = list(links.values("group_id","group__name","lecture_id","lecture__title","reference_teacher_id"))
@@ -47,7 +49,13 @@ def class_alerts(tenant, group):
             link = by_course[row["lecture_id"]]
             alerts.append({**row, "group_id":link["group_id"], "group_name":link["group__name"]})
     alerts.sort(key=lambda r: (r["group_name"],r["student_name"],r["lecture_id"],r["rule"]))
-    return {"count":len(alerts),"alerts":alerts}
+    return alerts
+
+
+def class_alerts(tenant, group):
+    from apps.domains.students.services.dawon_alert_queue import scoped_rows
+    pending = [row for row in scoped_rows(tenant, links_for(tenant), group) if row["status"] == "pending"]
+    return {"count":len(pending),"alerts":pending}
 
 
 def selected_enrollment(tenant, data, *, include_past=False):

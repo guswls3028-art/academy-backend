@@ -253,7 +253,8 @@ class DemoOperationsTests(TestCase):
                 request = getattr(factory, method)(path)
                 request.tenant = self.tenant
                 _validate_dawon_demo_access(request, token)
-                for role in ("admin", "student", "guardian"):
+                _validate_dawon_demo_access(request, {**token, "dawon_demo_role": "admin"})
+                for role in ("student", "guardian"):
                     with self.assertRaises(PermissionDenied):
                         _validate_dawon_demo_access(request, {**token, "dawon_demo_role": role})
                 request.tenant = self.other
@@ -267,3 +268,71 @@ class DemoOperationsTests(TestCase):
                 request = getattr(factory, method)(path)
                 request.tenant = self.tenant
                 _validate_dawon_demo_access(request, token)
+
+    def test_director_uses_native_session_workspaces_and_persists_attendance(self):
+        from django.urls import resolve
+        from apps.domains.attendance.models import Attendance
+        from apps.domains.enrollment.models import SessionEnrollment
+
+        course = Lecture.objects.create(tenant=self.tenant, title="관리자 과정")
+        lesson = Session.objects.create(lecture=course, title="1차시", order=1, date=timezone.localdate())
+        pupil = get_user_model().objects.create_user(tenant=self.tenant,username="course-pupil")
+        TenantMembership.ensure_active(tenant=self.tenant, user=pupil, role="student")
+        student = Student.objects.create(tenant=self.tenant,user=pupil,name="가학생",ps_number="test",omr_code="00000001")
+        enrollment = Enrollment.objects.create(tenant=self.tenant,lecture=course,student=student,status="ACTIVE")
+        SessionEnrollment.objects.create(tenant=self.tenant,session=lesson,enrollment=enrollment)
+        mark = Attendance.objects.create(tenant=self.tenant,session=lesson,enrollment=enrollment,status="UNSET")
+
+        def operation(method, path, data=None):
+            req = getattr(APIRequestFactory(),method)("/api/v1/"+path, data or {}, format="json",
+                HTTP_X_SCORE_EDITOR_CLIENT="course-operations", HTTP_X_SCORE_SESSION_ID=str(lesson.pk))
+            req.tenant = self.tenant
+            _validate_dawon_demo_access(req, self.token)
+            force_authenticate(req, user=self.user, token=self.token)
+            match = resolve(req.path)
+            return match.func(req, **match.kwargs)
+
+        reads = [(f"lectures/lectures/{course.pk}/",{}), ("lectures/sessions/",{"lecture":course.pk}),
+                 (f"lectures/sessions/{lesson.pk}/",{}), (f"lectures/sessions/{lesson.pk}/schedules/",{}),
+                 ("lectures/attendance/",{"session":lesson.pk}), (f"results/admin/sessions/{lesson.pk}/scores/",{}),
+                 (f"results/admin/sessions/{lesson.pk}/exams/",{}), ("homeworks/",{"session":lesson.pk}),
+                 ("media/videos/",{"session":lesson.pk})]
+        for path, params in reads:
+            with self.subTest(path=path):
+                response = operation("get",path,params)
+                self.assertEqual(response.status_code,200,response.data)
+        response = operation("patch",f"lectures/attendance/{mark.pk}/",{"status":"PRESENT"})
+        self.assertEqual(response.status_code,200,response.data)
+        mark.refresh_from_db()
+        self.assertEqual(mark.status,"PRESENT")
+        response = operation("get","lectures/attendance/",{"session":lesson.pk})
+        entries = response.data.get("results",[]) if isinstance(response.data,dict) else response.data
+        self.assertEqual([entry["status"] for entry in entries], ["PRESENT"])
+        from apps.domains.results.models.score_edit_draft import ScoreEditDraft
+        homework = Homework.objects.create(tenant=self.tenant, session=lesson, title="차시 과제")
+        HomeworkAssignment.objects.create(tenant=self.tenant, homework=homework, session=lesson, enrollment=enrollment)
+        ScoreEditDraft.objects.create(tenant=self.tenant, session=lesson, editor_user=self.user,
+                                      payload={"client_id":"course-operations", "changes":[]})
+        saved = operation("patch", "homework/scores/quick/", {"session_id":lesson.pk, "homework_id":homework.pk,
+                          "enrollment_id":enrollment.pk, "score":87.5})
+        self.assertEqual(saved.status_code, 200, saved.data)
+        retrieved = operation("get", f"homework/scores/{saved.data['id']}/")
+        self.assertEqual(retrieved.status_code, 200, retrieved.data)
+        self.assertEqual(float(retrieved.data["score"]), 87.5)
+        link = operation("post", "media/videos/youtube/", {"session":lesson.pk, "title":"복습 영상",
+                         "url":"https://www.youtube.com/watch?v=abcdefghijk"})
+        self.assertEqual(link.status_code, 201, link.data)
+        video_id = link.data["video"]["id"]
+        video = operation("get", f"media/videos/{video_id}/")
+        self.assertEqual(video.status_code, 200, video.data)
+        self.assertEqual(video.data["title"], "복습 영상")
+        playback = APIRequestFactory().post(f"/api/v1/student/video/videos/{video_id}/playback/")
+        playback.tenant = self.tenant
+        _validate_dawon_demo_access(playback, {**self.token, "dawon_demo_role":"student"})
+        playback.tenant = self.other
+        with self.assertRaises(PermissionDenied):
+            _validate_dawon_demo_access(playback, {**self.token, "dawon_demo_role":"student"})
+        for method,path in (("delete",f"lectures/sessions/{lesson.pk}/"),("post","media/videos/upload/init/"),
+                            ("post","messaging/send/"),("post","students/"),("post","staffs/")):
+            with self.subTest(path=path), self.assertRaises(PermissionDenied):
+                operation(method,path)

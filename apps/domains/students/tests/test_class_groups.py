@@ -294,6 +294,31 @@ class ClassGroupTests(TestCase):
         self.assertEqual(directory(group=other)["count"], 0)
         self.assertEqual({row["id"] for row in self.call("get").data}, {mine, other, second.pk})
 
+    def test_course_score_directory_scopes_a_student_with_two_classes(self):
+        from apps.domains.lectures.models import Lecture
+        from apps.domains.students.models import ClassGroupLecture
+
+        student = self.pupil("수강생", "중앙고")
+        director = get_user_model().objects.create_user(tenant=self.tenant, username="t719_dawon-demo-admin")
+        TenantMembership.ensure_active(tenant=self.tenant, user=director, role="admin")
+        teacher = get_user_model().objects.create_user(tenant=self.tenant, username="course-score-teacher")
+        TenantMembership.ensure_active(tenant=self.tenant, user=teacher, role="teacher")
+        courses = []
+        for name, instructor in [("담당반", teacher), ("다른 반", None)]:
+            group = ClassGroup.objects.create(tenant=self.tenant, name=name, kind="union", track="SKY", assigned_teacher=instructor)
+            group.students.add(student)
+            course = Lecture.objects.create(tenant=self.tenant, title=name)
+            ClassGroupLecture.objects.create(group=group, lecture=course, reference_teacher=instructor, period="vacation")
+            Enrollment.objects.create(tenant=self.tenant, lecture=course, student=student, status="ACTIVE")
+            courses.append(course)
+        for index, course in enumerate(courses):
+            args = {"view":"student_scores", "student":student.pk, "course":course.pk}
+            admin = self.call("get", payload=args, actor=director, token={"dawon_demo_role":"admin"})
+            self.assertEqual(admin.status_code, 200, admin.data)
+            self.assertEqual(admin.data, {"exams":[], "delta_percent":None, "previous_title":None})
+            response = self.call("get", payload=args, actor=teacher, token={"dawon_demo_role":"teacher"})
+            self.assertEqual(response.status_code, 404 if index else 200)
+
     def test_school_roster_atomic_and_native_lecture(self):
         one = self.pupil("first", " Ａ고 ")
         wrong = self.pupil("second", "B고")

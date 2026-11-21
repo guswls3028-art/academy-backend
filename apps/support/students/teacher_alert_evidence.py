@@ -41,16 +41,16 @@ def attendance_signals(tenant, roster, today, threshold):
     ).values("status")[:1])).order_by("enrollment_id", "-session__date", "-session__order", "-session_id")
     streaks = {}
     stopped = set()
-    for eid, mark, session_date in assigned.values_list("enrollment_id", "mark", "session__date"):
+    for eid, mark, session_date, session_id in assigned.values_list("enrollment_id", "mark", "session__date", "session_id"):
         if eid in stopped:
             continue
         if mark != "ABSENT":
             stopped.add(eid)
         else:
-            count, latest = streaks.get(eid, (0, session_date))
-            streaks[eid] = count + 1, latest
-    return [(eid, "absence_streak", count, f"{latest} 기준 배정 차시 {count}회 연속 결석")
-            for eid, (count, latest) in streaks.items() if count >= threshold]
+            count, latest, source = streaks.get(eid, (0, session_date, session_id))
+            streaks[eid] = count + 1, latest, source
+    return [(eid, "absence_streak", source, count, f"{latest} 기준 배정 차시 {count}회 연속 결석")
+            for eid, (count, latest, source) in streaks.items() if count >= threshold]
 
 
 def homework_signals(tenant, roster, today, rules):
@@ -76,7 +76,7 @@ def homework_signals(tenant, roster, today, rules):
         except (TypeError, ValueError):
             due = None
         if due and due < today and not row["submitted"] and not approved and (score is None or status == "NOT_SUBMITTED") and status != "VIDEO_MAKEUP":
-            missing[eid].append((due, title))
+            missing[eid].append((due, hid, title))
         if row["session__date"] and row["session__date"] <= today and row["homework__grading_mode"] == "SCORE":
             rate = score_rate(score, maximum) if score is not None and maximum and maximum > 0 and status not in ("NOT_SUBMITTED","VIDEO_MAKEUP") else None
             history[eid].append((row["session__date"], row["session__order"], hid, title, rate))
@@ -84,8 +84,8 @@ def homework_signals(tenant, roster, today, rules):
     if rules["homework_missing"]["enabled"]:
         for eid, entries in missing.items():
             if len(entries) >= rules["homework_missing"]["threshold"]:
-                due, title = max(entries)
-                signals.append((eid, "homework_missing", len(entries), f"기한 경과 미제출 {len(entries)}건 · 최근 {due} {title}"))
+                due, hid, title = max(entries)
+                signals.append((eid, "homework_missing", hid, len(entries), f"기한 경과 미제출 {len(entries)}건 · 최근 {due} {title}"))
     if rules["homework_drop"]["enabled"]:
         signals.extend(deltas(history, rules, "homework_drop"))
     return signals
@@ -102,7 +102,7 @@ def deltas(history, rules, drop, rise=None):
         diff = current[-1] - prev[-1]
         key = rise if diff > 0 else drop
         if key and rules[key]["enabled"] and abs(diff) >= rules[key]["threshold"]:
-            signals.append((eid, key, round(abs(diff), 2),
+            signals.append((eid, key, current[-3], round(abs(diff), 2),
                             f"{prev[-2]} {prev[-1]:.1f}% → {current[-2]} {current[-1]:.1f}% ({diff:+.1f}%p)"))
     return signals
 
@@ -152,12 +152,12 @@ def exam_signals(tenant, roster, today, rules):
         if len(recent) == 3 and rules["recent_exam_drop"]["enabled"]:
             baseline = fmean(recent)
             if baseline - rate >= rules["recent_exam_drop"]["threshold"]:
-                signals.append((eid, "recent_exam_drop", round(baseline-rate, 2),
+                signals.append((eid, "recent_exam_drop", exam, round(baseline-rate, 2),
                                 f"직전 3회 평균 {baseline:.1f}% → {title} {rate:.1f}%"))
         lecture = roster[eid].lecture_id
         reference = benchmarks.get((lecture, exam))
         if reference is not None and rules["top_reference_gap"]["enabled"] and reference-rate >= rules["top_reference_gap"]["threshold"]:
-            signals.append((eid, "top_reference_gap", round(reference-rate, 2),
+            signals.append((eid, "top_reference_gap", exam, round(reference-rate, 2),
                             f"{title} {rate:.1f}% · 강의 상위 {references[lecture]}% 평균 {reference:.1f}%"))
     return signals
 
@@ -194,18 +194,19 @@ def video_signals(tenant, roster, today, threshold):
             state = progress[video.pk].get(eid)
             percent = normalize_video_progress(state.progress if state else 0) * 100
             if percent < threshold:
-                low[eid].append((percent, video.title))
+                low[eid].append((percent, video.title, video.pk))
     signals = []
     for eid, entries in low.items():
-        percent, title = min(entries)
-        signals.append((eid, "video_watch", round(percent, 2),
+        percent, title, _ = min(entries)
+        newest = max(video_id for _, _, video_id in entries)
+        signals.append((eid, "video_watch", newest, round(percent, 2),
                         f"시청 기준 미달 영상 {len(entries)}개 · {title} {percent:.1f}%"))
     return signals
 
 
 def signals_for_lectures(tenant, lectures, today, rules):
     active = TenantMembership.objects.filter(tenant=tenant, role="student", user_id=OuterRef("student__user_id"),
-                                             is_active=True, user__is_active=True)
+                                             is_active=True, user__is_active=True, user__tenant=tenant)
     rows = Enrollment.objects.filter(tenant=tenant, lecture_id__in=lectures, status="ACTIVE", student__tenant=tenant,
         student__deleted_at__isnull=True, student__is_managed=True).filter(Exists(active)).select_related("student")
     roster = {e.pk: e for e in rows}
@@ -222,5 +223,5 @@ def signals_for_lectures(tenant, lectures, today, rules):
         signals.extend(video_signals(tenant, roster, today, rules["video_watch"]["threshold"]))
     return sorted([{"student_id": roster[eid].student_id, "student_name": roster[eid].student.name,
                     "lecture_id": roster[eid].lecture_id, "lecture_title": lectures[roster[eid].lecture_id],
-                    "rule": rule, "value": value, "detail": detail}
-                   for eid, rule, value, detail in signals], key=lambda s: (s["lecture_title"],s["student_name"],s["rule"],s["student_id"]))
+                    "rule": rule, "value": value, "detail": detail, "key": f"{eid}:{rule}:{source}"}
+                   for eid, rule, source, value, detail in signals], key=lambda s: (s["lecture_title"],s["student_name"],s["rule"],s["student_id"]))

@@ -38,6 +38,9 @@ student_page = record(count=integer, results=array(picker_student))
 directory_student = record(**student["properties"], groups=array(person))
 directory_student["properties"]["courses"] = array(record(id=integer, title=text, group=integer, color=text, chip_label=text))
 directory_page = record(count=integer, results=array(directory_student))
+directory_scores = record(exams=array(record(title=text, date=nullable(day), score=nullable(number),
+                                            maximum=nullable(number), state=text)),
+                          delta_percent=nullable(number), previous_title=nullable(text))
 exam_row = record(id=integer, student_id=integer, name=text, school=text, grade=nullable(integer),
                   score=nullable(number), maximum=nullable(number), status=text)
 member = record(**student["properties"], eligible=boolean)
@@ -58,6 +61,8 @@ rule = {"type": "object", "properties": {"enabled": boolean, "threshold": intege
 rules = {"type": "object", "additionalProperties": rule}
 teacher_alerts = record(rules=rules, lectures=array(record(id=integer, title=text)), alerts=rows,
                         followups=rows, unavailable=array(text))
+alert_page = record(counts=record(pending=integer, completed=integer), count=integer, alerts=rows)
+alert_summary = record(pending=integer, by_group={"type": "object", "additionalProperties": integer})
 staff_directory = variants(record(staff=array(record(id=integer, name=text, position=text, classes=array(text)))),
                           record(month=text, payroll=fields, open_count=integer, records=rows),
                           record(month=text, rows=array(record(id=integer, name=text, position=text, minutes=nullable(integer),

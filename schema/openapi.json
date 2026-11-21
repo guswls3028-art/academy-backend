@@ -54664,6 +54664,13 @@
         "parameters": [
           {
             "in": "query",
+            "name": "course",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
             "name": "grade",
             "schema": {
               "type": "integer"
@@ -54724,6 +54731,13 @@
           },
           {
             "in": "query",
+            "name": "student",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
             "name": "track",
             "schema": {
               "enum": [
@@ -54740,6 +54754,7 @@
             "schema": {
               "enum": [
                 "instructors",
+                "student_scores",
                 "students"
               ],
               "type": "string"
@@ -54905,6 +54920,58 @@
                       "required": [
                         "count",
                         "results"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "delta_percent": {
+                          "nullable": true,
+                          "type": "number"
+                        },
+                        "exams": {
+                          "items": {
+                            "properties": {
+                              "date": {
+                                "format": "date",
+                                "nullable": true,
+                                "type": "string"
+                              },
+                              "maximum": {
+                                "nullable": true,
+                                "type": "number"
+                              },
+                              "score": {
+                                "nullable": true,
+                                "type": "number"
+                              },
+                              "state": {
+                                "type": "string"
+                              },
+                              "title": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "title",
+                              "date",
+                              "score",
+                              "maximum",
+                              "state"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "previous_title": {
+                          "nullable": true,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "exams",
+                        "delta_percent",
+                        "previous_title"
                       ],
                       "type": "object"
                     }
@@ -59598,71 +59665,224 @@
     "/api/v1/students/teacher-alerts/": {
       "get": {
         "operationId": "students_teacher_alerts_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "group",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "schema": {
+              "enum": [
+                "school",
+                "union"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lecture_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "queue",
+            "schema": {
+              "enum": [
+                "list",
+                "summary"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "rule",
+            "schema": {
+              "enum": [
+                "absence_streak",
+                "exam_drop",
+                "exam_rise",
+                "homework_drop",
+                "homework_missing",
+                "recent_exam_drop",
+                "top_reference_gap",
+                "video_watch"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "settings",
+            "schema": {
+              "enum": [
+                1
+              ],
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "enum": [
+                "completed",
+                "pending"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "track",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "properties": {
-                    "alerts": {
-                      "items": {
-                        "type": "object"
-                      },
-                      "type": "array"
-                    },
-                    "followups": {
-                      "items": {
-                        "type": "object"
-                      },
-                      "type": "array"
-                    },
-                    "lectures": {
-                      "items": {
-                        "properties": {
-                          "id": {
-                            "type": "integer"
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "alerts": {
+                          "items": {
+                            "type": "object"
                           },
-                          "title": {
+                          "type": "array"
+                        },
+                        "followups": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "lectures": {
+                          "items": {
+                            "properties": {
+                              "id": {
+                                "type": "integer"
+                              },
+                              "title": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "title"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "rules": {
+                          "additionalProperties": {
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              },
+                              "threshold": {
+                                "type": "integer"
+                              }
+                            },
+                            "type": "object"
+                          },
+                          "type": "object"
+                        },
+                        "unavailable": {
+                          "items": {
                             "type": "string"
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "title"
-                        ],
-                        "type": "object"
-                      },
-                      "type": "array"
-                    },
-                    "rules": {
-                      "additionalProperties": {
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
                           },
-                          "threshold": {
-                            "type": "integer"
-                          }
-                        },
-                        "type": "object"
+                          "type": "array"
+                        }
                       },
+                      "required": [
+                        "rules",
+                        "lectures",
+                        "alerts",
+                        "followups",
+                        "unavailable"
+                      ],
                       "type": "object"
                     },
-                    "unavailable": {
-                      "items": {
-                        "type": "string"
+                    {
+                      "properties": {
+                        "alerts": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "count": {
+                          "type": "integer"
+                        },
+                        "counts": {
+                          "properties": {
+                            "completed": {
+                              "type": "integer"
+                            },
+                            "pending": {
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "pending",
+                            "completed"
+                          ],
+                          "type": "object"
+                        }
                       },
-                      "type": "array"
+                      "required": [
+                        "counts",
+                        "count",
+                        "alerts"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "by_group": {
+                          "additionalProperties": {
+                            "type": "integer"
+                          },
+                          "type": "object"
+                        },
+                        "pending": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "pending",
+                        "by_group"
+                      ],
+                      "type": "object"
                     }
-                  },
-                  "required": [
-                    "rules",
-                    "lectures",
-                    "alerts",
-                    "followups",
-                    "unavailable"
-                  ],
-                  "type": "object"
+                  ]
                 }
               }
             },
@@ -59687,26 +59907,45 @@
           "content": {
             "application/json": {
               "schema": {
-                "properties": {
-                  "rules": {
-                    "additionalProperties": {
-                      "properties": {
-                        "enabled": {
-                          "type": "boolean"
+                "anyOf": [
+                  {
+                    "properties": {
+                      "rules": {
+                        "additionalProperties": {
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "threshold": {
+                              "type": "integer"
+                            }
+                          },
+                          "type": "object"
                         },
-                        "threshold": {
-                          "type": "integer"
-                        }
-                      },
-                      "type": "object"
+                        "type": "object"
+                      }
                     },
+                    "required": [
+                      "rules"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "properties": {
+                      "key": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "status"
+                    ],
                     "type": "object"
                   }
-                },
-                "required": [
-                  "rules"
-                ],
-                "type": "object"
+                ]
               }
             }
           }
@@ -59780,6 +60019,9 @@
               }
             },
             "description": ""
+          },
+          "204": {
+            "description": "No response body"
           }
         },
         "security": [

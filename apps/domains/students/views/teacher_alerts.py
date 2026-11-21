@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
@@ -50,7 +50,7 @@ class DawonTeacherAlertsView(APIView):
             links = links.filter(reference_teacher=request.user)
         lectures = dict(links.order_by("lecture__title", "lecture_id").values_list("lecture_id", "lecture__title"))
         selected = request.query_params.get("lecture_id")
-        if selected is None:
+        if not selected:
             return lectures, lectures
         pk = serializers.IntegerField(min_value=1).run_validation(selected)
         if pk not in lectures:
@@ -65,18 +65,49 @@ class DawonTeacherAlertsView(APIView):
             if key in rules:
                 rules[key].update(saved)
         return Response({"rules": rules, "lectures": [{"id": pk, "title": title} for pk, title in lectures.items()],
-                         "alerts": signals_for_lectures(request.tenant, selected, timezone.localdate(timezone=ZoneInfo("Asia/Seoul")), rules),
+                         "alerts": [] if request.query_params.get("settings") == "1" else signals_for_lectures(request.tenant, selected, timezone.localdate(timezone=ZoneInfo("Asia/Seoul")), rules),
                          "followups": followups(request.tenant, selected), "unavailable": []}, headers={"Cache-Control": "private, no-store"})
 
-    @extend_schema(responses={200: schema.teacher_alerts})
+    def links(self, request, scope):
+        return ClassGroupLecture.objects.filter(group__tenant=request.tenant, lecture__tenant=request.tenant,
+                                              lecture_id__in=scope[1])
+
+    @extend_schema(parameters=[
+        OpenApiParameter("queue", str, enum=["list", "summary"]),
+        OpenApiParameter("status", str, enum=["pending", "completed"]),
+        OpenApiParameter("kind", str, enum=["union", "school"]),
+        OpenApiParameter("track", str), OpenApiParameter("group", int),
+        OpenApiParameter("lecture_id", int), OpenApiParameter("rule", str, enum=list(DEFAULTS)),
+        OpenApiParameter("q", str), OpenApiParameter("page", int),
+        OpenApiParameter("settings", int, enum=[1]),
+    ], responses={200: schema.variants(schema.teacher_alerts, schema.alert_page, schema.alert_summary)})
     def get(self, request):
         scope = self.scope(request)
+        if request.query_params.get("queue") in {"list", "summary"}:
+            from apps.domains.students.services.dawon_alert_queue import queue_page, scoped_rows
+            links = self.links(request, scope)
+            if request.query_params["queue"] == "summary":
+                by_group = {}
+                for row in scoped_rows(request.tenant, links):
+                    if row["status"] == "pending":
+                        pk = row["group_id"]
+                        by_group[pk] = by_group.get(pk, 0) + 1
+                data = {"pending": sum(by_group.values()), "by_group": by_group}
+            else:
+                data = queue_page(request.tenant, links, request.query_params)
+            return Response(data, headers={"Cache-Control": "private, no-store"})
         stored = DawonTeacherAlertSettings.objects.filter(tenant=request.tenant, teacher=request.user).values_list("rules", flat=True).first()
         return self.response(request, scope, stored or {})
 
-    @extend_schema(request={"application/json": schema.record(rules=schema.rules)}, responses={200: schema.teacher_alerts})
+    @extend_schema(request={"application/json": schema.variants(schema.record(rules=schema.rules),
+                   schema.record(key=schema.text, status=schema.text))},
+                   responses={200: schema.teacher_alerts, 204: None})
     def patch(self, request):
         scope = self.scope(request)
+        if "key" in request.data:
+            from apps.domains.students.services.dawon_alert_queue import update_disposition
+            update_disposition(request.tenant, request.user, self.links(request, scope), request.data)
+            return Response(status=204)
         updates = changes(request.data)
         with transaction.atomic():
             stored, _ = DawonTeacherAlertSettings.objects.select_for_update().get_or_create(tenant=request.tenant, teacher=request.user)

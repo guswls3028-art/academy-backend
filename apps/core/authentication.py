@@ -98,9 +98,11 @@ def _allows_dawon_workflow_write(request, role):
         return False
 
     from apps.domains.video.models import Video
+    from django.db.models import Q
 
     return Video.objects.filter(
-        pk=video_id, tenant=tenant, hls_path=_dawon_video_path, status=Video.Status.READY,
+        Q(hls_path=_dawon_video_path) | Q(source_type=Video.SourceType.YOUTUBE, session__lecture__tenant=tenant),
+        pk=video_id, tenant=tenant, status=Video.Status.READY,
     ).exists()
 
 
@@ -112,7 +114,12 @@ def _validate_dawon_demo_access(request, token):
     path = request.path
     method = request.method
     if role == "admin":
-        from apps.domains.clinic.dawon_demo import is_demo_tenant
+        from apps.core.dawon_course_operations import allows_course_operation
+        from apps.domains.clinic.dawon_demo import allows_demo_clinic_write, is_demo_tenant
+        if is_demo_tenant(getattr(request, "tenant", None)) and not _restricted_actions.search(path) and allows_course_operation(request):
+            return
+        if method == "PATCH" and allows_demo_clinic_write(request, role):
+            return
         if (is_demo_tenant(getattr(request, "tenant", None)) and method in {"GET", "HEAD"}
                 and re.fullmatch(r"/api/v1/results/school-reports/(?:[1-9][0-9]*/)?", path)):
             return
