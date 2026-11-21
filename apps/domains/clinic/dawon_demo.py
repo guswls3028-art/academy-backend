@@ -51,13 +51,30 @@ def visible_to_clinic_teacher(rows, tenant, teacher):
     ).distinct()
 
 
-def reviewable_sample_request(row):
+def actionable_sample_request(row):
     from apps.core.dawon_preview_identity import matches_original
     student = row.student
     return (is_sample_session(row.session) and row.student_id == SAMPLE_STUDENT_ID
             and student.tenant_id == row.tenant_id and student.is_managed and student.deleted_at is None
-            and row.source == SessionParticipant.Source.STUDENT_REQUEST and row.status == SessionParticipant.Status.PENDING
+            and row.source == SessionParticipant.Source.STUDENT_REQUEST
             and (student.name == "다원 수업 검수 학생 2" or (student.name == "김학생 2" and matches_original(student))))
+
+
+def expected_staff_status(data):
+    """Return the row state required for this particular review or correction."""
+    if data == {"status": "booked", "expected_status": "no_show"}:
+        return SessionParticipant.Status.NO_SHOW
+    status = data.get("status")
+    if status == "booked" and set(data) == {"status", "expected_checked_in_at"}:
+        if isinstance(data["expected_checked_in_at"], str) and data["expected_checked_in_at"]:
+            return SessionParticipant.Status.ATTENDED
+    if status in ("booked", "rejected") and set(data) == {"status"}:
+        return SessionParticipant.Status.PENDING
+    if status in ("attended", "no_show") and not set(data) - {"status", "is_late", "send_to"}:
+        late = data.get("is_late", False)
+        if type(late) is bool and (not late or status == "attended") and data.get("send_to", "parent") in ("parent", "student", "both"):
+            return SessionParticipant.Status.BOOKED
+    return None
 
 
 def allows_demo_clinic_write(request, role):
@@ -78,12 +95,13 @@ def allows_demo_clinic_write(request, role):
     if not match:
         return False
     participant_id, action = match.groups()
+    required_status = None
     if action == "set_status" and request.method == "PATCH":
-        status = data.get("status")
-        if set(data) != {"status"} or not (
-            (role in {"teacher", "admin"} and status in ("booked", "rejected")) or
-            (role == "student" and status == "cancelled")
-        ):
+        if role in {"teacher", "admin"}:
+            required_status = expected_staff_status(data)
+            if required_status is None:
+                return False
+        elif role != "student" or data != {"status": "cancelled"}:
             return False
     elif action == "change-booking" and role == "student" and request.method == "POST":
         dest = data.get("new_session_id")
@@ -96,7 +114,7 @@ def allows_demo_clinic_write(request, role):
         tenant=tenant, pk=participant_id, session__in=sessions, student_id=SAMPLE_STUDENT_ID,
         student__tenant=tenant, student__is_managed=True, student__deleted_at__isnull=True,
         student__name__in=("다원 수업 검수 학생 2", "김학생 2"), source=SessionParticipant.Source.STUDENT_REQUEST,
-        **({"status": SessionParticipant.Status.PENDING} if role in {"teacher", "admin"} else {}),
+        **({"status": required_status} if required_status else {}),
     ).select_related("student__user").first()
     if not participant:
         return False

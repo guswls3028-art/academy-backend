@@ -54,7 +54,7 @@ def care_directory(tenant, query, *, teacher=None):
         if kind != "clinic" or (group and not visible_groups.filter(pk=group.pk).exists()):
             raise NotFound()
     if kind == "clinic":
-        from apps.domains.clinic.contracts import reviewable_sample_request, visible_to_clinic_teacher
+        from apps.domains.clinic.contracts import actionable_sample_request, visible_to_clinic_teacher
         source = SessionParticipant.objects.filter(tenant=tenant, student__tenant=tenant, student__deleted_at__isnull=True).filter(
             Q(session__isnull=True) | Q(session__tenant=tenant),
         ).filter(Q(enrollment__isnull=True) | Q(enrollment__tenant=tenant, enrollment__lecture__tenant=tenant, enrollment__student_id=F("student_id")))
@@ -101,7 +101,8 @@ def care_directory(tenant, query, *, teacher=None):
             student = item.created_by
             fields = {"day":item.created_at.date(),"title":item.title,"status":"답변 완료" if item.answered else "답변 대기"}
             if detail:
-                fields.update(body=item.content,replies=list(item.replies.filter(tenant=tenant).order_by("created_at","pk").values_list("content",flat=True)))
+                fields.update(body=item.content, can_reply=item.created_by_id == 2,
+                              replies=list(item.replies.filter(tenant=tenant).order_by("created_at","pk").values_list("content",flat=True)))
         elif kind == "appointments":
             student = enrollment.student
             fields = {"day":item.day,"title":enrollment.lecture.title,"status":"상담 예정"}
@@ -111,7 +112,14 @@ def care_directory(tenant, query, *, teacher=None):
                       "title":item.session.title if item.session else "클리닉 신청",
                       "status":item.status}
             if detail:
-                fields.update(body=item.student_request_memo, can_review=reviewable_sample_request(item))
+                actionable = actionable_sample_request(item)
+                fields.update(body=item.student_request_memo,
+                              can_review=actionable and item.status == SessionParticipant.Status.PENDING,
+                              can_attend=actionable and item.status == SessionParticipant.Status.BOOKED,
+                              can_undo_arrival=actionable and item.status == SessionParticipant.Status.ATTENDED
+                                  and bool(item.checked_in_at) and not item.checked_out_at,
+                              checked_in_at=item.checked_in_at,
+                              can_undo_absence=actionable and item.status == SessionParticipant.Status.NO_SHOW)
         rows.append({"id":item.pk,"student_id":student.pk,"name":student.name,"groups":[home] if home else [],
                      "course_id":enrollment.lecture_id if enrollment else None,**fields})
     missing = {row["student_id"] for row in rows if not row["groups"]}

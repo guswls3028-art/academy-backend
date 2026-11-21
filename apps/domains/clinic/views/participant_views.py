@@ -14,7 +14,7 @@ from rest_framework import serializers
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
-from ..dawon_demo import LOCATION, MEMO, SAMPLE_STUDENT_ID, is_demo_tenant
+from ..dawon_demo import LOCATION, MEMO, SAMPLE_STUDENT_ID, expected_staff_status, is_demo_tenant
 from ..models import SessionParticipant, SessionParticipantPlanItem
 from ..serializers import (
     ClinicSessionParticipantBulkCreateResponseSerializer,
@@ -438,6 +438,11 @@ class ParticipantViewSet(
             except serializers.ValidationError as exc:
                 raise serializers.ValidationError({"expected_checked_in_at": exc.detail}) from exc
 
+        expected_status = None
+        if is_demo_tenant(request.tenant) and hasattr(request.auth, "get") and request.auth.get("dawon_demo_role") in {"teacher", "admin"}:
+            expected_status = expected_staff_status(request.data)
+            if expected_status is None:
+                raise PermissionDenied("체험 일정에서 처리할 수 없는 출결 요청입니다.")
         result = change_participant_status(
             tenant=getattr(request, "tenant", None),
             participant_id=self.get_object().pk,
@@ -447,8 +452,7 @@ class ParticipantViewSet(
             staff_memo=staff_memo,
             is_late=is_late,
             expected_checked_in_at=expected_checked_in_at,
-            require_pending=(is_demo_tenant(request.tenant) and hasattr(request.auth, "get")
-                             and request.auth.get("dawon_demo_role") in {"teacher", "admin"}),
+            expected_status=expected_status,
         )
         obj = result.participant
         notification_result = result.notification_result

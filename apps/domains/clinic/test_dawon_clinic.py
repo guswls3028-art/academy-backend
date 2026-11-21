@@ -12,7 +12,6 @@ from apps.domains.clinic.models import Session
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.lectures.models import Lecture
 from apps.domains.students.models import ClassGroup, ClassGroupLecture, Student
-from django.urls import resolve
 
 
 @override_settings(DAWON_REVIEW_CLASS_GROUPS=True)
@@ -105,10 +104,44 @@ class DawonClinicTests(TestCase):
         self.assertFalse(allows_demo_clinic_write(native,"admin"))
         from apps.domains.clinic.services.lifecycle import change_participant_status, Conflict
         with self.assertRaises(Conflict):
-            change_participant_status(tenant=self.tenant,participant_id=pk,next_status="booked",actor=self.users["teacher"],require_pending=True)
+            change_participant_status(tenant=self.tenant,participant_id=pk,next_status="booked",actor=self.users["teacher"],expected_status="pending")
         self.assertEqual(self.clinic_directory("teacher",status="rejected").data["count"],1)
         self.group.assigned_teacher=None
         self.group.save(update_fields=["assigned_teacher"])
         self.assertEqual(self.clinic_directory("teacher",status="rejected").data["count"],0)
         self.assertEqual(self.call("get",f"participants/{pk}/",{},"teacher").status_code,404)
         self.assertEqual(SessionParticipant.objects.get(pk=pk).status,"rejected")
+
+    def test_staff_share_clinic_attendance_and_student_sees_the_corrected_status(self):
+        from apps.core.authentication import _validate_dawon_demo_access
+        from django.utils import timezone
+
+        token = {"dawon_demo_role": "admin", "dawon_demo_until": int(timezone.now().timestamp()) + 60}
+        for endpoint in ("sessions/tree/", "participants/"):
+            _validate_dawon_demo_access(SimpleNamespace(tenant=self.tenant, method="GET",
+                path="/api/v1/clinic/" + endpoint), token)
+        booked = self.call("post", "participants/bulk-create/", {"session_ids": [self.session.pk]}, "student")
+        pk = booked.data["participants"][0]["id"]
+        path = f"participants/{pk}/"
+        with patch("apps.domains.clinic.views.participant_views.send_clinic_event_notification") as send:
+            self.assertEqual(self.call("patch", path+"set_status/", {"status": "booked"}, "teacher").status_code, 200)
+            self.assertTrue(self.clinic_directory("admin", record=pk).data["rows"][0]["can_attend"])
+            arrival = self.call("patch", path+"set_status/", {"status": "attended", "is_late": True}, "admin")
+            self.assertEqual(arrival.status_code, 200, arrival.data)
+            observed = self.call("get", path, {}, "student").data
+            self.assertEqual(observed["status"], "attended")
+            self.assertTrue(observed["is_late"])
+            stale = self.call("patch", path+"set_status/", {"status": "booked",
+                "expected_checked_in_at": "2020-01-01T00:00:00Z"}, "teacher")
+            self.assertEqual(stale.status_code, 409, stale.data)
+            restored = self.call("patch", path+"set_status/", {"status": "booked",
+                "expected_checked_in_at": observed["checked_in_at"]}, "teacher")
+            self.assertEqual(restored.status_code, 200, restored.data)
+            absent = self.call("patch", path+"set_status/", {"status": "no_show"}, "admin")
+            self.assertEqual(absent.status_code, 200, absent.data)
+            self.assertEqual(self.call("get", path, {}, "student").data["status"], "no_show")
+            self.assertFalse(self.clinic_directory("teacher", record=pk).data["rows"][0]["can_attend"])
+            undo = self.call("patch", path+"set_status/", {"status": "booked", "expected_status": "no_show"}, "admin")
+            self.assertEqual(undo.status_code, 200, undo.data)
+            self.assertEqual(self.call("get", path, {}, "student").data["status"], "booked")
+            send.assert_not_called()

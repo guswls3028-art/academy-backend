@@ -64,10 +64,10 @@ def _allows_dawon_workflow_write(request, role):
             and request.data.get("content") == _dawon_counsel_examples[request.data["title"]]
         )
     reply = _dawon_counsel_reply.fullmatch(path)
-    if role == "teacher" and reply:
+    if role in {"teacher", "admin"} and reply:
         from apps.domains.community.models import PostEntity
 
-        if not isinstance(request.data, dict):
+        if not isinstance(request.data, dict) or set(request.data) - {"content", "parent_reply"}:
             return False
         content = request.data.get("content")
         return (
@@ -76,6 +76,7 @@ def _allows_dawon_workflow_write(request, role):
             and not request.data.get("parent_reply")
             and PostEntity.objects.filter(
                 pk=reply[1], tenant=tenant, post_type="counsel", author_role="parent", created_by_id=2,
+                status="published", created_by__tenant=tenant, created_by__deleted_at__isnull=True,
             ).exists()
         )
 
@@ -115,10 +116,10 @@ def _validate_dawon_demo_access(request, token):
     method = request.method
     if role == "admin":
         from apps.core.dawon_course_operations import allows_course_operation
-        from apps.domains.clinic.dawon_demo import allows_demo_clinic_write, is_demo_tenant
+        from apps.domains.clinic.dawon_demo import is_demo_tenant
         if is_demo_tenant(getattr(request, "tenant", None)) and not _restricted_actions.search(path) and allows_course_operation(request):
             return
-        if method == "PATCH" and allows_demo_clinic_write(request, role):
+        if (method == "PATCH" or (method == "POST" and _dawon_counsel_reply.fullmatch(path))) and _allows_dawon_workflow_write(request, role):
             return
         if (is_demo_tenant(getattr(request, "tenant", None)) and method in {"GET", "HEAD"}
                 and re.fullmatch(r"/api/v1/results/school-reports/(?:[1-9][0-9]*/)?", path)):

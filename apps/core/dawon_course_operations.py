@@ -8,6 +8,7 @@ _READ = re.compile(
     rf"|enrollments(?:/[\w/-]+)?|exams(?:/[\w/-]+)?|homeworks?(?:/[\w/-]+)?"
     rf"|results/admin/(?:sessions|exams|attempt-history|student-grades|clinic-targets)(?:/[\w/-]+)?"
     rf"|submissions(?:/{_ID})?|media/(?:videos|video-permissions|video-progress)(?:/[\w/-]+)?"
+    rf"|clinic/(?:sessions(?:/(?:tree|locations|{_ID}(?:/availability)?))?|participants(?:/{_ID})?)"
     rf"|students/(?:teacher-alerts|class-groups/for-lecture/{_ID})"
     rf"|community/(?:posts|categories|scope-nodes)(?:/[\w/-]+)?|community/admin/posts)"
 )

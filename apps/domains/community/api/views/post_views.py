@@ -837,7 +837,7 @@ class PostViewSet(viewsets.ModelViewSet):
         demo_counsel_reply = (
             post.post_type == "counsel"
             and hasattr(request.auth, "get")
-            and request.auth.get("dawon_demo_role") == "teacher"
+            and request.auth.get("dawon_demo_role") in {"teacher", "admin"}
             and (tenant.pk, tenant.code) == (719, "dawon")
         )
         suppress_qna_notification = False

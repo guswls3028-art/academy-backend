@@ -14,6 +14,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 from apps.core.authentication import _validate_dawon_demo_access
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.lectures.models import Lecture, Session
+from apps.domains.community.models import PostEntity
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.exams.models import Exam
 from apps.domains.homework.models import HomeworkAssignment
@@ -110,7 +111,6 @@ class DemoOperationsTests(TestCase):
         self.assertEqual(self.operation().status_code, 404)
 
     def test_directories_scope_real_records_to_selected_group_student_and_tenant(self):
-        from apps.domains.community.models import PostEntity
         from apps.domains.students.models import DawonCounselAppointment
 
         groups = []
@@ -240,6 +240,38 @@ class DemoOperationsTests(TestCase):
             self.assertIn("Retry-After", second)
             self.assertFalse(AnonRateThrottle().allow_request(public, None))
             self.assertTrue(DawonDemoLearningThrottle().allow_request(public, None))
+
+    def test_director_answers_guardian_counsel_and_uses_the_existing_thread(self):
+        from django.urls import resolve
+
+        learner = get_user_model().objects.create_user(username="qa-counsel-student", tenant=self.tenant)
+        student = Student.objects.create(pk=2, tenant=self.tenant, user=learner, name="다원 수업 검수 학생 2",
+                                         ps_number="qa-counsel", omr_code="00000002", is_managed=True)
+        post = PostEntity.objects.create(tenant=self.tenant, post_type="counsel", author_role="parent",
+            created_by=student, title="시험 전 학습 계획", content="상담을 신청합니다.", status="published")
+        filters = {"view": "care", "kind": "requests", "record": post.pk}
+        self.assertTrue(self.operation(data=filters).data["rows"][0]["can_reply"])
+        url = f"/api/v1/community/posts/{post.pk}/replies/"
+        reply = "첫 이틀은 개념을 복습하고, 이후에는 유형별 문제와 오답을 번갈아 풀어 보세요."
+        factory = APIRequestFactory()
+        raw = factory.post(url, {"content": reply}, format="json")
+        raw.tenant = self.tenant
+        _validate_dawon_demo_access(APIView().initialize_request(raw), self.token)
+        raw = factory.post(url, {"content": reply}, format="json")
+        raw.tenant = self.tenant
+        force_authenticate(raw, user=self.user, token=self.token)
+        route = resolve(url)
+        with patch("apps.domains.messaging.services.send_event_notification") as send:
+            response = route.func(raw, **route.kwargs)
+        self.assertEqual(response.status_code, 201, response.data)
+        send.assert_not_called()
+        detail = self.operation(data=filters).data["rows"][0]
+        self.assertEqual(detail["status"], "답변 완료")
+        self.assertEqual(detail["replies"], [reply])
+        foreign = factory.post(url, {"content": reply}, format="json")
+        foreign.tenant = self.other
+        with self.assertRaises(PermissionDenied):
+            _validate_dawon_demo_access(APIView().initialize_request(foreign), self.token)
 
     def test_teacher_homework_write_methods_and_resources(self):
         factory = APIRequestFactory()
