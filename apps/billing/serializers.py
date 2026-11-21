@@ -225,6 +225,26 @@ class BankTransferNoticeSubmitSerializer(serializers.Serializer):
     depositor_name = serializers.CharField(max_length=100)
     deposited_at = serializers.DateTimeField()
     tax_invoice_requested = serializers.BooleanField(default=False)
+    receipt_kind = serializers.ChoiceField(choices=["NONE", "BUSINESS_TAX", "PERSONAL_TAX", "CASH"], required=False)
+    recipient_identifier = serializers.CharField(required=False, write_only=True, max_length=16)
+    recipient_name = serializers.CharField(required=False, write_only=True, max_length=100)
+    recipient_email = serializers.EmailField(required=False, write_only=True)
+
+    def validate(self, data):
+        kind = data.get("receipt_kind")
+        if kind in ("CASH", "PERSONAL_TAX"):
+            identifier = data.get("recipient_identifier", "").replace("-", "")
+            pattern = r"01[016789][0-9]{7,8}" if kind == "CASH" else r"[0-9]{6}[1-8][0-9]{6}"
+            if not re.fullmatch(pattern, identifier):
+                raise serializers.ValidationError({"detail": "증빙 발급용 번호를 확인해 주세요."})
+            data["recipient_identifier"] = identifier
+            if kind == "PERSONAL_TAX" and not (data.get("recipient_name") and data.get("recipient_email")):
+                raise serializers.ValidationError({"detail": "개인 세금계산서 수신자 이름과 이메일을 입력해 주세요."})
+        elif any(field in data for field in ("recipient_identifier", "recipient_name", "recipient_email")):
+            raise serializers.ValidationError({"detail": "선택한 증빙에는 개인 식별정보가 필요하지 않습니다."})
+        if kind is not None:
+            data["tax_invoice_requested"] = kind != "NONE"
+        return data
 
     def validate_depositor_name(self, value: str) -> str:
         value = value.strip()
@@ -270,6 +290,10 @@ class BankTransferNoticeSerializer(serializers.ModelSerializer):
         source="invoice.due_date",
         read_only=True,
     )
+    receipt_kind = serializers.SerializerMethodField()
+    automatic_receipt = serializers.SerializerMethodField()
+    receipt_provider_state = serializers.SerializerMethodField()
+    receipt_error = serializers.SerializerMethodField()
     tax_invoice_issue_id = serializers.SerializerMethodField()
     tax_invoice_status = serializers.SerializerMethodField()
     tax_invoice_issue_number = serializers.SerializerMethodField()
@@ -298,6 +322,7 @@ class BankTransferNoticeSerializer(serializers.ModelSerializer):
             "deposited_at",
             "status",
             "tax_invoice_requested",
+            "receipt_kind", "automatic_receipt", "receipt_provider_state", "receipt_error",
             "tax_invoice_issue_id",
             "tax_invoice_status",
             "tax_invoice_issue_number",
@@ -316,6 +341,23 @@ class BankTransferNoticeSerializer(serializers.ModelSerializer):
         except ObjectDoesNotExist:
             return None
 
+    def _receipt(self, obj):
+        return getattr(self._tax_issue(obj), "popbill", None)
+
+    def get_receipt_kind(self, obj) -> str:
+        receipt = self._receipt(obj)
+        return receipt.kind if receipt else ("BUSINESS_TAX" if obj.tax_invoice_requested else "NONE")
+
+    def get_automatic_receipt(self, obj) -> bool:
+        return self._receipt(obj) is not None
+
+    def get_receipt_provider_state(self, obj) -> int:
+        return getattr(self._receipt(obj), "provider_state", 0)
+
+    def get_receipt_error(self, obj) -> str:
+        issue = self._tax_issue(obj)
+        return issue.failure_reason if issue and self._receipt(obj) else ""
+
     def get_tax_invoice_issue_id(self, obj: BankTransferNotice):
         issue = self._tax_issue(obj)
         return issue.pk if issue else None
@@ -326,6 +368,9 @@ class BankTransferNoticeSerializer(serializers.ModelSerializer):
 
     def get_tax_invoice_issue_number(self, obj: BankTransferNotice):
         issue = self._tax_issue(obj)
+        receipt = self._receipt(obj)
+        if receipt and receipt.kind == "CASH":
+            return receipt.cash_approval_number
         return issue.issue_number if issue else ""
 
 

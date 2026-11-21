@@ -821,6 +821,10 @@
             "readOnly": true,
             "type": "integer"
           },
+          "automatic_receipt": {
+            "readOnly": true,
+            "type": "boolean"
+          },
           "business_profile_snapshot": {
             "description": "세금계산서 요청 시 사업자 정보 스냅샷",
             "readOnly": true
@@ -870,6 +874,18 @@
             "format": "date",
             "readOnly": true,
             "type": "string"
+          },
+          "receipt_error": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "receipt_kind": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "receipt_provider_state": {
+            "readOnly": true,
+            "type": "integer"
           },
           "rejection_reason": {
             "readOnly": true,
@@ -935,6 +951,7 @@
         },
         "required": [
           "amount",
+          "automatic_receipt",
           "business_profile_snapshot",
           "deposited_at",
           "depositor_name",
@@ -946,6 +963,9 @@
           "memo",
           "period_end",
           "period_start",
+          "receipt_error",
+          "receipt_kind",
+          "receipt_provider_state",
           "rejection_reason",
           "reviewed_at",
           "reviewed_by_name",
@@ -970,6 +990,54 @@
           "REJECTED"
         ],
         "type": "string"
+      },
+      "BankTransferNoticeSubmitRequest": {
+        "properties": {
+          "deposited_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "depositor_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "invoice_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "receipt_kind": {
+            "$ref": "#/components/schemas/ReceiptKindEnum"
+          },
+          "recipient_email": {
+            "format": "email",
+            "minLength": 1,
+            "type": "string",
+            "writeOnly": true
+          },
+          "recipient_identifier": {
+            "maxLength": 16,
+            "minLength": 1,
+            "type": "string",
+            "writeOnly": true
+          },
+          "recipient_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string",
+            "writeOnly": true
+          },
+          "tax_invoice_requested": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deposited_at",
+          "depositor_name",
+          "invoice_id"
+        ],
+        "type": "object"
       },
       "BillingCycleEnum": {
         "description": "* `MONTHLY` - 월납\n* `ONE_TIME` - 일시납",
@@ -14992,6 +15060,16 @@
         ],
         "type": "object"
       },
+      "ReceiptKindEnum": {
+        "description": "* `NONE` - NONE\n* `BUSINESS_TAX` - BUSINESS_TAX\n* `PERSONAL_TAX` - PERSONAL_TAX\n* `CASH` - CASH",
+        "enum": [
+          "NONE",
+          "BUSINESS_TAX",
+          "PERSONAL_TAX",
+          "CASH"
+        ],
+        "type": "string"
+      },
       "RecordPaymentPaymentMethodEnum": {
         "description": "* `CARD` - CARD\n* `BANK_TRANSFER` - BANK_TRANSFER\n* `CASH` - CASH\n* `OTHER` - OTHER",
         "enum": [
@@ -24493,7 +24571,14 @@
         ],
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankTransferNotice"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -24817,9 +24902,36 @@
       "post": {
         "description": "POST /api/v1/billing/bank-transfer/notices/",
         "operationId": "billing_bank_transfer_notices_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BankTransferNoticeSubmitRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/BankTransferNoticeSubmitRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/BankTransferNoticeSubmitRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "200": {
-            "description": "No response body"
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankTransferNotice"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

@@ -14,7 +14,7 @@ from apps.billing.models import (
     Invoice,
     TaxInvoiceIssue,
 )
-from apps.billing.services import invoice_service
+from apps.billing.services import invoice_service, popbill_receipts
 from apps.core.models.program import Program
 
 
@@ -169,6 +169,10 @@ def submit_notice(
     depositor_name: str,
     deposited_at,
     tax_invoice_requested: bool,
+    receipt_kind: str | None = None,
+    recipient_identifier: str = "",
+    recipient_name: str = "",
+    recipient_email: str = "",
 ) -> BankTransferNotice:
     """고객 입금 신고를 생성하거나 반려 건을 재제출한다."""
     _require_available()
@@ -201,8 +205,13 @@ def submit_notice(
             "먼저 납부해야 할 이전 청구서가 있습니다."
         )
 
+    kind = receipt_kind or ("BUSINESS_TAX" if tax_invoice_requested else "NONE")
+    automatic = popbill_receipts.enabled()
+    if receipt_kind and kind != "NONE" and not automatic:
+        raise BankTransferUnavailable("자동 증빙 발급 설정을 확인한 후 다시 신청해 주세요.")
+    recipient = popbill_receipts.recipient_data(recipient_identifier, recipient_name, recipient_email)
     snapshot: dict = {}
-    if tax_invoice_requested:
+    if kind == "BUSINESS_TAX":
         profile = BusinessProfile.objects.filter(tenant_id=tenant_id).first()
         if profile is None:
             raise BankTransferConflict(
@@ -216,11 +225,14 @@ def submit_notice(
         .first()
     )
     now = timezone.now()
+    previous_issue = getattr(invoice, "tax_invoice_issue", None)
+    previous_receipt = getattr(previous_issue, "popbill", None)
     if notice and notice.status == "SUBMITTED":
         if (
             notice.depositor_name == depositor_name
             and notice.deposited_at == deposited_at
             and notice.tax_invoice_requested == tax_invoice_requested
+            and (popbill_receipts.matches(previous_receipt, kind, recipient) if previous_receipt else kind in ("BUSINESS_TAX", "NONE"))
         ):
             return notice
         raise BankTransferConflict(
@@ -230,6 +242,10 @@ def submit_notice(
         raise BankTransferConflict(
             "이미 입금 확인을 요청했습니다. 처리 결과를 기다려 주세요."
         )
+    if previous_receipt:
+        if previous_receipt.provider_state or previous_receipt.next_attempt_at:
+            raise BankTransferConflict("이미 처리 중인 증빙이 있습니다.")
+        previous_receipt.delete()
     if notice is None:
         notice = BankTransferNotice(invoice=invoice)
 
@@ -249,7 +265,7 @@ def submit_notice(
     if tax_invoice_requested:
         if tax_issue and tax_issue.status == "ISSUED":
             raise BankTransferConflict("이미 세금계산서가 발행된 청구서입니다.")
-        TaxInvoiceIssue.objects.update_or_create(
+        tax_issue, _ = TaxInvoiceIssue.objects.update_or_create(
             invoice=invoice,
             defaults={
                 "tenant_id": tenant_id,
@@ -259,6 +275,8 @@ def submit_notice(
                 "failure_reason": "",
             },
         )
+        if automatic:
+            popbill_receipts.prepare(tax_issue, kind, recipient)
     elif tax_issue and tax_issue.status != "ISSUED":
         tax_issue.status = "NOT_REQUESTED"
         tax_issue.business_profile_snapshot = {}
@@ -285,6 +303,9 @@ def confirm_notice(
     """운영자가 입금을 확인하고 수납/구독/세금계산서 상태를 반영한다."""
     _program, invoice, notice = _lock_notice_workflow(notice_id)
     if notice.status == "CONFIRMED":
+        issue = getattr(invoice, "tax_invoice_issue", None)
+        if issue and getattr(issue, "popbill", None):
+            transaction.on_commit(lambda: popbill_receipts.dispatch(issue.pk, retry=True), robust=True)
         return notice
     if notice.status != "SUBMITTED":
         raise BankTransferConflict(
@@ -324,6 +345,14 @@ def confirm_notice(
             issue.save(
                 update_fields=["status", "failure_reason", "updated_at"]
             )
+            receipt = getattr(issue, "popbill", None)
+            if receipt is None and popbill_receipts.enabled() and issue.business_profile_snapshot:
+                # This is the first confirmation. Old READY or ISSUED manual documents stay manual.
+                receipt = popbill_receipts.prepare(issue, "BUSINESS_TAX", {})
+            if receipt:
+                receipt.next_attempt_at = timezone.now()
+                receipt.save(update_fields=["next_attempt_at"])
+                transaction.on_commit(lambda: popbill_receipts.dispatch(issue.pk), robust=True)
     return notice
 
 
@@ -357,6 +386,10 @@ def reject_notice(
         invoice_id=notice.invoice_id
     ).first()
     if issue and issue.status != "ISSUED":
+        receipt = getattr(issue, "popbill", None)
+        if receipt:
+            receipt.recipient_ciphertext = ""
+            receipt.save(update_fields=["recipient_ciphertext"])
         issue.status = "NOT_REQUESTED"
         issue.failure_reason = reason
         issue.save(
@@ -373,6 +406,8 @@ def mark_tax_invoice_issued(
     issued_at=None,
 ) -> TaxInvoiceIssue:
     issue = TaxInvoiceIssue.objects.select_for_update().get(pk=issue_id)
+    if getattr(issue, "popbill", None):
+        raise BankTransferConflict("팝빌 자동 발급 건은 공급사 결과로 갱신됩니다.")
     if issue.status == "ISSUED":
         if issue.issue_number == issue_number:
             return issue
