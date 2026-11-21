@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -51,6 +53,20 @@ class OMRPdfViewTests(TestCase):
         force_authenticate(request, user=self.user)
         request.tenant = self.tenant
         return request
+
+    def test_hakwonplus_print_preview_and_pdf_embed_the_platform_wordmark(self):
+        self.tenant.code = "hakwonplus"
+        self.tenant.save(update_fields=["code"])
+        logo = (Path(__file__).resolve().parents[1] / "omr/renderer/logos/hakwonplus.png").read_bytes()
+        data_uri = "data:image/png;base64," + base64.b64encode(logo).decode("ascii")
+        for doc in (
+            OMRDocumentService.from_exam(exam=self.exam, tenant=self.tenant),
+            OMRDocumentService.from_params(tenant=self.tenant, exam_title="Exam"),
+        ):
+            self.assertIn(data_uri, OMRHtmlRenderer().render(doc).decode("utf-8"))
+            pdf_doc = OMRDocumentService.fetch_logo_bytes(doc, tenant=self.tenant)
+            self.assertEqual(pdf_doc.logo_bytes, logo)
+            self.assertTrue(OMRPdfRenderer().render(pdf_doc).startswith(b"%PDF"))
 
     def test_movementhui_stock_logo_uses_background_free_print_mark(self):
         self.tenant.code = "movementhui"
