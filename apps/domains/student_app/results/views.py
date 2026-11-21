@@ -7,6 +7,7 @@ GET /student/grades/
 → 학생 본인 시험 결과 목록 + 과제 성적 목록 (기입된 성적만).
 """
 from django.http import Http404
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -65,6 +66,9 @@ class MyGradesSummaryView(APIView):
 
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
+    @extend_schema(parameters=[OpenApiParameter(
+        name="scope", type=str, description="Use rows for exam/homework rows with Home todo eligibility; otherwise returns the full grade board.",
+    )])
     def get(self, request):
         student = get_request_student(request)
         if not student:
@@ -73,7 +77,12 @@ class MyGradesSummaryView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"exams": [], "homeworks": []})
-        return Response(build_student_grades_summary(tenant=tenant, student=student))
+        rows_only = request.query_params.get("scope") == "rows"
+        return Response(build_student_grades_summary(
+            tenant=tenant, student=student,
+            include_grade_board_details=not rows_only,
+            include_learning_todo_eligibility=rows_only,
+        ))
 
 
 class MyGradesAnalyticsView(APIView):

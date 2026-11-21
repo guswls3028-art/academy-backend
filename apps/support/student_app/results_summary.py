@@ -167,6 +167,7 @@ def _safe_homework_number(value: Any, *, positive: bool = False) -> float | None
 
 def build_student_grades_summary(
     *, tenant: Any, student: Any, include_grade_board_details: bool = True,
+    include_learning_todo_eligibility: bool = False,
 ) -> dict[str, Any]:
     """Build authorized grade rows, with report and rollup details for the grade board."""
     today = timezone.localdate()
@@ -449,7 +450,7 @@ def build_student_grades_summary(
             homework_retake_counts[(row["enrollment_id"], row["homework_id"])] = row["max_attempt"]
 
     shared_inspections = {}
-    if include_grade_board_details and assigned_homework_ids:
+    if (include_grade_board_details or include_learning_todo_eligibility) and assigned_homework_ids:
         inspections = list(HomeworkInspection.objects.filter(
             tenant=tenant, enrollment_id__in=enrollment_ids, homework_id__in=assigned_homework_ids,
         ).exclude(solved__isnull=True, feedback="").select_related("session__lecture"))
@@ -592,24 +593,12 @@ def build_student_grades_summary(
 
     homework_list.sort(key=_homework_history_sort_key)
 
-    if not include_grade_board_details:
+    if not include_grade_board_details and not include_learning_todo_eligibility:
         return {"exams": exam_list, "homeworks": homework_list}
-
-    exam_trend, exam_summary = build_exam_progression(exam_list)
     current_todos_by_enrollment = {
         int(enrollment.id): lecture_has_current_learning_todos(enrollment.lecture, today=today)
         for enrollment in history_enrollments
     }
-    lecture_options = [
-        {
-            "id": int(enrollment.lecture_id),
-            "title": enrollment.lecture.title,
-            "color": enrollment.lecture.color,
-            "chip_label": enrollment.lecture.chip_label,
-            "is_active": lecture_active_by_enrollment[int(enrollment.id)],
-        }
-        for enrollment in history_enrollments
-    ]
     active_exam_ids = set(Exam.objects.filter(
         tenant=tenant, id__in=[exam["exam_id"] for exam in exam_list],
         is_active=True, exam_type=Exam.ExamType.REGULAR,
@@ -622,6 +611,21 @@ def build_student_grades_summary(
             and pair not in absent_learning_pairs
             and ("exam_id" not in row or row["exam_id"] in active_exam_ids)
         )
+
+    if not include_grade_board_details:
+        return {"exams": exam_list, "homeworks": homework_list}
+
+    exam_trend, exam_summary = build_exam_progression(exam_list)
+    lecture_options = [
+        {
+            "id": int(enrollment.lecture_id),
+            "title": enrollment.lecture.title,
+            "color": enrollment.lecture.color,
+            "chip_label": enrollment.lecture.chip_label,
+            "is_active": lecture_active_by_enrollment[int(enrollment.id)],
+        }
+        for enrollment in history_enrollments
+    ]
 
     return {
         "exams": exam_list,
