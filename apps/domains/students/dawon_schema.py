@@ -32,7 +32,9 @@ group_properties = dict(id=integer, name=text, kind=text, track=text, school=tex
 group_counts = dict(student_count=integer, lecture_count=integer)
 group = record(**group_properties, **group_counts, instructor_name=text)
 student = record(id=integer, name=text, school=text, grade=nullable(integer), phone=text, parent_phone=text)
-student_page = record(count=integer, results=array(student))
+picker_student = record(**student["properties"])
+picker_student["properties"]["selection_status"] = {"type": "string", "enum": ["eligible", "in_group", "enrolled", "previously_enrolled", "needs_group"]}
+student_page = record(count=integer, results=array(picker_student))
 directory_student = record(**student["properties"], groups=array(person))
 directory_student["properties"]["courses"] = array(record(id=integer, title=text, group=integer, color=text, chip_label=text))
 directory_page = record(count=integer, results=array(directory_student))
@@ -57,7 +59,10 @@ rules = {"type": "object", "additionalProperties": rule}
 teacher_alerts = record(rules=rules, lectures=array(record(id=integer, title=text)), alerts=rows,
                         followups=rows, unavailable=array(text))
 staff_directory = variants(record(staff=array(record(id=integer, name=text, position=text, classes=array(text)))),
-                          record(month=text, payroll=fields, open_count=integer, records=rows))
+                          record(month=text, payroll=fields, open_count=integer, records=rows),
+                          record(month=text, rows=array(record(id=integer, name=text, position=text, minutes=nullable(integer),
+                              work_amount=nullable(number), expense_amount=nullable(number), total_amount=nullable(number),
+                              state=text, open_count=integer))))
 staff_clock = record(staff=text, current=nullable(record(id=integer, date=day, start_time=clock)))
 clock_request = variants(record(action={"type": "string", "enum": ["start"]}),
                          record(action={"type": "string", "enum": ["end"]}, record=integer))
@@ -69,7 +74,13 @@ attendance_day = record(date=day, groups=array(attendance_group), group_name=nul
                         lessons=array(record(id=integer, order=integer, title=text, course_id=integer, course=text,
                                              students=array(attendance_student))),
                         status_labels={"type": "object", "additionalProperties": text})
+assessment = record(exam_id=integer, title=text, date=nullable(day), lecture_id=integer, status=text,
+                    score=nullable(number), max_score=nullable(number), percent=nullable(number))
+student_result = record(student_id=integer, name=text, courses=array(record(lecture_id=integer, course=text,
+                        group_id=integer, group=text)), latest=nullable(assessment), previous=nullable(assessment),
+                        delta_percent=nullable(number), status=text)
 operations = variants(
+    record(count=integer, rows=array(student_result)),
     record(groups=rows, employee=nullable(fields), exams=rows), attendance_day,
     record(count=integer, rows=rows), record(count=integer, alerts=rows),
     record(student=text, course=text, exams=rows, homework=rows, counsel=rows, clinic=rows, can_follow=boolean,

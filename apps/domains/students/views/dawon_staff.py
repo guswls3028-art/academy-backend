@@ -3,7 +3,7 @@ from collections import defaultdict
 from datetime import date
 
 from django.db import transaction
-from django.db.models import Q, Sum
+from django.db.models import Count, Q, Sum
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.exceptions import NotFound, ValidationError
@@ -50,10 +50,57 @@ def selected_staff(tenant, pk):
     return staff
 
 
+
+def month_start(month):
+    try:
+        first = date.fromisoformat(month + "-01")
+        if month != first.strftime("%Y-%m"):
+            raise ValueError
+    except ValueError:
+        raise ValidationError({"month": "연도와 월을 선택해 주세요."})
+    return first
+
+
+def monthly_payroll(tenant, people, first):
+    ids = [row["id"] for row in people]
+    dated = dict(tenant=tenant, staff_id__in=ids, date__year=first.year, date__month=first.month)
+    period = dict(tenant=tenant, staff_id__in=ids, year=first.year, month=first.month)
+    records = {row["staff_id"]: row for row in WorkRecord.objects.filter(**dated).values("staff_id").annotate(
+        hours=Sum("work_hours"), earned=Sum("amount"), pending=Count("pk", filter=Q(end_time__isnull=True)),
+        incomplete=Count("pk", filter=Q(end_time__isnull=False) & (Q(amount__isnull=True) | Q(work_hours__isnull=True))))}
+    expenses = dict(ExpenseRecord.objects.filter(**dated, status="APPROVED").values("staff_id").annotate(
+        total=Sum("amount")).values_list("staff_id", "total"))
+    snapshots = {item.staff_id: item for item in PayrollSnapshot.objects.filter(**period)}
+    locked = set(WorkMonthLock.objects.filter(**period, is_locked=True).values_list("staff_id", flat=True))
+    for row in people:
+        key = row["id"]
+        sums = records.get(key, {})
+        snapshot = snapshots.get(key)
+        if key in locked and snapshot:
+            state, hours, work, expense, total = ("confirmed", snapshot.work_hours, snapshot.work_amount,
+                                                   snapshot.approved_expense_amount, snapshot.total_amount)
+        elif key in locked or snapshot or sums.get("incomplete"):
+            state, hours, work, expense, total = "missing", None, None, None, None
+        else:
+            state, hours, work, expense = "estimate", sums.get("hours") or 0, sums.get("earned") or 0, expenses.get(key, 0)
+            total = work + expense
+        row.update(state=state, hours=hours, work_amount=work, expense_amount=expense,
+                   total_amount=total, open_count=sums.get("pending", 0))
+    return people
+
+
 class DawonStaffView(StaffRequest):
-    @extend_schema(responses={200: schema.staff_directory}, parameters=[OpenApiParameter("staff", int), OpenApiParameter("month", str)])
+    @extend_schema(responses={200: schema.staff_directory}, parameters=[OpenApiParameter("view", str, enum=["payroll"]), OpenApiParameter("staff", int), OpenApiParameter("month", str)])
     def get(self, request):
         tenant = request.tenant
+        if request.query_params.get("view") == "payroll":
+            month = request.query_params.get("month", "")
+            first = month_start(month)
+            people = list(sample_staff(tenant).order_by("name", "pk").values("id", "name", "position"))
+            for row in monthly_payroll(tenant, people, first):
+                hours = row.pop("hours")
+                row["minutes"] = round(hours * 60) if hours is not None else None
+            return Response({"month": month, "rows": people})
         if "staff" not in request.query_params:
             staff = list(sample_staff(tenant).order_by("name", "pk").values("id", "user_id", "name", "position"))
             classes = defaultdict(list)
@@ -66,30 +113,13 @@ class DawonStaffView(StaffRequest):
             return Response({"staff": staff})
         staff = selected_staff(tenant, request.query_params["staff"])
         month = request.query_params.get("month", "")
-        try:
-            first = date.fromisoformat(month + "-01")
-            if month != first.strftime("%Y-%m"):
-                raise ValueError
-        except ValueError:
-            raise ValidationError({"month": "연도와 월을 선택해 주세요."})
-        period = dict(tenant=tenant, staff=staff, year=first.year, month=first.month)
-        dated = dict(tenant=tenant, staff=staff, date__year=first.year, date__month=first.month)
-        records = WorkRecord.objects.filter(**dated).order_by("-date", "-start_time", "-pk")
-        amounts = records.aggregate(hours=Sum("work_hours"), earned=Sum("amount"))
-        expenses = ExpenseRecord.objects.filter(**dated, status="APPROVED").aggregate(total=Sum("amount"))["total"] or 0
-        snapshot = PayrollSnapshot.objects.filter(**period).first()
-        locked = WorkMonthLock.objects.filter(**period, is_locked=True).exists()
-        pending = records.filter(end_time__isnull=True).count()
-        incomplete = records.filter(end_time__isnull=False).filter(Q(amount__isnull=True) | Q(work_hours__isnull=True)).exists()
-        if snapshot and locked:
-            payroll = {"state": "confirmed", "hours": snapshot.work_hours, "work": snapshot.work_amount,
-                       "expenses": snapshot.approved_expense_amount, "total": snapshot.total_amount}
-        elif locked or snapshot or incomplete:
-            payroll = {"state": "missing", "hours": None, "work": None, "expenses": None, "total": None}
-        else:
-            earned = amounts["earned"] or 0
-            payroll = {"state": "estimate", "hours": amounts["hours"] or 0, "work": earned,
-                       "expenses": expenses, "total": earned + expenses}
+        first = month_start(month)
+        row = monthly_payroll(tenant, [{"id": staff.pk}], first)[0]
+        payroll = dict(state=row["state"], hours=row["hours"], work=row["work_amount"],
+                       expenses=row["expense_amount"], total=row["total_amount"])
+        pending = row["open_count"]
+        records = WorkRecord.objects.filter(tenant=tenant, staff=staff, date__year=first.year,
+                                            date__month=first.month).order_by("-date", "-start_time", "-pk")
         return Response({"month": month, "payroll": payroll, "open_count": pending, "records": list(
             records.values("id", "date", "start_time", "end_time", "end_date", "work_hours", "amount"))})
 

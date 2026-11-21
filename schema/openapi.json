@@ -54685,6 +54685,17 @@
           },
           {
             "in": "query",
+            "name": "kind",
+            "schema": {
+              "enum": [
+                "school",
+                "union"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
             "name": "lecture",
             "schema": {
               "type": "integer"
@@ -54708,6 +54719,18 @@
             "in": "query",
             "name": "search",
             "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "track",
+            "schema": {
+              "enum": [
+                "1%",
+                "HYPER",
+                "SKY"
+              ],
               "type": "string"
             }
           },
@@ -55804,6 +55827,16 @@
           },
           {
             "in": "query",
+            "name": "include_status",
+            "schema": {
+              "enum": [
+                1
+              ],
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "schema": {
               "type": "integer"
@@ -55914,6 +55947,16 @@
                                 "type": "string"
                               },
                               "school": {
+                                "type": "string"
+                              },
+                              "selection_status": {
+                                "enum": [
+                                  "eligible",
+                                  "in_group",
+                                  "enrolled",
+                                  "previously_enrolled",
+                                  "needs_group"
+                                ],
                                 "type": "string"
                               }
                             },
@@ -56104,6 +56147,16 @@
             }
           },
           {
+            "in": "query",
+            "name": "include_status",
+            "schema": {
+              "enum": [
+                1
+              ],
+              "type": "integer"
+            }
+          },
+          {
             "in": "path",
             "name": "lecture_pk",
             "required": true,
@@ -56224,6 +56277,16 @@
                                 "type": "string"
                               },
                               "school": {
+                                "type": "string"
+                              },
+                              "selection_status": {
+                                "enum": [
+                                  "eligible",
+                                  "in_group",
+                                  "enrolled",
+                                  "previously_enrolled",
+                                  "needs_group"
+                                ],
                                 "type": "string"
                               }
                             },
@@ -57006,9 +57069,67 @@
           },
           {
             "in": "query",
+            "name": "export",
+            "schema": {
+              "enum": [
+                1
+              ],
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
             "name": "group",
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lecture",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "enum": [
+                "decline",
+                "improvement",
+                "lowest",
+                "name",
+                "recent"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "enum": [
+                "absent",
+                "graded",
+                "no_exam",
+                "pending"
+              ],
+              "type": "string"
             }
           },
           {
@@ -57020,12 +57141,24 @@
           },
           {
             "in": "query",
+            "name": "trend",
+            "schema": {
+              "enum": [
+                "decline",
+                "improvement"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
             "name": "view",
             "schema": {
               "enum": [
                 "attendance",
                 "care",
-                "learners"
+                "learners",
+                "student_results"
               ],
               "type": "string"
             }
@@ -57037,6 +57170,164 @@
               "application/json": {
                 "schema": {
                   "anyOf": [
+                    {
+                      "properties": {
+                        "count": {
+                          "type": "integer"
+                        },
+                        "rows": {
+                          "items": {
+                            "properties": {
+                              "courses": {
+                                "items": {
+                                  "properties": {
+                                    "course": {
+                                      "type": "string"
+                                    },
+                                    "group": {
+                                      "type": "string"
+                                    },
+                                    "group_id": {
+                                      "type": "integer"
+                                    },
+                                    "lecture_id": {
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "required": [
+                                    "lecture_id",
+                                    "course",
+                                    "group_id",
+                                    "group"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "delta_percent": {
+                                "nullable": true,
+                                "type": "number"
+                              },
+                              "latest": {
+                                "nullable": true,
+                                "properties": {
+                                  "date": {
+                                    "format": "date",
+                                    "nullable": true,
+                                    "type": "string"
+                                  },
+                                  "exam_id": {
+                                    "type": "integer"
+                                  },
+                                  "lecture_id": {
+                                    "type": "integer"
+                                  },
+                                  "max_score": {
+                                    "nullable": true,
+                                    "type": "number"
+                                  },
+                                  "percent": {
+                                    "nullable": true,
+                                    "type": "number"
+                                  },
+                                  "score": {
+                                    "nullable": true,
+                                    "type": "number"
+                                  },
+                                  "status": {
+                                    "type": "string"
+                                  },
+                                  "title": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "exam_id",
+                                  "title",
+                                  "date",
+                                  "lecture_id",
+                                  "status",
+                                  "score",
+                                  "max_score",
+                                  "percent"
+                                ],
+                                "type": "object"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "previous": {
+                                "nullable": true,
+                                "properties": {
+                                  "date": {
+                                    "format": "date",
+                                    "nullable": true,
+                                    "type": "string"
+                                  },
+                                  "exam_id": {
+                                    "type": "integer"
+                                  },
+                                  "lecture_id": {
+                                    "type": "integer"
+                                  },
+                                  "max_score": {
+                                    "nullable": true,
+                                    "type": "number"
+                                  },
+                                  "percent": {
+                                    "nullable": true,
+                                    "type": "number"
+                                  },
+                                  "score": {
+                                    "nullable": true,
+                                    "type": "number"
+                                  },
+                                  "status": {
+                                    "type": "string"
+                                  },
+                                  "title": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "exam_id",
+                                  "title",
+                                  "date",
+                                  "lecture_id",
+                                  "status",
+                                  "score",
+                                  "max_score",
+                                  "percent"
+                                ],
+                                "type": "object"
+                              },
+                              "status": {
+                                "type": "string"
+                              },
+                              "student_id": {
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "student_id",
+                              "name",
+                              "courses",
+                              "latest",
+                              "previous",
+                              "delta_percent",
+                              "status"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "count",
+                        "rows"
+                      ],
+                      "type": "object"
+                    },
                     {
                       "properties": {
                         "employee": {
@@ -57662,6 +57953,16 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "view",
+            "schema": {
+              "enum": [
+                "payroll"
+              ],
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -57730,6 +58031,68 @@
                         "payroll",
                         "open_count",
                         "records"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "month": {
+                          "type": "string"
+                        },
+                        "rows": {
+                          "items": {
+                            "properties": {
+                              "expense_amount": {
+                                "nullable": true,
+                                "type": "number"
+                              },
+                              "id": {
+                                "type": "integer"
+                              },
+                              "minutes": {
+                                "nullable": true,
+                                "type": "integer"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "open_count": {
+                                "type": "integer"
+                              },
+                              "position": {
+                                "type": "string"
+                              },
+                              "state": {
+                                "type": "string"
+                              },
+                              "total_amount": {
+                                "nullable": true,
+                                "type": "number"
+                              },
+                              "work_amount": {
+                                "nullable": true,
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "position",
+                              "minutes",
+                              "work_amount",
+                              "expense_amount",
+                              "total_amount",
+                              "state",
+                              "open_count"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "month",
+                        "rows"
                       ],
                       "type": "object"
                     }

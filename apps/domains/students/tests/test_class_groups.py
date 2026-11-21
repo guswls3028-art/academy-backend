@@ -49,6 +49,9 @@ class ClassGroupTests(TestCase):
         url = f"{group.pk}/candidates/"
         data = get(url, page_info=1, search="1234-5678", grade=2, offset=1, limit=1).data
         self.assertEqual((data["count"], [r["id"] for r in data["results"]]), (2, [students[1].pk]))
+        status_page = get(url, page_info=1, include_status=1, search="학생").data
+        self.assertEqual({r["id"]:r["selection_status"] for r in status_page["results"]},
+                         {students[0].pk:"in_group",students[1].pk:"eligible",students[2].pk:"eligible"})
         self.assertEqual(get(url, page_info=1, grade=3).data["count"], 0)
         self.assertIsInstance(get(url).data, list)
         self.assertEqual(get(view="students", search="학생", limit=2).data["count"], 3)
@@ -64,6 +67,29 @@ class ClassGroupTests(TestCase):
         Enrollment.objects.create(tenant=self.tenant, lecture=course, student=students[0], status="INACTIVE")
         self.assertEqual([r["id"] for r in get(view="students", lecture=course.pk).data["results"]], [other.pk])
         self.assertEqual(get(view="students", lecture=course.pk, group=group.pk).data["count"], 0)
+
+    def test_course_search_explains_preconditions_and_preserves_save_guard(self):
+        from apps.domains.lectures.models import Lecture
+        from apps.domains.students.models import ClassGroupLecture
+        admin = get_user_model().objects.create_user(tenant=self.tenant, username="t719_dawon-demo-admin")
+        TenantMembership.ensure_active(tenant=self.tenant, user=admin, role="admin")
+        auth = {"actor":admin, "token":{"dawon_demo_role":"admin"}}
+        pupils = [self.pupil("학생 "+str(i), "검수고") for i in range(4)]
+        group = ClassGroup.objects.create(tenant=self.tenant, name="반", kind="union", track="SKY")
+        group.students.add(*pupils[:3])
+        lecture = Lecture.objects.create(tenant=self.tenant, title="강의", name="담당")
+        ClassGroupLecture.objects.create(group=group, lecture=lecture, period="vacation")
+        for child, status in zip(pupils[:2], ["ACTIVE","INACTIVE"]):
+            Enrollment.objects.create(tenant=self.tenant, lecture=lecture, student=child, status=status)
+        path = f"{group.pk}/lectures/{lecture.pk}/late-students/"
+        def statuses(term):
+            rows = self.call("get", path, {"page_info":1,"include_status":1,"search":term}, **auth).data["results"]
+            return {r["id"]:r["selection_status"] for r in rows}
+        self.assertEqual(statuses("학생"), dict(zip([p.pk for p in pupils],
+                         ["enrolled","previously_enrolled","eligible","needs_group"])))
+        self.assertEqual(statuses(""), {pupils[2].pk:"eligible"})
+        for child in [*pupils[:2],pupils[3]]:
+            self.assertEqual(self.call("post", path, {"student_ids":[child.pk]}, **auth).status_code, 400)
 
     def test_director_picker_counts_all_candidates_before_paging(self):
         admin = get_user_model().objects.create_user(tenant=self.tenant, username="t719_dawon-demo-admin")
@@ -250,6 +276,16 @@ class ClassGroupTests(TestCase):
         self.assertEqual(self.call("get", f"{mine}/", **role).status_code, 200)
         self.assertEqual(self.call("patch", f"{mine}/members/", {"add": []}, **role).status_code,403)
         self.assertEqual(self.call("get",f"{other}/",**role).status_code,404)
+        child, outside = self.pupil("가", "중앙고"), self.pupil("나", "중앙고")
+        own_group, foreign_group = ClassGroup.objects.get(pk=mine), ClassGroup.objects.get(pk=other)
+        own_group.students.add(child)
+        foreign_group.students.add(child, outside)
+        def directory(**params):
+            return self.call("get", "", {"view":"students", **params}, **role).data
+        self.assertEqual(directory(kind="union", track="SKY")["count"], 1)
+        self.assertEqual(directory(id=child.pk)["results"][0]["groups"], [{"id":mine, "name":own_group.name}])
+        self.assertEqual(directory(id=outside.pk)["count"], 0)
+        self.assertEqual(directory(group=other)["count"], 0)
         self.assertEqual({row["id"] for row in self.call("get").data}, {mine, other})
 
     def test_school_roster_atomic_and_native_lecture(self):

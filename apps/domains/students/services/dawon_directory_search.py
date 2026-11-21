@@ -4,7 +4,7 @@ import unicodedata
 from collections import defaultdict
 
 from django.db.models import Exists, OuterRef
-from rest_framework.fields import IntegerField
+from rest_framework.fields import ChoiceField, IntegerField
 
 from apps.core.models import TenantMembership
 from apps.domains.enrollment.models import Enrollment
@@ -31,7 +31,7 @@ def student_row(student):
 
 def active_students(qs, tenant):
     account = TenantMembership.objects.filter(tenant=tenant, user_id=OuterRef("user_id"),
-                                              role="student", is_active=True, user__is_active=True)
+                                              role="student", is_active=True, user__is_active=True, user__tenant=tenant)
     return qs.filter(tenant=tenant, deleted_at__isnull=True, is_managed=True).filter(Exists(account))
 
 
@@ -64,28 +64,43 @@ def student_page(qs, tenant, params, schools=()):
     return {"count": len(matches), "results": [rows[pk] for pk in ids if pk in rows]}
 
 
-def directory(tenant, params):
+def directory(tenant, params, *, authorized_groups=None):
     qs = Student.objects.all()
+    groups = ClassGroup.objects.filter(tenant=tenant)
+    if authorized_groups is not None:
+        groups = groups.filter(pk__in=authorized_groups.values("pk"))
+    filtered = authorized_groups is not None
+    for key, choices in (("kind", ClassGroup.Kind.values), ("track", ClassGroup.Track.values)):
+        if params.get(key):
+            groups = groups.filter(**{key: ChoiceField(choices=choices).run_validation(params[key])})
+            filtered = True
+    if params.get("group"):
+        groups = groups.filter(pk=IntegerField(min_value=1, max_value=2**63-1).run_validation(params["group"]))
+        filtered = True
+    if filtered:
+        qs = qs.filter(class_groups__in=groups).distinct()
     if params.get("id"):
         qs = qs.filter(pk=IntegerField(min_value=1, max_value=2**63 - 1).run_validation(params["id"]))
     if params.get("lecture"):
         lecture_id = IntegerField(min_value=1, max_value=2**63 - 1).run_validation(params["lecture"])
-        qs = qs.filter(Exists(Enrollment.objects.filter(
+        courses = Enrollment.objects.filter(
             student_id=OuterRef("pk"), tenant=tenant, lecture_id=lecture_id, lecture__tenant=tenant, status="ACTIVE",
-        )))
-    if params.get("group"):
-        group_id = IntegerField(min_value=1, max_value=2**63 - 1).run_validation(params["group"])
-        qs = qs.filter(class_groups__tenant=tenant, class_groups__pk=group_id)
+        )
+        if authorized_groups is not None:
+            courses = courses.filter(lecture__class_group_link__group__in=groups)
+        qs = qs.filter(Exists(courses))
     page = student_page(qs, tenant, params)
     ids = [s["id"] for s in page["results"]]
-    groups = defaultdict(list)
-    for student, pk, name in ClassGroup.objects.filter(tenant=tenant, students__in=ids).order_by("name", "pk").values_list("students", "pk", "name"):
-        groups[student].append({"id": pk, "name": name})
+    labels = defaultdict(list)
+    for student, pk, name in groups.filter(students__in=ids).order_by("name", "pk").values_list("students", "pk", "name"):
+        labels[student].append({"id": pk, "name": name})
     for student in page["results"]:
-        student["groups"] = groups[student["id"]]
+        student["groups"] = labels[student["id"]]
     if params.get("id") and page["results"]:
         enrollments = Enrollment.objects.filter(tenant=tenant, student_id=ids[0], student__tenant=tenant, status="ACTIVE",
             lecture__tenant=tenant, lecture__class_group_link__group__tenant=tenant).order_by("lecture__title", "pk")
+        if authorized_groups is not None:
+            enrollments = enrollments.filter(lecture__class_group_link__group__in=groups)
         page["results"][0]["courses"] = [{"id": course, "title": title, "group": group, "color": color, "chip_label": label}
             for course, title, group, color, label in enrollments.values_list(
                 "lecture_id", "lecture__title", "lecture__class_group_link__group_id", "lecture__color", "lecture__chip_label")]

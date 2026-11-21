@@ -26,6 +26,7 @@ from apps.support.results.exam_policy_dependencies import (
 from apps.support.results.exam_result_excel_import_dependencies import (
     ResultImportCandidateRecord,
     get_result_import_candidates,
+    assigned_exam_enrollments,
 )
 
 TREND_THRESHOLD_PP = 10
@@ -164,6 +165,22 @@ def _load_scores(*, results, exam_maxima, tenant, candidate_policy=None):
             status = "DONE"
         rows[key] = AnalysisScore(score, status, achievement)
     return rows
+
+
+def directory_exam_scores(*, tenant, exams, enrollment_ids):
+    """Project the original exam analysis states across many exams without a query per exam or learner."""
+    from apps.domains.results.services.omr_subjective_completion import pending_omr_result_ids
+
+    maxima = {exam.pk: float(exam.max_score or 100.0) for exam in exams}
+    assigned = {(exam, eid) for exam, eid in assigned_exam_enrollments(tenant=tenant, exam_ids=maxima)
+                if eid in enrollment_ids}
+    results = [r for r in latest_results_for_targets_per_enrollment(target_type="exam", target_ids=maxima).filter(
+        enrollment__tenant=tenant, enrollment_id__in=enrollment_ids).select_related("attempt")
+        if (r.target_id, r.enrollment_id) in assigned]
+    scores = _load_scores(results=results, exam_maxima=maxima, tenant=tenant)
+    pending = pending_omr_result_ids(results)
+    provisional = {(r.target_id, r.enrollment_id) for r in results if r.pk in pending}
+    return assigned, scores, provisional
 
 
 def _trend_signal(previous_delta: float | None, cumulative_delta: float) -> str | None:

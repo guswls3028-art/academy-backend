@@ -26,7 +26,7 @@ from apps.domains.results.services.omr_subjective_completion import pending_omr_
 from apps.domains.students import dawon_schema as schema
 from apps.domains.students.models import ClassGroup, DawonExamReview
 from apps.domains.students.services.dawon_daily_attendance import daily_attendance
-from apps.domains.students.services.dawon_exam_reports import admin_exam_detail, exam_for_management
+from apps.domains.students.services.dawon_exam_reports import admin_exam_detail, exam_for_management, student_results
 from apps.domains.students.services.dawon_care_directory import care_directory, learner_directory
 from apps.domains.students.services.dawon_followup import class_alerts, register_followup, student_record
 from apps.domains.teachers.contracts import active_teachers
@@ -89,13 +89,19 @@ class DawonDemoOperationsView(APIView):
         )
 
     @extend_schema(responses={200: schema.operations}, parameters=[
-        OpenApiParameter("view", str, enum=["attendance", "care", "learners"]),
+        OpenApiParameter("view", str, enum=["attendance", "care", "learners", "student_results"]),
+        OpenApiParameter("q", str), OpenApiParameter("page", int), OpenApiParameter("lecture", int),
+        OpenApiParameter("status", str, enum=["graded", "absent", "pending", "no_exam"]),
+        OpenApiParameter("sort", str, enum=["name", "recent", "decline", "improvement", "lowest"]),
+        OpenApiParameter("trend", str, enum=["decline", "improvement"]), OpenApiParameter("export", int, enum=[1]),
         OpenApiParameter("date", OpenApiTypes.DATE), OpenApiParameter("group", int),
         OpenApiParameter("course_overview", int), OpenApiParameter("student", int),
         OpenApiParameter("course", int), OpenApiParameter("exam", int), OpenApiParameter("alerts", str),
     ])
     def get(self, request):
         tenant = request.tenant
+        if request.query_params.get("view") == "student_results":
+            return Response(student_results(tenant, request.query_params), headers={"Cache-Control":"private, no-store"})
         if request.query_params.get("view") == "attendance":
             return Response(daily_attendance(tenant, request.query_params), headers={"Cache-Control": "private, no-store"})
         if request.query_params.get("view") in {"care", "learners"}:

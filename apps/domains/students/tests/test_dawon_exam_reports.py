@@ -38,6 +38,30 @@ class DawonExamReportTests(TestCase):
         self.assertNotIn(invalid.pk, [row["id"] for row in data["roster"]])
         self.assertTrue(all(invalid.pk not in item["graded_ids"] for item in data["questions"]))
 
+    def test_student_result_rows_filters_and_export(self):
+        from apps.domains.students.services.dawon_exam_reports import student_results
+        all_rows = student_results(self.tenant, {"export":"1"})
+        self.assertGreater(all_rows["count"], 25)
+        self.assertEqual(len({r["student_id"] for r in all_rows["rows"]}), all_rows["count"])
+        self.assertEqual(student_results(self.tenant, {"page":2})["rows"], all_rows["rows"][25:50])
+        course = DawonExamReport.objects.filter(kind="cycle").first().session.lecture_id
+        result = student_results(self.tenant, {"lecture":course, "q":self.student.name, "sort":"lowest"})
+        self.assertEqual(result["count"], 1)
+        row = result["rows"][0]
+        self.assertTrue(all(c["lecture_id"] == course for c in row["courses"]))
+        latest = row["latest"]
+        self.assertEqual(latest["status"], "graded")
+        self.assertAlmostEqual(latest["percent"], 100*latest["score"]/latest["max_score"])
+        self.assertIsNotNone(row["previous"])
+        current, previous = (DawonExamReport.objects.get(exam_id=p["exam_id"]) for p in [latest, row["previous"]])
+        self.assertEqual((current.kind,current.series), (previous.kind,previous.series))
+        self.assertEqual(current.sequence, previous.sequence + 1)
+        self.assertEqual(latest["max_score"], row["previous"]["max_score"])
+        self.assertAlmostEqual(row["delta_percent"], latest["percent"] - row["previous"]["percent"])
+        declining = student_results(self.tenant, {"trend":"decline","export":"1"})
+        self.assertTrue(declining["rows"])
+        self.assertTrue(all(r["delta_percent"] < 0 for r in declining["rows"]))
+
     def test_three_reports_and_seed_replay(self):
         call_command("seed_dawon_reports", stdout=StringIO())
         self.assertEqual(DawonExamReport.objects.count(), 10)

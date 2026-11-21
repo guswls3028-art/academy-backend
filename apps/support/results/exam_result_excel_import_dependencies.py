@@ -53,42 +53,39 @@ def get_answer_key_answers(*, template_exam_id: int | None) -> Any:
     return getattr(answer_key, "answers", None)
 
 
+def assigned_exam_enrollments(*, tenant, exam_ids):
+    """Prefer explicit assignment per exam, otherwise use its same-course lesson enrollments."""
+    from apps.domains.enrollment.models import SessionEnrollment
+    from apps.domains.exams.models import Exam, ExamEnrollment
+    from django.db.models import F
+
+    links = set(Exam.objects.filter(tenant=tenant, pk__in=exam_ids, sessions__lecture__tenant=tenant)
+                .values_list("pk", "sessions__lecture_id"))
+    pairs = set()
+    explicit = set()
+    for exam, course, enrollment in ExamEnrollment.objects.filter(exam_id__in=exam_ids, enrollment__tenant=tenant).values_list(
+            "exam_id", "enrollment__lecture_id", "enrollment_id"):
+        if (exam, course) in links:
+            explicit.add(exam)
+            pairs.add((exam, enrollment))
+    remaining = set(exam_ids) - explicit
+    if remaining:
+        pairs.update(SessionEnrollment.objects.filter(
+            tenant=tenant, session__exams__id__in=remaining, session__exams__tenant=tenant,
+            session__lecture__tenant=tenant, enrollment__tenant=tenant,
+            enrollment__lecture_id=F("session__lecture_id"), enrollment__status="ACTIVE",
+            enrollment__student__deleted_at__isnull=True,
+        ).values_list("session__exams__id", "enrollment_id").distinct())
+    return pairs
+
+
 def get_result_import_candidates(
     *,
     exam_id: int,
     tenant: Any,
 ) -> list[ResultImportCandidateRecord]:
-    from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-    from apps.domains.exams.models import Exam, ExamEnrollment
-    from django.db.models import F
-
-    linked_lecture_ids = set(
-        Exam.objects.filter(id=int(exam_id), tenant=tenant)
-        .values_list("sessions__lecture_id", flat=True)
-    )
-
-    enrollment_ids = list(
-        ExamEnrollment.objects.filter(
-            exam_id=int(exam_id),
-            enrollment__tenant=tenant,
-            enrollment__lecture_id__in=linked_lecture_ids,
-        ).values_list("enrollment_id", flat=True)
-    )
-    if not enrollment_ids:
-        enrollment_ids = list(
-            SessionEnrollment.objects.filter(
-                tenant=tenant,
-                session__exams__id=int(exam_id),
-                session__exams__tenant=tenant,
-                session__lecture__tenant=tenant,
-                enrollment__tenant=tenant,
-                enrollment__lecture_id=F("session__lecture_id"),
-                enrollment__status="ACTIVE",
-                enrollment__student__deleted_at__isnull=True,
-            )
-            .values_list("enrollment_id", flat=True)
-            .distinct()
-        )
+    from apps.domains.enrollment.models import Enrollment
+    enrollment_ids = [eid for _, eid in assigned_exam_enrollments(tenant=tenant, exam_ids=[exam_id])]
 
     enrollments = (
         Enrollment.objects.filter(

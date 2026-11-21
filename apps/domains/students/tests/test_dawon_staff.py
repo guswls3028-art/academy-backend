@@ -49,6 +49,18 @@ class DawonStaffFlowTest(TestCase):
         staff.refresh_from_db();other.refresh_from_db()
         self.assertEqual(staff.position,"INSTRUCTOR");self.assertEqual(other.position,"ASSISTANT")
 
+    def test_monthly_directory_matches_single_employee_and_denies_teacher(self):
+        params = {"view":"payroll","month":"2026-11"}
+        response = self.request(DawonStaffView, "admin", data=params)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["rows"]), len(FIXTURES))
+        row = response.data["rows"][0]
+        single = self.request(DawonStaffView, "admin", data={"staff":row["id"],"month":params["month"]}).data
+        self.assertEqual((row["state"],row["total_amount"],row["open_count"]),
+                         (single["payroll"]["state"],single["payroll"]["total"],single["open_count"]))
+        self.assertEqual(self.request(DawonStaffView,"teacher",data=params).status_code, 404)
+        self.assertEqual(self.request(DawonStaffView,"admin",data={**params,"month":"2026-13"}).status_code, 400)
+
     def test_seed_and_isolation(self):
         before = WorkRecord.objects.filter(tenant=self.tenant,memo=WORK_MARK).count()
         call_command("seed_dawon_staff", stdout=StringIO())

@@ -4,13 +4,14 @@ from statistics import mean
 
 from django.db.models import F, Q
 from rest_framework.exceptions import NotFound
+from rest_framework.fields import ChoiceField, IntegerField
 
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.exams.models import Exam, ExamQuestion
 from apps.domains.results.models import ResultItem
-from apps.domains.results.services.exam_analysis_metrics import load_exam_analysis
+from apps.domains.results.services.exam_analysis_metrics import directory_exam_scores, load_exam_analysis
 from apps.domains.results.services.omr_subjective_completion import pending_omr_result_ids
-from apps.domains.students.services.dawon_directory_search import school_of
+from apps.domains.students.services.dawon_directory_search import natural_name, school_of
 from apps.domains.students.models import DawonExamReport, DawonExamReview, DawonReportHomework
 
 
@@ -129,3 +130,91 @@ def admin_exam_detail(tenant, exam, course_id, reviewer):
             "average": mean(values) if values else None, "highest": max(values) if values else None,
             "lowest": min(values) if values else None, "distribution": distribution, "roster": roster,
             "reviewed": DawonExamReview.objects.filter(exam=exam, lecture_id=course_id, reviewer=reviewer).exists()}
+
+def student_results(tenant, params):
+    """One row per active class-course student; batch-load exam assignments and confirmed first attempts."""
+
+    sort = ChoiceField(choices=("name", "recent", "decline", "improvement", "lowest")).run_validation(params.get("sort") or "name")
+    status = ChoiceField(choices=("graded", "absent", "pending", "no_exam")).run_validation(params["status"]) if params.get("status") else None
+    page = IntegerField(min_value=1, max_value=1000000).run_validation(params.get("page", 1))
+    scope = Enrollment.objects.filter(tenant=tenant, status="ACTIVE", student__tenant=tenant, student__deleted_at__isnull=True,
+                                      lecture__tenant=tenant, lecture__class_group_link__group__tenant=tenant)
+    for key, field in (("group", "lecture__class_group_link__group_id"), ("lecture", "lecture_id")):
+        if params.get(key):
+            scope = scope.filter(**{field: IntegerField(min_value=1, max_value=2**63-1).run_validation(params[key])})
+    if term := params.get("q", "").strip()[:100]:
+        scope = scope.filter(student__name__icontains=term)
+    learners, enrolled, course_ids = {}, {}, set()
+    for eid, sid, name, cid, title, gid, group in scope.order_by("lecture__title", "pk").values_list(
+        "pk", "student_id", "student__name", "lecture_id", "lecture__title", "lecture__class_group_link__group_id",
+        "lecture__class_group_link__group__name",
+    ):
+        row = learners.setdefault(sid, dict(student_id=sid, name=name, courses=[], assessments=[]))
+        row["courses"].append(dict(lecture_id=cid, course=title, group_id=gid, group=group))
+        enrolled[eid] = (sid, cid)
+        course_ids.add(cid)
+
+    exams = list(Exam.objects.filter(tenant=tenant, is_active=True, exam_type=Exam.ExamType.REGULAR,
+                                    sessions__lecture_id__in=course_ids).distinct().select_related("dawonexamreport"))
+    assigned, scores, provisional = directory_exam_scores(tenant=tenant, exams=exams, enrollment_ids=enrolled)
+    assigned_by_exam = defaultdict(list)
+    for exam_id, eid in assigned:
+        assigned_by_exam[exam_id].append(eid)
+    dates = {}
+    exam_by_id = {exam.pk: exam for exam in exams}
+    for exam_id, session_id, cid, day in Exam.objects.filter(pk__in=exam_by_id, sessions__lecture_id__in=course_ids).order_by(
+            "sessions__date", "sessions__pk").values_list("pk", "sessions__id", "sessions__lecture_id", "sessions__date"):
+        definition = getattr(exam_by_id[exam_id], "dawonexamreport", None)
+        if (exam_id, cid) not in dates or (definition and definition.session_id == session_id):
+            dates[exam_id, cid] = (session_id, day)
+    for exam in exams:
+        definition = getattr(exam, "dawonexamreport", None)
+        for eid in assigned_by_exam[exam.pk]:
+            sid, cid = enrolled[eid]
+            if (exam.pk, cid) not in dates:
+                continue
+            session_id, day = dates[exam.pk, cid]
+            family = None
+            if definition and definition.session_id == session_id:
+                # Seeded labels include the display round ("심화 2회"); compare the section across rounds.
+                section = definition.section.removesuffix(f" {definition.sequence}회")
+                family = (definition.kind, definition.series, section) if definition.series and section else None
+            elif exam.template_exam_id:
+                family = ("template", exam.template_exam_id)
+            key = (exam.pk, eid)
+            source = scores.get(key)
+            first = source.initial if source and source.status == "DONE" and key not in provisional else None
+            state = "graded" if first else "absent" if not source or source.status == "NOT_SUBMITTED" else "pending"
+            score, maximum = (first.total_score, first.max_score) if first else (None, None)
+            point = dict(exam_id=exam.pk, title=exam.title, date=day, lecture_id=cid, status=state, score=score,
+                         max_score=maximum, percent=100 * score / maximum if maximum and score is not None else None)
+            comparison_max = maximum if first else exam.max_score
+            learners[sid]["assessments"].append((point, (cid, family, comparison_max) if family and comparison_max else None))
+
+    result = []
+    for row in learners.values():
+        points = sorted(row.pop("assessments"), key=lambda item: (
+            item[0]["date"] is not None, item[0]["date"], item[0]["exam_id"]), reverse=True)
+        latest, series = points[0] if points else (None, None)
+        previous = next((point for point, key in points[1:] if series and series == key and latest["date"]
+                         and point["date"] and point["date"] < latest["date"] and point["percent"] is not None), None)
+        delta = latest["percent"] - previous["percent"] if previous and latest["percent"] is not None and previous["percent"] is not None else None
+        row.update(latest=latest, previous=previous, delta_percent=delta, status=latest["status"] if latest else "no_exam")
+        trend = params.get("trend")
+        if trend == "decline" and (delta is None or delta >= 0):
+            continue
+        if trend == "improvement" and (delta is None or delta <= 0):
+            continue
+        if not status or row["status"] == status:
+            result.append(row)
+    result.sort(key=lambda row: (natural_name(row["name"]), row["student_id"]))
+    if sort == "recent":
+        result.sort(key=lambda row: str((row["latest"] or {}).get("date") or ""), reverse=True)
+    elif sort == "lowest":
+        result.sort(key=lambda row: (((row["latest"] or {}).get("percent") is None),
+                                     (row["latest"] or {}).get("percent") or 0))
+    elif sort in ("decline", "improvement"):
+        direction = 1 if sort == "decline" else -1
+        result.sort(key=lambda row: (row["delta_percent"] is None, direction * (row["delta_percent"] or 0)))
+    start = (page - 1) * 25
+    return {"count": len(result), "rows": result if params.get("export") == "1" else result[start:start+25]}

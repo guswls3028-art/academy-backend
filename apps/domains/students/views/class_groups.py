@@ -29,7 +29,7 @@ from apps.support.students.enrollment_matrix_dependencies import create_class_gr
 page_parameters = [OpenApiParameter("search", str), OpenApiParameter("grade", int),
                    OpenApiParameter("offset", int), OpenApiParameter("limit", int)]
 candidate_parameters = [*page_parameters, OpenApiParameter("page_info", int, enum=[1]),
-                        OpenApiParameter("exact", bool), OpenApiParameter("parent_phone", str),
+                        OpenApiParameter("include_status", int, enum=[1]), OpenApiParameter("exact", bool), OpenApiParameter("parent_phone", str),
                         OpenApiParameter("phone", str)]
 candidate_response = dawon_schema.variants(dawon_schema.array(dawon_schema.student), dawon_schema.student_page)
 
@@ -208,12 +208,18 @@ class ClassGroupViewSet(viewsets.ViewSet):
 
     @extend_schema(operation_id="students_class_groups_list", responses={200: dawon_schema.variants(dawon_schema.array(dawon_schema.group), dawon_schema.array(dawon_schema.person), dawon_schema.directory_page)},
                    parameters=[OpenApiParameter("view", str, enum=["instructors","students"]), *page_parameters,
+                               OpenApiParameter("kind", str, enum=ClassGroup.Kind.values), OpenApiParameter("track", str, enum=ClassGroup.Track.values),
                                OpenApiParameter("id", int), OpenApiParameter("group", int), OpenApiParameter("lecture", int)])
     def list(self, request):
         if request.query_params.get("view") == "students":
-            if not hasattr(request.auth, "get") or request.auth.get("dawon_demo_role") != "admin":
+            role = request.auth.get("dawon_demo_role") if hasattr(request.auth, "get") else None
+            if role not in ("admin", "teacher"):
                 raise PermissionDenied()
-            return Response(directory(request.tenant, request.query_params), headers={"Cache-Control":"private, no-store"})
+            if role == "teacher" and (request.user.tenant_id != request.tenant.pk or not
+                    TenantMembership.objects.filter(tenant=request.tenant, user=request.user, role="teacher", is_active=True).exists()):
+                raise PermissionDenied()
+            return Response(directory(request.tenant, request.query_params,
+                                      authorized_groups=self.groups() if role == "teacher" else None), headers={"Cache-Control":"private, no-store"})
         if request.query_params.get("view") == "instructors":
             if not hasattr(request.auth, "get") or request.auth.get("dawon_demo_role") != "admin":
                 raise PermissionDenied()
@@ -307,12 +313,21 @@ class ClassGroupViewSet(viewsets.ViewSet):
     def retrieve(self, request, pk):
         return Response(self.group_detail(self.group(pk)))
 
+    @staticmethod
+    def status_search(request):
+        params = request.query_params
+        return params.get("page_info") == "1" and params.get("include_status") == "1" and params.get("search", "").strip()
+
     def candidate_rows(self, group, qs, request, *, school=""):
         params = request.query_params
         if params.get("page_info") == "1":
             if not hasattr(request.auth, "get") or request.auth.get("dawon_demo_role") != "admin":
                 raise PermissionDenied()
-            return student_page(qs, request.tenant, params, (group.school if group.kind == "school" else None, school or None))
+            page = student_page(qs, request.tenant, params, (group.school if group.kind == "school" else None, school or None))
+            if params.get("include_status") == "1":
+                for row in page["results"]:
+                    row["selection_status"] = "eligible"
+            return page
         offset_field = serializers.IntegerField(min_value=0)
         offset = offset_field.run_validation(params.get("offset", 0))
         search = normalized(params.get("search", "")).casefold()
@@ -344,6 +359,13 @@ class ClassGroupViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["get"])
     def candidates(self, request, pk):
         group = self.group(pk)
+        if self.status_search(request):
+            page = self.candidate_rows(group, Student.objects.all(), request)
+            ids = [row["id"] for row in page["results"]]
+            members = set(group.students.filter(tenant=request.tenant, pk__in=ids).values_list("pk", flat=True))
+            for row in page["results"]:
+                row["selection_status"] = "in_group" if row["id"] in members else "eligible"
+            return Response(page)
         return Response(self.candidate_rows(group, Student.objects.exclude(class_groups=group), request))
 
     @extend_schema(methods=["GET"], responses={200: dawon_schema.reference})
@@ -379,6 +401,18 @@ class ClassGroupViewSet(viewsets.ViewSet):
         existing = link.lecture.enrollments.filter(tenant=request.tenant)
         members = group.students.filter(tenant=request.tenant)
         if not write:
+            if self.status_search(request):
+                page = self.candidate_rows(group, Student.objects.all(), request, school=link.school)
+                ids = [row["id"] for row in page["results"]]
+                assigned = set(members.filter(pk__in=ids).values_list("pk", flat=True))
+                enrolled = dict(existing.filter(student_id__in=ids).values_list("student_id", "status"))
+                for row in page["results"]:
+                    pk = row["id"]
+                    if pk in enrolled:
+                        row["selection_status"] = "enrolled" if enrolled[pk] == "ACTIVE" else "previously_enrolled"
+                    else:
+                        row["selection_status"] = "eligible" if pk in assigned else "needs_group"
+                return Response(page)
             return Response(self.candidate_rows(group, members.exclude(pk__in=existing.values("student_id")), request, school=link.school))
         field = serializers.ListField(child=serializers.IntegerField(min_value=1), allow_empty=False, max_length=500)
         ids = sorted(set(field.run_validation(request.data.get("student_ids"))))
