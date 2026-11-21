@@ -23029,6 +23029,17 @@
             "minimum": 0,
             "type": "integer"
           },
+          "homework_review_by_homework": {
+            "additionalProperties": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "homework_review_pending": {
+            "minimum": 0,
+            "type": "integer"
+          },
           "qna_pending": {
             "minimum": 0,
             "type": "integer"
@@ -23044,6 +23055,8 @@
         },
         "required": [
           "counsel_pending",
+          "homework_review_by_homework",
+          "homework_review_pending",
           "qna_pending",
           "submission_pending",
           "video_failed"
