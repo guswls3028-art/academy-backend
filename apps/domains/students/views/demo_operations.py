@@ -73,11 +73,14 @@ class DawonDemoOperationsView(APIView):
         super().initial(request, *args, **kwargs)
         tenant = getattr(request, "tenant", None)
         token = request.auth
+        role = token.get("dawon_demo_role") if hasattr(token, "get") else None
+        clinic_teacher = (role == "teacher" and request.method in {"GET", "HEAD"}
+                          and request.query_params.get("view") == "care" and request.query_params.get("kind") == "clinic")
         if not (
-            is_demo_tenant(tenant) and hasattr(token, "get") and token.get("dawon_demo_role") == "admin"
-            and request.user.username == "t719_dawon-demo-admin" and request.user.tenant_id == tenant.pk
+            is_demo_tenant(tenant) and (role == "admin" or clinic_teacher)
+            and request.user.username == f"t719_dawon-demo-{role}" and request.user.tenant_id == tenant.pk
             and not request.user.is_staff and not request.user.is_superuser
-            and TenantMembership.objects.filter(tenant=tenant, user=request.user, role="admin", is_active=True).exists()
+            and TenantMembership.objects.filter(tenant=tenant, user=request.user, role=role, is_active=True).exists()
         ):
             raise NotFound()
 
@@ -105,8 +108,12 @@ class DawonDemoOperationsView(APIView):
         if request.query_params.get("view") == "attendance":
             return Response(daily_attendance(tenant, request.query_params), headers={"Cache-Control": "private, no-store"})
         if request.query_params.get("view") in {"care", "learners"}:
-            select = care_directory if request.query_params["view"] == "care" else learner_directory
-            return Response(select(tenant, request.query_params), headers={"Cache-Control":"private, no-store"})
+            if request.query_params["view"] == "care":
+                teacher = request.user if request.auth.get("dawon_demo_role") == "teacher" else None
+                data = care_directory(tenant, request.query_params, teacher=teacher)
+            else:
+                data = learner_directory(tenant, request.query_params)
+            return Response(data, headers={"Cache-Control":"private, no-store"})
         if "alerts" in request.query_params:
             return Response(class_alerts(tenant, request.query_params.get("group")), headers={"Cache-Control":"private, no-store"})
         if "student" in request.query_params:

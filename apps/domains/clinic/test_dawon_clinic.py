@@ -11,7 +11,8 @@ from apps.domains.clinic.dawon_demo import allows_demo_clinic_write, ensure_demo
 from apps.domains.clinic.models import Session
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.lectures.models import Lecture
-from apps.domains.students.models import Student
+from apps.domains.students.models import ClassGroup, ClassGroupLecture, Student
+from apps.domains.students.views.demo_operations import DawonDemoOperationsView
 
 
 @override_settings(DAWON_REVIEW_CLASS_GROUPS=True)
@@ -19,13 +20,16 @@ class DawonClinicTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(id=719, code="dawon", name="다원", clinic_auto_approve_booking=True)
         self.users = {}
-        for role in ("student", "teacher"):
-            user = get_user_model().objects.create_user(username=role, tenant=self.tenant)
+        for role in ("student", "teacher", "admin"):
+            user = get_user_model().objects.create_user(username="t719_dawon-demo-"+role, tenant=self.tenant)
             TenantMembership.ensure_active(tenant=self.tenant, user=user, role=role)
             self.users[role] = user
         student = Student.objects.create(id=2, tenant=self.tenant, user=self.users["student"], name="다원 수업 검수 학생 2",
                                          is_managed=True, ps_number="qa-sample", omr_code="00000002")
         lecture = Lecture.objects.create(tenant=self.tenant, title="수학", subject="수학")
+        self.group = ClassGroup.objects.create(tenant=self.tenant,name="담당 반",kind="union",track="SKY",assigned_teacher=self.users["teacher"])
+        self.group.students.add(student)
+        ClassGroupLecture.objects.create(group=self.group,lecture=lecture,period="vacation")
         Enrollment.objects.create(tenant=self.tenant, student=student, lecture=lecture)
         ensure_demo_clinic_sessions(self.tenant)
         self.session = Session.objects.order_by("date").first()
@@ -71,3 +75,40 @@ class DawonClinicTests(TestCase):
         self.session.memo = ""
         self.session.save(update_fields=["memo"])
         self.assertFalse(allows_demo_clinic_write(request, "student"))
+
+    def clinic_directory(self, role, **scope):
+        request=APIRequestFactory().get("/api/v1/students/demo-operations/", {"view":"care","kind":"clinic",**scope})
+        request.tenant=self.tenant
+        force_authenticate(request,user=self.users[role],token={"dawon_demo_role":role})
+        return DawonDemoOperationsView.as_view()(request)
+
+    def test_director_approval_and_teacher_scope(self):
+        from apps.domains.clinic.models import SessionParticipant
+        from apps.core.authentication import _validate_dawon_demo_access
+        from django.utils import timezone
+        posted=self.call("post","participants/bulk-create/",{"session_ids":[self.session.pk]},"student")
+        self.assertEqual(posted.status_code,201,posted.data)
+        pk=posted.data["participants"][0]["id"]
+        self.assertEqual(self.clinic_directory("teacher",status="pending",group=self.group.pk).data["count"],1)
+        outside=ClassGroup.objects.create(tenant=self.tenant,name="담당 밖",kind="union",track="HYPER")
+        self.assertEqual(self.clinic_directory("teacher",group=outside.pk).status_code,404)
+        self.assertEqual(self.clinic_directory("teacher",kind="requests").status_code,404)
+        self.assertEqual(self.clinic_directory("teacher",view="learners").status_code,404)
+        self.assertEqual(self.clinic_directory("admin",record=pk).data["rows"][0]["can_review"],True)
+        route=f"participants/{pk}/set_status/"
+        native=SimpleNamespace(tenant=self.tenant,method="PATCH",path="/api/v1/clinic/"+route,data={"status":"rejected"})
+        _validate_dawon_demo_access(native,{"dawon_demo_role":"admin","dawon_demo_until":int(timezone.now().timestamp())+60})
+        result=self.call("patch",route,{"status":"rejected"},"admin")
+        self.assertEqual(result.status_code,200,result.data)
+        self.assertEqual(self.call("get",f"participants/{pk}/",{},"student").data["status"],"rejected")
+        self.assertEqual(self.clinic_directory("admin",status="pending").data["count"],0)
+        self.assertFalse(allows_demo_clinic_write(native,"admin"))
+        from apps.domains.clinic.services.lifecycle import change_participant_status, Conflict
+        with self.assertRaises(Conflict):
+            change_participant_status(tenant=self.tenant,participant_id=pk,next_status="booked",actor=self.users["teacher"],require_pending=True)
+        self.assertEqual(self.clinic_directory("teacher",status="rejected").data["count"],1)
+        self.group.assigned_teacher=None
+        self.group.save(update_fields=["assigned_teacher"])
+        self.assertEqual(self.clinic_directory("teacher",status="rejected").data["count"],0)
+        self.assertEqual(self.call("get",f"participants/{pk}/",{},"teacher").status_code,404)
+        self.assertEqual(SessionParticipant.objects.get(pk=pk).status,"rejected")

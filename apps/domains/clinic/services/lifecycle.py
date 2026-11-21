@@ -710,6 +710,7 @@ def change_participant_status(
     staff_memo=None,
     is_late: bool = False,
     expected_checked_in_at: datetime.datetime | None = None,
+    require_pending: bool = False,
 ) -> ParticipantTransitionResult:
     allowed_statuses = {choice[0] for choice in SessionParticipant.Status.choices}
     if next_status not in allowed_statuses:
@@ -722,6 +723,8 @@ def change_participant_status(
             .get(pk=request_student.pk)
         )
     participant = _locked_participant(tenant=tenant, participant_id=participant_id)
+    if require_pending and participant.status != SessionParticipant.Status.PENDING:
+        raise Conflict("이미 처리한 신청입니다. 현재 상태를 다시 확인해 주세요.")
     if request_student and participant.student_id != request_student.id:
         raise PermissionDenied("다른 학생의 예약을 수정할 수 없습니다.")
     if (

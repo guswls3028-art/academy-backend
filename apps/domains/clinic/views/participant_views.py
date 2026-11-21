@@ -288,6 +288,10 @@ class ParticipantViewSet(
         if is_demo_tenant(tenant) and hasattr(auth, "get") and auth.get("dawon_demo_role"):
             qs = qs.filter(session__memo=MEMO, session__location=LOCATION, student_id=SAMPLE_STUDENT_ID)
 
+            if auth.get("dawon_demo_role") == "teacher":
+                from ..dawon_demo import visible_to_clinic_teacher
+                qs = visible_to_clinic_teacher(qs, tenant, self.request.user)
+
         # 학생이 조회하는 경우: 자신의 예약 신청만 조회
         student = _get_request_student_for_clinic(self.request)
         if student:
@@ -443,6 +447,8 @@ class ParticipantViewSet(
             staff_memo=staff_memo,
             is_late=is_late,
             expected_checked_in_at=expected_checked_in_at,
+            require_pending=(is_demo_tenant(request.tenant) and hasattr(request.auth, "get")
+                             and request.auth.get("dawon_demo_role") in {"teacher", "admin"}),
         )
         obj = result.participant
         notification_result = result.notification_result

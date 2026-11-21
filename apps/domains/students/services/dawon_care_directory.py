@@ -43,20 +43,32 @@ def learner_directory(tenant, query):
     ))}
 
 
-def care_directory(tenant, query):
+def care_directory(tenant, query, *, teacher=None):
     kind = ChoiceField(choices=("clinic","requests","appointments")).run_validation(query.get("kind"))
     group = selected_group(tenant, query)
     term = query.get("q","").strip()[:100]
+    visible_groups = ClassGroup.objects.filter(tenant=tenant)
+    if teacher is not None:
+        from apps.support.lectures.class_group_cycles import assigned_class_group_ids
+        visible_groups = visible_groups.filter(pk__in=assigned_class_group_ids(tenant, teacher))
+        if kind != "clinic" or (group and not visible_groups.filter(pk=group.pk).exists()):
+            raise NotFound()
     if kind == "clinic":
+        from apps.domains.clinic.dawon_demo import reviewable_sample_request, visible_to_clinic_teacher
         source = SessionParticipant.objects.filter(tenant=tenant, student__tenant=tenant, student__deleted_at__isnull=True).filter(
             Q(session__isnull=True) | Q(session__tenant=tenant),
         ).filter(Q(enrollment__isnull=True) | Q(enrollment__tenant=tenant, enrollment__lecture__tenant=tenant, enrollment__student_id=F("student_id")))
+        if teacher is not None:
+            source = visible_to_clinic_teacher(source, tenant, teacher)
+        if query.get("status"):
+            status = ChoiceField(choices=SessionParticipant.Status.values).run_validation(query["status"])
+            source = source.filter(status=status)
         if group:
             source = source.filter(Q(enrollment__lecture__class_group_link__group=group)
                                    | Q(enrollment__isnull=True, student__class_groups=group))
         if term:
             source = source.filter(student__name__icontains=term)
-        source = source.select_related("student","session","enrollment__lecture__class_group_link__group").order_by("-created_at","-pk")
+        source = source.select_related("student","student__user","session","enrollment__lecture__class_group_link__group").order_by("-created_at","-pk")
     elif kind == "requests":
         replies = PostReply.objects.filter(tenant=tenant, post_id=OuterRef("pk"),author_role="staff")
         source = PostEntity.objects.filter(tenant=tenant,post_type="counsel",author_role="parent",status="published",
@@ -99,12 +111,12 @@ def care_directory(tenant, query):
                       "title":item.session.title if item.session else "클리닉 신청",
                       "status":item.status}
             if detail:
-                fields["body"] = item.student_request_memo
+                fields.update(body=item.student_request_memo, can_review=reviewable_sample_request(item))
         rows.append({"id":item.pk,"student_id":student.pk,"name":student.name,"groups":[home] if home else [],
                      "course_id":enrollment.lecture_id if enrollment else None,**fields})
     missing = {row["student_id"] for row in rows if not row["groups"]}
     groups = defaultdict(list)
-    for student_id, name in ClassGroup.objects.filter(tenant=tenant,students__in=missing).order_by("name").values_list("students","name"):
+    for student_id, name in visible_groups.filter(students__in=missing).order_by("name").values_list("students","name"):
         groups[student_id].append(name)
     for row in rows:
         if not row["groups"]:

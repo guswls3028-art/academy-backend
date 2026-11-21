@@ -39,6 +39,27 @@ def ensure_demo_clinic_sessions(tenant):
     ], ignore_conflicts=True)
 
 
+def visible_to_clinic_teacher(rows, tenant, teacher):
+    from django.db.models import F, Q
+    from apps.support.lectures.class_group_cycles import assigned_class_group_ids
+    groups = assigned_class_group_ids(tenant, teacher)
+    return rows.filter(
+        Q(enrollment__lecture__class_group_link__group_id__in=groups,
+          enrollment__tenant=tenant, enrollment__lecture__tenant=tenant, enrollment__student_id=F("student_id"))
+        | Q(enrollment__isnull=True, student__class_groups__in=groups),
+        tenant=tenant, student__tenant=tenant,
+    ).distinct()
+
+
+def reviewable_sample_request(row):
+    from apps.core.dawon_preview_identity import matches_original
+    student = row.student
+    return (is_sample_session(row.session) and row.student_id == SAMPLE_STUDENT_ID
+            and student.tenant_id == row.tenant_id and student.is_managed and student.deleted_at is None
+            and row.source == SessionParticipant.Source.STUDENT_REQUEST and row.status == SessionParticipant.Status.PENDING
+            and (student.name == "다원 수업 검수 학생 2" or (student.name == "김학생 2" and matches_original(student))))
+
+
 def allows_demo_clinic_write(request, role):
     if not request.path.startswith("/api/v1/clinic/participants/"):
         return False
@@ -60,7 +81,7 @@ def allows_demo_clinic_write(request, role):
     if action == "set_status" and request.method == "PATCH":
         status = data.get("status")
         if set(data) != {"status"} or not (
-            (role == "teacher" and status in ("booked", "rejected")) or
+            (role in {"teacher", "admin"} and status in ("booked", "rejected")) or
             (role == "student" and status == "cancelled")
         ):
             return False
@@ -75,7 +96,7 @@ def allows_demo_clinic_write(request, role):
         tenant=tenant, pk=participant_id, session__in=sessions, student_id=SAMPLE_STUDENT_ID,
         student__tenant=tenant, student__is_managed=True, student__deleted_at__isnull=True,
         student__name__in=("다원 수업 검수 학생 2", "김학생 2"), source=SessionParticipant.Source.STUDENT_REQUEST,
-        **({"status": SessionParticipant.Status.PENDING} if role == "teacher" else {}),
+        **({"status": SessionParticipant.Status.PENDING} if role in {"teacher", "admin"} else {}),
     ).select_related("student__user").first()
     if not participant:
         return False
