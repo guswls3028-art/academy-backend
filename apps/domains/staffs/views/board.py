@@ -2,7 +2,7 @@ from collections.abc import Mapping
 from functools import cached_property
 
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils.http import content_disposition_header
@@ -91,6 +91,13 @@ class StaffBoardEditSerializer(serializers.ModelSerializer):
         fields = ("title", "body")
 
 
+class BoardSearchSerializer(serializers.Serializer):
+    q = serializers.CharField(
+        default="", allow_blank=True, max_length=100,
+        error_messages={"max_length": "검색어는 100자 이하로 입력해 주세요."},
+    )
+
+
 class BoardPagination(PageNumberPagination):
     page_size = 20
     page_size_query_param = "page_size"
@@ -120,7 +127,11 @@ class StaffBoardViewSet(viewsets.GenericViewSet):
         ).order_by("-id")
 
     @extend_schema(
-        parameters=[OpenApiParameter("category", str, enum=StaffBoardPost.Category.values)],
+        parameters=[
+            OpenApiParameter("category", str, enum=StaffBoardPost.Category.values),
+            OpenApiParameter("q", {"type": "string", "maxLength": 100},
+                             description="제목·본문·첨부 파일명에 포함된 검색어. 앞뒤 공백을 제외하고 최대 100자."),
+        ],
         responses=StaffBoardSummarySerializer(many=True),
     )
     def list(self, request):
@@ -130,6 +141,13 @@ class StaffBoardViewSet(viewsets.GenericViewSet):
             if category not in StaffBoardPost.Category.values:
                 raise serializers.ValidationError({"category": "게시판 종류를 확인해 주세요."})
             posts = posts.filter(category=category)
+        search = BoardSearchSerializer(data=request.query_params)
+        search.is_valid(raise_exception=True)
+        keyword = search.validated_data["q"]
+        if keyword:
+            posts = posts.filter(
+                Q(title__icontains=keyword) | Q(body__icontains=keyword) | Q(attachment_name__icontains=keyword)
+            )
         page = self.paginate_queryset(posts)
         serializer = StaffBoardSummarySerializer(page, many=True, context=self.get_serializer_context())
         return self.get_paginated_response(serializer.data)
