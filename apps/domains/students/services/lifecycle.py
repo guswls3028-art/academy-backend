@@ -10,7 +10,7 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.students.models import ClassGroup, DawonCounselAppointment, DawonReportHomework, Student, StudentInventoryNamespaceConflict
+from apps.domains.students.models import ClassGroup, DawonAlertDisposition, DawonCounselAppointment, DawonReportHomework, Student, StudentInventoryNamespaceConflict
 from apps.domains.students.services.school import is_valid_grade, normalize_school_from_name
 from apps.support.students.lifecycle_dependencies import (
     active_wrong_note_pdf_exists_for_students,
@@ -88,6 +88,7 @@ PERMANENT_DELETE_ENROLLMENT_TENANT_PATHS = {
     ),
     "students.DawonReportHomework": (("report__exam__tenant_id", False), ("report__session__lecture__tenant_id", False)),
     "students.DawonCounselAppointment": (("registered_by__tenant_id", False),),
+    "students.DawonAlertDisposition": (("completed_by__tenant_id", True),),
     "submissions.OMRStudentMatch": (("tenant_id", False),),
     "submissions.Submission": (("tenant_id", False),),
     "video.InactiveVideoEntitlement": (("tenant_id", False),),
@@ -1146,6 +1147,7 @@ def _permanently_delete_selected_students(
                 ).delete()
 
         if enrollment_ids:
+            DawonAlertDisposition.objects.filter(enrollment__tenant=tenant, enrollment_id__in=enrollment_ids).delete()
             DawonReportHomework.objects.filter(
                 enrollment_id__in=enrollment_ids, report__exam__tenant=tenant, report__session__lecture__tenant=tenant,
             ).delete()

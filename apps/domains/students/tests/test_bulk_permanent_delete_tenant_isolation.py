@@ -2011,7 +2011,7 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
 
     def _dawon_links(self):
         from apps.domains.lectures.models import Session
-        from apps.domains.students.models import ClassGroup, DawonCounselAppointment, DawonExamReport, DawonReportHomework
+        from apps.domains.students.models import ClassGroup, DawonAlertDisposition, DawonCounselAppointment, DawonExamReport, DawonReportHomework
 
         group = ClassGroup.objects.create(tenant=self.tenant_a, name="QA 반", kind="union", track="SKY")
         group.students.add(self.student_a)
@@ -2023,15 +2023,19 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
         appointment = DawonCounselAppointment.objects.create(
             enrollment=self.enrollment_a, registered_by=self.admin_a, day=timezone.localdate(),
         )
-        return group, report, homework, appointment
+        alert = DawonAlertDisposition.objects.create(enrollment=self.enrollment_a, rule="absence_streak",
+            source=session.pk, detail="결석", value=2, completed_at=timezone.now(), completed_by=self.admin_a)
+        return group, report, homework, appointment, alert
 
     def test_dawon_permanent_delete_preserves_shared_class_report_and_other_students(self):
-        group, report, homework, appointment = self._dawon_links()
+        group, report, homework, appointment, alert = self._dawon_links()
         user = User.objects.create_user(username="qa-other-member", tenant=self.tenant_a)
         other = Student.objects.create(tenant=self.tenant_a, user=user, ps_number="QA02", omr_code="12345678", name="학생Y")
         group.students.add(other)
         enrollment = Enrollment.objects.create(tenant=self.tenant_a, lecture=self.lecture_a, student=other)
         other_homework = type(homework).objects.create(report=report, enrollment=enrollment, title="별도 과제")
+        other_alert = type(alert).objects.create(enrollment=enrollment, rule=alert.rule, source=alert.source,
+                                                 detail=alert.detail, value=1)
         other_appointment = type(appointment).objects.create(
             enrollment=enrollment, registered_by=self.admin_a, day=timezone.localdate(),
         )
@@ -2045,9 +2049,11 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
         self.assertTrue(type(appointment).objects.filter(pk=other_appointment.pk).exists())
         self.assertFalse(type(homework).objects.filter(pk=homework.pk).exists())
         self.assertFalse(type(appointment).objects.filter(pk=appointment.pk).exists())
+        self.assertFalse(type(alert).objects.filter(pk=alert.pk).exists())
+        self.assertTrue(type(alert).objects.filter(pk=other_alert.pk).exists())
 
     def test_dawon_permanent_delete_rejects_each_foreign_owner_before_any_cleanup(self):
-        group, report, homework, appointment = self._dawon_links()
+        group, report, homework, appointment, alert = self._dawon_links()
         foreign_user = User.objects.create_user(username="qa-foreign-author", tenant=self.tenant_b)
         foreign_course = Lecture.objects.create(tenant=self.tenant_b, title="QA 외부 강의")
         owners = [
@@ -2055,6 +2061,7 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
             (Exam.objects.filter(pk=report.exam_id), {"tenant": self.tenant_b}),
             (type(report.session).objects.filter(pk=report.session_id), {"lecture": foreign_course}),
             (type(appointment).objects.filter(pk=appointment.pk), {"registered_by": foreign_user}),
+            (type(alert).objects.filter(pk=alert.pk), {"completed_by": foreign_user}),
         ]
         for owner, change in owners:
             with self.subTest(model=owner.model._meta.label), transaction.atomic():
@@ -2066,6 +2073,7 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
                 self.assertTrue(Enrollment.objects.filter(pk=self.enrollment_a.pk).exists())
                 self.assertTrue(type(homework).objects.filter(pk=homework.pk).exists())
                 self.assertTrue(type(appointment).objects.filter(pk=appointment.pk).exists())
+                self.assertTrue(type(alert).objects.filter(pk=alert.pk).exists())
                 transaction.set_rollback(True)
 
     def test_permanent_delete_relation_contract_matches_model_graph(self):
