@@ -1,4 +1,6 @@
 """Tenant scoped persistence of session score-table composition."""
+from collections import defaultdict
+
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from rest_framework.exceptions import APIException, ValidationError
@@ -141,6 +143,11 @@ def student_session_totals(*, tenant, exam_rows, homework_rows, absent_learning_
         enrollment_id__in={pair[1] for pair in pairs}, enrollment__tenant=tenant,
         homework__tenant=tenant,
     ).values_list("session_id", "enrollment_id", "homework_id"))
+    homework_by_pair = defaultdict(list)
+    for row in homework_rows:
+        session_id = row.get("session_id")
+        if session_id is not None:
+            homework_by_pair[(session_id, row["enrollment_id"])].append(row)
     # Match the administrator's absent-row retention: persisted submissions,
     # attempts, and correction rows are evidence even before a Result exists.
     activity_pairs = set()
@@ -193,9 +200,8 @@ def student_session_totals(*, tenant, exam_rows, homework_rows, absent_learning_
             homework_entries = [{"homework_id": row["homework_id"], "block": {
                 "score": row.get("score"),
                 "meta": {"status": "NOT_SUBMITTED" if row.get("submission_state") == "NOT_SUBMITTED" else ""},
-            }} for row in homework_rows
-                if row.get("session_id") == session.id and row["enrollment_id"] == enrollment_id
-                and (session.id, enrollment_id, row["homework_id"]) in homework_targets]
+            }} for row in homework_by_pair.get((session.id, enrollment_id), ())
+                if (session.id, enrollment_id, row["homework_id"]) in homework_targets]
             summaries.append({
                 "session_id": session.id, "lecture_id": session.lecture_id,
                 "session_title": session.title or session.display_label, "lecture_title": session.lecture.title,
