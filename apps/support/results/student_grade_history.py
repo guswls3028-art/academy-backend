@@ -137,8 +137,9 @@ def build_student_exam_history(
 
     Callers own the enrollment visibility policy. Staff can pass all of a
     student's tenant enrollments; the student app passes active enrollments.
-    An optional totals_rows consumer receives the same published first-attempt
-    projection per enrollment before display-only exam-id deduplication.
+    Restrict the published history before loading grading evidence. An optional
+    totals_rows consumer receives the same first-attempt projection per
+    enrollment before display-only exam-id deduplication.
     """
     if not enrollment_ids:
         return [], [], empty_exam_summary()
@@ -157,17 +158,27 @@ def build_student_exam_history(
         )
     )
     result_exam_ids = {int(row["target_id"]) for row in results}
+    exams_map = exam_metadata_by_id(
+        tenant=tenant,
+        exam_ids=list(result_exam_ids),
+        published_results_only=published_results_only,
+    ) if result_exam_ids else {}
     explicit_exam_ids, explicit_target_pairs = explicit_exam_target_scope(
         tenant=tenant,
-        exam_ids=result_exam_ids,
+        exam_ids=set(exams_map),
         enrollment_ids={int(enrollment_id) for enrollment_id in enrollment_ids},
     )
     results = [
         row
         for row in results
-        if int(row["target_id"]) not in explicit_exam_ids
-        or (int(row["enrollment_id"]), int(row["target_id"])) in explicit_target_pairs
+        if row["target_id"] in exams_map
+        and (
+            int(row["target_id"]) not in explicit_exam_ids
+            or (int(row["enrollment_id"]), int(row["target_id"])) in explicit_target_pairs
+        )
     ]
+    if not results:
+        return [], [], empty_exam_summary()
     load_scoring_details = scoring_details_loader or request_exam_scoring_details_loader()
     pending_result_ids = pending_omr_result_ids_for_ids(
         (row["id"] for row in results), scoring_details_loader=load_scoring_details,
@@ -177,21 +188,18 @@ def build_student_exam_history(
         exam_ids=exam_ids,
         enrollment_ids=enrollment_ids,
     )
-    exams_map = exam_metadata_by_id(tenant=tenant, exam_ids=exam_ids) if exam_ids else {}
-
     retake_counts: dict[tuple[int, int], int] = {}
-    if exam_ids:
-        for attempt in (
-            ExamAttempt.objects.regular().filter(
-                exam_id__in=exam_ids,
-                enrollment_id__in=enrollment_ids,
-                exam__tenant=tenant,
-                enrollment__tenant=tenant,
-            )
-            .values("exam_id", "enrollment_id")
-            .annotate(max_attempt=Count("id"))
-        ):
-            retake_counts[(attempt["enrollment_id"], attempt["exam_id"])] = attempt["max_attempt"]
+    for attempt in (
+        ExamAttempt.objects.regular().filter(
+            exam_id__in=exam_ids,
+            enrollment_id__in=enrollment_ids,
+            exam__tenant=tenant,
+            enrollment__tenant=tenant,
+        )
+        .values("exam_id", "enrollment_id")
+        .annotate(max_attempt=Count("id"))
+    ):
+        retake_counts[(attempt["enrollment_id"], attempt["exam_id"])] = attempt["max_attempt"]
 
     enrollment_lecture_map = enrollment_lecture_metadata_by_id(
         tenant=tenant,
@@ -200,8 +208,7 @@ def build_student_exam_history(
     exam_lecture_pairs = {
         (int(row["target_id"]), int(enrollment_lecture_map[row["enrollment_id"]]["lecture_id"]))
         for row in results
-        if row["target_id"] in exams_map
-        and row["enrollment_id"] in enrollment_lecture_map
+        if row["enrollment_id"] in enrollment_lecture_map
         and enrollment_lecture_map[row["enrollment_id"]].get("lecture_id") is not None
     }
     primary_session_map = primary_session_metadata_by_exam_and_lecture(
@@ -216,11 +223,7 @@ def build_student_exam_history(
         result_pair = (int(result["enrollment_id"]), int(exam_id))
         if result_pair in seen_result_pairs:
             continue
-        info = exams_map.get(exam_id)
-        if not info:
-            continue
-        if published_results_only and not info["student_results_published"]:
-            continue
+        info = exams_map[exam_id]
         enrollment_info = enrollment_lecture_map.get(result["enrollment_id"])
         if not enrollment_info or enrollment_info.get("lecture_is_system"):
             continue

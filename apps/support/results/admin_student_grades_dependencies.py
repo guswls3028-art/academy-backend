@@ -54,17 +54,21 @@ def explicit_exam_target_scope(
     return {int(exam_id) for exam_id in explicit_exam_ids}, target_pairs
 
 
-def exam_metadata_by_id(*, tenant: Any, exam_ids: list[int]) -> dict[int, dict[str, Any]]:
+def exam_metadata_by_id(
+    *, tenant: Any, exam_ids: list[int], published_results_only: bool = False,
+) -> dict[int, dict[str, Any]]:
     from apps.domains.exams.models import Exam, ExamLecturePolicy
 
     exams_map = {}
+    exam_scope = Exam.objects.filter(
+        id__in=exam_ids,
+        tenant=tenant,
+        exam_type=Exam.ExamType.REGULAR,
+    )
+    if published_results_only:
+        exam_scope = exam_scope.filter(student_results_published=True)
     exams = list(
-        Exam.objects.filter(
-            id__in=exam_ids,
-            tenant=tenant,
-            exam_type=Exam.ExamType.REGULAR,
-        )
-        .select_related("sheet", "template_exam")
+        exam_scope.select_related("sheet", "template_exam")
         .only(
             "id",
             "title",
@@ -74,7 +78,6 @@ def exam_metadata_by_id(*, tenant: Any, exam_ids: list[int]) -> dict[int, dict[s
             "choice_question_count",
             "essay_numbering",
             "is_active",
-            "student_results_published",
             "exam_type",
             "template_exam_id",
             "template_exam__tenant_id",
@@ -109,7 +112,6 @@ def exam_metadata_by_id(*, tenant: Any, exam_ids: list[int]) -> dict[int, dict[s
             "essay_numbering": exam.essay_numbering,
             "pass_score_by_lecture": pass_scores_by_exam.get(int(exam.id), {}),
             "is_active": bool(exam.is_active),
-            "student_results_published": bool(exam.student_results_published),
             "effective_structure_exam_id": structure_exam_id,
         }
     return exams_map
