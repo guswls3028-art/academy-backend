@@ -1077,6 +1077,48 @@ class HomeworkSubmissionMediaTests(TestCase):
         self.assertEqual(SubmissionMedia.objects.count(), media_count)
 
     @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
+    def test_homework_review_alert_tracks_only_current_delivered_files(self, _upload):
+        from apps.support.results.dashboard_dependencies import pending_homework_file_counts
+        from apps.support.submissions.dependencies import homework_submission_revisions
+
+        def assert_pending(expected):
+            self.assertEqual(pending_homework_file_counts(tenant=self.tenant), expected)
+
+        assert_pending({})
+        first = self._post(file=_jpeg())
+        self.assertEqual(first.status_code, 201)
+        counts = {self.homework.pk: 1}
+        assert_pending(counts)
+        other = Tenant.objects.create(code="qa-homework-review-other", name="Other")
+        self.assertEqual(pending_homework_file_counts(tenant=other), {})
+        media = SubmissionMedia.objects.get(pk=first.data["id"])
+        for status in (SubmissionMedia.Status.FAILED, SubmissionMedia.Status.UPLOADING):
+            SubmissionMedia.objects.filter(pk=media.pk).update(status=status)
+            assert_pending({})
+        SubmissionMedia.objects.filter(pk=media.pk).update(status=SubmissionMedia.Status.UPLOADED)
+        revision = homework_submission_revisions(
+            tenant=self.tenant, enrollment_ids=[self.enrollment.pk], homework_ids=[self.homework.pk],
+        )[(self.enrollment.pk, self.homework.pk)]
+        score = create_homework_score_fixture(
+            enrollment=self.enrollment, session=self.session, homework=self.homework, score=0,
+            passed=False, reviewed_submission_revision=revision,
+        )
+        assert_pending({})
+        second = self._post(file=_mp4(), position=1)
+        self.assertEqual(second.status_code, 201)
+        assert_pending(counts)
+        score.delete()
+        assert_pending(counts)
+        SubmissionMedia.objects.filter(pk=second.data["id"]).update(removed_at=timezone.now())
+        assert_pending(counts)
+        SubmissionMedia.objects.filter(pk=media.pk).update(removed_at=timezone.now())
+        assert_pending({})
+        Submission.objects.filter(pk=media.submission_id).update(file_key="historical.jpg")
+        assert_pending(counts)
+        Submission.objects.filter(pk=media.submission_id).update(meta={"homework_media_legacy_removed_at": "2026-11-20"})
+        assert_pending({})
+
+    @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
     def test_upload_reload_teacher_view_grade_then_retry_and_delete_are_denied(
         self,
         upload_fileobj_to_r2,
@@ -1140,6 +1182,14 @@ class HomeworkSubmissionMediaTests(TestCase):
             source_id=self.homework.id,
         )
         self.assertEqual(correction.source_fingerprint, viewed_fingerprint)
+        from apps.support.results.dashboard_dependencies import pending_homework_file_counts
+
+        self.assertEqual(pending_homework_file_counts(tenant=self.tenant), {})
+        correction.completed = False
+        correction.save(update_fields=["completed"])
+        self.assertEqual(pending_homework_file_counts(tenant=self.tenant), {self.homework.pk: 1})
+        correction.completed = True
+        correction.save(update_fields=["completed"])
 
         retry = self._post(
             file=_jpeg("positive-journey.jpg", body=b"positive-journey"),

@@ -51,12 +51,14 @@ def homework_submission_revisions(
             target_id__in=tenant_homework_ids,
         )
         .exclude(status__in=[Submission.Status.FAILED, Submission.Status.SUPERSEDED])
+        .only("id", "enrollment_id", "target_id", "source", "meta", "file_key")
         .prefetch_related(Prefetch(
             "media_files",
             queryset=SubmissionMedia.objects.filter(
+                tenant=tenant,
                 status=SubmissionMedia.Status.UPLOADED,
                 removed_at__isnull=True,
-            ),
+            ).only("id", "submission_id"),
             to_attr="uploaded_media_files",
         ))
     )
