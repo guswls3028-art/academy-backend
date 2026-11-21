@@ -183,6 +183,7 @@ class DemoOperationsTests(TestCase):
                 "assigned": 1, "submitted": 1 - i, "graded": 1 - i, "missing": i, "deferred": 0,
             })
             self.assertEqual(course["instructor"], f"담당{i}")
+            self.assertEqual((course["color"], course["chip_label"]), (Lecture._meta.get_field("color").get_default(), Lecture._meta.get_field("chip_label").get_default()))
             self.assertEqual([s["title"] for s in course["sessions"]], [f"수업{i}"])
             self.assertEqual([(h["title"], h["status"]) for h in course["homework"]], [(f"과제{i}", "OPEN")])
             self.assertEqual(course["exams"], [{"id": exam.pk, "title": "공통 시험", "date": course["sessions"][0]["date"], "graded": 1, "average": (40, 80)[i]}])

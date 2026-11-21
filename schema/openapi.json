@@ -54800,6 +54800,12 @@
                               "courses": {
                                 "items": {
                                   "properties": {
+                                    "chip_label": {
+                                      "type": "string"
+                                    },
+                                    "color": {
+                                      "type": "string"
+                                    },
                                     "group": {
                                       "type": "integer"
                                     },
@@ -54813,7 +54819,9 @@
                                   "required": [
                                     "id",
                                     "title",
-                                    "group"
+                                    "group",
+                                    "color",
+                                    "chip_label"
                                   ],
                                   "type": "object"
                                 },

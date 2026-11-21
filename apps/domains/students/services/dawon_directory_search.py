@@ -86,6 +86,7 @@ def directory(tenant, params):
     if params.get("id") and page["results"]:
         enrollments = Enrollment.objects.filter(tenant=tenant, student_id=ids[0], student__tenant=tenant, status="ACTIVE",
             lecture__tenant=tenant, lecture__class_group_link__group__tenant=tenant).order_by("lecture__title", "pk")
-        page["results"][0]["courses"] = [{"id": course, "title": title, "group": group} for course, title, group in
-            enrollments.values_list("lecture_id", "lecture__title", "lecture__class_group_link__group_id")]
+        page["results"][0]["courses"] = [{"id": course, "title": title, "group": group, "color": color, "chip_label": label}
+            for course, title, group, color, label in enrollments.values_list(
+                "lecture_id", "lecture__title", "lecture__class_group_link__group_id", "lecture__color", "lecture__chip_label")]
     return page

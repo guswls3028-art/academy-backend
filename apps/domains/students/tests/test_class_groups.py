@@ -108,11 +108,15 @@ class ClassGroupTests(TestCase):
         self.assertEqual(admin_call("get",prefix+"candidates/").status_code,200)
         members = {"add":[student.pk,peer.pk],"remove":[]}
         self.assertEqual(admin_call("patch",prefix+"members/",members).status_code,200)
-        course=Lecture.objects.create(tenant=self.tenant,title="내 수업",name="교사",subject="수학")
+        course=Lecture.objects.create(tenant=self.tenant,title="내 수업",name="교사",subject="수학",color="#3820ab",chip_label="심화")
         other=Lecture.objects.create(tenant=self.tenant,title="다른 반",name="교사",subject="수학")
         ClassGroupLecture.objects.create(group=group,lecture=course,period="vacation")
         for lecture in (course,other):
             Enrollment.objects.create(tenant=self.tenant,lecture=lecture,student=student,status="ACTIVE")
+        own_course = admin_call("get", "", {"view": "students", "id": student.pk}).data["results"][0]["courses"][0]
+        group_course = admin_call("get", prefix).data["lectures"][0]
+        for item in (own_course, group_course):
+            self.assertEqual((item["color"], item["chip_label"]), ("#3820ab", "심화"))
         rows=admin_call("get",prefix).data["students"]
         self.assertEqual({r["id"]:r["course_ids"] for r in rows},{student.pk:[course.pk],peer.pk:[]})
         response=admin_call("patch",prefix+"members/",{"add":[],"remove":[student.pk]})

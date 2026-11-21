@@ -133,7 +133,7 @@ class DawonDemoOperationsView(APIView):
                 enrollments__student__tenant=tenant, enrollments__student__deleted_at__isnull=True,
             ), distinct=True),
             lessons=Count("sessions", distinct=True),
-        ).values("id", "title", "is_active", "students", "lessons", "name", "class_group_link__group_id",
+        ).values("id", "title", "is_active", "students", "lessons", "name", "color", "chip_label", "class_group_link__group_id",
                  "class_group_link__reference_teacher__tenant_id", "class_group_link__reference_teacher__name").order_by("title", "pk")
         course_details = {}
         for course in courses:

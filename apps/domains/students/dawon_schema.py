@@ -34,7 +34,7 @@ group = record(**group_properties, **group_counts, instructor_name=text)
 student = record(id=integer, name=text, school=text, grade=nullable(integer), phone=text, parent_phone=text)
 student_page = record(count=integer, results=array(student))
 directory_student = record(**student["properties"], groups=array(person))
-directory_student["properties"]["courses"] = array(record(id=integer, title=text, group=integer))
+directory_student["properties"]["courses"] = array(record(id=integer, title=text, group=integer, color=text, chip_label=text))
 directory_page = record(count=integer, results=array(directory_student))
 exam_row = record(id=integer, student_id=integer, name=text, school=text, grade=nullable(integer),
                   score=nullable(number), maximum=nullable(number), status=text)
