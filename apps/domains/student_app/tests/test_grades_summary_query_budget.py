@@ -99,6 +99,40 @@ class GradesSummaryQueryBudgetTests(TestCase):
     def test_manual_history_query_budget_and_response_parity(self):
         self._assert_history_budget("manual")
 
+    def test_unpublished_omr_results_stay_out_of_scoring_work(self):
+        published, _, _, published_result = self._add_exam(1, "omr_scan")
+        hidden, _, _, hidden_result = self._add_exam(2, "omr_scan")
+        self.Exam.objects.filter(pk=hidden.pk).update(student_results_published=False)
+
+        from apps.support.results import student_grade_history
+
+        original_pending = student_grade_history.pending_omr_result_ids_for_ids
+        inspected_result_ids = []
+
+        def record_pending_scope(result_ids, **kwargs):
+            result_ids = tuple(result_ids)
+            inspected_result_ids.extend(result_ids)
+            return original_pending(result_ids, **kwargs)
+
+        with patch.object(
+            student_grade_history,
+            "pending_omr_result_ids_for_ids",
+            side_effect=record_pending_scope,
+        ):
+            response = self._call()
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual([row["exam_id"] for row in response.data["exams"]], [published.pk])
+            self.assertEqual(inspected_result_ids, [published_result.pk])
+
+            inspected_result_ids.clear()
+            self.Exam.objects.filter(pk=hidden.pk).update(student_results_published=True)
+            refreshed = self._call()
+            self.assertEqual(refreshed.status_code, 200)
+            self.assertCountEqual(
+                [row["exam_id"] for row in refreshed.data["exams"]], [published.pk, hidden.pk],
+            )
+            self.assertCountEqual(inspected_result_ids, [published_result.pk, hidden_result.pk])
+
     def test_analytics_skips_grade_board_queries_with_identical_response(self):
         from apps.support.results import enterprise_analytics
         from apps.support.student_app.results_summary import build_student_grades_summary

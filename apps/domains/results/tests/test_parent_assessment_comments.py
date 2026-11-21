@@ -1,5 +1,9 @@
+from collections import Counter
+from unittest.mock import patch
+
 from django.apps import apps
 from django.contrib.auth import get_user_model
+from django.db.models.sql.compiler import SQLCompiler
 from django.test import TestCase
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
@@ -230,3 +234,37 @@ class ParentAssessmentCommentTests(TestCase):
             self.assertEqual([r["text"] for r in history], [f"revision {index} 2", f"revision {index} 1"])
             self.assertEqual([r["author_id"] for r in history], [self.staff.pk, self.staff.pk])
             self.assertTrue(all(r["author_name"] for r in history))
+
+    def test_roster_reads_only_child_pairs_but_peer_attendance_still_controls_fallback(self):
+        Attendance = apps.get_model("attendance", "Attendance")
+        self.assertEqual(self.write().status_code, 200)
+        user = get_user_model().objects.create_user(username="feedback-roster-peer", tenant=self.tenant)
+        peer = Student.objects.create(tenant=self.tenant, user=user, name="Peer",
+                                      ps_number="FB-PEER", omr_code="00000009")
+        enrollment = Enrollment.objects.create(tenant=self.tenant, student=peer, lecture=self.lecture)
+        SessionEnrollment.objects.create(tenant=self.tenant, session=self.session, enrollment=enrollment)
+        Attendance.objects.create(tenant=self.tenant, session=self.session, enrollment=enrollment)
+        # The only attendance is another learner's: the child's fallback must be hidden.
+        self.assertEqual(self.parent_read().data["items"], [])
+        enrollment.status = "INACTIVE"
+        enrollment.save(update_fields=["status"])
+        self.assertEqual(len(self.parent_read().data["items"]), 1)
+        enrollment.status = "ACTIVE"
+        enrollment.save(update_fields=["status"])
+        Attendance.objects.create(tenant=self.tenant, session=self.session, enrollment=self.enrollment)
+        counts = Counter()
+        original = SQLCompiler.results_iter
+
+        def observe(compiler, *args, **kwargs):
+            for row in original(compiler, *args, **kwargs):
+                label = compiler.query.model._meta.label
+                if label in ("attendance.Attendance", "enrollment.SessionEnrollment"):
+                    counts[label] += 1
+                yield row
+
+        with patch.object(SQLCompiler, "results_iter", observe):
+            response = self.parent_read()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row["text"] for row in response.data["items"]], ["학부모 전용"])
+        self.assertEqual(counts["attendance.Attendance"], 1)
+        self.assertEqual(counts["enrollment.SessionEnrollment"], 0)
