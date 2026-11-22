@@ -2731,9 +2731,9 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(resp.data["valid_bookings"], [])
 
     def test_today_pass_is_visible_alongside_older_target_and_student_booking(self):
+        from django.apps import apps as django_apps
+
         from apps.domains.enrollment.models import SessionEnrollment
-        from apps.domains.homework.models import HomeworkAssignment
-        from apps.domains.homework_results.models import Homework, HomeworkScore
         from apps.domains.lectures.models import SessionSchedule, SessionScheduleMembership
         from apps.domains.progress.models import AssessmentCorrection, SessionProgress
 
@@ -2769,6 +2769,9 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         )
         self.assertFalse(read_card())
         assignments = []
+        Homework = django_apps.get_model("homework_results", "Homework")
+        HomeworkAssignment = django_apps.get_model("homework", "HomeworkAssignment")
+        HomeworkScore = django_apps.get_model("homework_results", "HomeworkScore")
         for index in range(4):
             homework = Homework.objects.create(tenant=self.tenant, session=current, title=f"과제 {index + 1}")
             HomeworkAssignment.objects.create(
