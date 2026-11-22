@@ -2,7 +2,7 @@
 from collections import defaultdict
 from statistics import mean
 
-from django.db.models import F, Q
+from django.db.models import Exists, F, OuterRef, Q
 from rest_framework.exceptions import NotFound
 from rest_framework.fields import ChoiceField, IntegerField
 
@@ -11,6 +11,7 @@ from apps.domains.exams.models import Exam, ExamQuestion
 from apps.domains.results.models import ResultItem
 from apps.domains.results.services.exam_analysis_metrics import directory_exam_scores, load_exam_analysis
 from apps.domains.results.services.omr_subjective_completion import pending_omr_result_ids
+from apps.domains.submissions.models import Submission
 from apps.domains.students.services.dawon_directory_search import natural_name, school_of
 from apps.domains.students.models import DawonExamReport, DawonExamReview, DawonReportHomework
 
@@ -63,6 +64,10 @@ def report_for_student(*, tenant, exam, session, enrollment, analysis):
     definitions = scope.filter(kind=primary.kind).filter(
         Q(session=session, title=primary.title) | Q(series=primary.series, sequence__lte=primary.sequence)
     ).order_by("sequence", "exam_id")
+    if primary.kind == "school_mock":
+        submissions = Submission.objects.filter(tenant=tenant, enrollment=enrollment, target_type=Submission.TargetType.EXAM,
+                                                target_id=OuterRef("exam_id")).exclude(status=Submission.Status.SUPERSEDED)
+        definitions = definitions.annotate(has_submission=Exists(submissions))
     sections, trend = [], []
     for definition in definitions:
         related = definition.exam
@@ -71,13 +76,20 @@ def report_for_student(*, tenant, exam, session, enrollment, analysis):
         confirmed = confirmed_scores(own_analysis)
         own = confirmed.get(enrollment.pk)
         if own is None:
+            if primary.kind == "school_mock" and definition.series == primary.series and definition.sequence <= primary.sequence:
+                record = own_analysis.score_by_enrollment.get(enrollment.pk)
+                absent = not definition.has_submission and (record is None or record.status == "NOT_SUBMITTED")
+                status = "absent" if absent else "pending"
+                trend.append({"label": definition.section, "sequence": definition.sequence, "attempt_status": status,
+                              "score": None, "maximum": related.max_score, "average": None, "highest": None,
+                              "percentile": None})
             continue
         scores = [score.total_score for score in confirmed.values()]
         percentile = 100 * sum(value <= own.total_score for value in scores) / len(scores)
         point = {"score": own.total_score, "maximum": own.max_score, "average": mean(scores), "highest": max(scores),
                  "percentile": percentile if related.student_rank_published else None}
         if definition.series == primary.series and definition.sequence <= primary.sequence:
-            trend.append({"label": definition.section, "exam_id": related.pk, **point})
+            trend.append({"label": definition.section, "sequence": definition.sequence, "exam_id": related.pk, **point})
         if definition.session_id == session.pk and definition.title == primary.title:
             sections.append({"exam_id": related.pk, "title": definition.section, "scope": definition.scope,
                              "questions": question_rows(related, own_analysis, confirmed, enrollment.pk), **point})
@@ -85,8 +97,11 @@ def report_for_student(*, tenant, exam, session, enrollment, analysis):
         return None
     homework = DawonReportHomework.objects.filter(report=primary, enrollment=enrollment).order_by("pk").values(
         "title", "completion", "wrong", "unfinished")
+    # The exam description is student-facing. Dedicated demo records may store an ownership marker there.
+    description = primary.exam.description.strip()
     return {"title": primary.title, "kind": primary.kind, "course_title": session.lecture.title,
             "lesson_title": session.title, "date": session.date, "scope": primary.scope,
+            "characteristics": "" if description.startswith("dawon-demo:") else description,
             "sections": sections, "trend": trend, "homework": list(homework),
             "next_homework": primary.next_homework, "clinic": primary.clinic}
 

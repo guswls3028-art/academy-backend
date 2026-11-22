@@ -74,6 +74,7 @@ class DawonExamReportTests(TestCase):
                 report = report_for_student(tenant=self.tenant, exam=exam, session=lesson, enrollment=enrollment, analysis=analysis)
                 self.assertEqual([len(s["questions"]) for s in report["sections"]], counts)
                 self.assertEqual(len(report["trend"]), points)
+                self.assertEqual(report["characteristics"], "")
                 self.assertTrue(all(row["exam_id"] for row in report["trend"]))
                 self.assertTrue(report["homework"])
                 self.assertIsInstance(report["sections"][0]["questions"][0]["correct"], bool)
@@ -98,3 +99,24 @@ class DawonExamReportTests(TestCase):
                 exam.save(update_fields=["student_results_published"])
                 self.assertIsNone(report_for_student(tenant=self.tenant, exam=exam, session=lesson,
                                                     enrollment=enrollment, analysis=analysis))
+
+    def test_school_history_preserves_unscored_round_and_zero_and_published_description(self):
+        from apps.domains.results.models import Result
+
+        first, second, current = DawonExamReport.objects.filter(kind="school_mock").order_by("sequence")
+        enrollment = Enrollment.objects.get(tenant=self.tenant, lecture=current.session.lecture, student=self.student)
+        results = Result.objects.filter(target_type="exam", enrollment=enrollment)
+        results.filter(target_id=first.exam_id).delete()
+        results.filter(target_id=second.exam_id).update(total_score=0, objective_score=0)
+        current.exam.description = "서술형 풀이와 계산 정확도를 평가합니다."
+        current.exam.save(update_fields=["description"])
+        analysis = load_exam_analysis(exam=current.exam, tenant=self.tenant, lecture_id=enrollment.lecture_id, include_trends=False)
+        report = report_for_student(tenant=self.tenant, exam=current.exam, session=current.session, enrollment=enrollment, analysis=analysis)
+        absent, zero, latest = report["trend"]
+        self.assertEqual(report["characteristics"], current.exam.description)
+        self.assertEqual(absent["attempt_status"], "absent")
+        self.assertIsNone(absent["score"])
+        self.assertNotIn("exam_id", absent)
+        self.assertEqual(zero["score"], 0)
+        self.assertGreater(zero["percentile"], 0)
+        self.assertEqual(latest["sequence"], current.sequence)
