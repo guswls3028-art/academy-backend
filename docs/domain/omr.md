@@ -451,6 +451,12 @@ PDF 150/300dpi의 수정액·부분 마킹·복수·빈칸 경계는
 완료·재전달 절차를 따른다. 종료 중 수신과 반환 실패는
 `test_ai_sqs_worker_callback.py`에서 검증한다.
 
+재전달까지 한 시간 이상 걸려도 워커는 현재 점유한 작업과 같은 학원의 제출,
+시험, 원본 객체 키를 다시 확인한 뒤 다운로드 직전에 새 읽기 주소를 발급한다.
+회전 재판독도 새 제출이 참조하는 동일 원본을 사용한다. 폐기·교체된 제출,
+이미 대체된 작업이나 이전 점유 시각, 일치하지 않는 원본에는 주소를 발급하지 않는다.
+이미 접수된 작업에도 적용되며 원본 파일과 수기 성적은 보존한다.
+
 EventBridge 규칙 `academy-v1-recover-stuck-omr`은 5분마다
 `recover_stuck_omr_submissions`를 실행한다. `SUBMITTED`, `DISPATCHED`,
 `EXTRACTING`, `GRADING`에서 상태별 timeout을 넘긴 OMR만 실패 복구 후보이며,
