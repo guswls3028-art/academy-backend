@@ -1058,7 +1058,7 @@ class SessionScoresView(APIView):
                 )
 
                 if correction and correction.accepted_media_fingerprint:
-                    block.update(passed=True, clinic_required=False, teacher_resolved=True)
+                    block.update(passed=True, clinic_required=False)
 
                 homeworks_payload.append(
                     {

@@ -264,9 +264,14 @@ class HomeworkSubmissionMediaTests(TestCase):
 
     def test_staff_acceptance_is_versioned_separate_from_manual_review_and_preserves_zero_score(self):
         from apps.support.results.dashboard_dependencies import pending_homework_file_counts
-        from apps.support.student_app.results_summary import build_student_grades_summary
         from apps.support.submissions.dependencies import homework_submission_is_teacher_reviewed
 
+        Submission.objects.create(
+            tenant=self.tenant, user=self.student_user, enrollment=self.enrollment,
+            target_type=Submission.TargetType.HOMEWORK, target_id=self.homework.pk,
+            source=Submission.Source.HOMEWORK_IMAGE, status=Submission.Status.DONE,
+            file_key="existing/older-image.jpg",
+        )
         submission = Submission.objects.create(
             tenant=self.tenant, user=self.student_user, enrollment=self.enrollment,
             target_type=Submission.TargetType.HOMEWORK, target_id=self.homework.pk,
@@ -283,21 +288,26 @@ class HomeworkSubmissionMediaTests(TestCase):
             match = resolve(path)
             return match.func(request, **match.kwargs)
 
-        initial = self._staff_student_files().data["results"][0]
+        self._link_parent()
+        rows = self._staff_student_files().data["results"]
+        self.assertEqual(len(rows), 2)
+        initial = rows[0]
+        self.assertEqual({row["media_set_fingerprint"] for row in rows}, {initial["media_set_fingerprint"]})
         fingerprint = initial["media_set_fingerprint"]
         self.assertFalse(initial["teacher_accepted"])
         self.assertEqual(initial["session_id"], self.session.pk)
         self.assertEqual(pending_homework_file_counts(tenant=self.tenant), {self.homework.pk: 1})
         self.assertEqual(decide(accepted=True, fingerprint="0" * 64).status_code, 409)
         self.assertEqual(decide(accepted=True, fingerprint=fingerprint, user=self.student_user).status_code, 403)
+        self.assertEqual(decide(accepted=True, fingerprint=fingerprint, user=self.parent_user).status_code, 403)
         self.assertEqual(decide(accepted=True, fingerprint=fingerprint, enrollment_id=999999).status_code, 404)
         accepted = decide(accepted=True, fingerprint=fingerprint)
         self.assertEqual(accepted.status_code, 200, accepted.data)
         self.assertTrue(accepted.data["teacher_accepted"])
         self.assertEqual(decide(accepted=True, fingerprint=fingerprint).data, accepted.data)
-        updated = self._staff_student_files().data["results"][0]
-        self.assertTrue(updated["teacher_accepted"])
-        self.assertEqual(updated["teacher_accepted_updated_at"], accepted.data["teacher_accepted_updated_at"])
+        for updated in self._staff_student_files().data["results"]:
+            self.assertTrue(updated["teacher_accepted"])
+            self.assertEqual(updated["teacher_accepted_updated_at"], accepted.data["teacher_accepted_updated_at"])
         list_path = f"/api/v1/submissions/submissions/homework/{self.homework.pk}/"
         staff_list = HomeworkSubmissionsListView.as_view()(
             self._request("get", list_path, user=self.teacher), homework_id=self.homework.pk,
@@ -310,23 +320,61 @@ class HomeworkSubmissionMediaTests(TestCase):
             tenant=self.tenant, homework_id=self.homework.pk, enrollment_id=self.enrollment.pk,
         ))
 
-        def learner_homework():
-            return next(row for row in build_student_grades_summary(
-                tenant=self.tenant, student=self.student,
-            )["homeworks"] if row["homework_id"] == self.homework.pk)
+        def learner_homework(user):
+            path = "/api/v1/student/grades/"
+            request = self._request(
+                "get", path, user=user, student_id=self.student.pk if user == self.parent_user else None,
+            )
+            match = resolve(path)
+            response = match.func(request, **match.kwargs)
+            self.assertEqual(response.status_code, 200, response.data)
+            return next(row for row in response.data["homeworks"] if row["homework_id"] == self.homework.pk)
 
-        learner = learner_homework()
-        self.assertIsNone(learner["score"])
-        self.assertTrue(learner["passed"])
-        self.assertEqual(learner["submission_state"], "reviewed")
+        def staff_homework():
+            path = "/api/v1/results/admin/student-grades/"
+            request = self._request("get", path, user=self.teacher, data={"student_id": self.student.pk})
+            match = resolve(path)
+            response = match.func(request, **match.kwargs)
+            self.assertEqual(response.status_code, 200, response.data)
+            return next(row for row in response.data["homeworks"] if row["homework_id"] == self.homework.pk)
+
+        for user in (self.student_user, self.parent_user):
+            learner = learner_homework(user)
+            self.assertIsNone(learner["score"])
+            self.assertTrue(learner["passed"])
+            self.assertTrue(learner["teacher_accepted"])
+            self.assertFalse(learner["teacher_resolved"])
+            self.assertEqual(learner["achievement"], "PASS")
+            self.assertEqual(learner["submission_state"], "reviewed")
+        before_grade = staff_homework()
+        self.assertIsNone(before_grade["score"])
+        self.assertTrue(before_grade["passed"])
+        self.assertTrue(before_grade["teacher_accepted"])
+        self.assertEqual(before_grade["achievement"], "PASS")
+        unscored_cancel = decide(
+            accepted=False, fingerprint=fingerprint, updated_at=accepted.data["teacher_accepted_updated_at"],
+        )
+        self.assertEqual(unscored_cancel.status_code, 200, unscored_cancel.data)
+        for view in (lambda: learner_homework(self.student_user), lambda: learner_homework(self.parent_user), staff_homework):
+            row = view()
+            self.assertIsNone(row["score"])
+            self.assertIsNone(row["passed"])
+            self.assertFalse(row["teacher_accepted"])
+        self.assertEqual(pending_homework_file_counts(tenant=self.tenant), {self.homework.pk: 1})
+        accepted = decide(
+            accepted=True, fingerprint=fingerprint, updated_at=unscored_cancel.data["teacher_accepted_updated_at"],
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.data)
 
         score = create_homework_score_fixture(
             homework=self.homework, session=self.session, enrollment=self.enrollment, attempt_index=1,
             score=0, max_score=10, passed=False,
         )
-        learner = learner_homework()
-        self.assertEqual(learner["score"], 0)
-        self.assertTrue(learner["passed"])
+        for view in (lambda: learner_homework(self.student_user), lambda: learner_homework(self.parent_user), staff_homework):
+            row = view()
+            self.assertEqual(row["score"], 0)
+            self.assertTrue(row["passed"])
+            self.assertTrue(row["teacher_accepted"])
         scores_path = f"/api/v1/results/admin/sessions/{self.session.pk}/scores/"
         request = self._request("get", scores_path, user=self.teacher)
         match = resolve(scores_path)
@@ -344,13 +392,52 @@ class HomeworkSubmissionMediaTests(TestCase):
         self.assertEqual(cancelled.status_code, 200, cancelled.data)
         self.assertFalse(cancelled.data["teacher_accepted"])
         self.assertEqual(decide(accepted=False, fingerprint=fingerprint).data, cancelled.data)
-        self.assertFalse(learner_homework()["passed"])
+        for view in (lambda: learner_homework(self.student_user), lambda: learner_homework(self.parent_user), staff_homework):
+            row = view()
+            self.assertEqual(row["score"], 0)
+            self.assertFalse(row["passed"])
+            self.assertFalse(row["teacher_accepted"])
+            self.assertEqual(row["achievement"], "FAIL")
         score.refresh_from_db()
         self.assertEqual(score.score, 0)
         self.assertFalse(score.passed)
         self.assertEqual(pending_homework_file_counts(tenant=self.tenant), {self.homework.pk: 1})
         submission.refresh_from_db()
         self.assertEqual(submission.file_key, "existing/image.jpg")
+
+    def test_staff_acceptance_requires_delivered_files_from_eligible_submission(self):
+        from apps.domains.submissions.services.homework_media import homework_media_set_fingerprint
+
+        submission = Submission.objects.create(
+            tenant=self.tenant, user=self.student_user, enrollment=self.enrollment,
+            target_type=Submission.TargetType.HOMEWORK, target_id=self.homework.pk,
+            source=Submission.Source.HOMEWORK_IMAGE, status=Submission.Status.FAILED,
+        )
+        media = SubmissionMedia.objects.create(
+            tenant=self.tenant, submission=submission, client_upload_id=uuid.uuid4(),
+            upload_batch_id=uuid.uuid4(), fingerprint="c" * 64, object_key="image.jpg",
+            original_filename="image.jpg", media_kind="image", mime_type="image/jpeg",
+            size=100, position=0, status=SubmissionMedia.Status.UPLOADED,
+        )
+        path = f"/api/v1/submissions/submissions/homework/{self.homework.pk}/acceptance/"
+        def decide():
+            fingerprint = homework_media_set_fingerprint(
+                tenant=self.tenant, enrollment_id=self.enrollment.pk, homework_id=self.homework.pk,
+            )
+            request = self._request("patch", path, user=self.teacher, data={
+                "enrollment_id": self.enrollment.pk, "accepted": True, "expected_updated_at": None,
+                "expected_media_set_fingerprint": fingerprint,
+            })
+            match = resolve(path)
+            return match.func(request, **match.kwargs)
+
+        self.assertEqual(self._staff_student_files().data["count"], 0)
+        self.assertEqual(decide().status_code, 400)
+        Submission.objects.filter(pk=submission.pk).update(status=Submission.Status.SUBMITTED)
+        SubmissionMedia.objects.filter(pk=media.pk).update(status=SubmissionMedia.Status.UPLOADING)
+        response = decide()
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["code"], "HOMEWORK_MEDIA_NOT_READY")
 
     def _link_parent(self):
         result = create_parent_account_fixture(

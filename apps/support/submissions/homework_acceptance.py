@@ -29,6 +29,12 @@ def homework_acceptance_rows(*, tenant, enrollment_ids, homework_ids):
     )
 
 
+def homework_accepted_keys(*, tenant, enrollment_ids, homework_ids):
+    return set(homework_acceptance_rows(
+        tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=homework_ids,
+    ).filter(accepted_media_fingerprint__isnull=False).values_list("source_id", "session_id", "enrollment_id"))
+
+
 def homework_acceptance_payload(correction):
     updated_at = correction.media_acceptance_updated_at if correction else None
     return {
@@ -81,12 +87,18 @@ def set_homework_file_acceptance(
             "code": "HOMEWORK_FILE_ACCEPTANCE_CONFLICT", "detail": "다른 화면에서 판정이 바뀌었습니다. 다시 확인해 주세요.",
         })
     if accepted:
-        active_media = [media for submission in submissions for media in submission.media_files.all() if media.removed_at is None]
+        active_media = [
+            media for submission in submissions if submission.status != Submission.Status.FAILED
+            for media in submission.media_files.all() if media.removed_at is None
+        ]
         if any(media.status == SubmissionMedia.Status.UPLOADING for media in active_media):
             raise HomeworkFileConflict({
                 "code": "HOMEWORK_MEDIA_NOT_READY", "detail": "제출 파일을 저장 중입니다. 저장이 끝난 뒤 다시 확인해 주세요.",
             })
-        has_uploaded = any(media.status == SubmissionMedia.Status.UPLOADED and media.object_key not in ("", "pending") for media in active_media)
+        has_uploaded = any(
+            media.status == SubmissionMedia.Status.UPLOADED and media.object_key not in ("", "pending")
+            for media in active_media
+        )
         has_legacy = any(
             submission.file_key not in (None, "", "pending")
             and (item := serialize_legacy_homework_media(submission))["status"] == SubmissionMedia.Status.UPLOADED
