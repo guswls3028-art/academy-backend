@@ -45,11 +45,29 @@ class DawonDemoLearningTests(TestCase):
         self.assertEqual(response["Cache-Control"], "no-store")
         self.assertEqual(response.data["sessions"], [{
             "id": lesson.id, "lecture": "수업", "title": "차시", "date": lesson.date,
-            "time": None, "attendance": "출석", "videos": [], "exams": [], "homework": [],
+            "lecture_id": lecture.id, "order": 1, "session_label": lesson.display_label,
+            "time": None, "attendance": "출석", "videos": [], "video_items": [], "materials": [], "exams": [], "homework": [],
         }])
         membership.status = "INACTIVE"
         membership.save(update_fields=["status"])
         self.assertEqual(self.read(self.tenant).data["sessions"], [])
+
+    def test_material_only_lesson_restricts_published_sample_posts_to_the_enrolled_session(self):
+        from apps.domains.community.models import PostMapping, PostEntity, ScopeNode
+
+        lecture = Lecture.objects.create(tenant=self.tenant, title="기하", subject="수학")
+        enrollment = Enrollment.objects.create(tenant=self.tenant, student=self.sample, lecture=lecture)
+        lesson = Session.objects.create(lecture=lecture, title="정사영", order=1)
+        SessionEnrollment.objects.create(tenant=self.tenant, enrollment=enrollment, session=lesson)
+        hidden = Session.objects.create(lecture=lecture, title="다른 차시", order=2)
+        for session, label, share in ((lesson, "공개 자료", True), (lesson, "일반 자료", False), (hidden, "다른 자료", True)):
+            node, _ = ScopeNode.objects.get_or_create(tenant=self.tenant, level="SESSION", session=session, lecture=lecture)
+            post = PostEntity.objects.create(tenant=self.tenant, post_type="materials", title=label, content="본문",
+                                             status="published", meta={"dawon_public_sample": share})
+            PostMapping.objects.create(node=node, post=post)
+        record, = self.read(self.tenant).data["sessions"]
+        self.assertEqual(record["video_items"], [])
+        self.assertEqual([item["title"] for item in record["materials"]], ["공개 자료"])
 
     def test_homework_guidance_is_limited_to_assigned_homework_and_student_fields(self):
         from apps.domains.homework.models import HomeworkAssignment

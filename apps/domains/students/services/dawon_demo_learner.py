@@ -1,11 +1,41 @@
 """Date-based records available for the dedicated public Dawon sample."""
 
-from django.db.models import Count, Q
+from collections import defaultdict
+
+from django.db.models import Count, Exists, F, OuterRef, Q
 from django.utils import timezone
 
 
 def _local_day(timestamp):
     return timezone.localtime(timestamp).date()
+
+
+def _with_attachments(queryset, tenant, post_id):
+    from apps.domains.community.models import PostAttachment
+
+    return queryset.annotate(has_attachments=Exists(
+        PostAttachment.objects.filter(tenant=tenant, post_id=OuterRef(post_id)),
+    ))
+
+
+def session_materials(*, tenant, session_ids):
+    from apps.domains.community.models import PostMapping
+
+    now = timezone.now()
+    mappings = PostMapping.objects.filter(
+        node__tenant=tenant, node__level="SESSION", node__session_id__in=session_ids,
+        node__lecture__tenant=tenant, node__session__lecture_id=F("node__lecture_id"),
+        post__tenant=tenant, post__post_type="materials", post__status="published",
+        post__support_kind__isnull=True, post__meta__dawon_public_sample=True,
+    ).filter(Q(post__published_at__isnull=True) | Q(post__published_at__lte=now))
+    materials = defaultdict(list)
+    for session_id, pk, title, content, attached in _with_attachments(
+        mappings, tenant, "post_id",
+    ).order_by("post__created_at", "post_id").values_list(
+        "node__session_id", "post_id", "post__title", "post__content", "has_attachments",
+    ):
+        materials[session_id].append({"id": pk, "title": title, "detail": content, "has_attachments": attached})
+    return materials
 
 
 def learner_topics(*, tenant, student):
@@ -18,11 +48,18 @@ def learner_topics(*, tenant, student):
     published = PostEntity.objects.filter(
         tenant=tenant, status="published", support_kind__isnull=True,
     ).filter(Q(published_at__isnull=True) | Q(published_at__lte=now))
+    from apps.support.community.post_dependencies import visible_scope_node_ids_for_students
+
+    visible_nodes = visible_scope_node_ids_for_students(tenant=tenant, student_ids=[student.pk])
+    public_notices = published.filter(post_type="notice", meta__dawon_public_sample=True).filter(
+        Q(mappings__isnull=True) | Q(mappings__node_id__in=visible_nodes),
+    ).distinct()
     notices = [{
+        "id": post.pk, "has_attachments": post.has_attachments,
         "date": _local_day(post.published_at or post.created_at),
         "title": post.title,
         "detail": post.content,
-    } for post in published.filter(post_type="notice", meta__dawon_public_sample=True)
+    } for post in _with_attachments(public_notices, tenant, "pk")
         .order_by("-created_at")[:60]]
 
     statuses = {

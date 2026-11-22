@@ -179,15 +179,18 @@ class DawonDemoLearningView(APIView):
         videos = defaultdict(list)
         for video in Video.objects.filter(tenant=tenant, session_id__in=ids, status="READY").select_related("session"):
             if get_effective_access_mode(video=video, enrollment=enrollments[video.session.lecture_id]) != AccessMode.BLOCKED:
-                videos[video.session_id].append(video.title)
+                videos[video.session_id].append({"id": video.pk, "title": video.title})
+        from apps.domains.students.services.dawon_demo_learner import learner_topics, session_materials
+
+        materials = session_materials(tenant=tenant, session_ids=ids)
         response = Response({"sessions": [{
-            "id": s.pk, "lecture": s.lecture.title, "title": s.title or s.display_label,
+            "id": s.pk, "lecture_id": s.lecture_id, "lecture": s.lecture.title, "title": s.title or s.display_label,
+            "order": s.order, "session_label": s.display_label,
             "date": s.effective_date, "time": getattr(s, "schedule_start_time", None),
-            "attendance": attendances.get(s.pk), "videos": videos[s.pk],
+            "attendance": attendances.get(s.pk), "videos": [item["title"] for item in videos[s.pk]],
+            "video_items": videos[s.pk], "materials": materials.get(s.pk, []),
             "exams": exams[s.pk], "homework": homework[s.pk],
         } for s in sessions]})
-        from apps.domains.students.services.dawon_demo_learner import learner_topics
-
         response.data.update(learner_topics(tenant=tenant, student=sample))
         response["Cache-Control"] = "no-store"
         return response
