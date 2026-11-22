@@ -172,9 +172,18 @@ class DawonDemoLearningView(APIView):
             })
         for grade in grades["exams"]:
             if (grade["session_id"], grade["enrollment_id"]) in allowed_pairs:
+                available = grade["total_score"] is not None and not grade.get("is_provisional") and not grade.get("grading_status")
+                if available:
+                    attempt_status = "채점 완료"
+                elif grade.get("submission_pending") or grade.get("grading_status") or grade.get("is_provisional"):
+                    attempt_status = "채점 중"
+                elif grade.get("meta_status") == "NOT_SUBMITTED":
+                    attempt_status = "미응시"
+                else:
+                    attempt_status = "결과 대기"
                 exams[grade["session_id"]].append({
                     "id": grade["exam_id"], "title": grade["title"], "score": grade["total_score"], "max": grade["max_score"],
-                    "result_available": grade["total_score"] is not None and not grade.get("grading_status"),
+                    "result_available": available, "attempt_status": attempt_status,
                 })
         videos = defaultdict(list)
         for video in Video.objects.filter(tenant=tenant, session_id__in=ids, status="READY").select_related("session"):
