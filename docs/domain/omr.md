@@ -444,6 +444,13 @@ PDF 150/300dpi의 수정액·부분 마킹·복수·빈칸 경계는
 
 ### 5분 상태 복구 안전 계약
 
+작업 서버가 종료 신호를 받은 뒤 장기 폴링에서 OMR 메시지가 도착하면,
+서버는 수신한 큐에서 메시지를 즉시 다시 보이게 하고 종료한다. 새 작업 잠금을
+잡거나 메시지를 삭제하지 않는다. 즉시 반환에 실패해도 기존 SQS 재전달 시간이
+지나면 다른 서버가 같은 작업을 처리할 수 있다. 이미 실행 중인 작업은 기존
+완료·재전달 절차를 따른다. 종료 중 수신과 반환 실패는
+`test_ai_sqs_worker_callback.py`에서 검증한다.
+
 EventBridge 규칙 `academy-v1-recover-stuck-omr`은 5분마다
 `recover_stuck_omr_submissions`를 실행한다. `SUBMITTED`, `DISPATCHED`,
 `EXTRACTING`, `GRADING`에서 상태별 timeout을 넘긴 OMR만 실패 복구 후보이며,

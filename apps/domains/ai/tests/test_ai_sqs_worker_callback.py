@@ -76,6 +76,35 @@ class AISQSWorkerCallbackTests(TestCase):
             "payload": {},
         }
 
+    def test_shutdown_during_poll_returns_delivery_without_claiming_job(self):
+        job = AIJobModel.objects.create(
+            job_id="shutdown-during-poll", job_type="omr_grading",
+            status="PENDING", tenant_id=str(self.tenant.id), tier="basic",
+        )
+        message = self._message_for(job)
+        queue = _OneMessageQueue(message)
+
+        def receive_during_shutdown(*, tier, wait_time_seconds):
+            ai_sqs_worker._handle_signal(None, None)
+            return message
+
+        for released in (True, False):
+            with self.subTest(released=released):
+                ai_sqs_worker._shutdown = False
+                with (
+                    mock.patch.object(queue, "receive", side_effect=receive_during_shutdown),
+                    mock.patch.object(queue, "extend_visibility", return_value=released) as release,
+                    mock.patch.object(ai_sqs_worker, "BASIC_POLL_WEIGHT", 0),
+                    mock.patch.object(ai_sqs_worker, "LITE_POLL_WEIGHT", 1),
+                    mock.patch.dict("os.environ", {"AI_WORKER_PREMIUM_ONLY": "0"}),
+                ):
+                    self.assertEqual(ai_sqs_worker.run_ai_sqs_worker(queue=queue), 0)
+                release.assert_called_once_with(message["receipt_handle"], "lite", 0)
+                self.assertEqual(queue.delete_calls, 0)
+                job.refresh_from_db()
+                self.assertEqual(job.status, "PENDING")
+                self.assertIsNone(job.locked_at)
+
     def test_callback_failure_keeps_terminal_result_and_message_for_retry(self):
         job = AIJobModel.objects.create(
             job_id="callback-failure",
