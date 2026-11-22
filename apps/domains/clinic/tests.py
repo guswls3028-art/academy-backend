@@ -2730,6 +2730,50 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(resp.data["booking_status"], "required")
         self.assertEqual(resp.data["valid_bookings"], [])
 
+    def test_today_pass_is_visible_alongside_older_target_and_student_booking(self):
+        from apps.domains.enrollment.models import SessionEnrollment
+        from apps.domains.lectures.models import SessionSchedule, SessionScheduleMembership
+        from apps.domains.progress.models import SessionProgress
+
+        today = timezone.localdate()
+        enrollment = self.data["enrollments"][0]
+        old_session = self.data["lec_session"]
+        old_session.date = today - datetime.timedelta(days=7)
+        old_session.save(update_fields=["date"])
+        SessionEnrollment.objects.create(tenant=self.tenant, enrollment=enrollment, session=old_session)
+        link = self._make_live_exam_clinic_link(enrollment, old_session)
+        booking = self.make_participant(
+            self.tenant, self.make_clinic_session(self.tenant, date=today + datetime.timedelta(days=1)),
+            self.student, enrollment=enrollment, status="booked", source="student_request",
+        )
+        current = self.make_lecture_session(self.data["lecture"], order=2)
+        membership = SessionEnrollment.objects.create(tenant=self.tenant, enrollment=enrollment, session=current)
+        schedule = SessionSchedule.objects.create(session=current, date=today)
+        SessionScheduleMembership.objects.create(schedule=schedule, session_enrollment=membership)
+
+        def read_card():
+            response = self.client.get("/api/v1/clinic/idcard/", **self._headers(self.tenant))
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["passcard_state"], "BOOKING_CONFIRMED")
+            self.assertEqual(response.data["current_result"], "FAIL")
+            self.assertEqual(response.data["current_booking"]["participant_id"], booking.id)
+            self.assertEqual([target["clinic_link_id"] for target in response.data["current_targets"]], [link.id])
+            return response.data["today_assessments_passed"]
+
+        self.assertFalse(read_card())
+        progress = SessionProgress.objects.create(
+            enrollment=enrollment, session=current, exam_attempted=True, exam_passed=True,
+            homework_submitted=True, homework_passed=False,
+        )
+        self.assertFalse(read_card())
+        progress.homework_passed = True
+        progress.save(update_fields=["homework_passed"])
+        self.assertTrue(read_card())
+        self.assertTrue(read_card())
+        old_session.date = today
+        old_session.save(update_fields=["date"])
+        self.assertFalse(read_card())
+
     def test_idcard_passed_student_still_sees_active_reservation(self):
         today = timezone.localdate()
         clinic_session = self.make_clinic_session(

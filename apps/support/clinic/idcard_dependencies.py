@@ -49,6 +49,47 @@ def passcard_confirmed_enrollment_ids(
     }
 
 
+def passed_todays_assessments(*, tenant, student, clinic_links, today) -> bool:
+    """Check assigned class dates and saved progress without resolving older targets."""
+    from django.db.models import F, Q
+
+    from apps.domains.enrollment.models import SessionEnrollment
+    from apps.domains.progress.models import SessionProgress
+    from apps.support.lectures.schedule_queries import student_schedule_annotations
+
+    target_pairs = {(link.enrollment_id, link.session_id) for link in clinic_links}
+    memberships = (
+        SessionEnrollment.objects.filter(
+            tenant=tenant, enrollment__tenant=tenant, enrollment__student=student,
+            enrollment__status="ACTIVE", session__lecture__tenant=tenant,
+            session__lecture__is_active=True, enrollment__lecture_id=F("session__lecture_id"),
+        )
+        .annotate(**student_schedule_annotations(
+            tenant=tenant, student=student, session_ref="session_id", date_ref="session__date",
+        ))
+        .filter(Q(effective_date=today) | Q(session_id__in={link.session_id for link in clinic_links}))
+        .values_list("enrollment_id", "session_id", "effective_date")
+    )
+    dates = {(enrollment, session): day for enrollment, session, day in memberships}
+    if any(dates.get(pair) is None or dates[pair] >= today for pair in target_pairs):
+        return False
+
+    today_pairs = {pair for pair, day in dates.items() if day == today}
+    if not today_pairs:
+        return False
+    passing = SessionProgress.objects.filter(
+        enrollment_id__in={enrollment_id for enrollment_id, _ in today_pairs},
+        session_id__in={session_id for _, session_id in today_pairs},
+        exam_passed=True,
+        homework_passed=True,
+    ).values_list("enrollment_id", "session_id", "exam_attempted", "homework_submitted")
+    assessment_activity = {
+        (enrollment_id, session_id): attempted or submitted
+        for enrollment_id, session_id, attempted, submitted in passing
+    }
+    return today_pairs <= assessment_activity.keys() and any(assessment_activity[pair] for pair in today_pairs)
+
+
 def ordered_sessions_by_enrollment(
     *,
     tenant: Any,
