@@ -363,6 +363,8 @@ class AssessmentCorrection(TimestampModel):
         blank=True,
         help_text="완료 확인 당시 시험 점수·답안 내용의 SHA-256 지문.",
     )
+    accepted_media_fingerprint = models.CharField(max_length=64, null=True, blank=True)
+    media_acceptance_updated_at = models.DateTimeField(null=True, blank=True)
     updated_by = models.ForeignKey(
         "core.User",
         on_delete=models.SET_NULL,

@@ -46,6 +46,7 @@ from apps.domains.submissions.views.homework_submissions_list_view import (
 from apps.domains.submissions.views.pending_submissions_view import (
     PendingSubmissionsView,
 )
+from apps.domains.submissions.views.student_homework_files_view import StudentHomeworkFilesView
 from apps.support.results.admin_student_grades_dependencies import (
     submitted_homework_keys_for_grades,
 )
@@ -143,6 +144,213 @@ class HomeworkSubmissionMediaTests(TestCase):
             session=self.session,
             enrollment=self.enrollment,
         )
+
+    def _staff_student_files(self, *, student_id=None, user=None, data=None):
+        student_id = self.student.pk if student_id is None else student_id
+        path = f"/api/v1/submissions/submissions/students/{student_id}/homework/"
+        request = self._request("get", path, user=user or self.teacher, data=data)
+        match = resolve(path)
+        self.assertIs(match.func.cls, StudentHomeworkFilesView)
+        return match.func(request, **match.kwargs)
+
+    @patch(
+        "apps.domains.submissions.views.homework_submission_media_view.generate_presigned_get_url",
+        return_value="https://preview.invalid/file",
+    )
+    def test_staff_student_files_return_only_previewable_media_and_paginate(self, presign):
+        submission_defaults = dict(
+            tenant=self.tenant, user=self.student_user, enrollment=self.enrollment,
+            target_type=Submission.TargetType.HOMEWORK, target_id=self.homework.pk,
+            source=Submission.Source.HOMEWORK_IMAGE, status=Submission.Status.DONE,
+        )
+        legacy = Submission.objects.create(**submission_defaults, file_key="legacy.jpg")
+        current = Submission.objects.create(**submission_defaults)
+        replaced = Submission.objects.create(**{
+            **submission_defaults, "status": Submission.Status.SUPERSEDED, "file_key": "replaced.jpg",
+        })
+        self.assertNotEqual(replaced.pk, current.pk)
+        Submission.objects.create(
+            **submission_defaults, file_key="removed.jpg",
+            meta={"homework_media_legacy_removed_at": timezone.now().isoformat()},
+        )
+        records = []
+        for position, (name, kind, mime, status, key, removed) in enumerate([
+            ("photo.jpg", "image", "image/jpeg", "uploaded", "photo.jpg", None),
+            ("video.mp4", "video", "video/mp4", "uploaded", "video.mp4", None),
+            ("failed.jpg", "image", "image/jpeg", "failed", "failed.jpg", None),
+            ("uploading.jpg", "image", "image/jpeg", "uploading", "pending", None),
+            ("removed.jpg", "image", "image/jpeg", "uploaded", "removed.jpg", timezone.now()),
+            ("pending-key.jpg", "image", "image/jpeg", "uploaded", "pending", None),
+        ]):
+            records.append(SubmissionMedia.objects.create(
+                tenant=self.tenant, submission=current, client_upload_id=uuid.uuid4(),
+                upload_batch_id=uuid.uuid4(), fingerprint="c" * 64, object_key=key,
+                original_filename=name, media_kind=kind, mime_type=mime,
+                size=100, position=position, status=status, removed_at=removed,
+            ))
+        first = self._staff_student_files(data={"page_size": "1"})
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(first.data["count"], 2)
+        self.assertIsNotNone(first.data["next"])
+        self.assertIsNone(first.data["previous"])
+        self.assertEqual(len(first.data["results"]), 1)
+        row = first.data["results"][0]
+        self.assertEqual(row["id"], current.pk)
+        self.assertEqual(row["homework_id"], self.homework.pk)
+        self.assertEqual(row["enrollment_id"], self.enrollment.pk)
+        self.assertEqual(row["homework_title"], self.homework.title)
+        self.assertEqual(row["session_title"], self.session.title)
+        self.assertEqual(row["lecture_title"], self.lecture.title)
+        self.assertEqual(row["submitted_at"], current.created_at.isoformat())
+        self.assertEqual([f["id"] for f in row["files"]], [str(record.pk) for record in records[:2]])
+        self.assertFalse(any({"url", "object_key", "file_key"} & set(file) for file in row["files"]))
+        second = self._staff_student_files(data={"page": "2", "page_size": "1"})
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertIsNone(second.data["next"])
+        self.assertIsNotNone(second.data["previous"])
+        self.assertEqual(second.data["results"][0]["id"], legacy.pk)
+        self.assertEqual([file["id"] for file in second.data["results"][0]["files"]], [f"legacy-{legacy.pk}"])
+        self.assertEqual(self._staff_student_files(data={"page_size": "101"}).status_code, 400)
+        self.assertEqual(self._staff_student_files(data={"page": "3", "page_size": "1"}).status_code, 404)
+        presign.assert_not_called()
+
+        for file_id in [str(records[0].pk), str(records[1].pk), f"legacy-{legacy.pk}"]:
+            path = f"/api/v1/submissions/submissions/homework/{self.homework.pk}/media/{file_id}/preview/"
+            request = self._request("get", path, user=self.teacher)
+            response = HomeworkSubmissionMediaPreviewView.as_view()(request, homework_id=self.homework.pk, media_id=file_id)
+            self.assertEqual(response.status_code, 200, response.data)
+
+    def test_staff_student_files_enforce_role_student_enrollment_lecture_and_tenant(self):
+        other_tenant = Tenant.objects.create(code="file-list-other", name="Other")
+        other_student = create_student_fixture(
+            tenant=self.tenant, user=User.objects.create_user(username="file-list-other-user", tenant=self.tenant),
+            ps_number="HWM002", omr_code="27182818", name=self.student.name,
+            phone="01033332222",
+        )
+        foreign_student = create_student_fixture(
+            tenant=other_tenant, user=User.objects.create_user(username="file-list-foreign-user", tenant=other_tenant),
+            ps_number="HWM003", omr_code="16180339", name=self.student.name,
+            phone="01044442222",
+        )
+        other_enrollment = create_enrollment_fixture(tenant=self.tenant, student=other_student, lecture=self.lecture)
+        other_lecture = create_lecture_fixture(tenant=self.tenant, title="Wrong lecture")
+        wrong_enrollment = create_enrollment_fixture(tenant=self.tenant, student=self.student, lecture=other_lecture)
+        foreign_lecture = create_lecture_fixture(tenant=other_tenant, title="Foreign lecture")
+        foreign_session = create_session_fixture(lecture=foreign_lecture, order=1)
+        foreign_homework = create_homework_fixture(tenant=other_tenant, session=foreign_session, title="Foreign homework")
+        for enrollment, homework_id, tenant in [
+            (self.enrollment, self.homework.pk, self.tenant),
+            (other_enrollment, self.homework.pk, self.tenant),
+            (wrong_enrollment, self.homework.pk, self.tenant),
+            (self.enrollment, foreign_homework.pk, self.tenant),
+            (self.enrollment, self.homework.pk, other_tenant),
+        ]:
+            Submission.objects.create(
+                tenant=tenant, user=self.student_user, enrollment=enrollment,
+                target_type=Submission.TargetType.HOMEWORK, target_id=homework_id,
+                source=Submission.Source.HOMEWORK_IMAGE, status=Submission.Status.DONE, file_key="legacy.jpg",
+            )
+        self._link_parent()
+        self.assertEqual(self._staff_student_files(user=self.student_user).status_code, 403)
+        self.assertEqual(self._staff_student_files(user=self.parent_user).status_code, 403)
+        self.assertEqual(self._staff_student_files(student_id=foreign_student.pk).status_code, 404)
+        own = self._staff_student_files()
+        self.assertEqual(own.status_code, 200, own.data)
+        self.assertEqual(own.data["count"], 1)
+        self.assertEqual(own.data["results"][0]["enrollment_id"], self.enrollment.pk)
+        same_name = self._staff_student_files(student_id=other_student.pk)
+        self.assertEqual(same_name.data["count"], 1)
+        self.assertEqual(same_name.data["results"][0]["enrollment_id"], other_enrollment.pk)
+
+    def test_staff_acceptance_is_versioned_separate_from_manual_review_and_preserves_zero_score(self):
+        from apps.support.results.dashboard_dependencies import pending_homework_file_counts
+        from apps.support.student_app.results_summary import build_student_grades_summary
+        from apps.support.submissions.dependencies import homework_submission_is_teacher_reviewed
+
+        submission = Submission.objects.create(
+            tenant=self.tenant, user=self.student_user, enrollment=self.enrollment,
+            target_type=Submission.TargetType.HOMEWORK, target_id=self.homework.pk,
+            source=Submission.Source.HOMEWORK_IMAGE, status=Submission.Status.SUBMITTED,
+            file_key="existing/image.jpg",
+        )
+        path = f"/api/v1/submissions/submissions/homework/{self.homework.pk}/acceptance/"
+        def decide(*, accepted, fingerprint, updated_at=None, user=None, enrollment_id=None):
+            request = self._request("patch", path, user=user or self.teacher, data={
+                "enrollment_id": self.enrollment.pk if enrollment_id is None else enrollment_id,
+                "accepted": accepted, "expected_updated_at": updated_at,
+                "expected_media_set_fingerprint": fingerprint,
+            })
+            match = resolve(path)
+            return match.func(request, **match.kwargs)
+
+        initial = self._staff_student_files().data["results"][0]
+        fingerprint = initial["media_set_fingerprint"]
+        self.assertFalse(initial["teacher_accepted"])
+        self.assertEqual(initial["session_id"], self.session.pk)
+        self.assertEqual(pending_homework_file_counts(tenant=self.tenant), {self.homework.pk: 1})
+        self.assertEqual(decide(accepted=True, fingerprint="0" * 64).status_code, 409)
+        self.assertEqual(decide(accepted=True, fingerprint=fingerprint, user=self.student_user).status_code, 403)
+        self.assertEqual(decide(accepted=True, fingerprint=fingerprint, enrollment_id=999999).status_code, 404)
+        accepted = decide(accepted=True, fingerprint=fingerprint)
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+        self.assertTrue(accepted.data["teacher_accepted"])
+        self.assertEqual(decide(accepted=True, fingerprint=fingerprint).data, accepted.data)
+        updated = self._staff_student_files().data["results"][0]
+        self.assertTrue(updated["teacher_accepted"])
+        self.assertEqual(updated["teacher_accepted_updated_at"], accepted.data["teacher_accepted_updated_at"])
+        list_path = f"/api/v1/submissions/submissions/homework/{self.homework.pk}/"
+        staff_list = HomeworkSubmissionsListView.as_view()(
+            self._request("get", list_path, user=self.teacher), homework_id=self.homework.pk,
+        )
+        self.assertTrue(staff_list.data[0]["teacher_accepted"])
+        self.assertFalse(staff_list.data[0]["teacher_reviewed"])
+        self.assertEqual(staff_list.data[0]["media_set_fingerprint"], fingerprint)
+        self.assertEqual(pending_homework_file_counts(tenant=self.tenant), {})
+        self.assertTrue(homework_submission_is_teacher_reviewed(
+            tenant=self.tenant, homework_id=self.homework.pk, enrollment_id=self.enrollment.pk,
+        ))
+
+        def learner_homework():
+            return next(row for row in build_student_grades_summary(
+                tenant=self.tenant, student=self.student,
+            )["homeworks"] if row["homework_id"] == self.homework.pk)
+
+        learner = learner_homework()
+        self.assertIsNone(learner["score"])
+        self.assertTrue(learner["passed"])
+        self.assertEqual(learner["submission_state"], "reviewed")
+
+        score = create_homework_score_fixture(
+            homework=self.homework, session=self.session, enrollment=self.enrollment, attempt_index=1,
+            score=0, max_score=10, passed=False,
+        )
+        learner = learner_homework()
+        self.assertEqual(learner["score"], 0)
+        self.assertTrue(learner["passed"])
+        scores_path = f"/api/v1/results/admin/sessions/{self.session.pk}/scores/"
+        request = self._request("get", scores_path, user=self.teacher)
+        match = resolve(scores_path)
+        staff_scores = match.func(request, **match.kwargs)
+        self.assertEqual(staff_scores.status_code, 200, staff_scores.data)
+        block = staff_scores.data["rows"][0]["homeworks"][0]["block"]
+        self.assertEqual(block["score"], 0)
+        self.assertTrue(block["passed"])
+        self.assertEqual(pending_homework_file_counts(tenant=self.tenant), {})
+
+        self.assertEqual(decide(accepted=False, fingerprint=fingerprint).status_code, 409)
+        cancelled = decide(
+            accepted=False, fingerprint=fingerprint, updated_at=accepted.data["teacher_accepted_updated_at"],
+        )
+        self.assertEqual(cancelled.status_code, 200, cancelled.data)
+        self.assertFalse(cancelled.data["teacher_accepted"])
+        self.assertEqual(decide(accepted=False, fingerprint=fingerprint).data, cancelled.data)
+        self.assertFalse(learner_homework()["passed"])
+        score.refresh_from_db()
+        self.assertEqual(score.score, 0)
+        self.assertFalse(score.passed)
+        self.assertEqual(pending_homework_file_counts(tenant=self.tenant), {self.homework.pk: 1})
+        submission.refresh_from_db()
+        self.assertEqual(submission.file_key, "existing/image.jpg")
 
     def _link_parent(self):
         result = create_parent_account_fixture(

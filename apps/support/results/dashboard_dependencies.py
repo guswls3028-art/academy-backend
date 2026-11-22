@@ -60,7 +60,12 @@ def pending_homework_file_counts(*, tenant: Any) -> dict[int, int]:
         completed=True, source_id=OuterRef("target_id"), enrollment_id=OuterRef("enrollment_id"),
         session__homeworks__id=OuterRef("target_id"),
     )
-    candidates = delivered.filter(Exists(assigned)).alias(
+    accepted = AssessmentCorrection.objects.filter(
+        tenant=tenant, source_type=AssessmentCorrection.SourceType.HOMEWORK,
+        source_id=OuterRef("target_id"), enrollment_id=OuterRef("enrollment_id"),
+        session__homeworks__id=OuterRef("target_id"), accepted_media_fingerprint__isnull=False,
+    )
+    candidates = delivered.filter(Exists(assigned), ~Exists(accepted)).alias(
         passed=Subquery(latest_score.values("passed")[:1]),
     ).filter(
         Q(passed=False) | (Q(passed__isnull=True) & ~Exists(confirmed)),

@@ -1045,16 +1045,20 @@ class SessionScoresView(APIView):
                         "updated_at": hs.updated_at,
                     }
                     updated_at = hs.updated_at
+                correction = correction_map.get((eid, "homework", int(hw.id)))
                 block.update(
                     assessment_correction_payload(
                         source_type=AssessmentCorrection.SourceType.HOMEWORK,
                         score=block.get("score"),
                         max_score=block.get("max_score"),
                         source_fingerprint=None,
-                        correction=correction_map.get((eid, "homework", int(hw.id))),
+                        correction=correction,
                         homework_passed=block.get("passed"),
                     )
                 )
+
+                if correction and correction.accepted_media_fingerprint:
+                    block.update(passed=True, clinic_required=False, teacher_resolved=True)
 
                 homeworks_payload.append(
                     {

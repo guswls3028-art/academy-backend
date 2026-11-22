@@ -421,6 +421,13 @@ def build_student_grades_summary(
     remediated_homework_keys, teacher_completed_homework_keys = homework_remediation_keys(
         tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=homework_ids,
     )
+    from apps.support.submissions.homework_acceptance import homework_acceptance_rows
+
+    accepted_homework_keys = set(homework_acceptance_rows(
+        tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=homework_ids,
+    ).filter(accepted_media_fingerprint__isnull=False).values_list("source_id", "session_id", "enrollment_id"))
+    remediated_homework_keys |= accepted_homework_keys
+    teacher_completed_homework_keys |= accepted_homework_keys
     submitted_revisions = homework_submission_revisions(
         tenant=tenant,
         enrollment_ids=enrollment_ids,
@@ -513,7 +520,7 @@ def build_student_grades_summary(
             "title": score.homework.title if score.homework else f"과제 #{score.homework_id}",
             "score": safe_score,
             "max_score": effective_max,
-            "passed": is_pass_1st,
+            "passed": is_pass_1st or key in accepted_homework_keys,
             "achievement": achievement,
             "submission_state": submission_state,
             "teacher_resolved": key in teacher_completed_homework_keys,
@@ -567,7 +574,7 @@ def build_student_grades_summary(
             "title": homework.title if homework else f"과제 #{assignment.homework_id}",
             "score": None,
             "max_score": effective_max,
-            "passed": None if awaiting_review or video_makeup else False,
+            "passed": True if key in accepted_homework_keys else None if awaiting_review or video_makeup else False,
             "achievement": (
                 "REMEDIATED"
                 if remediated
