@@ -2742,7 +2742,7 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         old_session = self.data["lec_session"]
         old_session.date = today - datetime.timedelta(days=7)
         old_session.save(update_fields=["date"])
-        SessionEnrollment.objects.create(tenant=self.tenant, enrollment=enrollment, session=old_session)
+        old_membership = SessionEnrollment.objects.create(tenant=self.tenant, enrollment=enrollment, session=old_session)
         link = self._make_live_exam_clinic_link(enrollment, old_session)
         booking = self.make_participant(
             self.tenant, self.make_clinic_session(self.tenant, date=today - datetime.timedelta(days=1)),
@@ -2777,11 +2777,16 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
             assignments.append(homework)
         for homework in assignments:
             self.assertFalse(read_card())
-            HomeworkScore.objects.create(
+            score = HomeworkScore.objects.create(
                 enrollment=enrollment, session=current, homework=homework,
                 score=90, max_score=100, passed=True, teacher_approved=False,
             )
         self.assertTrue(read_card())
+        score.passed = False
+        score.save(update_fields=["passed"])
+        self.assertFalse(read_card())
+        score.passed = True
+        score.save(update_fields=["passed"])
         correction = AssessmentCorrection.objects.create(
             tenant=self.tenant, enrollment=enrollment, session=current, source_id=assignments[0].pk,
             source_type="homework", completed=False,
@@ -2798,10 +2803,8 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertTrue(read_card())
         self.assertTrue(read_card())
         # An unresolved item from today's actual class always takes priority.
-        booking.session.date = today
-        booking.session.save(update_fields=["date"])
-        old_session.date = today
-        old_session.save(update_fields=["date"])
+        moved_schedule = SessionSchedule.objects.create(session=old_session, date=today)
+        SessionScheduleMembership.objects.create(schedule=moved_schedule, session_enrollment=old_membership)
         self.assertFalse(read_card())
 
     def test_idcard_passed_student_still_sees_active_reservation(self):
