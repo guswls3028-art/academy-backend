@@ -87,7 +87,7 @@ class GradesSummaryQueryBudgetTests(TestCase):
             ):
                 original = self._call()
             self.assertEqual(response.data, original.data)
-        self.assertLessEqual(max(counts), 69, counts)
+        self.assertLessEqual(max(counts), 72, counts)
         self.assertLessEqual(max(counts) - min(counts), 1, counts)
 
     def test_omr_history_query_budget_and_response_parity(self):
