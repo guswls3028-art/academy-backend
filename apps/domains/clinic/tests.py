@@ -2732,8 +2732,10 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
 
     def test_today_pass_is_visible_alongside_older_target_and_student_booking(self):
         from apps.domains.enrollment.models import SessionEnrollment
+        from apps.domains.homework.models import HomeworkAssignment
+        from apps.domains.homework_results.models import Homework, HomeworkScore
         from apps.domains.lectures.models import SessionSchedule, SessionScheduleMembership
-        from apps.domains.progress.models import SessionProgress
+        from apps.domains.progress.models import AssessmentCorrection, SessionProgress
 
         today = timezone.localdate()
         enrollment = self.data["enrollments"][0]
@@ -2743,8 +2745,8 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         SessionEnrollment.objects.create(tenant=self.tenant, enrollment=enrollment, session=old_session)
         link = self._make_live_exam_clinic_link(enrollment, old_session)
         booking = self.make_participant(
-            self.tenant, self.make_clinic_session(self.tenant, date=today + datetime.timedelta(days=1)),
-            self.student, enrollment=enrollment, status="booked", source="student_request",
+            self.tenant, self.make_clinic_session(self.tenant, date=today - datetime.timedelta(days=1)),
+            self.student, enrollment=enrollment, status="attended", source="student_request",
         )
         current = self.make_lecture_session(self.data["lecture"], order=2)
         membership = SessionEnrollment.objects.create(tenant=self.tenant, enrollment=enrollment, session=current)
@@ -2763,13 +2765,41 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertFalse(read_card())
         progress = SessionProgress.objects.create(
             enrollment=enrollment, session=current, exam_attempted=True, exam_passed=True,
-            homework_submitted=True, homework_passed=False,
+            homework_submitted=False, homework_passed=False,
         )
         self.assertFalse(read_card())
+        assignments = []
+        for index in range(4):
+            homework = Homework.objects.create(tenant=self.tenant, session=current, title=f"과제 {index + 1}")
+            HomeworkAssignment.objects.create(
+                tenant=self.tenant, session=current, enrollment=enrollment, homework=homework,
+            )
+            assignments.append(homework)
+        for homework in assignments:
+            self.assertFalse(read_card())
+            HomeworkScore.objects.create(
+                enrollment=enrollment, session=current, homework=homework,
+                score=90, max_score=100, passed=True, teacher_approved=False,
+            )
+        self.assertTrue(read_card())
+        correction = AssessmentCorrection.objects.create(
+            tenant=self.tenant, enrollment=enrollment, session=current, source_id=assignments[0].pk,
+            source_type="homework", completed=False,
+        )
+        self.assertFalse(read_card())
+        correction.completed = True
+        correction.save(update_fields=["completed"])
+        self.assertTrue(read_card())
+        progress.refresh_from_db()
+        self.assertFalse(progress.homework_passed)
+        self.assertFalse(progress.homework_submitted)
         progress.homework_passed = True
         progress.save(update_fields=["homework_passed"])
         self.assertTrue(read_card())
         self.assertTrue(read_card())
+        # An unresolved item from today's actual class always takes priority.
+        booking.session.date = today
+        booking.session.save(update_fields=["date"])
         old_session.date = today
         old_session.save(update_fields=["date"])
         self.assertFalse(read_card())
