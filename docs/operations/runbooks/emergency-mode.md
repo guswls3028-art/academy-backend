@@ -46,7 +46,12 @@
    ```
    powershell -File scripts/v1/run-with-env.ps1 -- pwsh -File scripts/v1/run-ops-healthcheck.ps1
    ```
-   → 결과를 Codex에게 보여주고 판단 요청
+   결과에서 **최근 운영 배포**의 실행 번호·커밋·상태를 확인한다. 이 항목은
+   `main`의 공식 백엔드 배포 워크플로를 조회한다. **최근 전체 작업**에는
+   알림 크론 등 별도 작업의 실패도 표시된다. 같은 실행 번호는 한 번만 표시한다.
+   CloudWatch의 `academy-api-UserImpact` 복합 경보가 `ALARM`이면 즉시 확인하고,
+   데이터 부족·경보 누락·조회 실패는 주의 사항에서 확인한다.
+   결과를 Codex에게 보여주고 판단을 요청한다.
 
 2. **Codex가 복구가 필요하다고 판단하면:**
    - API/Messaging 장애는 image rollback이 fail-closed이므로 운영자에게 즉시 연락하고
