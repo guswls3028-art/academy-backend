@@ -134,9 +134,11 @@ try {
     try {
         $resp = Invoke-WebRequest -Uri "$API_DOMAIN/health" -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
         $healthCode = $resp.StatusCode
-        $health = $resp.Content | ConvertFrom-Json -ErrorAction Stop
-        $dbReady = $healthCode -eq 200 -and $health.service -eq "academy-api" -and
-            $health.status -eq "healthy" -and $health.database -eq "connected"
+        $health = $resp.Content | ConvertFrom-Json -AsHashtable -NoEnumerate -ErrorAction Stop
+        $dbReady = $healthCode -eq 200 -and $health -is [System.Collections.IDictionary] -and
+            $health.service -is [string] -and $health.service -ceq "academy-api" -and
+            $health.status -is [string] -and $health.status -ceq "healthy" -and
+            $health.database -is [string] -and $health.database -ceq "connected"
     } catch {
         if ($_.Exception.Response) {
             $healthCode = [int]$_.Exception.Response.StatusCode

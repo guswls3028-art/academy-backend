@@ -4,7 +4,9 @@ $ErrorActionPreference = "Stop"
 function Invoke-WebRequest {
     param($Uri)
     if ($Uri -like "*/health" -and $scenario -eq "db-down") { return @{ StatusCode = 503; Content = "{}" } }
-    if ($Uri -like "*/health" -and $scenario -eq "bad-health") { return @{ StatusCode = 200; Content = "<html/>" } }
+    if ($Uri -like "*/health" -and $invalidResponses.ContainsKey($scenario)) {
+        return @{ StatusCode = 200; Content = $invalidResponses[$scenario] }
+    }
     @{ StatusCode = 200; Content = '{"status":"healthy","database":"connected","service":"academy-api"}' }
 }
 
@@ -52,6 +54,12 @@ function Assert-Contains($output, $expected) {
     if (-not $output.Contains($expected)) { throw "Missing healthcheck output: $expected" }
 }
 
+$invalidResponses = @{
+    "html" = "<html/>"
+    "split-array" = '[{"service":"academy-api"},{"status":"healthy"},{"database":"connected"}]'
+    "singleton-array" = '[{"service":"academy-api","status":"healthy","database":"connected"}]'
+    "array-fields" = '{"service":["academy-api"],"status":["healthy"],"database":["connected"]}'
+}
 $output = Read-HealthOutput "normal" "OK"
 Assert-Contains $output "Release #101 (main@12345678)"
 Assert-Contains $output "Dev Alerts Cron #102"
@@ -76,7 +84,7 @@ $output = Read-HealthOutput "unavailable" ""
 Assert-Contains $output "최근 운영 배포 조회 실패"
 Assert-Contains $output "CloudWatch 알람 조회 실패"
 Assert-Contains $output "Dev Alerts Cron #102"
-foreach ($scenario in @("db-down", "bad-health")) {
+foreach ($scenario in (@("db-down") + $invalidResponses.Keys)) {
     $output = Read-HealthOutput $scenario "OK"
     Assert-Contains $output "RDS 상태가 'backing-up' — 즉시 확인 필요"
 }
