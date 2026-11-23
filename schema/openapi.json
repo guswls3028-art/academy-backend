@@ -23107,6 +23107,17 @@
             "minimum": 0,
             "type": "integer"
           },
+          "homework_review_by_homework": {
+            "additionalProperties": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "homework_review_pending": {
+            "minimum": 0,
+            "type": "integer"
+          },
           "qna_pending": {
             "minimum": 0,
             "type": "integer"
@@ -23122,6 +23133,8 @@
         },
         "required": [
           "counsel_pending",
+          "homework_review_by_homework",
+          "homework_review_pending",
           "qna_pending",
           "submission_pending",
           "video_failed"
@@ -51811,6 +51824,15 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "description": "제목·본문·첨부 파일명에 포함된 검색어. 앞뒤 공백을 제외하고 최대 100자.",
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -54834,6 +54856,16 @@
       "get": {
         "description": "GET /student/grades/\n학생 본인 또는 학부모가 선택한 자녀의 시험/과제 목록과 회차별 누적 추이를 반환.\n회차는 활성 수강 안의 확정 시험 결과가 추가될 때마다 자동으로 이어진다.",
         "operationId": "student_grades_retrieve",
+        "parameters": [
+          {
+            "description": "Use rows for exam/homework rows with Home todo eligibility; otherwise returns the full grade board.",
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "No response body"

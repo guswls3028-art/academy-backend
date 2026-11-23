@@ -99,6 +99,40 @@ class GradesSummaryQueryBudgetTests(TestCase):
     def test_manual_history_query_budget_and_response_parity(self):
         self._assert_history_budget("manual")
 
+    def test_unpublished_omr_results_stay_out_of_scoring_work(self):
+        published, _, _, published_result = self._add_exam(1, "omr_scan")
+        hidden, _, _, hidden_result = self._add_exam(2, "omr_scan")
+        self.Exam.objects.filter(pk=hidden.pk).update(student_results_published=False)
+
+        from apps.support.results import student_grade_history
+
+        original_pending = student_grade_history.pending_omr_result_ids_for_ids
+        inspected_result_ids = []
+
+        def record_pending_scope(result_ids, **kwargs):
+            result_ids = tuple(result_ids)
+            inspected_result_ids.extend(result_ids)
+            return original_pending(result_ids, **kwargs)
+
+        with patch.object(
+            student_grade_history,
+            "pending_omr_result_ids_for_ids",
+            side_effect=record_pending_scope,
+        ):
+            response = self._call()
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual([row["exam_id"] for row in response.data["exams"]], [published.pk])
+            self.assertEqual(inspected_result_ids, [published_result.pk])
+
+            inspected_result_ids.clear()
+            self.Exam.objects.filter(pk=hidden.pk).update(student_results_published=True)
+            refreshed = self._call()
+            self.assertEqual(refreshed.status_code, 200)
+            self.assertCountEqual(
+                [row["exam_id"] for row in refreshed.data["exams"]], [published.pk, hidden.pk],
+            )
+            self.assertCountEqual(inspected_result_ids, [published_result.pk, hidden_result.pk])
+
     def test_analytics_skips_grade_board_queries_with_identical_response(self):
         from apps.support.results import enterprise_analytics
         from apps.support.student_app.results_summary import build_student_grades_summary
@@ -125,6 +159,56 @@ class GradesSummaryQueryBudgetTests(TestCase):
         self.assertEqual(actual.data["summary"]["scored_exam_count"], 2)
         self.assertEqual(actual.data, full_grade_board.data)
         self.assertLessEqual(len(actual_queries) + 2, len(full_grade_board_queries))
+
+    def test_home_rows_match_full_board_for_student_and_selected_parent(self):
+        self._add_exam(1, "manual")
+        homework = fixtures.Homework.objects.create(tenant=self.tenant, session=self.session, title="Home task")
+        fixtures.HomeworkAssignment.objects.create(
+            tenant=self.tenant, session=self.session, homework=homework, enrollment=self.enrollment,
+        )
+        fixtures.HomeworkScore.objects.create(
+            homework=homework, session=self.session, enrollment=self.enrollment,
+            score=0, max_score=100, passed=False,
+        )
+        parent_user = fixtures.User.objects.create_user(
+            username="rows-parent", password="test", tenant=self.tenant,
+        )
+        fixtures.TenantMembership.ensure_active(tenant=self.tenant, user=parent_user, role="parent")
+        parent = apps.get_model("parents", "Parent").objects.create(
+            tenant=self.tenant, user=parent_user, name="Parent", phone="01099998888",
+        )
+        self.student.parent = parent
+        self.student.save(update_fields=["parent", "updated_at"])
+
+        def call(user, scope):
+            request = self.factory.get("/api/v1/student/grades/", {"scope": scope},
+                                       HTTP_X_STUDENT_ID=str(self.student.id))
+            request.tenant = self.tenant
+            fixtures.force_authenticate(request, user=user)
+            return fixtures.MyGradesSummaryView.as_view()(request)
+
+        from apps.support.student_app import results_summary
+        for user in (self.user, parent_user):
+            with self.subTest(role="student" if user == self.user else "parent"):
+                with CaptureQueriesContext(connection) as full_queries:
+                    full = call(user, "")
+                self.assertEqual(full.status_code, 200)
+                with (
+                    patch.object(results_summary, "student_session_totals", side_effect=AssertionError("board totals")),
+                    patch.object(results_summary, "get_student_grade_report_layout", side_effect=AssertionError("board layout")),
+                ):
+                    with CaptureQueriesContext(connection) as rows_queries:
+                        rows = call(user, "rows")
+                self.assertEqual(rows.status_code, 200)
+                self.assertEqual(rows.data, {key: full.data[key] for key in ("exams", "homeworks")})
+                self.assertIn("learning_todo_eligible", rows.data["exams"][0])
+                self.assertIn("learning_todo_eligible", rows.data["homeworks"][0])
+                self.assertLess(len(rows_queries), len(full_queries))
+                self.assertEqual(call(user, "unknown").data, full.data)
+        analytics_rows = results_summary.build_student_grades_summary(
+            tenant=self.tenant, student=self.student, include_grade_board_details=False,
+        )
+        self.assertNotIn("learning_todo_eligible", analytics_rows["exams"][0])
 
     def test_summary_limits_ranking_to_exams_with_published_comparison_fields(self):
         from apps.support.student_app import results_summary

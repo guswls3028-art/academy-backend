@@ -635,3 +635,19 @@ POST는 버전이 있는 단건 또는 배치 입력이다. 같은 결과의 재
 practice_inspection으로 제공한다. 기존 검사 기록은 배정 해제 시 숨기며 기존 점수·학부모 전용 글과
 독립적으로 보존한다. API 검증은 test_homework_inspection, 역할별 화면 경로는 프런트
 `docs/HOMEWORK-SCORING.md`와 격리 homework real-use가 소유한다.
+## 교직원 홈페이지의 과제 제출 알림
+
+학생이나 선택 자녀의 학부모가 과제 사진·동영상을 제출하면 교직원 홈페이지가
+다음 업무 알림 조회에서 **과제 제출 확인** 건수를 읽는다. 단위는 과제와 수강생
+한 쌍이다. 같은 과제에 파일을 추가하거나 전송을 재시도해도 인원이 중복되지 않는다.
+기존 단건 파일도 포함한다. 저장 중·실패·제거·교체된 파일, 해제된 배정과 다른
+학원의 제출은 제외한다. 파일을 열어 보는 동안 표시를 유지하며 직접 확인 완료나
+해당 제출의 채점이 기록되면 빠진다. 확인 취소와 불합격 채점 뒤의 새 파일 제출은
+다시 집계한다.
+
+교직원 전용 `GET /results/admin/teacher-dashboard-counts/`의
+`homework_review_pending`은 전체 인원-과제 건수, `homework_review_by_homework`는
+과제 ID별 건수다. 제출 원본이나 학생 신원은 이 응답에 포함하지 않는다.
+시험 제출함의 대기 건수는 별도로 집계한다. 이 홈페이지 알림은 메시지 발송 설정과
+독립적이다. 교직원 권한·학원 격리·빈 값은 `test_operational_dashboard_counts.py`,
+파일 상태와 확인·취소·재제출은 `test_homework_media_submission.py`에서 검증한다.

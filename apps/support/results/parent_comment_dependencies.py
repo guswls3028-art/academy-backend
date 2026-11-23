@@ -20,7 +20,7 @@ def parent_comment_titles(*, tenant, student, comments):
     Explicit exam targets remain authoritative even when none is this child.
     Only IDs/titles are read; attendance notes and revision history are not loaded.
     """
-    from django.db.models import F
+    from django.db.models import Exists, F, OuterRef
     from apps.domains.attendance.models import Attendance
     from apps.domains.exams.models import Exam
     from apps.support.results.progress_read_dependencies import live_regular_exam_filter
@@ -38,10 +38,21 @@ def parent_comment_titles(*, tenant, student, comments):
         "enrollment__status": "ACTIVE",
         "enrollment__student__deleted_at__isnull": True,
     }
-    attendance = set(Attendance.objects.filter(**roster_filter).values_list("session_id", "enrollment_id"))
-    attendance_sessions = {sid for sid, _ in attendance}
-    session_roster = set(SessionEnrollment.objects.filter(**roster_filter).values_list("session_id", "enrollment_id"))
-    roster = attendance | {(sid, eid) for sid, eid in session_roster if sid not in attendance_sessions}
+    applicable_attendance = Attendance.objects.filter(**roster_filter)
+    attendance_pairs = (
+        applicable_attendance.filter(enrollment_id__in=enrollments)
+        .order_by()
+        .values_list("session_id", "enrollment_id")
+    )
+    # Attendance anywhere in the applicable class roster suppresses fallback,
+    # even when none belongs to this child. Do not narrow this Exists scope.
+    fallback_pairs = (
+        SessionEnrollment.objects.filter(**roster_filter, enrollment_id__in=enrollments)
+        .filter(~Exists(applicable_attendance.filter(session_id=OuterRef("session_id"))))
+        .order_by()
+        .values_list("session_id", "enrollment_id")
+    )
+    roster = set(attendance_pairs.union(fallback_pairs, all=True))
 
     exam_ids = {c.assessment_id for c in comments if c.assessment_kind == "exam"}
     exams = {(sid, eid): title for sid, eid, title in Exam.objects.filter(

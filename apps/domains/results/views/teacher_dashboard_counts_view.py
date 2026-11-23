@@ -35,6 +35,8 @@ class TeacherDashboardCountsSerializer(serializers.Serializer):
     qna_pending = serializers.IntegerField(min_value=0)
     counsel_pending = serializers.IntegerField(min_value=0)
     submission_pending = serializers.IntegerField(min_value=0)
+    homework_review_pending = serializers.IntegerField(min_value=0)
+    homework_review_by_homework = serializers.DictField(child=serializers.IntegerField(min_value=1))
 
 
 class TeacherDashboardCountsView(APIView):

@@ -146,6 +146,16 @@ After a release touching video, verify:
 - Batch CE and queue are enabled.
 - A netprobe or small test job reaches `SUCCEEDED` when video runtime changed.
 - `reconcile_batch_video_jobs` and `scan_stuck_video_jobs` remain runnable with `apps.api.config.settings.worker`.
+- For a verified EC2 host interruption, the existing Ops Batch runtime can check an individual failed job with
+  `python manage.py reconcile_batch_video_jobs --failed-batch-id <aws-batch-job-id> --dry-run`.
+  The check reads the Batch record and the current application job without changing either.
+- Removing `--dry-run` lets the same command resubmit only that interrupted upload. It verifies the ordinary video
+  queue and job definition, the latest Batch generation, the current uploaded video and the existing reconcile
+  lock. It skips a stale, cancelled or completed job and keeps the normal attempt limit. A successful resubmission
+  records the new Batch ID. If cancellation or replacement wins during submission, the command terminates the
+  unlinked new Batch job and preserves the current application state.
+- The regular hourly sweep remains the automatic fallback for API failures, busy locks and jobs outside the
+  individual host-interruption path. Only the worker can mark the video ready.
 - READY 영상의 R2 전수 검사는 `verify_video_storage_integrity --limit <N> --after-id <cursor>`로 나눠 실행한다. 각 배치의 `last_id`를 다음 `after-id`로 넘겨 `has_more=false`까지 확인한다. master/segment 누락뿐 아니라 R2 인증·전송·목록 실패도 nonzero로 실패 폐쇄하며, 단일 장시간 실행의 원격 제한시간 초과를 성공으로 해석하지 않는다.
 - YouTube link upload still bypasses Batch and is immediately playable in the student app through the embedded YouTube player.
 

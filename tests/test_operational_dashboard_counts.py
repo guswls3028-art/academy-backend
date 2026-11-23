@@ -90,7 +90,10 @@ class OperationalDashboardCountTests(TestCase):
         self.assertEqual(self.client_for(tenant=self.other).get("/api/v1/results/admin/teacher-dashboard-counts/").status_code, 401)
 
     def test_empty_academy_returns_explicit_zero_for_each_count(self):
-        self.assertEqual(self.counts(), {"video_failed": 0, "qna_pending": 0, "counsel_pending": 0, "submission_pending": 0})
+        self.assertEqual(self.counts(), {
+            "video_failed": 0, "qna_pending": 0, "counsel_pending": 0, "submission_pending": 0,
+            "homework_review_pending": 0, "homework_review_by_homework": {},
+        })
 
     def test_active_exam_total_excludes_templates_inactive_and_other_tenant(self):
         Exam.objects.bulk_create([
