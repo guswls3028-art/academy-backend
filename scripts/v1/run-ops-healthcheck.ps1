@@ -128,17 +128,21 @@ try {
     Add-Issue "/healthz 연결 실패 — 서버가 다운되었을 수 있습니다"
 }
 
+$dbReady = $false
 try {
     $healthCode = $null
     try {
         $resp = Invoke-WebRequest -Uri "$API_DOMAIN/health" -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
         $healthCode = $resp.StatusCode
+        $health = $resp.Content | ConvertFrom-Json -ErrorAction Stop
+        $dbReady = $healthCode -eq 200 -and $health.service -eq "academy-api" -and
+            $health.status -eq "healthy" -and $health.database -eq "connected"
     } catch {
         if ($_.Exception.Response) {
             $healthCode = [int]$_.Exception.Response.StatusCode
         }
     }
-    if ($healthCode -eq 200) {
+    if ($dbReady) {
         Write-Check "✅" "/health:  200 (DB 연결 정상)"
     } else {
         Write-Check "❌" "/health:  $healthCode (DB 연결 문제 가능)"
@@ -314,6 +318,8 @@ try {
 
     if ($rdsStatus -eq "available") {
         Write-Check "✅" "상태: $rdsStatus ($rdsClass, $rdsEngine)"
+    } elseif ($rdsStatus -eq "backing-up" -and $dbReady) {
+        Write-Check "ℹ️" "상태: backing-up (백업 진행 중, API의 DB 연결 확인됨)"
     } else {
         Write-Check "❌" "상태: $rdsStatus — 비정상!"
         Add-Issue "RDS 상태가 '$rdsStatus' — 즉시 확인 필요"

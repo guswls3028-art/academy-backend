@@ -1,7 +1,12 @@
 $ErrorActionPreference = "Stop"
 
 # Exercise the normal entry point with synthetic AWS/GitHub responses only.
-function Invoke-WebRequest { @{ StatusCode = 200 } }
+function Invoke-WebRequest {
+    param($Uri)
+    if ($Uri -like "*/health" -and $scenario -eq "db-down") { return @{ StatusCode = 503; Content = "{}" } }
+    if ($Uri -like "*/health" -and $scenario -eq "bad-health") { return @{ StatusCode = 200; Content = "<html/>" } }
+    @{ StatusCode = 200; Content = '{"status":"healthy","database":"connected","service":"academy-api"}' }
+}
 
 function gh {
     $global:LASTEXITCODE = 0
@@ -27,6 +32,9 @@ function gh {
 
 function aws {
     $global:LASTEXITCODE = 0
+    if ($args[0] -eq "rds" -and $args[1] -eq "describe-db-instances") {
+        return '{"DBInstances":[{"DBInstanceStatus":"backing-up"}]}'
+    }
     if ($args[0] -ne "cloudwatch" -or $args[1] -ne "describe-alarms") { return "{}" }
     if ($args -notcontains "MetricAlarm" -or $args -notcontains "CompositeAlarm") { throw "Incomplete alarm query" }
     if ($scenario -eq "unavailable") { $global:LASTEXITCODE = 1; return "{}" }
@@ -48,6 +56,8 @@ $output = Read-HealthOutput "normal" "OK"
 Assert-Contains $output "Release #101 (main@12345678)"
 Assert-Contains $output "Dev Alerts Cron #102"
 Assert-Contains $output "academy-api-UserImpact: OK"
+Assert-Contains $output "backing-up (백업 진행 중, API의 DB 연결 확인됨)"
+if ($output.Contains("RDS 상태가 'backing-up'")) { throw "Healthy backup raised an incident" }
 if ([regex]::Matches($output, "Release #101").Count -ne 1) { throw "Release printed multiple times" }
 
 $output = Read-HealthOutput "waiting" "ALARM"
@@ -66,4 +76,8 @@ $output = Read-HealthOutput "unavailable" ""
 Assert-Contains $output "최근 운영 배포 조회 실패"
 Assert-Contains $output "CloudWatch 알람 조회 실패"
 Assert-Contains $output "Dev Alerts Cron #102"
-Write-Output "PASS: deployment and CloudWatch healthcheck"
+foreach ($scenario in @("db-down", "bad-health")) {
+    $output = Read-HealthOutput $scenario "OK"
+    Assert-Contains $output "RDS 상태가 'backing-up' — 즉시 확인 필요"
+}
+Write-Output "PASS: production release, CloudWatch alarms and RDS backup health"
