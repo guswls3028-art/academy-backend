@@ -456,6 +456,45 @@ class BankTransferApiTests(APITestCase):
             return self.client.post(f"/api/v1/billing/admin/bank-transfer/notices/{notice_id}/confirm/",
                                     format="json", **self.headers)
 
+    def test_reconciliation_reserves_the_batch_for_eligible_payments(self):
+        from apps.billing.services.popbill_receipts import reconcile_due
+
+        self._enable_popbill()
+        now = timezone.now()
+        earlier = now - timedelta(days=1)
+
+        def queue(index, *, issuer="1234567890", mode="test", paid=True, confirmed=True, due=earlier):
+            day = date(2024, 1, 1) + timedelta(days=index)
+            invoice = Invoice.objects.create(
+                tenant=self.tenant, invoice_number=f"INV-QUEUE-{index}", plan="all",
+                billing_mode="INVOICE_REQUEST", supply_amount=100, tax_amount=10, total_amount=110,
+                period_start=day, period_end=day, due_date=day, paid_at=now if paid else None,
+                status="PAID" if paid else "SCHEDULED",
+            )
+            BankTransferNotice.objects.create(
+                invoice=invoice, depositor_name="QA", deposited_at=now, submitted_at=now, amount=110,
+                status="CONFIRMED" if confirmed else "SUBMITTED", reviewed_at=now if confirmed else None,
+            )
+            issue = TaxInvoiceIssue.objects.create(tenant=self.tenant, invoice=invoice, status="READY")
+            PopbillReceipt.objects.create(
+                issue=issue, kind="BUSINESS_TAX", document_key=f"queue{index}", issuer=issuer,
+                environment=mode, next_attempt_at=due,
+            )
+            return issue.pk
+
+        for index in range(100):
+            queue(index, issuer="9876543210")
+            queue(100 + index, mode="live")
+        queue(200, paid=False)
+        queue(201, confirmed=False)
+        eligible = queue(202, due=now)
+        queue(203, due=now + timedelta(days=1))
+
+        with patch("apps.billing.services.popbill_receipts.dispatch") as dispatch:
+            reconcile_due()
+        self.assertEqual(dispatch.call_count, 1)
+        dispatch.assert_called_once_with(eligible)
+
     def test_cash_receipt_retry_recovers_without_repeating_payment(self):
         from apps.billing.services.popbill_receipts import _document
         self._enable_popbill()

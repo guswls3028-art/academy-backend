@@ -240,9 +240,15 @@ def dispatch(issue_id, *, retry=False):
 def reconcile_due():
     if enabled():
         ids = (
-            PopbillReceipt.objects.filter(next_attempt_at__lte=timezone.now())
-            .order_by("next_attempt_at")
+            PopbillReceipt.objects.filter(
+                next_attempt_at__lte=timezone.now(),
+                environment=settings.BILLING_POPBILL_MODE,
+                issuer=settings.BILLING_POPBILL_CORP_NUM,
+                issue__invoice__paid_at__isnull=False,
+                issue__invoice__bank_transfer_notice__status="CONFIRMED",
+            )
+            .order_by("next_attempt_at", "pk")
             .values_list("issue_id", flat=True)
         )
-        for issue_id in list(ids[:200]):
+        for issue_id in ids[:200]:
             dispatch(issue_id)
