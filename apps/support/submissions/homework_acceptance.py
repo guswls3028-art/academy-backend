@@ -1,11 +1,10 @@
 """Staff decisions for submitted homework files, separate from score and review history."""
 
 from django.db import transaction
-from django.db.models import Prefetch
-from django.utils import timezone
+from django.db.models import F, Prefetch
 from rest_framework.exceptions import APIException, NotFound, ValidationError
 
-from apps.domains.progress.models import AssessmentCorrection
+from apps.domains.progress.models import HomeworkFileAcceptance
 from apps.domains.submissions.models import Submission, SubmissionMedia
 from apps.domains.submissions.services.homework_media import (
     homework_media_set_fingerprint_for_submissions,
@@ -20,25 +19,24 @@ class HomeworkFileConflict(APIException):
 
 
 def homework_acceptance_rows(*, tenant, enrollment_ids, homework_ids):
-    return AssessmentCorrection.objects.filter(
+    return HomeworkFileAcceptance.objects.filter(
         tenant=tenant,
-        source_type=AssessmentCorrection.SourceType.HOMEWORK,
         enrollment_id__in=enrollment_ids,
-        source_id__in=homework_ids,
-        media_acceptance_updated_at__isnull=False,
+        homework_id__in=homework_ids,
+        session_id=F("homework__session_id"),
     )
 
 
 def homework_accepted_keys(*, tenant, enrollment_ids, homework_ids):
     return set(homework_acceptance_rows(
         tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=homework_ids,
-    ).filter(accepted_media_fingerprint__isnull=False).values_list("source_id", "session_id", "enrollment_id"))
+    ).filter(fingerprint__isnull=False).values_list("homework_id", "session_id", "enrollment_id"))
 
 
-def homework_acceptance_payload(correction):
-    updated_at = correction.media_acceptance_updated_at if correction else None
+def homework_acceptance_payload(decision):
+    updated_at = decision.updated_at if decision else None
     return {
-        "teacher_accepted": bool(correction and correction.accepted_media_fingerprint),
+        "teacher_accepted": bool(decision and decision.fingerprint),
         "teacher_accepted_updated_at": updated_at.isoformat() if updated_at is not None else None,
     }
 
@@ -73,15 +71,12 @@ def set_homework_file_acceptance(
             "code": "HOMEWORK_MEDIA_CHANGED", "detail": "제출 파일이 변경되었습니다. 최신 파일을 다시 확인해 주세요.",
         })
 
-    correction_key = dict(
-        tenant=tenant, enrollment_id=enrollment_id, session_id=homework.session_id,
-        source_type=AssessmentCorrection.SourceType.HOMEWORK, source_id=homework_id,
-    )
-    correction = AssessmentCorrection.objects.select_for_update().filter(**correction_key).first()
-    current_fingerprint = correction.accepted_media_fingerprint if correction else None
-    actual_updated_at = correction.media_acceptance_updated_at if correction else None
+    target = dict(tenant=tenant, enrollment_id=enrollment_id, session_id=homework.session_id, homework_id=homework_id)
+    decision = HomeworkFileAcceptance.objects.select_for_update().filter(**target).first()
+    current_fingerprint = decision.fingerprint if decision else None
+    actual_updated_at = decision.updated_at if decision else None
     if (accepted and current_fingerprint == fingerprint) or (not accepted and not current_fingerprint):
-        return homework_acceptance_payload(correction)
+        return homework_acceptance_payload(decision)
     if expected_updated_at != actual_updated_at:
         raise HomeworkFileConflict({
             "code": "HOMEWORK_FILE_ACCEPTANCE_CONFLICT", "detail": "다른 화면에서 판정이 바뀌었습니다. 다시 확인해 주세요.",
@@ -107,12 +102,8 @@ def set_homework_file_acceptance(
         )
         if not has_uploaded and not has_legacy:
             raise ValidationError({"accepted": "업로드를 마친 과제 파일이 필요합니다."})
-    if correction is None:
-        correction = AssessmentCorrection(**correction_key)
-    correction.accepted_media_fingerprint = fingerprint if accepted else None
-    correction.media_acceptance_updated_at = timezone.now()
-    if correction.pk:
-        correction.save(update_fields=["accepted_media_fingerprint", "media_acceptance_updated_at"])
-    else:
-        correction.save()
-    return homework_acceptance_payload(correction)
+    if decision is None:
+        decision = HomeworkFileAcceptance(**target)
+    decision.fingerprint = fingerprint if accepted else None
+    decision.save()
+    return homework_acceptance_payload(decision)

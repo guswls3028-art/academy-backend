@@ -77,6 +77,7 @@ from apps.support.results.assessment_correction_dependencies import (
     homework_media_set_fingerprint,
     set_teacher_assessment_resolution,
 )
+from apps.support.submissions.homework_acceptance import homework_accepted_keys
 from apps.support.homework.review_lock import lock_homework_review_target
 from apps.support.results.session_scores_dependencies import (
     AssessmentCorrection,
@@ -386,6 +387,9 @@ class SessionScoresView(APIView):
         exam_ids = [int(e.id) for e in exams]
         homeworks = sorted(homeworks, key=lambda h: (getattr(h, "display_order", 0) or 0, h.created_at, h.id))
         homework_ids = [int(hw.id) for hw in homeworks]
+        accepted_homework_keys = homework_accepted_keys(
+            tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=homework_ids,
+        )
         correction_map: Dict[tuple[int, str, int], AssessmentCorrection] = {
             (
                 int(correction.enrollment_id),
@@ -1057,7 +1061,7 @@ class SessionScoresView(APIView):
                     )
                 )
 
-                if correction and correction.accepted_media_fingerprint:
+                if (hw.id, session.id, eid) in accepted_homework_keys:
                     block.update(passed=True, clinic_required=False)
 
                 homeworks_payload.append(

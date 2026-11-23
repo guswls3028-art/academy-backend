@@ -120,7 +120,7 @@ class StudentHomeworkFilesView(APIView):
 
         enrollment_ids = {row.enrollment_id for row in page}
         acceptances = {
-            (row.enrollment_id, row.source_id): row
+            (row.enrollment_id, row.homework_id): row
             for row in homework_acceptance_rows(tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=homework_by_id)
         }
         evidence = defaultdict(list)

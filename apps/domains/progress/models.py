@@ -363,8 +363,6 @@ class AssessmentCorrection(TimestampModel):
         blank=True,
         help_text="완료 확인 당시 시험 점수·답안 내용의 SHA-256 지문.",
     )
-    accepted_media_fingerprint = models.CharField(max_length=64, null=True, blank=True)
-    media_acceptance_updated_at = models.DateTimeField(null=True, blank=True)
     updated_by = models.ForeignKey(
         "core.User",
         on_delete=models.SET_NULL,
@@ -391,6 +389,26 @@ class AssessmentCorrection(TimestampModel):
             ),
         ]
         ordering = ["-updated_at", "-id"]
+
+
+class HomeworkFileAcceptance(models.Model):
+    """Latest staff decision on a student's submitted files, independent of manual score review."""
+
+    tenant = models.ForeignKey("core.Tenant", on_delete=models.CASCADE, related_name="+")
+    enrollment = models.ForeignKey("enrollment.Enrollment", on_delete=models.CASCADE, related_name="+")
+    session = models.ForeignKey("lectures.Session", on_delete=models.CASCADE, related_name="+")
+    homework = models.ForeignKey("homework_results.Homework", on_delete=models.CASCADE, related_name="+")
+    # Revocation clears the fingerprint but retains the decision version for concurrent reviewers.
+    fingerprint = models.CharField(max_length=64, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "enrollment", "session", "homework"],
+                name="uniq_homework_file_acceptance",
+            ),
+        ]
 
 
 class RiskLog(TimestampModel):

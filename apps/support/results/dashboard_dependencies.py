@@ -28,7 +28,7 @@ def pending_homework_file_counts(*, tenant: Any) -> dict[int, int]:
     from django.db.models import Exists, F, OuterRef, Q, Subquery
     from apps.domains.homework.models import HomeworkAssignment
     from apps.domains.homework_results.models import Homework, HomeworkScore
-    from apps.domains.progress.models import AssessmentCorrection
+    from apps.domains.progress.models import AssessmentCorrection, HomeworkFileAcceptance
     from apps.domains.submissions.models import Submission, SubmissionMedia
     from apps.support.submissions.dependencies import homework_submission_revisions
 
@@ -60,10 +60,9 @@ def pending_homework_file_counts(*, tenant: Any) -> dict[int, int]:
         completed=True, source_id=OuterRef("target_id"), enrollment_id=OuterRef("enrollment_id"),
         session__homeworks__id=OuterRef("target_id"),
     )
-    accepted = AssessmentCorrection.objects.filter(
-        tenant=tenant, source_type=AssessmentCorrection.SourceType.HOMEWORK,
-        source_id=OuterRef("target_id"), enrollment_id=OuterRef("enrollment_id"),
-        session__homeworks__id=OuterRef("target_id"), accepted_media_fingerprint__isnull=False,
+    accepted = HomeworkFileAcceptance.objects.filter(
+        tenant=tenant, homework_id=OuterRef("target_id"), enrollment_id=OuterRef("enrollment_id"),
+        session_id=F("homework__session_id"), fingerprint__isnull=False,
     )
     candidates = delivered.filter(Exists(assigned), ~Exists(accepted)).alias(
         passed=Subquery(latest_score.values("passed")[:1]),
