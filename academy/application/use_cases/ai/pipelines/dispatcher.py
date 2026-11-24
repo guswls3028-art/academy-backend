@@ -242,16 +242,24 @@ def handle_ai_job(job: AIJob) -> AIResult:
 
         cfg = AIConfig.load()
 
-        download_url = payload.get("download_url")
+        if job.type == "omr_grading":
+            from apps.domains.submissions.services.omr_worker_source import sign_current_omr_source
+            download_url = sign_current_omr_source(job)
+        else:
+            download_url = payload.get("download_url")
         if not download_url:
             return AIResult.failed(job.id, "download_url missing")
 
         # 다운로드 단계 (모든 작업 공통)
         _record_progress(job.id, "downloading", 10, step_index=1, step_total=1, step_name_display="다운로드", step_percent=0, tenant_id=tenant_id)
-        local_path = download_to_tmp(
-            download_url=download_url,
-            job_id=str(job.id),
-        )
+        try:
+            local_path = download_to_tmp(download_url=download_url, job_id=str(job.id))
+        except Exception as exc:
+            if job.type != "omr_grading":
+                raise
+            # HTTP errors can include the entire presigned URL.
+            logger.warning("OMR download failed | job_id=%s error_type=%s", job.id, type(exc).__name__)
+            return AIResult.failed(job.id, "OMR original download failed")
         _record_progress(job.id, "downloading", 10, step_index=1, step_total=1, step_name_display="다운로드", step_percent=100, tenant_id=tenant_id)
 
         # --------------------------------------------------
