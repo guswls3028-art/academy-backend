@@ -417,3 +417,108 @@ class ManualNotificationContextSourceTests(TestCase):
             self.assertEqual(post(video_notice, final=True).status_code, 200)
             self.assertEqual(provider.call_count, 2)
             self.assertEqual(ScheduledNotification.objects.count(), 2)
+
+    def test_scheduled_grade_drops_stale_recipient_and_rechecks_after_queue_delay(self):
+        from datetime import timedelta
+        from unittest.mock import Mock, patch
+
+        from django.utils import timezone
+
+        from apps.domains.enrollment.test_support import create_enrollment_fixture, create_session_enrollment_fixture
+        from apps.domains.homework.test_support import create_homework_assignment_fixture
+        from apps.domains.homework_results.test_support import create_homework_fixture, create_homework_score_fixture
+        from apps.domains.lectures.test_support import create_lecture_fixture, create_session_fixture
+        from apps.domains.messaging.models import MessagingObserver, ScheduledNotification
+        from apps.domains.messaging.scheduled import process_due_notifications
+        from apps.domains.messaging.views.send_views import SendMessageView
+        from apps.domains.progress.models import HomeworkFileAcceptance
+        from apps.domains.submissions.models import Submission
+        from apps.worker.messaging_worker.sqs_main import (
+            _assert_grade_homework_delivery_active, _send_failure_disposition, send_one_alimtalk,
+        )
+
+        self.admin.phone = "01010007199"
+        self.admin.save(update_fields=["phone"])
+        MessagingObserver.objects.create(tenant=self.tenant, user=self.admin)
+        lecture = create_lecture_fixture(tenant=self.tenant, title="수학", name="수학", subject="MATH")
+        session = create_session_fixture(lecture=lecture, order=1, title="1차시")
+        homework = create_homework_fixture(tenant=self.tenant, session=session, title="연습")
+        early = self._student("S071", "예약 전 제출", "01010007001")
+        late = self._student("S072", "큐 지연 중 제출", "01010007002")
+        missing = self._student("S073", "미제출 대조군", "01010007003")
+        students = (early, late, missing)
+        enrollments = {}
+        for student in students:
+            enrollment = create_enrollment_fixture(tenant=self.tenant, student=student, lecture=lecture)
+            create_session_enrollment_fixture(tenant=self.tenant, session=session, enrollment=enrollment)
+            create_homework_assignment_fixture(tenant=self.tenant, session=session, enrollment=enrollment, homework=homework)
+            create_homework_score_fixture(session=session, enrollment=enrollment, homework=homework,
+                                          score=None, passed=False, meta={"status": "NOT_SUBMITTED"})
+            enrollments[student.pk] = enrollment
+
+        send_at = timezone.now() + timedelta(minutes=5)
+        request = self.factory.post("/api/v1/messaging/send/", {
+            "session_id": session.pk, "send_to": "parent", "block_category": "grades",
+            "student_ids": [student.pk for student in students], "raw_body": "#{과제1결과}",
+            "scheduled_send_at": send_at.isoformat(),
+            "alimtalk_extra_vars_per_student": {str(student.pk): {"_body_subst": "미제출"} for student in students},
+        }, format="json")
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as queue:
+            response = SendMessageView.as_view()(request)
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["scheduled"], 3)
+            queue.assert_not_called()
+            Submission.objects.create(
+                tenant=self.tenant, user=early.user, enrollment=enrollments[early.pk], target_type="homework",
+                target_id=homework.pk, source=Submission.Source.HOMEWORK_IMAGE,
+                status=Submission.Status.SUBMITTED, file_key="fixture/submitted-before-send.jpg",
+            )
+            with patch("apps.domains.messaging.scheduled.dj_tz.now", return_value=send_at + timedelta(seconds=1)):
+                process_due_notifications(batch_size=20)
+
+        outboxes = list(ScheduledNotification.objects.filter(tenant=self.tenant))
+        self.assertEqual(len(outboxes), 6)
+        by_reference = {row.payload["domain_object_id"]: row for row in outboxes}
+        self.assertEqual({row.grade_homework_review["student_id"] for row in outboxes}, {student.pk for student in students})
+        cancelled = [row for row in outboxes if row.status == ScheduledNotification.Status.CANCELLED]
+        self.assertEqual(len(cancelled), 2)
+        self.assertTrue(all(row.grade_homework_review["student_id"] == early.pk
+                            and row.error_message == "grade_homework_review_changed" for row in cancelled))
+        self.assertTrue(all(row.payload.get("redacted") for row in cancelled))
+        self.assertEqual(queue.call_count, 4)
+        self.assertTrue(all("grade_homework_review" not in call.kwargs for call in queue.call_args_list))
+
+        HomeworkFileAcceptance.objects.create(
+            tenant=self.tenant, session=session, enrollment=enrollments[late.pk], homework=homework,
+            fingerprint="1" * 64,
+        )
+        client = Mock()
+        client.send.return_value = None
+        with patch("apps.worker.messaging_worker.sqs_main._get_solapi_client", return_value=client):
+            for call in queue.call_args_list:
+                payload = call.kwargs
+                row = by_reference[payload["domain_object_id"]]
+                params = {"business_tenant_id": self.tenant.pk, "business_key": row.business_idempotency_key}
+
+                def before_provider_call():
+                    _assert_grade_homework_delivery_active(payload, **params)
+                    return True
+
+                result = send_one_alimtalk(
+                    None, payload["to"], self.admin.phone, "fixture-profile", "fixture-template",
+                    before_provider_call=before_provider_call,
+                )
+                if row.grade_homework_review["student_id"] == late.pk:
+                    self.assertEqual(result.get("reason"), "grade_homework_review_changed")
+                    self.assertFalse(result.get("provider_called"))
+                else:
+                    self.assertEqual(row.grade_homework_review["student_id"], missing.pk)
+                    self.assertTrue(result.get("provider_called"), result)
+                    with self.assertRaisesRegex(ValueError, "^grade_homework_review_changed$"):
+                        _assert_grade_homework_delivery_active(
+                            payload, **{**params, "business_tenant_id": self.tenant.pk + 1000},
+                        )
+        self.assertEqual(client.send.call_count, 2)
+        self.assertEqual(_send_failure_disposition("grade_homework_review_changed", provider_send_started=False), "terminal")

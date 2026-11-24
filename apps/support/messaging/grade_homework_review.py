@@ -4,6 +4,7 @@ from collections import defaultdict
 from fnmatch import fnmatchcase
 import json
 import re
+from uuid import UUID
 
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import HomeworkScore
@@ -19,6 +20,8 @@ EMPTY_GRADE_LINE = re.compile(r"(?:[^\n]*:\s*-?\s*/\s*-?|\s*:|\s*-\s*:\s*-)?\Z")
 AGGREGATES = {"과제목록", "시험성적", "선생님메모", "전체요약", "숙제완성도"}
 DETAILS = {"시험성적", "선생님메모"}
 STATE_KEY = "_homework_notice_states"
+OUTBOX_GUARD_KEY = "grade_homework_review"
+OUTBOX_REFERENCE_PREFIX = "grade_homework_outbox:"
 
 
 def _literal(text):
@@ -88,7 +91,30 @@ def _legacy_claim(body, rendered, slot, titles, assigned):
     ))
 
 
-def grade_homework_notice_changed(*, tenant, session, enrollments, body, contexts, lock):
+def _assignment_states(tenant, session_id, assignments):
+    enrollments = {enrollment_id for _, enrollment_id, _ in assignments}
+    homeworks = {homework_id for _, _, homework_id in assignments}
+    accepted = homework_accepted_keys(tenant=tenant, enrollment_ids=enrollments, homework_ids=homeworks)
+    scores = {(row.enrollment_id, row.homework_id): row for row in HomeworkScore.objects.filter(
+        session_id=session_id, enrollment__tenant=tenant, enrollment_id__in=enrollments,
+        homework_id__in=homeworks, attempt_index=1,
+    ).only("enrollment_id", "homework_id", "session_id", "score", "meta", "reviewed_submission_revision")}
+    cleared = superseded_homework_missing_keys(tenant=tenant, scores=scores.values(), accepted_keys=accepted)
+    states = {}
+    for assignment_id, enrollment_id, homework_id in assignments:
+        pair = (enrollment_id, homework_id)
+        score = scores.get(pair)
+        if (homework_id, session_id, enrollment_id) in accepted:
+            states[assignment_id] = "accepted"
+        elif (score and score.score is None and isinstance(score.meta, dict)
+              and score.meta.get("status") == HomeworkScore.MetaStatus.NOT_SUBMITTED and pair not in cleared):
+            states[assignment_id] = "missing"
+        else:
+            states[assignment_id] = "other"
+    return states
+
+
+def grade_homework_notice_changed(*, tenant, session, enrollments, body, contexts, lock, missing_assignments=None):
     """Read the selected roster and compare the same data again inside final outbox admission."""
     names = TOKEN.findall(body)
     numbered = {slot[1] for name in names if (slot := RESULT_SLOT.fullmatch(name))}
@@ -117,23 +143,14 @@ def grade_homework_notice_changed(*, tenant, session, enrollments, body, context
         enrollment_id__in=targets, homework__tenant=tenant, homework__session=session).order_by("pk")
     if lock:
         assignments = assignments.select_for_update(of=("self",))
-    pairs = list(assignments.values_list("enrollment_id", "homework_id"))
-    accepted = homework_accepted_keys(tenant=tenant, enrollment_ids=targets, homework_ids=ids)
-    scores = {(s.enrollment_id, s.homework_id): s for s in HomeworkScore.objects.filter(session=session,
-        enrollment__tenant=tenant, enrollment_id__in=targets, homework_id__in=ids, attempt_index=1)
-        .only("enrollment_id","homework_id","session_id","score","meta","reviewed_submission_revision")}
-    cleared = superseded_homework_missing_keys(tenant=tenant, scores=scores.values(), accepted_keys=accepted)
+    rows = list(assignments.values_list("pk", "enrollment_id", "homework_id"))
+    current = _assignment_states(tenant, session.pk, rows)
     states = defaultdict(dict)
-    for eid, hid in pairs:
-        score = scores.get((eid, hid))
-        if (hid, session.pk, eid) in accepted:
-            state = "accepted"
-        elif (score and score.score is None and isinstance(score.meta, dict)
-              and score.meta.get("status") == HomeworkScore.MetaStatus.NOT_SUBMITTED and (eid, hid) not in cleared):
-            state = "missing"
-        else:
-            state = "other"
-        states[targets[eid]][by_id[hid]] = [hid, state]
+    assignment_by_student_slot = {}
+    for assignment_id, eid, hid in rows:
+        student_id, slot = targets[eid], by_id[hid]
+        states[student_id][slot] = [hid, current[assignment_id]]
+        assignment_by_student_slot[(student_id, slot)] = assignment_id
 
     for student_id, raw in snapshots.items():
         # Compact JSON from the grade board has three bounded scalars per referenced slot.
@@ -158,6 +175,69 @@ def grade_homework_notice_changed(*, tenant, session, enrollments, body, context
     for student_id, rendered in legacy.items():
         visible = states[student_id]
         for slot, (_, state) in visible.items():
-            if state != "missing" and _legacy_claim(body, rendered, slot, titles, sorted(visible)):
+            if (state != "missing" or missing_assignments is not None) and _legacy_claim(
+                body, rendered, slot, titles, sorted(visible),
+            ):
+                if state == "missing":
+                    missing_assignments.setdefault(student_id, []).append(assignment_by_student_slot[(student_id, slot)])
+                    continue
                 return True
     return False
+
+
+def stale_grade_homework_outboxes(tenants, notifications, *, lock=True):
+    """Recheck exact refs under the same assignment locks as file submissions."""
+    groups = defaultdict(list)
+    stale = set()
+    for notification in notifications:
+        guard = notification.grade_homework_review
+        if notification.trigger != "manual_send" or guard is None:
+            continue
+        if not isinstance(guard, dict):
+            stale.add(notification.pk)
+            continue
+        session_id, student_id, assignment_ids = (guard.get(key) for key in ("session_id", "student_id", "assignment_ids"))
+        if (type(session_id) is not int or type(student_id) is not int or not isinstance(assignment_ids, list)
+                or not assignment_ids or any(type(key) is not int for key in assignment_ids)):
+            stale.add(notification.pk)
+            continue
+        groups[(notification.tenant_id, session_id)].append((notification.pk, student_id, assignment_ids))
+
+    for (tenant_id, session_id), entries in sorted(groups.items()):
+        tenant = tenants[tenant_id]
+        assignment_ids = {pk for _, _, ids in entries for pk in ids}
+        homeworks = staff_homework_file_targets(tenant=tenant).filter(session_id=session_id)
+        assignments = HomeworkAssignment.objects.filter(
+            pk__in=assignment_ids, tenant=tenant, session_id=session_id, homework__in=homeworks,
+            enrollment__tenant=tenant, enrollment__status="ACTIVE", enrollment__student__tenant=tenant,
+            enrollment__student__deleted_at__isnull=True,
+        ).order_by("pk")
+        if lock:
+            assignments = assignments.select_for_update(of=("self",))
+        rows = list(assignments.values_list(
+            "pk", "enrollment_id", "homework_id", "enrollment__student_id",
+        ))
+        current = _assignment_states(tenant, session_id, [(pk, eid, hid) for pk, eid, hid, _ in rows])
+        owners = {pk: student_id for pk, _, _, student_id in rows}
+        stale.update(
+            notification_id for notification_id, student_id, ids in entries
+            if any(owners.get(pk) != student_id or current.get(pk) != "missing" for pk in ids)
+        )
+    return stale
+
+
+def grade_homework_delivery_is_stale(*, business_tenant_id, business_key, reference):
+    """Recheck after queue delay using the exact durable outbox and business tenant."""
+    from apps.domains.messaging.models import ScheduledNotification
+
+    try:
+        dispatch_key = UUID(hex=reference.removeprefix(OUTBOX_REFERENCE_PREFIX))
+    except ValueError:
+        return True
+    outbox = ScheduledNotification.objects.select_related("tenant").filter(
+        tenant_id=business_tenant_id, dispatch_key=dispatch_key, trigger="manual_send",
+        business_idempotency_key=business_key, grade_homework_review__isnull=False,
+    ).exclude(status__in=(ScheduledNotification.Status.CANCELLED, ScheduledNotification.Status.FAILED)).first()
+    return outbox is None or outbox.pk in stale_grade_homework_outboxes(
+        {business_tenant_id: outbox.tenant}, [outbox], lock=False,
+    )
