@@ -99,9 +99,9 @@ class SendMessageView(APIView):
     def _send(self, request, data, admission):
         from apps.support.messaging.session_message_context import resolve_session_message_data, SessionMessageContextError
         try:
-            data = resolve_session_message_data(tenant=request.tenant, data=data)
+            data = resolve_session_message_data(tenant=request.tenant, data=data, lock_homework=True)
         except SessionMessageContextError as exc:
-            return Response({"detail": str(exc), "code": "session_context_missing"}, status=409)
+            return Response({"detail": str(exc), "code": exc.code}, status=409)
         tenant = request.tenant
         send_to = data["send_to"]
         message_mode = "alimtalk"

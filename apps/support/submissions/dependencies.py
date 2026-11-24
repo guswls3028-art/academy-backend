@@ -58,7 +58,7 @@ def homework_submission_revisions(
                 tenant=tenant,
                 status=SubmissionMedia.Status.UPLOADED,
                 removed_at__isnull=True,
-            ).only("id", "submission_id"),
+            ).exclude(object_key__in=["", "pending"]).only("id", "submission_id"),
             to_attr="uploaded_media_files",
         ))
     )
@@ -71,7 +71,7 @@ def homework_submission_revisions(
         }:
             parts.append(("submission", int(parent.id)))
         meta = parent.meta if isinstance(parent.meta, dict) else {}
-        if parent.file_key and not meta.get("homework_media_legacy_removed_at"):
+        if parent.file_key not in (None, "", "pending") and not meta.get("homework_media_legacy_removed_at"):
             parts.append(("legacy", int(parent.id)))
         parts.extend(
             ("media", int(media.id))

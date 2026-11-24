@@ -314,3 +314,86 @@ class ManualNotificationContextSourceTests(TestCase):
         self.assertEqual(scheduled.payload["to"], control.parent_phone)
         self.assertEqual(confirmed["batch_result"]["accepted_count"], 1)
         process.assert_called_once_with(batch_size=1, notification_ids=[scheduled.id])
+
+    def test_grade_homework_preview_and_send_recheck_only_the_selected_assignment(self):
+        import json
+        from unittest.mock import patch
+        from apps.domains.messaging.models import ScheduledNotification
+        from apps.domains.messaging.views.operations_views import SendMessagePreflightView
+        from apps.domains.messaging.views.send_views import SendMessageView
+        from apps.domains.enrollment.test_support import create_enrollment_fixture, create_session_enrollment_fixture
+        from apps.domains.homework.test_support import create_homework_assignment_fixture
+        from apps.domains.homework_results.test_support import create_homework_fixture, create_homework_score_fixture
+        from apps.domains.lectures.test_support import create_lecture_fixture, create_session_fixture
+        from apps.domains.progress.models import HomeworkFileAcceptance
+        from apps.domains.submissions.models import Submission
+        from apps.support.messaging.session_message_context import resolve_session_message_data
+        from apps.support.submissions.dependencies import homework_submission_revisions
+
+        student = self._student("S039", "성적 확인 학생", "01088889999")
+        lecture = create_lecture_fixture(tenant=self.tenant, title="수학", name="수학", subject="MATH")
+        session = create_session_fixture(lecture=lecture, order=1, title="1차시")
+        enrollment = create_enrollment_fixture(tenant=self.tenant, student=student, lecture=lecture)
+        create_session_enrollment_fixture(tenant=self.tenant, session=session, enrollment=enrollment)
+        tasks = [create_homework_fixture(tenant=self.tenant, session=session, title="연습", display_order=i) for i in (1, 2)]
+        for homework in tasks:
+            create_homework_assignment_fixture(tenant=self.tenant, session=session, enrollment=enrollment, homework=homework)
+        scores = [create_homework_score_fixture(session=session, homework=hw, enrollment=enrollment,
+            score=None, meta={"status": "NOT_SUBMITTED"}, passed=False) for hw in tasks]
+        legacy_data = {"session_id": session.pk, "send_to": "parent", "block_category": "grades",
+            "student_ids": [student.pk], "raw_body": "#{과제1결과} / #{과제2결과}",
+            "alimtalk_extra_vars_per_student": {str(student.pk): {"_body_subst": "미제출 / 미제출"}}}
+        def snapshot(state, rendered):
+            context = {"_body_subst": rendered, "_homework_notice_states": json.dumps(
+                [[1, tasks[0].pk, state], [2, tasks[1].pk, "missing"]])}
+            return {**legacy_data, "alimtalk_extra_vars_per_student": {str(student.pk): context}}
+
+        def post(data, final=False):
+            url = "/api/v1/messaging/send/" if final else "/api/v1/messaging/send/preflight/"
+            request = self.factory.post(url, data, format="json")
+            force_authenticate(request, user=self.admin)
+            request.tenant = self.tenant
+            if final:
+                with self.captureOnCommitCallbacks(execute=True):
+                    return SendMessageView.as_view()(request)
+            return SendMessagePreflightView.as_view()(request)
+
+        outdated = snapshot("missing", "미제출 / 미제출")
+        for data in (outdated, legacy_data):
+            self.assertEqual(post(data).data["blockers"], [])
+        submission = Submission.objects.create(tenant=self.tenant, user=student.user, enrollment=enrollment, target_type="homework",
+            target_id=tasks[0].pk, source=Submission.Source.HOMEWORK_IMAGE, file_key="pending",
+            status=Submission.Status.SUBMITTED)
+        self.assertEqual(post(legacy_data).data["blockers"], [])
+        submission.file_key = "test/file.jpg"
+        submission.save(update_fields=["file_key"])
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as provider:
+            for data in (outdated, legacy_data):
+                self.assertIn("grade_homework_review_changed", [i["code"] for i in post(data).data["blockers"]])
+                denied = post(data, final=True)
+                self.assertEqual((denied.status_code, denied.data.get("code")), (409,"grade_homework_review_changed"))
+            provider.assert_not_called()
+            self.assertFalse(ScheduledNotification.objects.exists())
+            current = snapshot("other", "점수 미입력 / 미제출")
+            self.assertEqual(post(snapshot("other", "미제출 / 미제출"), final=True).status_code, 409)
+            resolved = resolve_session_message_data(tenant=self.tenant, data=current)
+            self.assertNotIn("_homework_notice_states", resolved["alimtalk_extra_vars_per_student"][str(student.pk)])
+            def legacy(raw, text):
+                return {**legacy_data, "raw_body": raw, "alimtalk_extra_vars_per_student": {str(student.pk): {"_body_subst": text}}}
+            legitimate = legacy("이전 미제출 안내와 별개입니다. #{과제2결과}", "이전 미제출 안내와 별개입니다. 미제출")
+            adjoining = legacy("#{학생이름}#{과제1결과}#{선생님이름}", "미제출 문의 점수 미입력 선생님")
+            for data in (current, legitimate, adjoining, legacy("#{과제목록}", "- 연습: 점수 미입력\n- 연습: 미제출")):
+                self.assertEqual(post(data).data["blockers"], [])
+            self.assertEqual(post(legacy("#{과제목록}", "- 연습: 미제출\n- 연습: 미제출"), final=True).status_code, 409)
+            receipt = HomeworkFileAcceptance.objects.create(tenant=self.tenant, enrollment=enrollment, session=session,
+                homework=tasks[0], fingerprint="9"*64)
+            self.assertEqual(post(current, final=True).status_code, 409)
+            self.assertEqual(post(snapshot("accepted", "통과 (교사 확인) / 미제출")).data["blockers"], [])
+            receipt.delete()
+            version = homework_submission_revisions(tenant=self.tenant,enrollment_ids=[enrollment.pk],homework_ids=[tasks[0].pk])
+            scores[0].reviewed_submission_revision = version[(enrollment.pk, tasks[0].pk)]
+            scores[0].save(update_fields=["reviewed_submission_revision"])
+            self.assertEqual(post(outdated).data["blockers"], [])
+            self.assertEqual(post(legitimate, final=True).status_code, 200)
+            provider.assert_called_once()
+            self.assertEqual(ScheduledNotification.objects.count(), 1)
