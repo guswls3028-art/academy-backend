@@ -54,6 +54,24 @@ def resolve_manual_notification_context_source(
         raise ManualContextSourceError("context_source는 객체여야 합니다.")
 
     source_type = context_source.get("type")
+    if source_type == "assignment_not_submitted":
+        if trigger != source_type:
+            raise ManualContextSourceError("과제 미제출 알림에만 사용할 수 있습니다.")
+        from apps.support.messaging.assignment_not_submitted_dependencies import (
+            missing_homework_assignments, missing_homework_target,
+        )
+
+        homework_id = context_source.get("homework_id")
+        homework = missing_homework_target(tenant, homework_id) if type(homework_id) is int and homework_id > 0 else None
+        if homework is None:
+            raise ManualContextSourceError("현재 차시의 과제를 다시 선택해 주세요.")
+        rows = missing_homework_assignments(tenant=tenant, homework=homework)
+        return ManualContextSourceResult(
+            sorted({row.enrollment.student_id for row in rows}),
+            {"과제명": homework.title, "강의명": homework.session.lecture.title,
+             "차시명": homework.session.title or homework.session.display_label},
+        )
+
     if source_type == SCHOOL_REPORT_REQUEST_TRIGGER:
         if trigger != SCHOOL_REPORT_REQUEST_TRIGGER:
             raise ManualContextSourceError("학교 성적 취합 자료는 제출 요청에만 사용할 수 있습니다.")

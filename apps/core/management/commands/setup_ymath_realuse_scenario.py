@@ -283,17 +283,17 @@ def ensure_development_messaging_baseline() -> None:
         config.save()
 
 
-def ensure_development_clinic_cancellation_fixture(tenant: Tenant) -> None:
-    """Provision the tenant-owned copy required by the clinic cancel real-use flow."""
+def ensure_development_notification_fixture(tenant: Tenant, trigger: str) -> None:
+    """Provision the tenant-owned copy required by the isolated notification preview."""
 
     if not _is_persistent_development_runtime():
         raise CommandError("Development messaging fixtures require the persistent development runtime.")
     if str(os.environ.get("SOLAPI_MOCK") or "").strip().lower() not in {"1", "true", "yes"}:
         raise CommandError("Development messaging fixtures require SOLAPI_MOCK=true.")
     if not SCENARIO_CODE_RE.fullmatch(str(tenant.code or "")):
-        raise CommandError("Development clinic messaging fixture requires an exact qa-* tenant.")
+        raise CommandError("Development messaging fixture requires an exact qa-* tenant.")
     if not tenant.is_active or not tenant.messaging_is_active:
-        raise CommandError("Development clinic messaging fixture requires active tenant messaging.")
+        raise CommandError("Development messaging fixture requires active tenant messaging.")
 
     from apps.domains.messaging.alimtalk_content_builders import (
         get_solapi_template_id,
@@ -302,9 +302,10 @@ def ensure_development_clinic_cancellation_fixture(tenant: Tenant) -> None:
     from apps.domains.messaging.default_templates import get_default_templates
     from apps.domains.messaging.models import AutoSendConfig, MessageTemplate
 
-    trigger = "clinic_cancelled"
+    if trigger not in {"clinic_cancelled", "assignment_not_submitted"}:
+        raise CommandError("Unsupported development messaging fixture.")
     if not get_template_type(trigger) or not get_solapi_template_id(trigger):
-        raise CommandError("Development clinic cancellation requires an approved common template mapping.")
+        raise CommandError("Development notification requires an approved common template mapping.")
 
     definition = get_default_templates(tenant.name or "학원")[trigger]
     config = (
@@ -313,10 +314,10 @@ def ensure_development_clinic_cancellation_fixture(tenant: Tenant) -> None:
         .first()
     )
     if config and (config.message_mode or "alimtalk").strip().lower() != "alimtalk":
-        raise CommandError("Development clinic cancellation fixture found a non-Alimtalk config.")
+        raise CommandError("Development notification fixture found a non-Alimtalk config.")
     template = config.template if config else None
     if template is not None and template.tenant_id != tenant.id:
-        raise CommandError("Development clinic cancellation fixture found a foreign template.")
+        raise CommandError("Development notification fixture found a foreign template.")
     if template is None:
         templates = list(
             MessageTemplate.objects.select_for_update()
@@ -324,7 +325,7 @@ def ensure_development_clinic_cancellation_fixture(tenant: Tenant) -> None:
             .order_by("id")[:2]
         )
         if len(templates) > 1:
-            raise CommandError("Ambiguous development clinic cancellation template.")
+            raise CommandError("Ambiguous development notification template.")
         template = templates[0] if templates else MessageTemplate(tenant=tenant)
         template.category = definition["category"]
         template.name = definition["name"]
@@ -338,7 +339,7 @@ def ensure_development_clinic_cancellation_fixture(tenant: Tenant) -> None:
     if config is None:
         config = AutoSendConfig(tenant=tenant, trigger=trigger)
     config.template = template
-    config.enabled = True
+    config.enabled = trigger == "clinic_cancelled"
     config.message_mode = "alimtalk"
     config.minutes_before = definition.get("minutes_before")
     config.delay_mode = "immediate"
@@ -501,7 +502,8 @@ class Command(BaseCommand):
             tenant.is_active = True
             tenant.save(update_fields=["name", "is_active"])
             if _is_persistent_development_runtime():
-                ensure_development_clinic_cancellation_fixture(tenant)
+                ensure_development_notification_fixture(tenant, "clinic_cancelled")
+                ensure_development_notification_fixture(tenant, "assignment_not_submitted")
             self._ensure_scenario_provenance(tenant)
 
             feature_flags, ui_config = _ymath_program_contract()

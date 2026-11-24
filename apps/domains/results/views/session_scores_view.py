@@ -1061,7 +1061,8 @@ class SessionScoresView(APIView):
                     )
                 )
 
-                if (hw.id, session.id, eid) in accepted_homework_keys:
+                block["teacher_accepted"] = (hw.id, session.id, eid) in accepted_homework_keys
+                if block["teacher_accepted"]:
                     block.update(passed=True, clinic_required=False)
 
                 homeworks_payload.append(

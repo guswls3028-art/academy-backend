@@ -403,6 +403,11 @@ class ManualNotificationPreviewView(APIView):
                 {"detail": "send_to는 'parent' 또는 'student'만 가능합니다."},
                 status=http_status.HTTP_400_BAD_REQUEST,
             )
+        if trigger == "assignment_not_submitted" and (
+            not isinstance(context_source, dict) or context_source.get("type") != trigger
+        ):
+            return Response({"detail": "과제 제출함에서 해당 과제를 다시 열어 미리보기해 주세요."},
+                            status=http_status.HTTP_400_BAD_REQUEST)
         if trigger == SCHOOL_REPORT_REQUEST_TRIGGER:
             if (
                 send_to != "student" or not isinstance(context_source, dict)
@@ -527,6 +532,7 @@ class ManualNotificationPreviewView(APIView):
                 staff_id=staff_id,
                 session_type="manual",
                 session_id=0,
+                **({"homework_id": context_source["homework_id"]} if trigger == "assignment_not_submitted" else {}),
                 notification_type=trigger,
                 send_to=send_to,
                 **({

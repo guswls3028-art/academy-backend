@@ -199,3 +199,76 @@ class ManualNotificationContextSourceTests(TestCase):
             response.data["detail"],
             "clinic_session_change는 클리닉 변경 알림에만 사용할 수 있습니다.",
         )
+
+    def test_missing_homework_notice_requires_assignment_and_rechecks_evidence_before_outbox(self):
+        from apps.domains.enrollment.test_support import create_enrollment_fixture
+        from apps.domains.homework.test_support import create_homework_assignment_fixture
+        from apps.domains.homework_results.test_support import create_homework_fixture, create_homework_score_fixture
+        from apps.domains.lectures.test_support import create_lecture_fixture, create_session_fixture
+        from apps.domains.messaging.models import ScheduledNotification
+        from apps.domains.progress.models import HomeworkFileAcceptance
+        from apps.domains.submissions.models import Submission
+        from apps.domains.messaging.notification_dispatch import consume_preview_token_and_execute
+
+        student = self._student("S034", "과제학생", "01088889999")
+        lecture = create_lecture_fixture(tenant=self.tenant, title="수학", name="수학", subject="MATH")
+        session = create_session_fixture(lecture=lecture, order=1, title="1차시")
+        enrollment = create_enrollment_fixture(tenant=self.tenant, student=student, lecture=lecture, status="ACTIVE")
+        homework = create_homework_fixture(tenant=self.tenant, session=session, title="풀이 인증")
+        create_homework_assignment_fixture(tenant=self.tenant, homework=homework, session=session, enrollment=enrollment)
+        trigger = "assignment_not_submitted"
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant, category="assignment", name="과제 안내", body="#{학생이름} #{과제명}",
+        )
+        AutoSendConfig.objects.create(tenant=self.tenant, trigger=trigger, template=template, message_mode="alimtalk")
+
+        def preview(source):
+            data = {"trigger": trigger, "send_to": "parent", "student_ids": [student.pk]}
+            if source is not None:
+                data["context_source"] = {"type": trigger, "homework_id": source}
+            return self._post(data)
+
+        self.assertEqual(preview(None).status_code, 400)
+        self.assertEqual(preview(homework.pk + 1000).status_code, 400)
+        score = create_homework_score_fixture(
+            homework=homework, session=session, enrollment=enrollment, score=None,
+            meta={"status": "NOT_SUBMITTED"},
+        )
+        first = preview(homework.pk)
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual([r["student_id"] for r in first.data["recipients"]], [student.pk])
+        token = first.data["preview_token"]
+        self.assertTrue(token)
+        initial_phone = student.parent_phone
+        student.parent_phone = "01055550001"
+        student.save(update_fields=["parent_phone"])
+        self.assertEqual(consume_preview_token_and_execute(token, self.tenant)["code"], "preview_changed")
+        student.parent_phone = initial_phone
+        student.save(update_fields=["parent_phone"])
+        submission = Submission.objects.create(
+            tenant=self.tenant, user=student.user, enrollment=enrollment,
+            target_type=Submission.TargetType.HOMEWORK, target_id=homework.pk,
+            source=Submission.Source.HOMEWORK_IMAGE, status=Submission.Status.SUBMITTED, file_key="fixture/photo.jpg",
+        )
+        self.assertEqual(preview(homework.pk).data["recipients"], [])
+        result = consume_preview_token_and_execute(token, self.tenant, session_type="manual")
+        self.assertEqual((result.get("status"), result.get("code")), (409, "preview_changed"))
+        self.assertFalse(ScheduledNotification.objects.filter(tenant=self.tenant).exists())
+        submission.status = Submission.Status.FAILED
+        submission.save(update_fields=["status"])
+        score.score = 0
+        score.save(update_fields=["score"])
+        self.assertEqual(preview(homework.pk).data["recipients"], [])
+        score.score = None
+        score.save(update_fields=["score"])
+        self.assertEqual(preview(homework.pk).data["total_count"], 1)
+        HomeworkFileAcceptance.objects.create(
+            tenant=self.tenant, session=session, enrollment=enrollment,
+            homework=homework, fingerprint="1" * 64,
+        )
+        self.assertEqual(preview(homework.pk).data["recipients"], [])
+        old_token = NotificationPreviewToken.objects.get(token=token)
+        old_token.payload.pop("homework_id")
+        old_token.save(update_fields=["payload"])
+        self.assertEqual(consume_preview_token_and_execute(token, self.tenant)["code"], "preview_changed")
+        self.assertFalse(ScheduledNotification.objects.filter(tenant=self.tenant).exists())

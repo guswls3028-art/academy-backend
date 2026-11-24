@@ -398,6 +398,7 @@ class HomeworkSubmissionMediaTests(HomeworkMediaFixtureMixin, TestCase):
         self.assertEqual(staff_scores.status_code, 200, staff_scores.data)
         block = staff_scores.data["rows"][0]["homeworks"][0]["block"]
         self.assertEqual(block["score"], 0)
+        self.assertTrue(block["teacher_accepted"])
         self.assertTrue(block["passed"])
         self.assertEqual(pending_homework_file_counts(tenant=self.tenant), {})
 
