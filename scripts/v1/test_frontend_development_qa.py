@@ -724,7 +724,7 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
     def test_fixed_documents_bound_remote_session_lifetime_and_operation(self):
         directory = ROOT / "scripts/v1/templates/ssm"
         for filename, duration in [("frontend_development_qa.json", "5"),
-                                   ("frontend_development_api_port.json", "90")]:
+                                   ("frontend_development_api_port.json", "100")]:
             document = json.loads((directory / filename).read_text())
             self.assertEqual(document.get("inputs"), {"maxSessionDuration": duration, "idleSessionTimeout": "5"})
         command = json.loads((directory / "frontend_development_qa.json").read_text())["properties"]["linux"]["commands"]
@@ -1485,7 +1485,7 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
         for path, expected in (
             ("iam/trust_frontend_development_qa.json", "aa2c1a60b63ad287c2e8caba7257beaafe5d602df66659c3093f917ad670713a"),
             ("ssm/frontend_development_qa.json", "6bd3f1a5abe78703659621f901f2b5ea1d9dce66b36b3da9c12eefdcaf3efc10"),
-            ("ssm/frontend_development_api_port.json", "457d31ebdb1ed4436da3bfdb6f090b0180f8ec5dff7ac1303dfb45fe506f486c"),
+            ("ssm/frontend_development_api_port.json", "e27d1a7a394b27dcb58f7e45a1173760f1486320674a140e47f6e27eb8eecf2b"),
         ):
             with self.subTest(path=path):
                 document = json.loads((ROOT / "scripts/v1/templates" / path).read_text())

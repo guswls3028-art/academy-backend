@@ -22,6 +22,7 @@ DETAILS = {"시험성적", "선생님메모"}
 STATE_KEY = "_homework_notice_states"
 OUTBOX_GUARD_KEY = "grade_homework_review"
 OUTBOX_REFERENCE_PREFIX = "grade_homework_outbox:"
+HOMEWORK_NOTICE_TRIGGERS = {"manual_send", "assignment_not_submitted"}
 
 
 def _literal(text):
@@ -185,13 +186,27 @@ def grade_homework_notice_changed(*, tenant, session, enrollments, body, context
     return False
 
 
+def _missing_grade_owners(tenant, session_id, assignment_ids, lock):
+    homeworks = staff_homework_file_targets(tenant=tenant).filter(session_id=session_id)
+    assignments = HomeworkAssignment.objects.filter(
+        pk__in=assignment_ids, tenant=tenant, session_id=session_id, homework__in=homeworks,
+        enrollment__tenant=tenant, enrollment__status="ACTIVE", enrollment__student__tenant=tenant,
+        enrollment__student__deleted_at__isnull=True,
+    ).order_by("pk")
+    if lock:
+        assignments = assignments.select_for_update(of=("self",))
+    rows = list(assignments.values_list("pk", "enrollment_id", "homework_id", "enrollment__student_id"))
+    current = _assignment_states(tenant, session_id, [(pk, eid, hid) for pk, eid, hid, _ in rows])
+    return {pk: student_id for pk, _, _, student_id in rows if current.get(pk) == "missing"}
+
+
 def stale_grade_homework_outboxes(tenants, notifications, *, lock=True):
     """Recheck exact refs under the same assignment locks as file submissions."""
     groups = defaultdict(list)
     stale = set()
     for notification in notifications:
         guard = notification.grade_homework_review
-        if notification.trigger != "manual_send" or guard is None:
+        if notification.trigger not in HOMEWORK_NOTICE_TRIGGERS or guard is None:
             continue
         if not isinstance(guard, dict):
             stale.add(notification.pk)
@@ -201,32 +216,35 @@ def stale_grade_homework_outboxes(tenants, notifications, *, lock=True):
                 or not assignment_ids or any(type(key) is not int for key in assignment_ids)):
             stale.add(notification.pk)
             continue
-        groups[(notification.tenant_id, session_id)].append((notification.pk, student_id, assignment_ids))
+        inbox_homework_id = None
+        if notification.trigger == "assignment_not_submitted":
+            inbox_homework_id = guard.get("homework_id")
+            if type(inbox_homework_id) is not int or inbox_homework_id <= 0:
+                stale.add(notification.pk)
+                continue
+        group = (notification.tenant_id, session_id, notification.trigger, inbox_homework_id)
+        groups[group].append((notification.pk, student_id, assignment_ids))
 
-    for (tenant_id, session_id), entries in sorted(groups.items()):
+    for (tenant_id, session_id, _, inbox_homework_id), entries in sorted(groups.items()):
         tenant = tenants[tenant_id]
-        assignment_ids = {pk for _, _, ids in entries for pk in ids}
-        homeworks = staff_homework_file_targets(tenant=tenant).filter(session_id=session_id)
-        assignments = HomeworkAssignment.objects.filter(
-            pk__in=assignment_ids, tenant=tenant, session_id=session_id, homework__in=homeworks,
-            enrollment__tenant=tenant, enrollment__status="ACTIVE", enrollment__student__tenant=tenant,
-            enrollment__student__deleted_at__isnull=True,
-        ).order_by("pk")
-        if lock:
-            assignments = assignments.select_for_update(of=("self",))
-        rows = list(assignments.values_list(
-            "pk", "enrollment_id", "homework_id", "enrollment__student_id",
-        ))
-        current = _assignment_states(tenant, session_id, [(pk, eid, hid) for pk, eid, hid, _ in rows])
-        owners = {pk: student_id for pk, _, _, student_id in rows}
+        if inbox_homework_id:
+            from apps.support.messaging.assignment_not_submitted_dependencies import missing_homework_assignments, missing_homework_target
+
+            homework = missing_homework_target(tenant, inbox_homework_id)
+            eligible = missing_homework_assignments(
+                tenant=tenant, homework=homework, student_ids={sid for _, sid, _ in entries}, lock=lock,
+            ) if homework and homework.session_id == session_id else []
+            owners = {row.pk: row.enrollment.student_id for row in eligible}
+        else:
+            owners = _missing_grade_owners(tenant, session_id, {pk for _, _, ids in entries for pk in ids}, lock)
         stale.update(
             notification_id for notification_id, student_id, ids in entries
-            if any(owners.get(pk) != student_id or current.get(pk) != "missing" for pk in ids)
+            if any(owners.get(pk) != student_id for pk in ids)
         )
     return stale
 
 
-def grade_homework_delivery_is_stale(*, business_tenant_id, business_key, reference):
+def grade_homework_delivery_is_stale(*, business_tenant_id, business_key, reference, trigger="manual_send"):
     """Recheck after queue delay using the exact durable outbox and business tenant."""
     from apps.domains.messaging.models import ScheduledNotification
 
@@ -235,7 +253,7 @@ def grade_homework_delivery_is_stale(*, business_tenant_id, business_key, refere
     except ValueError:
         return True
     outbox = ScheduledNotification.objects.select_related("tenant").filter(
-        tenant_id=business_tenant_id, dispatch_key=dispatch_key, trigger="manual_send",
+        tenant_id=business_tenant_id, dispatch_key=dispatch_key, trigger=trigger,
         business_idempotency_key=business_key, grade_homework_review__isnull=False,
     ).exclude(status__in=(ScheduledNotification.Status.CANCELLED, ScheduledNotification.Status.FAILED)).first()
     return outbox is None or outbox.pk in stale_grade_homework_outboxes(

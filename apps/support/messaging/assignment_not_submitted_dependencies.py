@@ -69,7 +69,7 @@ def missing_homework_target(tenant, homework_id):
     return staff_homework_file_targets(tenant=tenant).select_related("session__lecture").filter(pk=homework_id).first()
 
 
-def missing_homework_confirmation_valid(tenant, payload):
+def missing_homework_confirmation_valid(tenant, payload, *, confirmed_guards=None):
     from apps.domains.messaging.services.recipients import normalize_phone
 
     homework_id = payload.get("homework_id")
@@ -85,4 +85,14 @@ def missing_homework_confirmation_valid(tenant, payload):
     for row in still_missing:
         student = row.enrollment.student
         current[student.pk] = normalize_phone(student.parent_phone if payload["send_to"] == "parent" else student.phone)
-    return reviewed == current
+    if reviewed != current:
+        return False
+    if confirmed_guards is not None:
+        for row in still_missing:
+            student_id = row.enrollment.student_id
+            guard = confirmed_guards.setdefault(student_id, {
+                "homework_id": homework.pk, "session_id": homework.session_id,
+                "student_id": student_id, "assignment_ids": [],
+            })
+            guard["assignment_ids"].append(row.pk)
+    return True

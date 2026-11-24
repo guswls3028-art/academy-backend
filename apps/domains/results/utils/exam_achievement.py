@@ -101,6 +101,7 @@ def compute_exam_achievement(
     attempt_id: int | None = None,
     meta_status: str | None = None,
     tenant: Any,
+    initial_scores: dict[tuple[int, int], InitialExamScore] | None = None,
 ) -> dict[str, Any]:
     """
     시험 하나에 대해 학생의 성취 상태를 통합 계산.
@@ -131,6 +132,7 @@ def compute_exam_achievement(
     return compute_exam_achievement_bulk(
         items=[item],
         tenant=tenant,
+        initial_scores=initial_scores,
     )[(int(enrollment_id), int(exam_id))]
 
 
