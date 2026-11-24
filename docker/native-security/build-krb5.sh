@@ -5,7 +5,8 @@ output_root="${1:?output directory is required}"
 work_root="$(mktemp -d)"
 trap 'rm -rf "${work_root}"' EXIT INT TERM
 multiarch="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
-version='1.21.3-5+deb13u1+academy1'
+debian_version='1.21.3-5+deb13u2'
+version="${debian_version}+academy1"
 mkdir -p "${output_root}"
 
 download() {
@@ -20,9 +21,9 @@ download \
     "${work_root}/source.tar.gz" \
     'b7a4cd5ead67fb08b980b21abd150ff7217e85ea320c9ed0c6dadd304840ad35'
 download \
-    'https://deb.debian.org/debian-security/pool/updates/main/k/krb5/krb5_1.21.3-5+deb13u1.debian.tar.xz' \
+    "https://deb.debian.org/debian-security/pool/updates/main/k/krb5/krb5_${debian_version}.debian.tar.xz" \
     "${work_root}/debian.tar.xz" \
-    '02b873b239fbe7ddf016dfe44deba4130673f4606c18c93da0622e2bc8500fb4'
+    '68e3ce5ebfffb8c47a7378b09b36b279791b1994b9df3d9a016d5e105f42a02b'
 download \
     'https://github.com/krb5/krb5/commit/48afa9abb89ab2176bb20624d87d010b9984fc08.patch' \
     "${work_root}/array-bound.patch" \
@@ -58,9 +59,9 @@ tar -xJf "${work_root}/debian.tar.xz" -C "${source_root}"
 apt-get update
 (
     cd "${work_root}"
-    apt-get download 'libkrb5-3=1.21.3-5+deb13u1' \
-        'libgssapi-krb5-2=1.21.3-5+deb13u1' \
-        'libk5crypto3=1.21.3-5+deb13u1' 'libkrb5support0=1.21.3-5+deb13u1'
+    apt-get download "libkrb5-3=${debian_version}" \
+        "libgssapi-krb5-2=${debian_version}" \
+        "libk5crypto3=${debian_version}" "libkrb5support0=${debian_version}"
 )
 ulimit -c 0
 for entry in 'libkrb5-3:libkrb5.so.3.3' 'libgssapi-krb5-2:libgssapi_krb5.so.2.2' \
@@ -81,7 +82,7 @@ for entry in 'libkrb5-3:libkrb5.so.3.3' 'libgssapi-krb5-2:libgssapi_krb5.so.2.2'
     nm -D --defined-only "${fixed_library}" | awk '{print $3}' | sort >"${work_root}/new-symbols"
     diff -u "${work_root}/old-symbols" "${work_root}/new-symbols"
     install -m 0644 "${fixed_library}" "${original_library}"
-    sed -i "s/^Version: .*/Version: ${version}/; s/^Source: .*/Source: krb5/; s/(= 1.21.3-5+deb13u1)/(= ${version})/g; s/^Maintainer: .*/Maintainer: Academy Platform <platform@academy.invalid>/" "${package_root}/DEBIAN/control"
+    sed -i "s/^Version: .*/Version: ${version}/; s/^Source: .*/Source: krb5/; s/(= ${debian_version})/(= ${version})/g; s/^Maintainer: .*/Maintainer: Academy Platform <platform@academy.invalid>/" "${package_root}/DEBIAN/control"
     grep -Fx 'Source: krb5' "${package_root}/DEBIAN/control"
     (
         cd "${package_root}"

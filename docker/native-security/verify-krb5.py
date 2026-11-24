@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 
-VERSION = "1.21.3-5+deb13u1+academy1"
+VERSION = "1.21.3-5+deb13u2+academy1"
 MODIFIED = -1765328343
 CASES = ("valid", "extra-ticket", "missing-client", "missing-server")
 PACKAGES = ("libkrb5-3", "libgssapi-krb5-2", "libk5crypto3", "libkrb5support0")
