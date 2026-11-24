@@ -229,13 +229,14 @@ def _assert_clinic_reminder_delivery_active(data: dict, *, business_tenant_id: i
 
 
 def _assert_grade_homework_delivery_active(data: dict, *, business_tenant_id: int, business_key: str) -> None:
-    if data.get("event_type") != "manual_send":
+    trigger = data.get("event_type")
+    if trigger not in ("manual_send", "assignment_not_submitted"):
         return
     from apps.support.messaging.grade_homework_review import OUTBOX_REFERENCE_PREFIX, grade_homework_delivery_is_stale
 
     reference = str(data.get("domain_object_id") or "")
     if reference.startswith(OUTBOX_REFERENCE_PREFIX) and grade_homework_delivery_is_stale(
-        business_tenant_id=business_tenant_id, business_key=business_key, reference=reference,
+        business_tenant_id=business_tenant_id, business_key=business_key, reference=reference, trigger=trigger,
     ):
         raise ValueError("grade_homework_review_changed")
 
