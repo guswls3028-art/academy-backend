@@ -222,12 +222,12 @@ class AssessmentCorrectionConcurrencyPGTests(TransactionTestCase):
     @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
     def test_grade_notice_waits_for_submitted_file_before_outbox(self, upload):
         from concurrent.futures import ThreadPoolExecutor
-        from apps.support.messaging.session_message_context import GradeHomeworkReviewChanged, resolve_session_message_data
+        from apps.support.messaging.session_message_context import resolve_session_message_data
 
         self.homework.scores.create(session=self.session, enrollment=self.enrollment, score=None,
                                     passed=False, meta={"status": "NOT_SUBMITTED"})
         student_id = self.enrollment.student_id
-        data = {"block_category": "grades", "session_id": self.session.pk, "student_ids": [student_id],
+        data = {"block_category": "grades", "session_id": self.session.pk, "send_to": "parent", "student_ids": [student_id],
                 "raw_body": "#{과제1결과}", "alimtalk_extra_vars_per_student": {str(student_id): {"_body_subst": "미제출"}}}
         resolve_session_message_data(tenant=self.tenant, data=data)
         lock_attempt = threading.Event()
@@ -240,8 +240,12 @@ class AssessmentCorrectionConcurrencyPGTests(TransactionTestCase):
                         lock_attempt.set()
                     return execute(sql, params, many, context)
 
-                with transaction.atomic(), connection.execute_wrapper(observe):
-                    return resolve_session_message_data(tenant=self.tenant, data=data, lock_homework=True)
+                path = "/api/v1/messaging/send/"
+                request = APIRequestFactory().post(path, data, format="json")
+                request.tenant = self.tenant
+                force_authenticate(request, user=self.admin)
+                with connection.execute_wrapper(observe):
+                    return resolve(path).func(request)
             finally:
                 connection.close()
 
@@ -252,8 +256,10 @@ class AssessmentCorrectionConcurrencyPGTests(TransactionTestCase):
                 future = executor.submit(confirm)
                 self.assertTrue(lock_attempt.wait(timeout=10))
                 self.assertFalse(future.done())
-            with self.assertRaises(GradeHomeworkReviewChanged):
-                future.result(timeout=10)
+            response = future.result(timeout=10)
+            self.assertEqual((response.status_code, response.data.get("code")), (409, "grade_homework_review_changed"))
+        for model in ("ManualSendRequest", "ScheduledNotification"):
+            self.assertFalse(apps.get_model("messaging", model).objects.filter(tenant=self.tenant).exists())
 
     def test_first_unscored_homework_decision_honors_expected_updated_at(self):
         correction_created = threading.Event()
