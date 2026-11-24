@@ -23,6 +23,7 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
     automake \
     bzip2 \
     bison \
+    build-essential \
     comerr-dev \
     libkeyutils-dev \
     liblmdb-dev \
