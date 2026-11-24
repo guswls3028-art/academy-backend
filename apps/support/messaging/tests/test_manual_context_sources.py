@@ -385,6 +385,9 @@ class ManualNotificationContextSourceTests(TestCase):
             for data in (current, legitimate, adjoining, legacy("#{과제목록}", "- 연습: 점수 미입력\n- 연습: 미제출")):
                 self.assertEqual(post(data).data["blockers"], [])
             self.assertEqual(post(legacy("#{과제목록}", "- 연습: 미제출\n- 연습: 미제출"), final=True).status_code, 409)
+            self.assertEqual(post(legacy("#{과제1결과}\n\n\n다음 안내", "미제출\n\n다음 안내"), final=True).status_code, 409)
+            unused = "#{과제1결과}\n#{시험8명}: #{시험8}/#{시험8만점}\n다음 안내"
+            self.assertEqual(post(legacy(unused, "미제출\n\n다음 안내"), final=True).status_code, 409)
             receipt = HomeworkFileAcceptance.objects.create(tenant=self.tenant, enrollment=enrollment, session=session,
                 homework=tasks[0], fingerprint="9"*64)
             self.assertEqual(post(current, final=True).status_code, 409)
@@ -397,3 +400,20 @@ class ManualNotificationContextSourceTests(TestCase):
             self.assertEqual(post(legitimate, final=True).status_code, 200)
             provider.assert_called_once()
             self.assertEqual(ScheduledNotification.objects.count(), 1)
+
+            homework_model = type(tasks[0])
+            many = homework_model.objects.bulk_create([
+                homework_model(tenant=self.tenant, session=session, title=f"연습 {number}", display_order=number)
+                for number in range(3, 101)
+            ])
+            last = many[-1]
+            create_homework_assignment_fixture(tenant=self.tenant, homework=last, session=session, enrollment=enrollment)
+            self.assertEqual(post(legacy("#{과제100결과}", "미제출"), final=True).status_code, 409)
+            self.assertEqual(post(legacy("#{과제100결과}", "점수 미입력")).data["blockers"], [])
+            scores[1].meta = {"status": "VIDEO_MAKEUP"}
+            scores[1].save(update_fields=["meta"])
+            video_notice = legacy("#{과제2결과}", "영상보강")
+            self.assertEqual(post(video_notice).data["blockers"], [])
+            self.assertEqual(post(video_notice, final=True).status_code, 200)
+            self.assertEqual(provider.call_count, 2)
+            self.assertEqual(ScheduledNotification.objects.count(), 2)
