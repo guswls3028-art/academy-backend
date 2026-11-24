@@ -5,7 +5,7 @@ from __future__ import annotations
 from math import isfinite
 from typing import Any
 
-from django.db.models import F, Max
+from django.db.models import F, Max, Prefetch
 from django.utils import timezone
 
 from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
@@ -233,12 +233,22 @@ def build_student_grades_summary(
     }
     result_analysis_map = {}
     if result_ids:
-        from apps.domains.results.models import Result
+        from apps.domains.results.models import Result, ResultItem
 
         result_rows = list(
             Result.objects
             .filter(id__in=result_ids)
-            .prefetch_related("items__question__sheet")
+            .prefetch_related(Prefetch(
+                "items",
+                # This request-local cache serves only analysis and correction fingerprints.
+                # Keep their fields and relation keys; omit wide crop/region and sheet data.
+                queryset=ResultItem.objects.select_related("question__sheet").only(
+                    "id", "result_id", "question_id", "answer", "is_correct",
+                    "include_in_wrong_note", "score", "max_score", "question__id",
+                    "question__number", "question__sheet_id", "question__sheet__id",
+                    "question__sheet__exam_id",
+                ),
+            ))
         )
         result_by_id = {int(result.id): result for result in result_rows}
         result_analysis_map = {
