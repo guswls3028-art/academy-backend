@@ -32,6 +32,7 @@ class ScoreBlockSerializer(serializers.Serializer):
 
     passed = serializers.BooleanField(allow_null=True)
     clinic_required = serializers.BooleanField()
+    teacher_accepted = serializers.BooleanField(required=False)
 
     is_locked = serializers.BooleanField()
     lock_reason = serializers.CharField(allow_null=True, allow_blank=True)

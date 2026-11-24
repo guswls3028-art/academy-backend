@@ -32,6 +32,7 @@ from apps.support.results.admin_student_grades_dependencies import (
     submitted_homework_keys_for_grades,
 )
 from apps.support.results.assessment_clinic_status import homework_remediation_keys
+from apps.support.submissions.homework_acceptance import homework_accepted_keys
 from apps.support.results.student_grade_history import (
     build_exam_progression as _build_exam_progression,
     empty_exam_summary as _empty_exam_summary,
@@ -332,6 +333,10 @@ class AdminStudentGradesView(APIView):
             tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=hw_ids,
         )
 
+        accepted_homework_keys = homework_accepted_keys(
+            tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=hw_ids,
+        )
+
         hw_retake_counts = {}
         if hw_ids and enrollment_ids:
             hw_retake_counts = homework_retake_counts_by_key(
@@ -384,7 +389,10 @@ class AdminStudentGradesView(APIView):
             is_pass_1st = bool(hs.passed) if hs is not None else None
             max_attempt = hw_retake_counts.get((enrollment_id, homework.id), 0)
 
-            if score is not None and is_pass_1st and meta_status != "NOT_SUBMITTED":
+            teacher_accepted = (homework.id, session_id_hw, enrollment_id) in accepted_homework_keys
+            if teacher_accepted:
+                achievement = "PASS"
+            elif score is not None and is_pass_1st and meta_status != "NOT_SUBMITTED":
                 achievement = "PASS"
             elif (homework.id, session_id_hw, enrollment_id) in remediated_homework_keys:
                 achievement = "REMEDIATED"
@@ -402,11 +410,12 @@ class AdminStudentGradesView(APIView):
                 "grading_mode": homework.grading_mode,
                 "score": score,
                 "max_score": max_score,
-                "passed": is_pass_1st,
+                "passed": True if teacher_accepted else is_pass_1st,
+                "teacher_accepted": teacher_accepted,
                 "is_locked": bool(hs.is_locked) if hs is not None else False,
                 "lock_reason": hs.lock_reason if hs is not None else None,
                 "score_updated_at": hs.updated_at.isoformat() if hs is not None else None,
-                "meta_status": meta_status,
+                "meta_status": None if teacher_accepted else meta_status,
                 "achievement": achievement,
                 "retake_count": max_attempt,
                 "display_order": homework.display_order,

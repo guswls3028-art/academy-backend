@@ -18,9 +18,10 @@ case "${architecture}" in
     *) echo "Unsupported libpq package architecture: ${architecture}" >&2; exit 1 ;;
 esac
 
-# Restrict sid to a temporary signed download of these two exact packages.
+# Fetch the two checksum-pinned packages from their signed, dated Debian index.
+# The historical index is intentionally retained past its live mirror lifetime.
 mkdir -p "${work_root}/lists/partial" "${output_root}"
-printf '%s\n' 'deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] https://deb.debian.org/debian sid main' >"${work_root}/sources.list"
+printf '%s\n' 'deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] https://snapshot.debian.org/archive/debian/20261114T090000Z/ sid main' >"${work_root}/sources.list"
 apt_fixed() {
     apt-get -o "Dir::Etc::sourcelist=${work_root}/sources.list" \
         -o 'Dir::Etc::sourceparts=-' -o "Dir::State::lists=${work_root}/lists" "$@"

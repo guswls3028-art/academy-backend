@@ -5,12 +5,66 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 보안 스캔으로 배포가 멈춘 경우
+
+배포 담당자는 실패한 실행·단계와 이미지별 저장소·digest·CVE·패키지·버전을
+공유 배포 기록에 남기고, 원인 해소를 우선 맡는다. 새 앱 변경의 준비 검사와
+서버 변경에 의존하지 않는 배포는 검증된 런타임 및 기존 슬롯 조건에 맞춰 진행한다.
+현재 진행 중인 실사용 검사와 운영 이용을 먼저 보호한다.
+
+배포판 패키지와 공식 업스트림 태그를 함께 확인한다. 수정 PR을 닫았거나
+별도 브랜치에 반영한 경우 지원 중인 유지보수 브랜치의 정확한 커밋과
+조상 관계를 확인한다. 지원되는 패키지와 수정 커밋을 찾으면 호환성 및
+출처를 검증하고, 새 후보에서 여섯 이미지의 최신 완료 스캔과 기존 실사용
+절차를 수행한다. 차단이 지속되면 담당자, 확인한 출처와 다음 확인 조건을
+남기고 기존 복구 감시에 연결한다.
+
+## 2026-11-24 OpenSSL 3.5 유지보수 스냅샷
+
+[배포 44934386925](https://github.com/guswls3028-art/academy-backend/actions/runs/44934386925)의
+완료 스캔은 기존 `openssl / 3.5.7-1~deb13u3`에서 신규 High 7건을 검출했다.
+공식 [OpenSSL 3.5 유지보수 커밋](https://github.com/openssl/openssl/commit/1ad851363d5b8588b0d40edcc045fd633e93f0c2)에는
+해당 일곱 건의 수정이 포함됐다. [Debian 보안 추적기](https://security-tracker.debian.org/tracker/source-package/openssl)에는
+stable 패키지의 해당 수정이 아직 게시되지 않아 공통 base를 3.5 유지보수 소스로 빌드한다.
+
+`docker/native-security/build-openssl.sh`는 해당 소스와 Debian stable
+`3.5.9-1~deb13u1` 패키징의 SHA-256을 대조한다. 기존 Debian 아키텍처 설정,
+패치, 패키지 이름과 공유 라이브러리 ABI로 빌드하며 Debian의 네이티브
+테스트와 심볼 검사를 적용한다. 설치 버전의 `~dev20261124+git1ad85136` 표기는
+유지보수 스냅샷을 식별한다. 런타임에는 같은 소스로 빌드한 CLI, 공유 라이브러리,
+legacy provider를 설치하고 Python TLS 런타임과 provider 로드를 확인한다.
+출처와 체크섬은 이미지의
+`/usr/local/share/academy/native-security/openssl-build.json`에 보존한다.
+
+정식 후보는 독립된 새 여섯 개 digest에 기존 ECR 정책을 적용한다.
+다른 신규 보고나 스캐너의 패키지 판정은 새 scan으로 확인한다.
+정식 Debian 호환 수정판이 게시되면 동일 ABI, 패키지 식별과 운영 경로를
+검증한 뒤 패키징 대체 범위를 다시 결정한다.
+
+## 2026-11-24 Kerberos stable 보안 갱신
+
+[QA 이미지 45386280631](https://github.com/guswls3028-art/academy-backend/actions/runs/45386280631)의
+새 base 완료 스캔에는 이전 OpenSSL 항목이 없었고, 기존
+`krb5 / 1.21.3-5+deb13u1+academy1`에서 High 6건이 검출됐다.
+[DSA-6650-1](https://security-tracker.debian.org/tracker/DSA-6650-1)은
+`CVE-2026-112314`, `CVE-2026-112320`–`CVE-2026-112323`,
+`CVE-2026-119079`의 stable 수정판을 `1.21.3-5+deb13u2`로 명시한다.
+
+`build-krb5.sh`는 공식 보안 소스의 해시와 동일 버전의 signed APT 패키지로
+클라이언트 라이브러리 네 개를 함께 갱신한다. stable 보안 패치와 이전
+`krb5_rd_cred` 수정 두 건을 적용해 `1.21.3-5+deb13u2+academy1`을 만든다.
+기존 공개 심볼, 패키지 간 버전 의존성과 Kerberos/GSSAPI 실행 검증을 유지한다.
+수정 후보의 정확한 새 digest에서 기존 ECR 정책을 다시 실행한다.
+
 ## 2026-11-13 PostgreSQL 클라이언트 라이브러리 수정
 
 배포 후보의 ECR scan이 Debian trixie `libpq5`의 source package인
 `postgresql-17 / 17.11-0+deb13u1`에서 신규 High 38건을 검출했다. Debian sid의
 공식 수정 패키지 `libpq5`와 `libpq-dev` `18.7-1` 두 개만 임시 APT 목록에서
 서명 검증 후 내려받고, arm64·amd64별 SHA-256과 패키지 메타데이터를 검증한다.
+APT 목록은 [2026-11-14 Debian snapshot](https://snapshot.debian.org/archive/debian/20261114T090000Z/)을 가리킨다.
+이 보존본의 목록 만료 검사는 해당 임시 소스에서만 해제하며 Debian 서명과
+두 패키지의 기존 체크섬 검증을 유지한다.
 런타임에는 `libpq5`만 설치하며 나머지 APT 패키지는 기존 trixie 소스를 사용한다.
 [차단된 배포](https://github.com/guswls3028-art/academy-backend/actions/runs/43398146196) ·
 [PostgreSQL 보안 릴리스](https://www.postgresql.org/about/news/postgresql-187-1712-1616-1520-1425-and-19-rc-2-released-3442/)

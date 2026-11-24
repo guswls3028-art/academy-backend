@@ -113,6 +113,7 @@ logger = logging.getLogger("messaging_worker")
 
 _NON_RETRYABLE_SEND_FAILURES = (
     "clinic_booking_closed",
+    "grade_homework_review_changed",
     "alimtalk_failed_or_rejected",
     "alimtalk_requires_pf_id_and_template_id",
     "InvalidParameterValue",
@@ -225,6 +226,18 @@ def _assert_clinic_reminder_delivery_active(data: dict, *, business_tenant_id: i
 
     if not is_clinic_booking_reminder_active(tenant_id=business_tenant_id, origin_id=origin):
         raise ValueError("clinic_booking_closed")
+
+
+def _assert_grade_homework_delivery_active(data: dict, *, business_tenant_id: int, business_key: str) -> None:
+    if data.get("event_type") != "manual_send":
+        return
+    from apps.support.messaging.grade_homework_review import OUTBOX_REFERENCE_PREFIX, grade_homework_delivery_is_stale
+
+    reference = str(data.get("domain_object_id") or "")
+    if reference.startswith(OUTBOX_REFERENCE_PREFIX) and grade_homework_delivery_is_stale(
+        business_tenant_id=business_tenant_id, business_key=business_key, reference=reference,
+    ):
+        raise ValueError("grade_homework_review_changed")
 
 
 def _resolve_worker_business_key(data: dict, message_id: str | None) -> str:
@@ -1443,6 +1456,9 @@ def main() -> int:
                             return True
                         _assert_clinic_reminder_delivery_active(
                             data, business_tenant_id=business_tenant_id,
+                        )
+                        _assert_grade_homework_delivery_active(
+                            data, business_tenant_id=business_tenant_id, business_key=business_key,
                         )
                         if claim_log_id is not None:
                             try:

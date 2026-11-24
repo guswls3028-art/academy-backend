@@ -4602,6 +4602,23 @@
         ],
         "type": "string"
       },
+      "HomeworkFileAcceptance": {
+        "properties": {
+          "teacher_accepted": {
+            "type": "boolean"
+          },
+          "teacher_accepted_updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "teacher_accepted",
+          "teacher_accepted_updated_at"
+        ],
+        "type": "object"
+      },
       "HomeworkGradingMode": {
         "description": "* `SCORE` - 점수형\n* `COMPLETION` - 완료형",
         "enum": [
@@ -7152,6 +7169,14 @@
           "skipped_no_phone"
         ],
         "type": "object"
+      },
+      "MediaKindEnum": {
+        "description": "* `image` - Image\n* `video` - Video",
+        "enum": [
+          "image",
+          "video"
+        ],
+        "type": "string"
       },
       "MessageModeEnum": {
         "description": "* `alimtalk` - 알림톡만",
@@ -10609,6 +10634,28 @@
             "description": "비목 이름",
             "maxLength": 120,
             "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedHomeworkFileAcceptanceUpdateRequest": {
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          },
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "expected_media_set_fingerprint": {
+            "minLength": 1,
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "expected_updated_at": {
+            "format": "date-time",
+            "nullable": true,
             "type": "string"
           }
         },
@@ -21006,6 +21053,192 @@
         "required": [
           "has_any_sessions",
           "items"
+        ],
+        "type": "object"
+      },
+      "StudentHomeworkFile": {
+        "properties": {
+          "client_file_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "error_message": {
+            "type": "string"
+          },
+          "failed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "file_size": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "legacy": {
+            "type": "boolean"
+          },
+          "media_kind": {
+            "$ref": "#/components/schemas/MediaKindEnum"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "original_filename": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer"
+          },
+          "removed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StudentHomeworkFileStatusEnum"
+          },
+          "upload_batch_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "upload_started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "uploaded_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_file_id",
+          "created_at",
+          "error_message",
+          "failed_at",
+          "file_size",
+          "id",
+          "legacy",
+          "media_kind",
+          "mime_type",
+          "original_filename",
+          "position",
+          "removed_at",
+          "status",
+          "upload_batch_id",
+          "upload_started_at",
+          "uploaded_at"
+        ],
+        "type": "object"
+      },
+      "StudentHomeworkFileStatusEnum": {
+        "description": "* `uploading` - Uploading\n* `uploaded` - Uploaded\n* `failed` - Failed\n* `removed` - Removed",
+        "enum": [
+          "uploading",
+          "uploaded",
+          "failed",
+          "removed"
+        ],
+        "type": "string"
+      },
+      "StudentHomeworkFileSubmission": {
+        "properties": {
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/StudentHomeworkFile"
+            },
+            "type": "array"
+          },
+          "homework_id": {
+            "type": "integer"
+          },
+          "homework_title": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "lecture_title": {
+            "type": "string"
+          },
+          "media_set_fingerprint": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "integer"
+          },
+          "session_title": {
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "teacher_accepted": {
+            "type": "boolean"
+          },
+          "teacher_accepted_updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "files",
+          "homework_id",
+          "homework_title",
+          "id",
+          "lecture_title",
+          "media_set_fingerprint",
+          "session_id",
+          "session_title",
+          "submitted_at",
+          "teacher_accepted",
+          "teacher_accepted_updated_at"
+        ],
+        "type": "object"
+      },
+      "StudentHomeworkFilesPage": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "next": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "previous": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/StudentHomeworkFileSubmission"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "next",
+          "previous",
+          "results"
         ],
         "type": "object"
       },
@@ -58914,6 +59147,63 @@
         ]
       }
     },
+    "/api/v1/submissions/submissions/homework/{homework_id}/acceptance/": {
+      "patch": {
+        "operationId": "submissions_submissions_homework_acceptance_partial_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "homework_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedHomeworkFileAcceptanceUpdateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedHomeworkFileAcceptanceUpdateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedHomeworkFileAcceptanceUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeworkFileAcceptance"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "submissions"
+        ]
+      }
+    },
     "/api/v1/submissions/submissions/homework/{homework_id}/candidates/": {
       "get": {
         "operationId": "submissions_submissions_homework_candidates_retrieve",
@@ -59173,6 +59463,60 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "submissions"
+        ]
+      }
+    },
+    "/api/v1/submissions/submissions/students/{student_id}/homework/": {
+      "get": {
+        "operationId": "submissions_submissions_students_homework_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "default": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "schema": {
+              "default": 30,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentHomeworkFilesPage"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

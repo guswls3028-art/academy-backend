@@ -78,9 +78,13 @@ def _create_scheduled_notification_unlocked(
     payload: dict,
 ):
     from apps.domains.messaging.models import ScheduledNotification
+    from apps.support.messaging.grade_homework_review import OUTBOX_GUARD_KEY, OUTBOX_REFERENCE_PREFIX
 
     dispatch_key = uuid4()
     durable_payload = dict(payload)
+    grade_homework_review = durable_payload.pop(OUTBOX_GUARD_KEY, None)
+    if grade_homework_review is not None:
+        durable_payload["domain_object_id"] = OUTBOX_REFERENCE_PREFIX + dispatch_key.hex
     durable_payload["occurrence_key"] = (
         durable_payload.get("occurrence_key") or f"dispatch:{dispatch_key.hex}"
     )
@@ -117,6 +121,7 @@ def _create_scheduled_notification_unlocked(
         trigger=trigger,
         send_at=send_at,
         payload=durable_payload,
+        grade_homework_review=grade_homework_review,
         dispatch_key=dispatch_key,
         business_idempotency_key=business_key,
         recipient_fingerprint=recipient_fingerprint,
@@ -145,6 +150,7 @@ def create_notification_outboxes(
             build_messaging_observer_payloads,
             get_messaging_observer_recipients,
         )
+        from apps.support.messaging.grade_homework_review import OUTBOX_GUARD_KEY
 
         observer_recipients = get_messaging_observer_recipients(tenant_id)
         original_outboxes = []
@@ -160,6 +166,8 @@ def create_notification_outboxes(
                 original_outbox=original_outbox,
                 recipients=observer_recipients,
             ):
+                if original_outbox.grade_homework_review is not None:
+                    observer_payload[OUTBOX_GUARD_KEY] = original_outbox.grade_homework_review
                 _create_scheduled_notification_unlocked(
                     tenant_id=tenant_id,
                     trigger=item["trigger"],
@@ -449,6 +457,17 @@ def _ensure_notification_dispatch_identity(notification) -> None:
         notification.save(update_fields=update_fields)
 
 
+def _cancel_stale_notification(notification, reason):
+    notification.status = notification.Status.CANCELLED
+    notification.next_attempt_at = None
+    notification.error_message = reason
+    notification.payload = redact_terminal_delivery_payload(
+        trigger=notification.trigger,
+        payload=notification.payload,
+    )
+    notification.save(update_fields=["status", "next_attempt_at", "error_message", "payload"])
+
+
 def _claim_due_notifications(
     *,
     batch_size: int,
@@ -499,10 +518,14 @@ def _claim_due_notifications(
         _acquire_provider_daily_dispatch_lock()
         tenants = {
             tenant.id: tenant
-            for tenant in Tenant.objects.select_for_update()
+            # Assignment writers must be able to commit their tenant FK while we wait.
+            for tenant in Tenant.objects.select_for_update(no_key=True)
             .filter(id__in=tenant_ids)
             .order_by("id")
         }
+        from apps.support.messaging.grade_homework_review import stale_grade_homework_outboxes
+
+        stale_grade_outboxes = stale_grade_homework_outboxes(tenants, due)
         provider_daily_limit = get_provider_daily_dispatch_limit()
         provider_daily_usage = get_provider_daily_notification_usage(now=now)
         provider_day_start, provider_day_end = get_provider_day_window(now=now)
@@ -543,19 +566,7 @@ def _claim_due_notifications(
 
         for notification in due:
             if _clinic_participant_reminder_is_stale(notification):
-                notification.status = ScheduledNotification.Status.CANCELLED
-                notification.next_attempt_at = None
-                notification.error_message = "clinic_participant_closed"
-                notification.payload = redact_terminal_delivery_payload(
-                    trigger=notification.trigger,
-                    payload=notification.payload,
-                )
-                notification.save(update_fields=[
-                    "status",
-                    "next_attempt_at",
-                    "error_message",
-                    "payload",
-                ])
+                _cancel_stale_notification(notification, "clinic_participant_closed")
                 terminal_count += 1
                 continue
             terminal_error = _terminal_payload_error(notification.payload, trigger=notification.trigger)
@@ -625,6 +636,10 @@ def _claim_due_notifications(
                     update_fields=update_fields
                 )
                 reconciled_count += 1
+                continue
+            if notification.pk in stale_grade_outboxes:
+                _cancel_stale_notification(notification, "grade_homework_review_changed")
+                terminal_count += 1
                 continue
             if notification.attempt_count >= MAX_ENQUEUE_ATTEMPTS:
                 notification.status = ScheduledNotification.Status.FAILED
