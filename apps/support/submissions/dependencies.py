@@ -522,6 +522,22 @@ def target_belongs_to_tenant(target_type, target_id, tenant) -> bool:
     return False
 
 
+def staff_submission_student_exists(*, tenant, student_id: int) -> bool:
+    from apps.domains.students.models import Student
+
+    return Student.objects.filter(tenant=tenant, id=student_id, deleted_at__isnull=True).exists()
+
+
+def staff_homework_file_targets(*, tenant):
+    from apps.domains.homework_results.models import Homework
+
+    return Homework.objects.filter(
+        tenant=tenant,
+        homework_type=Homework.HomeworkType.REGULAR,
+        session__lecture__tenant=tenant,
+    ).exclude(meta__removed_from_session_at__isnull=False)
+
+
 def homework_submission_target_exists(*, homework_id: int, tenant) -> bool:
     from apps.domains.homework_results.models import Homework
 
@@ -763,7 +779,12 @@ def homework_submission_media_lock_keys(*, tenant, enrollment_ids, homework_ids)
                 completed=True,
             ).values_list("enrollment_id", "source_id")
         )
-    return {
+    from apps.support.submissions.homework_acceptance import homework_acceptance_rows
+
+    accepted = set(homework_acceptance_rows(
+        tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=homework_ids,
+    ).filter(fingerprint__isnull=False).values_list("enrollment_id", "homework_id"))
+    return accepted | {
         key for key in latest_scores.keys() | manual_completed
         if _homework_review_source(latest_scores.get(key), key in manual_completed)
     }
@@ -810,6 +831,12 @@ def homework_submission_review_map(
         ).only("enrollment_id", "updated_at", "passed")
     }
 
+    from apps.support.submissions.homework_acceptance import homework_acceptance_payload, homework_acceptance_rows
+
+    file_decisions = {
+        row.enrollment_id: row
+        for row in homework_acceptance_rows(tenant=tenant, enrollment_ids=normalized_ids, homework_ids=[homework_id])
+    }
     review_map: dict[int, dict[str, Any]] = {}
     for enrollment_id in normalized_ids:
         score = score_map.get(enrollment_id)
@@ -826,6 +853,7 @@ def homework_submission_review_map(
             else None
         )
         review_map[enrollment_id] = {
+            **homework_acceptance_payload(file_decisions.get(enrollment_id)),
             "teacher_reviewed": review_source is not None,
             "teacher_review_source": review_source,
             "teacher_review_note": (

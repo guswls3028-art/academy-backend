@@ -8,6 +8,8 @@ from .views.exam_omr_submit_view import ExamOMRSubmitView
 # ✅ 추가
 from .views.exam_submissions_list_view import ExamSubmissionsListView
 from .views.homework_submissions_list_view import HomeworkSubmissionsListView
+from .views.student_homework_files_view import StudentHomeworkFilesView
+from .views.homework_file_acceptance_view import HomeworkFileAcceptanceView
 from .views.exam_omr_batch_upload_view import (
     ExamOMRBatchInitializeView,
     ExamOMRBatchUploadView,
@@ -58,6 +60,18 @@ urlpatterns = [
         "submissions/exams/<int:exam_id>/",
         ExamSubmissionsListView.as_view(),
         name="exam-submissions-list",
+    ),
+
+    path(
+        "submissions/students/<int:student_id>/homework/",
+        StudentHomeworkFilesView.as_view(),
+        name="student-homework-files",
+    ),
+
+    path(
+        "submissions/homework/<int:homework_id>/acceptance/",
+        HomeworkFileAcceptanceView.as_view(),
+        name="homework-file-acceptance",
     ),
 
     # ✅ 과제 제출 목록: GET /submissions/homework/{homeworkId}/
