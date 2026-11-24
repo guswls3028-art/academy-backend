@@ -149,6 +149,7 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
     && python -c "import ctypes, zlib; libz = ctypes.CDLL('libz.so.1'); assert not hasattr(libz, 'zipOpenNewFileInZip4_64'); assert zlib.decompress(zlib.compress(b'academy')) == b'academy'; ctypes.CDLL('libxml2.so.2')" \
     && printf 'academy\n' | grep -P '^academy$' \
     && openssl_version="$(cat /tmp/academy-openssl/package-version)" \
+    && dpkg --compare-versions "$openssl_version" ge "3.5.7-1~deb13u3" \
     && test "$(dpkg-query -W -f='${Version}' openssl)" = "$openssl_version" \
     && test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "$openssl_version" \
     && test "$(dpkg-query -W -f='${Version}' openssl-provider-legacy)" = "$openssl_version" \
