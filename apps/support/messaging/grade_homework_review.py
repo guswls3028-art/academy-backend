@@ -13,8 +13,9 @@ from apps.support.submissions.homework_acceptance import homework_accepted_keys
 
 
 TOKEN = re.compile(r"#\{([^{}\n]+)\}")
-RESULT_SLOT = re.compile(r"과제([1-9]\d?)(?:결과)?\Z")
-TITLE_SLOT = re.compile(r"과제([1-9]\d?)명\Z")
+RESULT_SLOT = re.compile(r"과제([1-9][0-9]*)(?:결과)?\Z")
+ASSESSMENT_SLOT = re.compile(r"#\{(?:과제|시험)[1-9][0-9]*(?:명|만점|결과|최고점)?\}")
+EMPTY_GRADE_LINE = re.compile(r"(?:[^\n]*:\s*-?\s*/\s*-?|\s*:|\s*-\s*:\s*-)?\Z")
 AGGREGATES = {"과제목록", "시험성적", "선생님메모", "전체요약", "숙제완성도"}
 DETAILS = {"시험성적", "선생님메모"}
 STATE_KEY = "_homework_notice_states"
@@ -27,6 +28,29 @@ def _literal(text):
 
 def _legacy_claim(body, rendered, slot, titles, assigned):
     """Older clients send only the rendered body. Match generated slots or titled cards."""
+    title_fields = {f"과제{number}명": title for number, title in titles.items()}
+    fields = {f"과제{slot}", f"과제{slot}결과", "과제목록", *DETAILS}
+    source = []
+    optional_row = False
+    for line in body.strip().splitlines():
+        if not line.strip():
+            continue
+        # The previous score composer removes empty or unused template rows after substitution.
+        if not fields.intersection(TOKEN.findall(line)) and ASSESSMENT_SLOT.search(line):
+            if EMPTY_GRADE_LINE.fullmatch(ASSESSMENT_SLOT.sub("", line).strip()):
+                optional_row = True
+                continue
+        if source:
+            source.append("\n")
+        if optional_row:
+            source.append("#{_optional_grade_row}")
+            optional_row = False
+        source.append(line)
+    if optional_row:
+        source.append("#{_optional_grade_row}")
+    body = "".join(source)
+    rendered = "\n".join(line for line in rendered.strip().splitlines() if line.strip())
+
     def result_pattern(label):
         parts = []
         offset = 0
@@ -35,13 +59,11 @@ def _legacy_claim(body, rendered, slot, titles, assigned):
             parts.append(_literal(body[offset:token.start()]))
             name = token[1]
             offset = token.end()
-            result = RESULT_SLOT.fullmatch(name)
-            title_slot = TITLE_SLOT.fullmatch(name)
-            if result and int(result[1]) == slot:
+            if name in (f"과제{slot}", f"과제{slot}결과"):
                 parts.append(label)
                 checked = True
-            elif title_slot and int(title_slot[1]) in titles:
-                parts.append(_literal(titles[int(title_slot[1])]))
+            elif name in title_fields:
+                parts.append(_literal(title_fields[name]))
             elif name == "과제목록" or name in DETAILS:
                 # Include the other assigned titles in display order. Two tasks may share a title.
                 entries = []
@@ -57,7 +79,7 @@ def _legacy_claim(body, rendered, slot, titles, assigned):
         parts.append(_literal(body[offset:]))
         return checked and fnmatchcase(rendered.strip(), "".join(parts).strip())
 
-    if not any(label in rendered and result_pattern(label) for label in ("미제출", "영상보강")):
+    if not result_pattern("미제출"):
         return False
     # Adjacent substitutions in an old custom template may have no delimiter. Do not
     # attribute another field's wording to this assignment if a current result also fits.
@@ -69,7 +91,7 @@ def _legacy_claim(body, rendered, slot, titles, assigned):
 def grade_homework_notice_changed(*, tenant, session, enrollments, body, contexts, lock):
     """Read the selected roster and compare the same data again inside final outbox admission."""
     names = TOKEN.findall(body)
-    numbered = {int(slot[1]) for name in names if (slot := RESULT_SLOT.fullmatch(name))}
+    numbered = {slot[1] for name in names if (slot := RESULT_SLOT.fullmatch(name))}
     all_slots = bool(AGGREGATES.intersection(names))
     snapshots = {}
     legacy = {}
@@ -80,7 +102,7 @@ def grade_homework_notice_changed(*, tenant, session, enrollments, body, context
         if STATE_KEY in context:
             snapshots[student_id] = context.pop(STATE_KEY)
         rendered = context.get("_body_subst")
-        if isinstance(rendered, str) and ("미제출" in rendered or "영상보강" in rendered):
+        if isinstance(rendered, str) and "미제출" in rendered:
             legacy[student_id] = rendered
     if not (snapshots or legacy) or not (all_slots or numbered):
         return False
@@ -89,7 +111,7 @@ def grade_homework_notice_changed(*, tenant, session, enrollments, body, context
     ordered = list(homeworks.values_list("pk", "title"))
     by_id = {hid: n for n, (hid, _) in enumerate(ordered, 1)}
     titles = {n: title for n, (_, title) in enumerate(ordered, 1)}
-    ids = [hid for hid, n in by_id.items() if all_slots or n in numbered]
+    ids = [hid for hid, n in by_id.items() if all_slots or str(n) in numbered]
     targets = {eid: sid for eid, sid in enrollments.items() if sid in snapshots or sid in legacy}
     assignments = HomeworkAssignment.objects.filter(tenant=tenant, session=session, homework_id__in=ids,
         enrollment_id__in=targets, homework__tenant=tenant, homework__session=session).order_by("pk")
