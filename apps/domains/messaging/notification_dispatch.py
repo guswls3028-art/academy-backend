@@ -388,6 +388,7 @@ def create_preview_token(
     notification_type: str,
     send_to: str,
     *,
+    homework_id=None,
     school_report_source=None,
     actor_user_id=None,
 ) -> str:
@@ -415,6 +416,8 @@ def create_preview_token(
         "notification_type": notification_type,
         "send_to": send_to,
     }
+    if homework_id is not None:
+        payload["homework_id"] = homework_id
     if school_report_source is not None:
         payload["school_report_source"] = school_report_source
         payload["school_report_actor_id"] = actor_user_id
@@ -714,6 +717,12 @@ def consume_preview_token_and_execute(token_str: str, tenant, *, session_type=No
 
         batch_id = uuid.uuid4()
         delivery_payload = token.payload
+        if token.notification_type == "assignment_not_submitted":
+            from apps.support.messaging.assignment_not_submitted_dependencies import missing_homework_confirmation_valid
+
+            if not missing_homework_confirmation_valid(tenant, delivery_payload):
+                return {"error": "과제 제출 또는 수신 대상이 변경되었습니다. 미리보기를 다시 확인해 주세요.",
+                        "code": "preview_changed", "status": 409}
         if token.notification_type == SCHOOL_REPORT_REQUEST_TRIGGER:
             from apps.support.messaging.school_report_requests import school_report_confirmation_valid
 
