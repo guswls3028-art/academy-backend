@@ -41,6 +41,21 @@ legacy provider를 설치하고 Python TLS 런타임과 provider 로드를 확�
 정식 Debian 호환 수정판이 게시되면 동일 ABI, 패키지 식별과 운영 경로를
 검증한 뒤 패키징 대체 범위를 다시 결정한다.
 
+## 2026-11-24 Kerberos stable 보안 갱신
+
+[QA 이미지 45386280631](https://github.com/guswls3028-art/academy-backend/actions/runs/45386280631)의
+새 base 완료 스캔에는 이전 OpenSSL 항목이 없었고, 기존
+`krb5 / 1.21.3-5+deb13u1+academy1`에서 High 6건이 검출됐다.
+[DSA-6650-1](https://security-tracker.debian.org/tracker/DSA-6650-1)은
+`CVE-2026-112314`, `CVE-2026-112320`–`CVE-2026-112323`,
+`CVE-2026-119079`의 stable 수정판을 `1.21.3-5+deb13u2`로 명시한다.
+
+`build-krb5.sh`는 공식 보안 소스의 해시와 동일 버전의 signed APT 패키지로
+클라이언트 라이브러리 네 개를 함께 갱신한다. stable 보안 패치와 이전
+`krb5_rd_cred` 수정 두 건을 적용해 `1.21.3-5+deb13u2+academy1`을 만든다.
+기존 공개 심볼, 패키지 간 버전 의존성과 Kerberos/GSSAPI 실행 검증을 유지한다.
+수정 후보의 정확한 새 digest에서 기존 ECR 정책을 다시 실행한다.
+
 ## 2026-11-13 PostgreSQL 클라이언트 라이브러리 수정
 
 배포 후보의 ECR scan이 Debian trixie `libpq5`의 source package인
