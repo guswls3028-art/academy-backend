@@ -186,6 +186,39 @@ class AssessmentCorrectionConcurrencyPGTests(TransactionTestCase):
         )
         return match.func(request, **match.kwargs)
 
+    def test_missing_notice_waits_for_manual_completion_before_confirm(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        from apps.support.messaging.assignment_not_submitted_dependencies import missing_homework_confirmation_valid
+
+        student = self.enrollment.student
+        payload = {"homework_id": self.homework.pk, "send_to": "parent",
+                   "recipients": [{"student_id": student.pk, "phone": student.parent_phone or ""}]}
+        with transaction.atomic():
+            self.assertTrue(missing_homework_confirmation_valid(self.tenant, payload))
+        lock_attempt = threading.Event()
+
+        def confirm():
+            close_old_connections()
+            try:
+                def observe_lock(execute, sql, params, many, context):
+                    if "FOR UPDATE" in sql and "homework_assignment" in sql:
+                        lock_attempt.set()
+                    return execute(sql, params, many, context)
+
+                with transaction.atomic(), connection.execute_wrapper(observe_lock):
+                    return missing_homework_confirmation_valid(self.tenant, payload)
+            finally:
+                connection.close()
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with transaction.atomic():
+                self.assertEqual(self._teacher_complete().status_code, 200)
+                result = executor.submit(confirm)
+                self.assertTrue(lock_attempt.wait(timeout=10))
+                self.assertFalse(result.done())
+            self.assertFalse(result.result(timeout=10))
+
     def test_first_unscored_homework_decision_honors_expected_updated_at(self):
         correction_created = threading.Event()
         competing_request_started = threading.Event()

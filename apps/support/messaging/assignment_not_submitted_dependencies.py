@@ -29,6 +29,7 @@ def missing_homework_assignments(*, tenant, homework, student_ids=None, lock=Fal
     """Resolve the assigned roster against persisted file evidence and grading."""
     from apps.domains.homework.models import HomeworkAssignment
     from apps.domains.homework_results.models import HomeworkScore
+    from apps.domains.progress.models import AssessmentCorrection
     from apps.support.submissions.dependencies import homework_submission_revisions
     from apps.support.submissions.homework_acceptance import homework_accepted_keys
 
@@ -49,11 +50,15 @@ def missing_homework_assignments(*, tenant, homework, student_ids=None, lock=Fal
     target = dict(tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=[homework.pk])
     excluded = {eid for eid, _ in homework_submission_revisions(**target)}
     excluded.update(eid for _, _, eid in homework_accepted_keys(**target))
+    excluded.update(AssessmentCorrection.objects.filter(
+        tenant=tenant, session_id=homework.session_id, enrollment_id__in=enrollment_ids,
+        source_type=AssessmentCorrection.SourceType.HOMEWORK, source_id=homework.pk, completed=True,
+    ).values_list("enrollment_id", flat=True))
     scores = HomeworkScore.objects.filter(
         homework=homework, session_id=homework.session_id, enrollment_id__in=enrollment_ids,
-    ).values_list("enrollment_id", "score", "meta")
-    for eid, score, meta in scores:
-        if score is not None or (isinstance(meta, dict) and meta.get("status") == HomeworkScore.MetaStatus.VIDEO_MAKEUP):
+    ).values_list("enrollment_id", "score", "passed", "meta")
+    for eid, score, passed, meta in scores:
+        if score is not None or passed or (isinstance(meta, dict) and meta.get("status") == HomeworkScore.MetaStatus.VIDEO_MAKEUP):
             excluded.add(eid)
     return [row for row in rows if row.enrollment_id not in excluded]
 

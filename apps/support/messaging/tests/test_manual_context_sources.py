@@ -201,7 +201,9 @@ class ManualNotificationContextSourceTests(TestCase):
         )
 
     def test_missing_homework_notice_requires_assignment_and_rechecks_evidence_before_outbox(self):
-        from apps.domains.enrollment.test_support import create_enrollment_fixture
+        from unittest.mock import patch
+        from django.urls import resolve
+        from apps.domains.enrollment.test_support import create_enrollment_fixture, create_session_enrollment_fixture
         from apps.domains.homework.test_support import create_homework_assignment_fixture
         from apps.domains.homework_results.test_support import create_homework_fixture, create_homework_score_fixture
         from apps.domains.lectures.test_support import create_lecture_fixture, create_session_fixture
@@ -239,6 +241,31 @@ class ManualNotificationContextSourceTests(TestCase):
         self.assertEqual([r["student_id"] for r in first.data["recipients"]], [student.pk])
         token = first.data["preview_token"]
         self.assertTrue(token)
+        create_session_enrollment_fixture(tenant=self.tenant, session=session, enrollment=enrollment)
+        correction_path = f"/api/v1/results/admin/sessions/{session.pk}/score-correction/"
+
+        def set_manual_completion(completed):
+            request = self.factory.patch(correction_path, {
+                "enrollment_id": enrollment.pk, "source_id": homework.pk, "source_type": "homework",
+                "completed": completed, "note": "수기 확인",
+            }, format="json")
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            match = resolve(correction_path)
+            response = match.func(request, **match.kwargs)
+            self.assertEqual(response.status_code, 200, response.data)
+
+        set_manual_completion(True)
+        self.assertEqual(preview(homework.pk).data["recipients"], [])
+        self.assertEqual(consume_preview_token_and_execute(token, self.tenant)["code"], "preview_changed")
+        set_manual_completion(False)
+        self.assertEqual(preview(homework.pk).data["total_count"], 1)
+        score.passed = True
+        score.meta = {}
+        score.save(update_fields=["passed", "meta"])
+        self.assertEqual(preview(homework.pk).data["recipients"], [])
+        score.passed = False
+        score.save(update_fields=["passed"])
         initial_phone = student.parent_phone
         student.parent_phone = "01055550001"
         student.save(update_fields=["parent_phone"])
@@ -272,3 +299,18 @@ class ManualNotificationContextSourceTests(TestCase):
         old_token.save(update_fields=["payload"])
         self.assertEqual(consume_preview_token_and_execute(token, self.tenant)["code"], "preview_changed")
         self.assertFalse(ScheduledNotification.objects.filter(tenant=self.tenant).exists())
+
+        control = self._student("S035", "미제출학생", "01077773333")
+        control_enrollment = create_enrollment_fixture(tenant=self.tenant, student=control, lecture=lecture, status="ACTIVE")
+        create_homework_assignment_fixture(tenant=self.tenant, homework=homework, session=session, enrollment=control_enrollment)
+        actual = preview(homework.pk).data
+        self.assertEqual([row["student_id"] for row in actual["recipients"]], [control.pk])
+        # Another assignment becomes missing after preview. Confirm only the reviewed student.
+        HomeworkFileAcceptance.objects.filter(tenant=self.tenant, enrollment=enrollment, homework=homework).delete()
+        with patch("apps.domains.messaging.scheduled.process_due_notifications") as process:
+            confirmed = consume_preview_token_and_execute(actual["preview_token"], self.tenant, session_type="manual")
+        scheduled = ScheduledNotification.objects.get(tenant=self.tenant)
+        self.assertEqual(scheduled.payload["target_id"], control.pk)
+        self.assertEqual(scheduled.payload["to"], control.parent_phone)
+        self.assertEqual(confirmed["batch_result"]["accepted_count"], 1)
+        process.assert_called_once_with(batch_size=1, notification_ids=[scheduled.id])
