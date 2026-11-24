@@ -20,6 +20,22 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
     && sh /usr/local/bin/upgrade-apt.sh \
     && apt-get install -y --no-install-recommends \
     autoconf \
+    autoconf-archive \
+    asciidoctor \
+    ruby-asciidoctor-pdf \
+    debian-keyring \
+    gpgv \
+    libleptonica-dev \
+    libarchive-dev \
+    libpango1.0-dev \
+    libcairo2-dev \
+    libicu-dev \
+    libpng-dev \
+    libcurl4-openssl-dev \
+    tesseract-ocr-eng \
+    tesseract-ocr-kor \
+    fonts-nanum \
+    python3-pil \
     automake \
     bzip2 \
     bison \
@@ -57,6 +73,14 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
 
 WORKDIR /build
 
+COPY docker/native-security/build-tesseract.sh /usr/local/bin/
+COPY docker/native-security/verify-tesseract.py /usr/local/bin/
+RUN sh /usr/local/bin/build-tesseract.sh /build/tesseract \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends /build/tesseract/*.deb \
+    && apt-get check \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY docker/native-security/build-openssl.sh /usr/local/bin/
 RUN sh /usr/local/bin/build-openssl.sh /build/openssl \
     && dpkg -i /build/openssl/runtime/*.deb /build/openssl/build/libssl-dev.deb \
@@ -83,6 +107,7 @@ COPY requirements/constraints.txt ./requirements/constraints.txt
 COPY requirements/common.txt ./requirements/common.txt
 RUN pip install --upgrade pip \
     && pip install --user --no-cache-dir --no-binary=psycopg2-binary -r requirements/common.txt
+RUN /usr/bin/python3 /usr/local/bin/verify-tesseract.py
 
 # ==============================================================================
 # Stage 2: Runtime (최종 이미지 - 빌드 도구 제거, non-root)
@@ -95,6 +120,9 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app
 
+# Only API/AI/Tools install these rebuilt packages; other runtimes retain no OCR install.
+COPY --from=builder /build/tesseract /usr/local/share/academy/tesseract
+COPY docker/native-security/verify-tesseract.py /usr/local/bin/
 COPY --from=builder /build/native-security/out /tmp/academy-native-security
 COPY --from=builder /build/libpq/libpq5.deb /tmp/academy-native-security/libpq5.deb
 COPY --from=builder /build/openssl/runtime /tmp/academy-openssl

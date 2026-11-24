@@ -37,7 +37,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libngtcp2-crypto-ossl0="${LIBNGTCP2_VERSION}" \
     libcurl4t64="${LIBCURL_VERSION}" \
     libbrotli1="${LIBBROTLI_VERSION}" \
-    tesseract-ocr \
+    /usr/local/share/academy/tesseract/tesseract-ocr.deb \
+    /usr/local/share/academy/tesseract/libtesseract5.deb \
     tesseract-ocr-kor \
     libgl1 \
     && dpkg --configure -a \
@@ -145,5 +146,8 @@ RUN DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker \
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD kill -0 1 2>/dev/null || exit 1
+
+# Verify the installed CLI/SONAME and trusted English/Korean data after Python dependencies.
+RUN python /usr/local/bin/verify-tesseract.py
 
 CMD ["python", "-m", "apps.worker.ai_worker.sqs_main_cpu"]
