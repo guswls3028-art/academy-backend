@@ -1538,3 +1538,34 @@ python -m pytest tests/test_ecr_critical_scan_gate.py -q
 python -m pytest tests/test_release_performance_contract.py -q
 pwsh scripts/v1/test-workflow-governance-contract.ps1
 ```
+
+
+## Tesseract 5.5.4: Trixie-native OCR package repair
+
+V1 run45456790122 stopped before development on CVE-2026-88048 in the AI image's
+Debian Trixie tesseract5.5.0-1. No rollout occurred. The fixed Debian source is
+5.5.4-1; the forky CLI requires ICU78 whereas Trixie supplies ICU76, so runtime
+images must not install forky binaries or add its apt distribution.
+
+`docker/native-security/build-tesseract.sh` checks the exact SHA256 of the official
+Debian signed DSC and all three source archives, verifies the DSC with Debian's
+maintainer keyring, and uses the unchanged Debian packaging/build/tests on Trixie.
+Only the local package revision becomes5.5.4-1+academy1. Source identity remains
+`tesseract`; CLI `tesseract` and SONAME `libtesseract.so.5` remain. Debian generates
+native runtime dependencies; no dependency field is weakened or borrowed from forky.
+
+The base builder validates installed packages using normal generated English and
+Korean text and trusted system language packs. It exports only the two runtime
+debs; API, AI CPU and Tools install and verify those same packages after their
+Python dependencies. Korean, English and orientation packs remain available.
+Messaging/Video do not install OCR packages. The benign verifier neither loads
+untrusted traineddata nor reproduces the vulnerability. Static tests alone do
+not prove the rebuild or OCR: official arm64 native-image CI must build and pass
+the actual verifier, followed by all affected service-image checks and fresh ECR
+scans under unchanged acceptance/severity gates. No successful scan or live
+convergence is claimed until the release operator verifies exact digests and
+normal isolated development/preprod/runtime gates.
+
+Primary metadata: [Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-88048),
+[fixed Debian source](https://deb.debian.org/debian/pool/main/t/tesseract/tesseract_5.5.4-1.dsc),
+[forky runtime dependencies](https://packages.debian.org/forky/tesseract-ocr).
