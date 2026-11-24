@@ -522,3 +522,160 @@ class ManualNotificationContextSourceTests(TestCase):
                         )
         self.assertEqual(client.send.call_count, 2)
         self.assertEqual(_send_failure_disposition("grade_homework_review_changed", provider_send_started=False), "terminal")
+
+    def test_confirmed_missing_inbox_notice_rechecks_due_and_provider_for_original_and_observer(self):
+        import uuid
+        from datetime import timedelta
+        from unittest.mock import Mock, patch
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.urls import resolve
+        from apps.domains.enrollment.test_support import create_enrollment_fixture, create_session_enrollment_fixture
+        from apps.domains.homework.test_support import create_homework_assignment_fixture
+        from apps.domains.homework_results.test_support import create_homework_fixture, create_homework_score_fixture
+        from apps.domains.lectures.test_support import create_lecture_fixture, create_session_fixture
+        from apps.domains.messaging.models import MessagingObserver, ScheduledNotification
+        from apps.domains.messaging.scheduled import process_due_notifications
+        from apps.domains.messaging.views_notification import ManualNotificationConfirmView
+        from apps.domains.submissions.services.homework_media import homework_media_set_fingerprint
+        from apps.worker.messaging_worker.sqs_main import _assert_grade_homework_delivery_active, send_one_alimtalk
+
+        self.admin.phone = "01010008199"
+        self.admin.save(update_fields=["phone"])
+        MessagingObserver.objects.create(tenant=self.tenant, user=self.admin)
+        trigger = "assignment_not_submitted"
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant, category="assignment", name="미제출 안내", body="#{학생이름} #{과제명}",
+        )
+        AutoSendConfig.objects.create(tenant=self.tenant, trigger=trigger, template=template, message_mode="alimtalk")
+        lecture = create_lecture_fixture(tenant=self.tenant, title="수학", name="수학", subject="MATH")
+        session = create_session_fixture(lecture=lecture, order=1, title="1차시")
+        hw = create_homework_fixture(tenant=self.tenant, session=session, title="연습")
+        early, late, missing, unscored = students = [
+            self._student(f"S08{i}", f"과제 학생 {i}", f"0101000800{i}") for i in range(1, 5)
+        ]
+        enrolled = {}
+        for student in students:
+            enrollment = create_enrollment_fixture(tenant=self.tenant, student=student, lecture=lecture)
+            enrolled[student.pk] = enrollment
+            TenantMembership.ensure_active(tenant=self.tenant, user=student.user, role="student")
+            create_session_enrollment_fixture(tenant=self.tenant, session=session, enrollment=enrollment)
+            create_homework_assignment_fixture(tenant=self.tenant, session=session, homework=hw, enrollment=enrollment)
+        create_homework_score_fixture(homework=hw, session=session, enrollment=enrolled[missing.pk], score=None,
+                                      passed=False, meta={"status": "NOT_SUBMITTED"})
+
+        preview = self._post({"trigger": trigger, "send_to": "parent", "context_source": {
+            "type": trigger, "homework_id": hw.pk,
+        }})
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual({row["student_id"] for row in preview.data["recipients"]}, {s.pk for s in students})
+
+        def post_file(student):
+            path = f"/api/v1/submissions/submissions/homework/{hw.pk}/media/"
+            request = self.factory.post(path, {
+                "enrollment_id": enrolled[student.pk].pk,
+                "client_file_id": str(uuid.uuid4()), "upload_batch_id": str(uuid.uuid4()), "position": 0,
+                "file": SimpleUploadedFile("synthetic.jpg", bytes.fromhex("ffd8ffe0") + b"sample", content_type="image/jpeg"),
+            }, format="multipart")
+            request.tenant = self.tenant
+            force_authenticate(request, user=student.user)
+            match = resolve(path)
+            with patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2") as storage:
+                response = match.func(request, **match.kwargs)
+            self.assertEqual(response.status_code, 201, response.data)
+            storage.assert_called_once()
+
+        def confirm(token):
+            request = self.factory.post("/api/v1/messaging/manual-notification/confirm/",
+                                        {"preview_token": token}, format="json")
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            response = ManualNotificationConfirmView.as_view()(request)
+            self.assertEqual(response.status_code, 200, response.data)
+            return response.data
+
+        rows = ScheduledNotification.objects.filter(tenant=self.tenant)
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as queue:
+            with patch("apps.domains.messaging.scheduled.HOURLY_SEND_LIMIT", 0):
+                first = confirm(preview.data["preview_token"])
+                self.assertEqual(first["accepted_count"], 4)
+                self.assertEqual(confirm(preview.data["preview_token"])["batch_id"], first["batch_id"])
+                process_due_notifications(batch_size=20)
+            queue.assert_not_called()
+            deferred = list(rows)
+            self.assertEqual(len(deferred), 8)
+            self.assertTrue(all(row.error_message == "hourly_dispatch_quota_deferred" for row in deferred))
+            originals = {row.pk: int(row.payload["target_id"]) for row in deferred
+                         if row.payload["target_type"] != "messaging_observer"}
+            def source_student(row):
+                if row.pk in originals:
+                    return originals[row.pk]
+                return originals[int(row.payload["origin_id"].split(":")[1])]
+            def address(payload):
+                return payload["to"], payload.get("origin_id", "")
+            by_address = {address(row.payload): row for row in deferred}
+
+            post_file(early)
+            after_quota = max(row.next_attempt_at for row in deferred) + timedelta(seconds=1)
+            with patch("apps.domains.messaging.scheduled.dj_tz.now", return_value=after_quota):
+                process_due_notifications(batch_size=20)
+                process_due_notifications(batch_size=20)
+
+        post_file(late)
+        path = f"/api/v1/submissions/submissions/homework/{hw.pk}/acceptance/"
+        request = self.factory.patch(path, {
+            "enrollment_id": enrolled[late.pk].pk, "accepted": True, "expected_updated_at": None,
+            "expected_media_set_fingerprint": homework_media_set_fingerprint(
+                tenant=self.tenant, homework_id=hw.pk, enrollment_id=enrolled[late.pk].pk,
+            ),
+        }, format="json")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        match = resolve(path)
+        accepted = match.func(request, **match.kwargs)
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+        self.assertTrue(accepted.data["teacher_accepted"])
+        client = Mock()
+        client.send.return_value = None
+        delivered = []
+        queued = []
+        with patch("apps.worker.messaging_worker.sqs_main._get_solapi_client", return_value=client):
+            for call in queue.call_args_list:
+                payload = call.kwargs
+                row = by_address[address(payload)]
+                target = source_student(row)
+                queued.append(target)
+                def before_provider_call():
+                    _assert_grade_homework_delivery_active(
+                        payload, business_tenant_id=self.tenant.pk, business_key=row.business_idempotency_key,
+                    )
+                    return True
+                result = send_one_alimtalk(None, payload["to"], self.admin.phone, "fixture-profile",
+                                           "fixture-template", before_provider_call=before_provider_call)
+                if result.get("provider_called"):
+                    delivered.append(target)
+        with self.subTest(boundary="provider"):
+            self.assertCountEqual(delivered, [missing.pk, missing.pk, unscored.pk, unscored.pk])
+            self.assertEqual(client.send.call_count, 4)
+        with self.subTest(boundary="queue"):
+            self.assertCountEqual(queued, [late.pk, late.pk, missing.pk, missing.pk, unscored.pk, unscored.pk])
+        with self.subTest(boundary="terminal_outbox"):
+            cancelled = list(rows.filter(status=ScheduledNotification.Status.CANCELLED))
+            self.assertEqual({row.pk for row in cancelled}, {row.pk for row in deferred if source_student(row) == early.pk})
+            self.assertTrue(all(row.payload.get("redacted") for row in cancelled))
+
+
+        # Newly reviewed, still-missing controls are admitted immediately without a quota delay.
+        immediate = self._post({"trigger": trigger, "send_to": "parent", "context_source": {
+            "type": trigger, "homework_id": hw.pk,
+        }})
+        self.assertEqual(immediate.status_code, 200, immediate.data)
+        self.assertEqual({r["student_id"] for r in immediate.data["recipients"]}, {missing.pk, unscored.pk})
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as instant:
+            receipt = confirm(immediate.data["preview_token"])
+            self.assertEqual(receipt["accepted_count"], 2)
+            self.assertEqual(confirm(immediate.data["preview_token"])["batch_id"], receipt["batch_id"])
+            process_due_notifications(batch_size=20)
+        self.assertCountEqual([call.kwargs["to"] for call in instant.call_args_list], [
+            missing.parent_phone, unscored.parent_phone, self.admin.phone, self.admin.phone,
+        ])

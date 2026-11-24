@@ -504,11 +504,13 @@ def execute_notification_batch(
     staff_id: Optional[int],
     *,
     process: bool = True,
+    confirmed_homework_guards: dict | None = None,
 ) -> dict:
     """
     payload의 수신자 목록에 대해 알림톡 발송 실행.
     """
     from apps.domains.messaging.policy import check_recipient_allowed
+    from apps.support.messaging.grade_homework_review import OUTBOX_GUARD_KEY
     from apps.domains.messaging.scheduled import (
         create_notification_outboxes,
         process_due_notifications,
@@ -574,6 +576,7 @@ def execute_notification_batch(
             "check_in": "check_in_complete",
             "absent": "absent_occurred",
         }.get(notification_type, notification_type)
+        guard = (confirmed_homework_guards or {}).get(r.get("student_id"))
         for mode in modes_to_send:
             outbox_specs.append(
                 {
@@ -591,6 +594,7 @@ def execute_notification_batch(
                         "target_id": r.get("student_id"),
                         "target_name": r.get("student_name", ""),
                         "occurrence_key": f"batch_{batch_id}",
+                        **({OUTBOX_GUARD_KEY: guard} if guard is not None else {}),
                         **({
                             "origin_type": SCHOOL_REPORT_REQUEST_TRIGGER,
                             "origin_id": "{academic_year}:{semester}:{exam_round}".format(**payload["school_report_source"]),
@@ -717,10 +721,13 @@ def consume_preview_token_and_execute(token_str: str, tenant, *, session_type=No
 
         batch_id = uuid.uuid4()
         delivery_payload = token.payload
+        confirmed_homework_guards = {}
         if token.notification_type == "assignment_not_submitted":
             from apps.support.messaging.assignment_not_submitted_dependencies import missing_homework_confirmation_valid
 
-            if not missing_homework_confirmation_valid(tenant, delivery_payload):
+            if not missing_homework_confirmation_valid(
+                tenant, delivery_payload, confirmed_guards=confirmed_homework_guards,
+            ):
                 return {"error": "과제 제출 또는 수신 대상이 변경되었습니다. 미리보기를 다시 확인해 주세요.",
                         "code": "preview_changed", "status": 409}
         if token.notification_type == SCHOOL_REPORT_REQUEST_TRIGGER:
@@ -738,6 +745,7 @@ def consume_preview_token_and_execute(token_str: str, tenant, *, session_type=No
             batch_id=str(batch_id),
             staff_id=token.created_by_id,
             process=False,
+            confirmed_homework_guards=confirmed_homework_guards,
         )
         if "error" in batch_result:
             return {"error": batch_result["error"], "code": batch_result.get("code", ""), "status": 400}
