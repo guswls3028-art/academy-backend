@@ -94,6 +94,7 @@ from apps.support.results.session_scores_dependencies import (
     Sheet,
     Submission,
     resolve_template_exam,
+    superseded_homework_missing_keys,
 )
 from apps.support.results.progress_read_dependencies import (
     session_score_enrollment_ids,
@@ -529,6 +530,9 @@ class SessionScoresView(APIView):
             attempt_index=1,
         )
 
+        superseded_missing_keys = superseded_homework_missing_keys(
+            tenant=tenant, scores=hw_scores, accepted_keys=accepted_homework_keys,
+        )
         hw_map: Dict[int, Dict[int, HomeworkScore]] = {}
         for hs in hw_scores:
             hw_map.setdefault(int(hs.enrollment_id), {})[int(hs.homework_id)] = hs
@@ -1048,6 +1052,8 @@ class SessionScoresView(APIView):
                         "meta": getattr(hs, "meta", None),
                         "updated_at": hs.updated_at,
                     }
+                    if (eid, hw.id) in superseded_missing_keys:
+                        block["meta"] = {k: v for k, v in hs.meta.items() if k != "status"} or None
                     updated_at = hs.updated_at
                 correction = correction_map.get((eid, "homework", int(hw.id)))
                 block.update(

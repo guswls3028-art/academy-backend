@@ -422,6 +422,68 @@ class HomeworkSubmissionMediaTests(HomeworkMediaFixtureMixin, TestCase):
         submission.refresh_from_db()
         self.assertEqual(submission.file_key, "existing/image.jpg")
 
+    def test_session_scores_project_only_superseded_missing_marks_without_writing_grades(self):
+        from apps.support.submissions.dependencies import homework_submission_revisions
+
+        meta = {"status": "NOT_SUBMITTED", "note": "staff entry"}
+        score = create_homework_score_fixture(
+            homework=self.homework, session=self.session, enrollment=self.enrollment,
+            attempt_index=1, score=None, max_score=10, passed=False, meta=meta,
+        )
+        path = f"/api/v1/results/admin/sessions/{self.session.pk}/scores/"
+
+        def block():
+            match = resolve(path)
+            response = match.func(self._request("get", path, user=self.teacher), **match.kwargs)
+            self.assertEqual(response.status_code, 200, response.data)
+            return response.data["rows"][0]["homeworks"][0]["block"]
+
+        initial = block()
+        self.assertEqual(initial["meta"], meta)
+        submission = Submission.objects.create(
+            tenant=self.tenant, user=self.student_user, enrollment=self.enrollment,
+            target_type=Submission.TargetType.HOMEWORK, target_id=self.homework.pk,
+            source=Submission.Source.HOMEWORK_IMAGE, status=Submission.Status.SUBMITTED,
+        )
+        self.assertEqual(block()["meta"], meta)
+        submission.file_key = "existing/new-photo.jpg"
+        submission.save(update_fields=["file_key"])
+        current = block()
+        self.assertEqual(current["meta"], {"note": "staff entry"})
+        self.assertIsNone(current["score"])
+        self.assertFalse(current["teacher_accepted"])
+        self.assertFalse(current["passed"])
+        self.assertEqual(current["clinic_required"], initial["clinic_required"])
+        self.assertEqual(current["correction_status"], initial["correction_status"])
+
+        score.reviewed_submission_revision = homework_submission_revisions(
+            tenant=self.tenant, homework_ids=[self.homework.pk], enrollment_ids=[self.enrollment.pk],
+        )[(self.enrollment.pk, self.homework.pk)]
+        score.save(update_fields=["reviewed_submission_revision"])
+        self.assertEqual(block()["meta"], meta)
+
+        decision_path = f"/api/v1/submissions/submissions/homework/{self.homework.pk}/acceptance/"
+        fingerprint = self._staff_student_files().data["results"][0]["media_set_fingerprint"]
+        request = self._request("patch", decision_path, user=self.teacher, data={
+            "enrollment_id": self.enrollment.pk, "accepted": True,
+            "expected_updated_at": None, "expected_media_set_fingerprint": fingerprint,
+        })
+        match = resolve(decision_path)
+        response = match.func(request, **match.kwargs)
+        self.assertEqual(response.status_code, 200, response.data)
+        current = block()
+        self.assertEqual(current["meta"], {"note": "staff entry"})
+        self.assertIsNone(current["score"])
+        self.assertTrue(current["teacher_accepted"])
+        self.assertTrue(current["passed"])
+        self.assertFalse(current["clinic_required"])
+        score.score = 0
+        score.save(update_fields=["score"])
+        self.assertEqual(block()["score"], 0)
+        score.refresh_from_db()
+        self.assertEqual(score.meta, meta)
+        self.assertFalse(score.passed)
+
     def test_staff_acceptance_requires_delivered_files_from_eligible_submission(self):
         from apps.domains.submissions.services.homework_media import homework_media_set_fingerprint
 

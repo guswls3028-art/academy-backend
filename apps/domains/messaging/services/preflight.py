@@ -237,7 +237,7 @@ def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
     try:
         data = resolve_session_message_data(tenant=tenant, data=data)
     except SessionMessageContextError as exc:
-        blockers.append(PreflightIssue("session_context_missing", "수업 정보 확인 필요", str(exc)))
+        blockers.append(PreflightIssue(exc.code, "수업 정보 확인 필요", str(exc)))
 
     if is_messaging_disabled(tenant.id):
         blockers.append(
