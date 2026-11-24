@@ -47,6 +47,9 @@ legacy provider를 설치하고 Python TLS 런타임과 provider 로드를 확�
 `postgresql-17 / 17.11-0+deb13u1`에서 신규 High 38건을 검출했다. Debian sid의
 공식 수정 패키지 `libpq5`와 `libpq-dev` `18.7-1` 두 개만 임시 APT 목록에서
 서명 검증 후 내려받고, arm64·amd64별 SHA-256과 패키지 메타데이터를 검증한다.
+APT 목록은 [2026-11-14 Debian snapshot](https://snapshot.debian.org/archive/debian/20261114T090000Z/)을 가리킨다.
+이 보존본의 목록 만료 검사는 해당 임시 소스에서만 해제하며 Debian 서명과
+두 패키지의 기존 체크섬 검증을 유지한다.
 런타임에는 `libpq5`만 설치하며 나머지 APT 패키지는 기존 trixie 소스를 사용한다.
 [차단된 배포](https://github.com/guswls3028-art/academy-backend/actions/runs/43398146196) ·
 [PostgreSQL 보안 릴리스](https://www.postgresql.org/about/news/postgresql-187-1712-1616-1520-1425-and-19-rc-2-released-3442/)
