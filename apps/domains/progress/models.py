@@ -391,6 +391,26 @@ class AssessmentCorrection(TimestampModel):
         ordering = ["-updated_at", "-id"]
 
 
+class HomeworkFileAcceptance(models.Model):
+    """Latest staff decision on a student's submitted files, independent of manual score review."""
+
+    tenant = models.ForeignKey("core.Tenant", on_delete=models.CASCADE, related_name="+")
+    enrollment = models.ForeignKey("enrollment.Enrollment", on_delete=models.CASCADE, related_name="+")
+    session = models.ForeignKey("lectures.Session", on_delete=models.CASCADE, related_name="+")
+    homework = models.ForeignKey("homework_results.Homework", on_delete=models.CASCADE, related_name="+")
+    # Revocation clears the fingerprint but retains the decision version for concurrent reviewers.
+    fingerprint = models.CharField(max_length=64, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "enrollment", "session", "homework"],
+                name="uniq_homework_file_acceptance",
+            ),
+        ]
+
+
 class RiskLog(TimestampModel):
     class RiskLevel(models.TextChoices):
         WARNING = "WARNING", "Warning"

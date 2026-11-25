@@ -97,11 +97,12 @@ class SendMessageView(APIView):
         )
 
     def _send(self, request, data, admission):
+        from apps.support.messaging.grade_homework_review import OUTBOX_GUARD_KEY
         from apps.support.messaging.session_message_context import resolve_session_message_data, SessionMessageContextError
         try:
-            data = resolve_session_message_data(tenant=request.tenant, data=data)
+            data = resolve_session_message_data(tenant=request.tenant, data=data, lock_homework=True)
         except SessionMessageContextError as exc:
-            return Response({"detail": str(exc), "code": "session_context_missing"}, status=409)
+            return Response({"detail": str(exc), "code": exc.code}, status=409)
         tenant = request.tenant
         send_to = data["send_to"]
         message_mode = "alimtalk"
@@ -109,6 +110,7 @@ class SendMessageView(APIView):
         raw_body = (data.get("raw_body") or "").strip()
         raw_subject = (data.get("raw_subject") or "").strip()
         scheduled_send_at = data.get("scheduled_send_at")
+        grade_missing_assignments = data.get("grade_missing_assignments", {})
         if scheduled_send_at is not None and scheduled_send_at <= timezone.now():
             return Response(
                 {"scheduled_send_at": "예약 발송 시각은 현재 이후여야 합니다."}, status=status.HTTP_400_BAD_REQUEST,
@@ -381,6 +383,11 @@ class SendMessageView(APIView):
                         alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
                         alimtalk_replacements.append({"key": "선생님메모", "value": user_custom_content})
 
+            missing_assignments = grade_missing_assignments.get(recipient.student_id)
+            grade_guard = {OUTBOX_GUARD_KEY: {
+                "session_id": data["session_id"], "student_id": recipient.student_id,
+                "assignment_ids": missing_assignments,
+            }} if missing_assignments else {}
             try:
                 dispatch_result = _dispatch_or_schedule_message(
                     tenant_id=tenant.id,
@@ -397,6 +404,7 @@ class SendMessageView(APIView):
                         "alimtalk_replacements": alimtalk_replacements,
                         "event_type": "manual_send",
                         **admission.delivery_metadata,
+                        **grade_guard,
                         "target_type": "student" if send_to != "parent" else "parent",
                         "target_id": recipient.student_id,
                         "target_name": name,

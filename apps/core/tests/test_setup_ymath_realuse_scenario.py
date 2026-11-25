@@ -23,7 +23,7 @@ from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 from apps.api.common.auth_jwt import TenantAwareTokenObtainPairSerializer
 from apps.core.management.commands.setup_ymath_realuse_scenario import (
     Command,
-    ensure_development_clinic_cancellation_fixture,
+    ensure_development_notification_fixture,
     ensure_development_messaging_baseline,
 )
 from apps.core.models import OpsAuditLog, Program, Tenant, TenantMembership
@@ -283,8 +283,13 @@ class SetupYmathRealuseScenarioTests(TestCase):
             ),
             patch.dict(os.environ, {"SOLAPI_MOCK": "true"}),
         ):
-            ensure_development_clinic_cancellation_fixture(tenant)
-            ensure_development_clinic_cancellation_fixture(tenant)
+            ensure_development_notification_fixture(tenant, "clinic_cancelled")
+            ensure_development_notification_fixture(tenant, "clinic_cancelled")
+            ensure_development_notification_fixture(tenant, "assignment_not_submitted")
+
+        manual = AutoSendConfig.objects.select_related("template").get(tenant=tenant, trigger="assignment_not_submitted")
+        self.assertFalse(manual.enabled)
+        self.assertEqual(manual.template.category, MessageTemplate.Category.ASSIGNMENT)
 
         config = AutoSendConfig.objects.select_related("template").get(
             tenant=tenant,

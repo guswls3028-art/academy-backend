@@ -407,7 +407,7 @@ cleanup0 승격 계약은 frontend `docs/DEPLOYMENT-OPERATIONS.md`가 소유한�
 #### 세션 제한과 장애 경계
 
 고정 QA document의 `inputs`는 maxSessionDuration=5분/idleSessionTimeout=5분,
-Port document는 90분/5분이다. frontend의 85분 실사용 검사와 90분 로컬 tunnel
+Port document는 100분/5분이다. frontend의 95분 실사용 검사와 100분 로컬 tunnel
 제한에 맞춰, 연결 시작·검사 종료에 5분 여유를 둔다. 호출자가 timeout을 바꾸는
 parameter는 없다. 공식 실행35543367845의 기존25분 연결은23:07:01Z부터
 23:32:01Z까지 정확히25분 뒤 종료되어, 진행 중이던 자료함 삭제가 ECONNREFUSED로
@@ -419,16 +419,26 @@ parameter는 없다. 공식 실행35543367845의 기존25분 연결은23:07:01Z�
 당시 영상 검증의 개별 17분 한도를 포함하도록 검사 60분·터널 65분으로 맞췄다.
 당시 양쪽 QA tenant/user/R2/process/listener 정리 0은 확인됐고 운영 승격은 차단됐다.
 이후 실행40168553418은 기존 36건에 47.79분이 걸려 60분 전체 한도에서 마지막 영상이
-중단됐다. 현재 39건의 검사 예산은 마지막 영상 17분·새 사진 흐름 2건 각 7분과
-변동 여유를 포함해 85분이며, 서버·로컬 터널은 90분으로 맞춘다. 개별 테스트 제한,
-단일 worker·재시도 0·전체 필수 통과·cleanup0 조건은 유지한다. 90분 계약은 검사 예산과 종료 여유를 일치시키며,
-고정 8000→18000 포트, 5분 idle 제한, 역할·tenant/data 범위를 바꾸지 않는다.
+중단됐다. 이후 실행45431752643은 41건을 71.513분에 통과한 뒤 마지막 영상의
+개별 17분 한도보다 짧은 잔여 예산 때문에 85분 부모 deadline에서 SIGTERM됐다.
+당시 primary/cross tenant Cleanup과 독립 Inspect는 모두 0이고 운영 승격은 차단됐다.
+현재 42건의 검사 예산은 95분, 서버·로컬 터널은 100분으로 맞춘다.
+개별 테스트 제한과 실제 690초 재생·갱신·동시 사용자 검증, 단일 worker·재시도 0·
+전체 필수 통과·cleanup0 조건은 유지한다. 고정 8000→18000 포트,
+5분 idle 제한, 역할·tenant/data 범위와 QA command 5분 수명은 바꾸지 않는다.
 영상 갱신 중 먼저 발생한 worker timeout은 이 수명 차이와 별도로 진단한다.
-QA CI job은 설치·정리·증거 업로드를 포함해 100분이며, 해당 job의 OIDC 요청과
-`academy-frontend-development-qa` 역할의 MaxSessionDuration은 6000초(100분)로 맞춘다.
+QA CI job은 설치·정리·증거 업로드를 포함해 120분이며, 해당 job의 OIDC 요청과
+`academy-frontend-development-qa` 역할의 MaxSessionDuration은 7200초(120분)로 맞춘다.
 기존 3600초 인증이 검사 종료 전후 만료돼 Cleanup/Inspect를 막는 일을 방지한다.
+95분 검사·100분 터널 이후에도 준비·정리·증거 업로드 여유를 보존한다.
 별도 readiness job은 기존 3600초 요청을 유지한다. 역할의 trust·inline policy·
 action·resource와 QA command의 5분 수명은 바꾸지 않는다.
+이 역할 수명의 선언적 Apply 구현은 현재 저장소에 없다.
+`converge_frontend_development_qa.py --frontend-role-plan --aws-profile <profile>`는
+문서·정책 검토 계획이며 frontend IAM/SSM을 적용하지 않는다. 성공한 manifest를 가진
+정확한 보호 main 이후 배포 담당이 기존 수동 운영 경계에서 해당 역할의
+MaxSessionDuration만 7200으로 갱신하고, 검토한 Port 문서의 새 버전을 default로 지정한다.
+소스 변경이나 frontend CI 요청만으로 실제 IAM/SSM 설정이 수렴했다고 간주하지 않는다.
 역할 수명과 Port 문서 변경은 깨끗한 최신 main·성공 manifest ancestry·공유 배포 lock·
 활성 개발 세션 0을 확인한 뒤 exact 기존 설정을 대조하고 적용한다. 변경 전 버전과
 정책 hash를 보존하며, default/latest 문서·역할 수명·불변 trust/policy의 readback과

@@ -95,9 +95,9 @@ def execute_manual_send_request(*, tenant, actor_user_id: int, data: dict, send)
     recipient_scope = data["send_to"]
     replayed = False
     with transaction.atomic():
-        # Lock the business tenant before inspecting or inserting a receipt.
-        # This also serializes the initially missing UUID across target scopes.
-        Tenant.objects.select_for_update().get(pk=tenant.pk)
+        # Serialize admissions, including the first request across target scopes.
+        # Uploads holding an assignment lock need KEY SHARE on this tenant to commit.
+        Tenant.objects.select_for_update(no_key=True).get(pk=tenant.pk)
         existing = list(ManualSendRequest.objects.filter(tenant=tenant, request_id=request_id))
         if any(row.actor_user_id != actor_user_id or row.payload_fingerprint != fingerprint for row in existing):
             return Response({

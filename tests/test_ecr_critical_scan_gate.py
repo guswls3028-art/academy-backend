@@ -75,21 +75,17 @@ def _high_policy_document(*entries: dict[str, object]) -> dict[str, object]:
 
 
 @pytest.mark.parametrize("repository", gate.REPOSITORIES)
-def test_current_candidate_only_accepts_exact_reviewed_high(repository: str) -> None:
+def test_current_candidate_rejects_retired_high_exceptions(repository: str) -> None:
     policy_dir = Path(__file__).parents[1] / "docs" / "ssot"
     acceptances = gate.load_acceptances(
         policy_dir / "ecr-critical-risk-acceptance.json", datetime.now(timezone.utc).date()
     )
     baselines, known = gate.load_high_baselines(
-        policy_dir / "ecr-high-risk-baseline.json", date(2026, 11, 9)
+        policy_dir / "ecr-high-risk-baseline.json", date(2026, 11, 25)
     )
     assert not acceptances
-    assert known == {
-        (repo, cve, "glibc", "2.41-12+deb13u4")
-        for repo in gate.REPOSITORIES
-        for cve in ("CVE-2026-19499", "CVE-2026-5435")
-    }
-    assert baselines[repository] == 2
+    assert not known
+    assert baselines[repository] == 0
     assert gate.evaluate_findings(repository, _scan(), acceptances) == []
     assert gate.evaluate_high_budget(repository, _scan(), baselines, known) == 0
     gcc = _scan(
@@ -102,14 +98,17 @@ def test_current_candidate_only_accepts_exact_reviewed_high(repository: str) -> 
         _finding("CVE-2026-19499", "glibc", "2.41-12+deb13u4", "HIGH"),
         _finding("CVE-2026-5435", "glibc", "2.41-12+deb13u4", "HIGH"),
     )
-    assert gate.evaluate_high_budget(repository, reviewed, baselines, known) == 2
+    with pytest.raises(gate.GateError, match="High reviewed policy exceeded"):
+        gate.evaluate_high_budget(repository, reviewed, baselines, known)
     cyrus = _finding("CVE-2026-107161", "cyrus-sasl2", "2.1.28+dfsg1-9", "HIGH")
     combined = _scan(*reviewed["imageScanFindings"]["findings"], cyrus)
     with pytest.raises(gate.GateError, match="High reviewed policy exceeded"):
         gate.evaluate_high_budget(repository, combined, baselines, known)
-    with pytest.raises(gate.GateError, match="unreviewed High"):
+    with pytest.raises(gate.GateError, match="High reviewed policy exceeded"):
         gate.evaluate_high_budget(repository, _scan(cyrus), baselines, known)
     for finding in [
+        _finding("CVE-2026-19499", "glibc", "2.41-12+deb13u4", "HIGH"),
+        _finding("CVE-2026-5435", "glibc", "2.41-12+deb13u4", "HIGH"),
         _finding("CVE-2099-9999", "gcc-14", "14.2.0-19", "HIGH"),
         _finding("CVE-2026-102010", "gcc-14", "14.2.0-20", "HIGH"),
         _finding("CVE-2026-95619", "gcc-14", "14.2.0-20", "HIGH"),
@@ -123,7 +122,7 @@ def test_current_candidate_only_accepts_exact_reviewed_high(repository: str) -> 
         _finding("CVE-2026-119586", "sqlite3", "3.54.1-1+academy1", "HIGH"),
         _finding("CVE-2026-119586", "another-package", "3.46.1-7+deb13u2", "HIGH"),
     ]:
-        with pytest.raises(gate.GateError, match="unreviewed High"):
+        with pytest.raises(gate.GateError, match="High reviewed policy exceeded"):
             gate.evaluate_high_budget(repository, _scan(finding), baselines, known)
     with pytest.raises(gate.GateError, match="unaccepted critical"):
         gate.evaluate_findings(repository, _scan(
@@ -149,20 +148,24 @@ def test_retired_gcc_exceptions_do_not_block_clean_candidates_after_their_old_ex
     for repository in gate.REPOSITORIES:
         assert gate.evaluate_high_budget(repository, _scan(), baselines, known) == 0
         for cve in ("CVE-2026-102010", "CVE-2026-95619"):
-            with pytest.raises(gate.GateError, match="unreviewed High"):
+            with pytest.raises(gate.GateError, match="High reviewed policy exceeded"):
                 gate.evaluate_high_budget(repository, _scan(
                     _finding(cve, "gcc-14", "14.2.0-19", "HIGH")
                 ), baselines, known)
 
 
 @pytest.mark.parametrize("repository", gate.REPOSITORIES)
-def test_approved_glibc_review_keeps_exact_service_scope_without_expiry(repository, tmp_path) -> None:
-    policy = Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
-    entries = json.loads(policy.read_text(encoding="utf-8"))["acceptedHighFindings"]
-    glibc = [entry for entry in entries if entry.get("indefiniteAcceptance")]
-    assert {entry["cve"] for entry in glibc} == {"CVE-2026-19499", "CVE-2026-5435"}
-    assert all(entry["packageName"] == "glibc" for entry in glibc)
-    assert all(entry["expiresOn"] is None and entry["indefiniteAcceptance"] is True for entry in glibc)
+def test_indefinite_glibc_fixture_keeps_exact_service_scope_without_expiry(repository, tmp_path) -> None:
+    glibc = [
+        _high_policy_entry(
+            cve=cve, packageName="glibc", packageVersion="2.41-12+deb13u4",
+            repositories=sorted(gate.REPOSITORIES), expiresOn=None,
+            indefiniteAcceptance=True, approvedOn="2026-10-21",
+            approvalReference="docs/operations/container-image-security.md#glibc-approval-20261021",
+            vendorTracker=f"https://security-tracker.debian.org/tracker/{cve}",
+        )
+        for cve in ("CVE-2026-19499", "CVE-2026-5435")
+    ]
     isolated = tmp_path / "glibc-review.json"
     isolated.write_text(json.dumps(_high_policy_document(*glibc)), encoding="utf-8")
     baselines, known = gate.load_high_baselines(isolated, date(2100, 1, 1))

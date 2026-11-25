@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from django.db.models import Prefetch
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -10,7 +12,7 @@ from rest_framework.pagination import PageNumberPagination
 
 from apps.api.common.query_params import parse_query_int
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.submissions.models import Submission
+from apps.domains.submissions.models import Submission, SubmissionMedia
 from apps.domains.submissions.services.homework_media import (
     homework_media_set_fingerprint_for_submissions,
     serialize_homework_media,
@@ -21,6 +23,7 @@ from apps.support.submissions.dependencies import (
     enrollment_map_for_submission_list,
     homework_submission_review_map,
     homework_submission_target_exists,
+    staff_homework_file_targets,
 )
 
 
@@ -80,11 +83,13 @@ class HomeworkSubmissionsListView(APIView):
                 target_type=Submission.TargetType.HOMEWORK,
                 target_id=int(homework_id),
             )
-            .prefetch_related("media_files")
+            .prefetch_related(Prefetch("media_files", queryset=SubmissionMedia.objects.filter(tenant=tenant)))
             .order_by("-id")
         )
         if not homework_submission_target_exists(homework_id=int(homework_id), tenant=tenant):
             qs = qs.none()
+
+        session_id = staff_homework_file_targets(tenant=tenant).filter(pk=homework_id).values_list("session_id", flat=True).first()
 
         paginator = None
         if "page" in request.query_params or "page_size" in request.query_params:
@@ -179,6 +184,7 @@ class HomeworkSubmissionsListView(APIView):
                 {
                     "id": int(s.id),
                     "enrollment_id": int(enrollment_id) if enrollment_id else 0,
+                    "session_id": session_id,
                     "student_id": student_id,
                     "student_name": student_name,
                     "student_phone": student_phone_v or None,
@@ -199,6 +205,8 @@ class HomeworkSubmissionsListView(APIView):
                     **review_map.get(
                         int(enrollment_id) if enrollment_id else 0,
                         {
+                            "teacher_accepted": False,
+                            "teacher_accepted_updated_at": None,
                             "teacher_reviewed": False,
                             "teacher_review_source": None,
                             "teacher_review_note": "",

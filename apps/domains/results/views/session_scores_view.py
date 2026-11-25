@@ -77,6 +77,7 @@ from apps.support.results.assessment_correction_dependencies import (
     homework_media_set_fingerprint,
     set_teacher_assessment_resolution,
 )
+from apps.support.submissions.homework_acceptance import homework_accepted_keys
 from apps.support.homework.review_lock import lock_homework_review_target
 from apps.support.results.session_scores_dependencies import (
     AssessmentCorrection,
@@ -93,6 +94,7 @@ from apps.support.results.session_scores_dependencies import (
     Sheet,
     Submission,
     resolve_template_exam,
+    superseded_homework_missing_keys,
 )
 from apps.support.results.progress_read_dependencies import (
     session_score_enrollment_ids,
@@ -386,6 +388,9 @@ class SessionScoresView(APIView):
         exam_ids = [int(e.id) for e in exams]
         homeworks = sorted(homeworks, key=lambda h: (getattr(h, "display_order", 0) or 0, h.created_at, h.id))
         homework_ids = [int(hw.id) for hw in homeworks]
+        accepted_homework_keys = homework_accepted_keys(
+            tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=homework_ids,
+        )
         correction_map: Dict[tuple[int, str, int], AssessmentCorrection] = {
             (
                 int(correction.enrollment_id),
@@ -525,6 +530,9 @@ class SessionScoresView(APIView):
             attempt_index=1,
         )
 
+        superseded_missing_keys = superseded_homework_missing_keys(
+            tenant=tenant, scores=hw_scores, accepted_keys=accepted_homework_keys,
+        )
         hw_map: Dict[int, Dict[int, HomeworkScore]] = {}
         for hs in hw_scores:
             hw_map.setdefault(int(hs.enrollment_id), {})[int(hs.homework_id)] = hs
@@ -1044,17 +1052,24 @@ class SessionScoresView(APIView):
                         "meta": getattr(hs, "meta", None),
                         "updated_at": hs.updated_at,
                     }
+                    if (eid, hw.id) in superseded_missing_keys:
+                        block["meta"] = {k: v for k, v in hs.meta.items() if k != "status"} or None
                     updated_at = hs.updated_at
+                correction = correction_map.get((eid, "homework", int(hw.id)))
                 block.update(
                     assessment_correction_payload(
                         source_type=AssessmentCorrection.SourceType.HOMEWORK,
                         score=block.get("score"),
                         max_score=block.get("max_score"),
                         source_fingerprint=None,
-                        correction=correction_map.get((eid, "homework", int(hw.id))),
+                        correction=correction,
                         homework_passed=block.get("passed"),
                     )
                 )
+
+                block["teacher_accepted"] = (hw.id, session.id, eid) in accepted_homework_keys
+                if block["teacher_accepted"]:
+                    block.update(passed=True, clinic_required=False)
 
                 homeworks_payload.append(
                     {

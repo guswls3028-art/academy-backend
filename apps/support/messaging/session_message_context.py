@@ -12,10 +12,14 @@ TOKEN = re.compile(r"#\{(현재차시명|현재차시날짜|다음차시명|다�
 
 
 class SessionMessageContextError(ValueError):
-    pass
+    code = "session_context_missing"
 
 
-def resolve_session_message_data(*, tenant, data):
+class GradeHomeworkReviewChanged(SessionMessageContextError):
+    code = "grade_homework_review_changed"
+
+
+def resolve_session_message_data(*, tenant, data, lock_homework=False):
     """Return a copy. Caller context never overrides server-owned class facts."""
     result = deepcopy(data)
     body = result.get("raw_body") or ""
@@ -51,6 +55,18 @@ def resolve_session_message_data(*, tenant, data):
     ).values_list("id", "student_id"))
     if student_ids - set(allowed_enrollments.values()):
         raise SessionMessageContextError("선택한 수업에 등록되지 않은 학생이 있습니다. 발송 대상을 다시 선택해 주세요.")
+    if result.get("block_category") == "grades" and not result.get("video_makeup_homework"):
+        from apps.support.messaging.grade_homework_review import grade_homework_notice_changed
+
+        missing_assignments = {} if lock_homework else None
+        if grade_homework_notice_changed(
+            tenant=tenant, session=session, enrollments=allowed_enrollments, body=body,
+            contexts=result.get("alimtalk_extra_vars_per_student") or {}, lock=lock_homework,
+            missing_assignments=missing_assignments,
+        ):
+            raise GradeHomeworkReviewChanged("과제 제출 또는 통과 상태가 바뀌었습니다. 성적표를 새로 열어 발송 내용을 다시 확인해 주세요.")
+        if missing_assignments:
+            result["grade_missing_assignments"] = missing_assignments
     if result.get("video_makeup_homework"):
         resolve_video_makeup_homework(
             tenant=tenant, session=session, data=result, enrollments=allowed_enrollments,
