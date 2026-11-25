@@ -394,6 +394,7 @@ def run_pdf_question_pipeline(
         "segmentation_method": segmentation_method,
     }
     if embedded_answers:
+        result["answer_source_mode"] = "embedded_numbered_key"
         result["answers"] = _check_choice_summary(embedded_answers, full_text_by_page[solution_tail_start])
         if len(result["answers"]) != len(embedded_answers):
             result["source_issues"] = ["answer_coverage_incomplete"]

@@ -163,7 +163,12 @@ def attach_paired_source_results(
         for answer in answers
         if int(answer.get("question_number") or 0) not in detected_numbers
     ]
-    result_payload["answer_source_requested"] = answer_requested
+    # The approval endpoint persists AnswerKey only for an identified answer
+    # source. An embedded key has the same review and completeness contract.
+    has_answer_source = answer_requested or bool(answer_download_url) or (
+        result_payload.get("answer_source_mode") == "embedded_numbered_key"
+    )
+    result_payload["answer_source_requested"] = has_answer_source
     result_payload["explanation_source_requested"] = explanation_requested
     matched_answer_numbers = {
         int(answer.get("question_number") or 0)
@@ -175,7 +180,7 @@ def attach_paired_source_results(
     }
     result_payload["missing_answer_numbers"] = (
         sorted(detected_numbers - matched_answer_numbers)
-        if answer_requested
+        if has_answer_source
         else []
     )
     result_payload["missing_explanation_numbers"] = (
