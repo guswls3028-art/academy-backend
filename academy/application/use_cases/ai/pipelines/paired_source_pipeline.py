@@ -149,6 +149,7 @@ def attach_paired_source_results(
         source_issues.append("answer_source_preserved_manual_review")
     else:
         answers = list(result_payload.get("answers") or [])
+        source_issues.extend(result_payload.get("source_issues") or [])
 
     matched_answers = [
         answer

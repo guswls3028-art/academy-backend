@@ -71,6 +71,9 @@ _LABELLED_CHOICE = re.compile(
     r"^[ \t]*(\d{1,3})[.)][ \t]*\[(?:정답|답)\][ \t]*([①-⑨1-9])[ \t]*$",
     re.MULTILINE,
 )
+_CHOICE_TABLE = re.compile(
+    r"(?:^|\n)번호([0-9 \t\r\n]+)\n정답([①-⑨ \t\r\n]+)"
+)
 
 
 def run_pdf_question_pipeline(
@@ -391,7 +394,9 @@ def run_pdf_question_pipeline(
         "segmentation_method": segmentation_method,
     }
     if embedded_answers:
-        result["answers"] = embedded_answers
+        result["answers"] = _check_choice_summary(embedded_answers, full_text_by_page[solution_tail_start])
+        if len(result["answers"]) != len(embedded_answers):
+            result["source_issues"] = ["answer_coverage_incomplete"]
 
     logger.info(
         "PDF_QUESTION_PIPELINE_DONE | job_id=%s | questions=%d | explanations=%d (unmatched=%d)",
@@ -458,6 +463,22 @@ def _find_solution_tail_start(
         logger.info("PDF_SOLUTION_TAIL_FOUND | page=%d", page_idx)
         return page_idx
     return None
+
+
+def _check_choice_summary(entries: List[Dict], page_text: str) -> List[Dict]:
+    """Leave conflicting printed answers for the teacher to resolve in review."""
+    summary: dict[int, set[str]] = {}
+    for numbers, choices in _CHOICE_TABLE.findall(page_text):
+        labels = numbers.split()
+        values = re.findall(r"[①-⑨]", choices)
+        if len(labels) != len(values) or any(len(label) > 3 for label in labels):
+            continue
+        for label, choice in zip(labels, values):
+            summary.setdefault(int(label), set()).add(choice.translate(_CIRCLED_ANSWER_TRANSLATION))
+    return [
+        entry for entry in entries
+        if entry["question_number"] not in summary or summary[entry["question_number"]] == {entry["answer"]}
+    ]
 
 
 def _find_embedded_choice_key(

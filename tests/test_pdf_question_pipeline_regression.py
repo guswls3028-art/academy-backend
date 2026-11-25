@@ -8,6 +8,7 @@ import pytest
 from apps.shared.contracts.ai_job import AIJob
 from academy.application.use_cases.ai.pipelines.pdf_question_pipeline import (
     _build_question_list,
+    _check_choice_summary,
     _extract_numbered_support_entries,
     _extract_explanations,
     _find_academy_review_cover_pages,
@@ -37,6 +38,7 @@ def test_embedded_choice_key_requires_matching_distinct_numbers_and_no_later_pap
     start, answers = _find_embedded_choice_key(texts, pages)
     assert start == 1
     assert [entry["answer"] for entry in answers] == ["1", "4"]
+    assert _check_choice_summary(answers, "번호1\n2\n정답①\n③") == answers[:1]
     explanations = _extract_labelled_choice_explanations(
         {idx: [{"text": text}] for idx, text in texts.items()}, answers,
     )
