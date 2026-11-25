@@ -4,6 +4,7 @@ The vendor packages avoid Debian libreoffice-common's ucf/Perl dependency.
 Do not install the desktop, Java/Python/JavaScript macro providers or updater.
 """
 import hashlib
+from http.client import IncompleteRead
 from pathlib import Path
 import platform
 import shutil
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from urllib.error import URLError
 from urllib.request import urlopen
 
 VERSION = "26.8.1"
@@ -28,23 +30,35 @@ PACKAGES = {
 }
 
 
-def install(archive_path=None):
-    directory, architecture, expected = ARCHIVES[platform.machine()]
-    with tempfile.TemporaryDirectory(prefix="resource-office-install-") as temp:
-        root = Path(temp)
-        archive = Path(archive_path) if archive_path else root / "office.tar.gz"
-        if not archive_path:
-            url = (
-                f"https://downloadarchive.documentfoundation.org/libreoffice/old/{ARCHIVE_VERSION}/deb/{directory}/"
-                f"LibreOffice_{ARCHIVE_VERSION}_Linux_{architecture}_deb.tar.gz"
-            )
-            with urlopen(url, timeout=120) as response, archive.open("wb") as target:
+def download_archive(archive, directory, architecture):
+    filename = f"LibreOffice_{ARCHIVE_VERSION}_Linux_{architecture}_deb.tar.gz"
+    origins = (
+        f"https://downloadarchive.documentfoundation.org/libreoffice/old/{ARCHIVE_VERSION}",
+        "https://dev-builds.libreoffice.org/pre-releases",
+    )
+    for index, origin in enumerate(origins):
+        url = f"{origin}/deb/{directory}/{filename}"
+        try:
+            with urlopen(url, timeout=30) as response, archive.open("wb") as target:
                 total = 0
                 while chunk := response.read(1024 * 1024):
                     total += len(chunk)
                     if total > 300 * 1024 * 1024:
                         raise ValueError("Office archive size limit")
                     target.write(chunk)
+            return
+        except (URLError, TimeoutError, ConnectionError, IncompleteRead):
+            if index == len(origins) - 1:
+                raise
+
+
+def install(archive_path=None):
+    directory, architecture, expected = ARCHIVES[platform.machine()]
+    with tempfile.TemporaryDirectory(prefix="resource-office-install-") as temp:
+        root = Path(temp)
+        archive = Path(archive_path) if archive_path else root / "office.tar.gz"
+        if not archive_path:
+            download_archive(archive, directory, architecture)
         with archive.open("rb") as source:
             actual = hashlib.file_digest(source, "sha256").hexdigest()
         if actual != expected:

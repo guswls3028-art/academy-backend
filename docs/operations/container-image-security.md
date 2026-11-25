@@ -1054,6 +1054,8 @@ PBDS binary heap의 `erase_if` 재할당 뒤 entry pointer를 갱신하는 헤�
   26.8.1 배포물을 아키텍처별 SHA-256으로 고정한다. 설치 정본은
   `scripts/install-resource-reader.py`, `scripts/install-resource-office.py`다.
   LibreOffice는 공급자의 공식 보관소에서 `26.8.1.1` 경로로 내려받는다.
+  연결이 실패하면 LibreOffice 공식 빌드 서버의 동일 버전·아키텍처 파일을
+  처음부터 다시 받는다. 고정된 체크섬 또는 크기 제한을 위반하면 설치를 중단한다.
   arm64와 amd64 아카이브 모두 기존에 고정한 SHA-256으로 검증한다.
   LibreOffice는 공식 vendor DEB의 Writer/Calc/Impress·그림/수식·필수 core만
   설치하며 Java/Python/JavaScript macro provider, updater, desktop integration을
