@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from apps.domains.assets.omr.services.meta_generator import (
     MAX_MC_QUESTIONS,
+    build_essay_score_grid_metadata,
     essay_score_column_ranges,
     validate_layout,
 )
@@ -41,7 +42,7 @@ class OMRDocument:
     essay_question_numbers: tuple[int, ...] = ()
     essay_numbering: str = "continuous"
     # Teacher score strips from the exam's OMR contract (meta_generator SSOT).
-    # Only exam-bound documents whose shape equals the contract carry them.
+    # Only a matching, scan-enabled exam sheet carries the layout signature.
     essay_score_marks: tuple[dict[str, Any], ...] = ()
     essay_score_questions: tuple[dict[str, Any], ...] = ()
     essay_score_layout_marks: tuple[dict[str, Any], ...] = ()
@@ -59,6 +60,17 @@ class OMRDocument:
     ) -> OMRDocument:
         """로고 바이너리가 추가된 새 인스턴스를 반환."""
         return replace(self, logo_bytes=logo_bytes, logo_mime=logo_mime)
+
+    def with_paper_score_grid(self) -> OMRDocument:
+        """Print bubbles for handwriting without signing this sheet for score recognition."""
+        grid = build_essay_score_grid_metadata(
+            choice_numbers=list(self.resolved_choice_question_numbers),
+            essay_numbers=list(self.resolved_essay_question_numbers),
+        )
+        return replace(
+            self, essay_score_questions=tuple(grid["essay_score_questions"]),
+            essay_score_layout_marks=(), essay_score_marks=(),
+        )
 
     @property
     def render_essay_count(self) -> int:

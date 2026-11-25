@@ -5,11 +5,13 @@ The grading grid only proposes those scores; saving stays the teacher's action.
 """
 from __future__ import annotations
 
+import pymupdf
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
 
 from apps.core.models import Tenant, TenantMembership
+from apps.domains.assets.omr.services.meta_generator import build_essay_score_grid_metadata
 from apps.domains.results.models import Result, ResultItem
 from apps.domains.results.services.grading_service import grade_submission
 from apps.domains.results.services.manual_exam_grading import (
@@ -116,6 +118,50 @@ class OmrEssayScoreProposalTests(TestCase):
         return next(row for row in sheet["rows"] if row["enrollment_id"] == enrollment.id)
 
     # -- setting -------------------------------------------------------------
+
+    def test_teacher_prints_paper_score_bubbles_from_both_entries_without_changing_grading(self):
+        teacher = User.objects.create_user(username="paper-teacher", tenant=self.tenant)
+        TenantMembership.ensure_active(tenant=self.tenant, user=teacher, role="teacher")
+        self.client.force_authenticate(user=teacher)
+        self.exam.sessions.clear()
+        self.exam.manual_grading_method = Exam.ManualGradingMethod.CORRECTNESS
+        self.exam.save(update_fields=["manual_grading_method"])
+        state = self._api("get", "essay-score-marks/")
+        self.assertEqual(state.status_code, 200, state.content)
+        self.assertFalse(state.data["available"])
+        params = {"mc_count": 1, "essay_count": 1, "essay_score_grid": "paper"}
+        for base in (f"/api/v1/exams/{self.exam.id}/omr/", "/api/v1/tools/omr/"):
+            with self.subTest(base=base):
+                def post(path, data):
+                    return self.client.post(base + path, data, format="json",
+                                            HTTP_HOST="api.hakwonplus.com", HTTP_X_TENANT_CODE=self.tenant.code)
+
+                preview = post("preview/", params)
+                self.assertEqual(preview.status_code, 200, preview.content)
+                self.assertEqual(preview.content.count(b'class="bu essay-score-bubble"'), 9)
+                self.assertNotIn(b'class="es-a"', preview.content)
+                pdf = post("pdf/", params)
+                self.assertEqual(pdf.status_code, 200)
+                choices = build_essay_score_grid_metadata(
+                    choice_numbers=[1], essay_numbers=[2],
+                )["essay_score_questions"][0]["choices"]
+                with pymupdf.open(stream=pdf.content, filetype="pdf") as document:
+                    words = document[0].get_text("words")
+                    for bubble in choices:
+                        x = bubble["center"]["x"] * 72 / 25.4
+                        y = bubble["center"]["y"] * 72 / 25.4
+                        labels = [word[4] for word in words if abs((word[0] + word[2]) / 2 - x) < 4
+                                  and abs((word[1] + word[3]) / 2 - y) < 5]
+                        self.assertEqual(labels, [bubble["label"]])
+                plain = post("preview/", {"mc_count": 1, "essay_count": 1})
+                self.assertNotIn(b'data-essay-score-question=', plain.content)
+                for invalid in ({"essay_count": 0}, {"essay_score_grid": "exam"}, {"essay_score_grid": "typo"}):
+                    self.assertEqual(post("pdf/", {**params, **invalid}).status_code, 400)
+        self.sheet.refresh_from_db()
+        self.exam.refresh_from_db()
+        self.assertFalse(self.sheet.essay_score_marks)
+        self.assertEqual(self.sheet.essay_score_marks_scan_shape, "")
+        self.assertEqual(self.exam.manual_grading_method, Exam.ManualGradingMethod.CORRECTNESS)
 
     def test_setting_toggles_printed_strip_and_worker_payload(self):
         response = self._api("get", "essay-score-marks/")

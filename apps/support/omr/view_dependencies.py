@@ -11,13 +11,7 @@ from apps.support.exams.view_dependencies import IsTeacherOrAdmin  # noqa: F401 
 def get_exam_for_omr_document(*, tenant, exam_id: int):
     from apps.domains.exams.models import Exam
 
-    return get_object_or_404(
-        Exam.objects.filter(
-            Q(sessions__lecture__tenant=tenant)
-            | Q(derived_exams__sessions__lecture__tenant=tenant)
-        ).distinct(),
-        id=int(exam_id),
-    )
+    return get_object_or_404(Exam, tenant=tenant, id=int(exam_id))
 
 
 def omr_template_assets_for_tenant(*, tenant, exam_id: int | None = None):
