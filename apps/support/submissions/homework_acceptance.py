@@ -1,7 +1,7 @@
 """Staff decisions for submitted homework files, separate from score and review history."""
 
 from django.db import transaction
-from django.db.models import F, Prefetch
+from django.db.models import Prefetch
 from rest_framework.exceptions import APIException, NotFound, ValidationError
 
 from apps.domains.progress.models import HomeworkFileAcceptance
@@ -12,25 +12,14 @@ from apps.domains.submissions.services.homework_media import (
 )
 from apps.support.homework.review_lock import lock_homework_review_target
 from apps.support.submissions.dependencies import staff_homework_file_targets
+from apps.support.submissions.homework_acceptance_queries import (
+    homework_acceptance_rows as homework_acceptance_rows,
+    homework_accepted_keys as homework_accepted_keys,
+)
 
 
 class HomeworkFileConflict(APIException):
     status_code = 409
-
-
-def homework_acceptance_rows(*, tenant, enrollment_ids, homework_ids):
-    return HomeworkFileAcceptance.objects.filter(
-        tenant=tenant,
-        enrollment_id__in=enrollment_ids,
-        homework_id__in=homework_ids,
-        session_id=F("homework__session_id"),
-    )
-
-
-def homework_accepted_keys(*, tenant, enrollment_ids, homework_ids):
-    return set(homework_acceptance_rows(
-        tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=homework_ids,
-    ).filter(fingerprint__isnull=False).values_list("homework_id", "session_id", "enrollment_id"))
 
 
 def homework_acceptance_payload(decision):

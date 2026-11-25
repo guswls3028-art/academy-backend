@@ -10,7 +10,7 @@ from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import HomeworkScore
 from apps.support.results.session_scores_dependencies import superseded_homework_missing_keys
 from apps.support.submissions.dependencies import staff_homework_file_targets
-from apps.support.submissions.homework_acceptance import homework_accepted_keys
+from apps.support.submissions.homework_acceptance_queries import homework_accepted_keys
 
 
 TOKEN = re.compile(r"#\{([^{}\n]+)\}")
