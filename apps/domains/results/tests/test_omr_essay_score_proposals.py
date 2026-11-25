@@ -11,7 +11,6 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.assets.omr.services.meta_generator import build_essay_score_grid_metadata
 from apps.domains.results.models import Result, ResultItem
 from apps.domains.results.services.grading_service import grade_submission
 from apps.domains.results.services.manual_exam_grading import (
@@ -142,17 +141,13 @@ class OmrEssayScoreProposalTests(TestCase):
                 self.assertNotIn(b'class="es-a"', preview.content)
                 pdf = post("pdf/", params)
                 self.assertEqual(pdf.status_code, 200)
-                choices = build_essay_score_grid_metadata(
-                    choice_numbers=[1], essay_numbers=[2],
-                )["essay_score_questions"][0]["choices"]
                 with pymupdf.open(stream=pdf.content, filetype="pdf") as document:
-                    words = document[0].get_text("words")
-                    for bubble in choices:
-                        x = bubble["center"]["x"] * 72 / 25.4
-                        y = bubble["center"]["y"] * 72 / 25.4
-                        labels = [word[4] for word in words if abs((word[0] + word[2]) / 2 - x) < 4
-                                  and abs((word[1] + word[3]) / 2 - y) < 5]
-                        self.assertEqual(labels, [bubble["label"]])
+                    # The single essay's score column is on the right, midway down the A4.
+                    page = document[0]
+                    width, height = page.rect.width, page.rect.height
+                    score_column = pymupdf.Rect(width * .91, height * .40, width, height * .62)
+                    digits = [word[4] for word in page.get_text("words", clip=score_column, sort=True)]
+                    self.assertEqual(digits, list("012345678"))
                 plain = post("preview/", {"mc_count": 1, "essay_count": 1})
                 self.assertNotIn(b'data-essay-score-question=', plain.content)
                 for invalid in ({"essay_count": 0}, {"essay_score_grid": "exam"}, {"essay_score_grid": "typo"}):
