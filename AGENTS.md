@@ -109,6 +109,15 @@ the frontend review method is in `../frontend/docs/REAL-USE-REVIEW-MANUAL.md`.
   no SMS/LMS fallback. Matchup: `docs/domain/matchup.md`, preserve manual cuts/
   approvals. Accounts: `docs/domain/parent-account.md`, `docs/domain/student-core.md`,
   `docs/domain/student-lifecycle.md`.
+- Before changing a shared service, trace its API, worker and scheduled callers.
+  Keep shared reads and business rules within the dependencies those callers
+  actually package. Load optional behavior only on the branch that uses it.
+- When a consumer changes, use the candidate image and its isolated service role
+  to process a synthetic job through the normal entry point. Exercise the ordinary
+  case with the option absent and the case that requires it. Use the isolated
+  database and queue when the change crosses them. Substitute only the external effect. Verify the
+  durable outcome, retry safety and failure signal observable by the operator.
+  Extend the nearest existing check only where it misses that boundary.
 - Prove every affected role's ordinary successful action through API,
   persistence, worker, reload/downstream screens, and visible failure/recovery.
   Guards, disabled actions, notices, swallowed errors, empty-success fallbacks,
