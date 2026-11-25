@@ -5,6 +5,34 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-11-25 glibc stable 수정 검증 및 High 예외 종료
+
+Debian trixie stable의 `glibc 2.41-12+deb13u5`는
+[CVE-2026-19499](https://security-tracker.debian.org/tracker/CVE-2026-19499)와
+[CVE-2026-5435](https://security-tracker.debian.org/tracker/CVE-2026-5435)의 공식 수정판이다.
+공식 InRelease 서명, ARM64 패키지 목록과 바이너리 SHA-256, 패키지 메타데이터 및
+AArch64 ELF를 확인했다. 탐지 감소만으로 예외를 종료한 것이 아니다.
+
+[정규 배포 45490658504](https://github.com/guswls3028-art/academy-backend/actions/runs/45490658504)의
+source는 `352df7e7c382dbf017de4f3a055a882eea51d5fd`다.
+[운영 성공 manifest](https://github.com/guswls3028-art/academy-backend/blob/6e9b9baae1dad7008fc749dc80d3289ae8175a2b/docs/reports/release-manifest.latest.json)의
+여섯 immutable ARM64 이미지에서 manifest/config와 패키지 변경 레이어의 SHA-256을
+검증하고 최종 dpkg 상태의 `libc6`·`libc-bin`이 모두 `2.41-12+deb13u5`임을 읽었다.
+운영 ASG·Batch digest를 같은 이미지에 연결했으며, 운영 컨테이너 안에서 별도
+취약 입력 재현이나 패키지 교체를 실행하지 않았다. 여섯 COMPLETE scan은
+High 0·Critical 0이다.
+
+동일 후보의 격리 개발 저장·실제 인코딩과 production 자원 접근 거절,
+preprod CDN 재생·임시 인스턴스 종료, 운영 API/DB·영상 재생 및 영향 OMR 읽기
+검증을 재사용한다. 합성 개발 자료는 잔여 객체·tenant·user 모두 0이며 공유 운영
+잠금 반환을 확인했다.
+
+따라서 `glibc / 2.41-12+deb13u4`의 두 exact 예외를 High 정본에서 제거한다.
+기존 exact identity 건수 계약에 맞춰 여섯 저장소의 High 상한도 2에서 0으로
+축소한다. 두 finding이 다시 나타나거나 다른 High/Critical이 검출되면 후보는
+실패한다. 10월 21일 무기한 승인은 만료 처리하지 않고 아래 이력으로 보존한다.
+SASL 수용, 기존 native/platform HOLD와 새 후보의 필수 릴리스 검증은 변경하지 않는다.
+
 ## 보안 스캔으로 배포가 멈춘 경우
 
 배포 담당자는 실패한 실행·단계와 이미지별 저장소·digest·CVE·패키지·버전을
@@ -302,7 +330,10 @@ APT 단계에서 `libbrotli1`을 해당 stable 수정 버전으로 명시 설치
 
 <a id="glibc-approval-20261021"></a>
 
-## 2026-10-21 온라인 제출 수정 배포의 glibc 두 예외 무기한 승인
+## 2026-10-21 온라인 제출 수정 배포의 glibc 두 예외 무기한 승인 (이력: 2026-11-25 종료)
+
+이 절은 당시의 명시 승인과 잔여 위험을 보존한다. 두 예외는 위의 공식 stable
+수정판 운영 검증 후 정본에서 제거했으며, 현재 후보에 적용하는 승인이 아니다.
 
 [온라인 제출 수정 PR669](https://github.com/guswls3028-art/academy-backend/pull/669)의
 [배포39552635486](https://github.com/guswls3028-art/academy-backend/actions/runs/39552635486)은
@@ -1232,7 +1263,7 @@ SQLite FTS5 생성·쓰기·검색도 실행한다.
 
 당시 두 SSOT의 허용 identity를 비우고 여섯 repository의 High 상한을 모두
 0으로 낮췄다. 해당 vendor-fixed 취약점의 예외는 현재도 복원하지 않는다.
-현재 후보는 이 문서 상단의 exact·기한부 정책과 여섯 immutable digest 완료
+현재 후보는 두 SSOT의 빈 허용 identity 목록과 여섯 immutable digest 완료
 scan을 적용한다. 검토되지 않은 새 finding은 계속 후보를 중단한다.
 이전 만료일·identity 교체·부분집합 및 사라진 항목 보고 테스트는 `tests/fixtures/security-20260919/`의
 명시적 과거 스냅샷으로 유지한다. 해당 fixture는 배포 허가에 사용하지 않는다.
