@@ -17,6 +17,7 @@ from academy.domain.tools.question_splitter import (
     TextBlock,
     is_non_question_page,
     _extract_question_number,
+    _looks_like_header_folio,
     _references_prior_context,
     split_questions,
     validate_anchors_across_pages,
@@ -890,6 +891,13 @@ def test_split_section_marginal_number_uses_section_number_space():
     )
 
     assert [r.number for r in regions] == [105, 106, 107]
+
+
+def test_page_wide_subject_and_grade_masthead_is_not_a_question():
+    masthead = TextBlock("4\n(모의 시험)\n탐구 영역\n고2", 31, 44, 510, 69)
+    assert _looks_like_header_folio(masthead, page_width=580, page_height=810)
+    real_stem = TextBlock("4. 다음 영역의 넓이를 구하시오.", 31, 44, 510, 69)
+    assert not _looks_like_header_folio(real_stem, page_width=580, page_height=810)
 
 
 def test_footer_folio_does_not_expand_last_question_bbox():

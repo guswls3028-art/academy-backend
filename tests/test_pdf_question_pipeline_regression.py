@@ -11,6 +11,8 @@ from academy.application.use_cases.ai.pipelines.pdf_question_pipeline import (
     _extract_numbered_support_entries,
     _extract_explanations,
     _find_academy_review_cover_pages,
+    _find_embedded_choice_key,
+    _extract_labelled_choice_explanations,
     _find_solution_tail_start,
     _recover_missing_first_question_from_native_anchors,
     run_pdf_question_pipeline,
@@ -26,6 +28,23 @@ def _page(page_index: int, number: int | None, bbox: tuple[int, int, int, int]):
         "has_embedded_text": True,
         "paper_type": "clean_pdf_dual",
     }
+
+
+def test_embedded_choice_key_requires_matching_distinct_numbers_and_no_later_paper():
+    pages = [{"page_index": 0, "numbers": [1, 2]}]
+    texts = {0: "1. 첫 문제\n2. 둘째 문제", 1: "빠른 정답 (2회)\n1. [답] ①\n첫 해설",
+             2: "둘째 줄\n2. [답] ④\n두 번째 해설"}
+    start, answers = _find_embedded_choice_key(texts, pages)
+    assert start == 1
+    assert [entry["answer"] for entry in answers] == ["1", "4"]
+    explanations = _extract_labelled_choice_explanations(
+        {idx: [{"text": text}] for idx, text in texts.items()}, answers,
+    )
+    assert explanations[0]["text"] == "첫 해설\n둘째 줄"
+    assert explanations[0]["continues_on_next_page"]
+    for changed in ("1. [답] ④", "3. [답] ④", "1. [보기] 새 시험"):
+        assert _find_embedded_choice_key({**texts, 2: changed}, pages) == (None, [])
+    assert _find_embedded_choice_key({**texts, 3: "1. 다음 문제"}, pages) == (None, [])
 
 
 @pytest.mark.parametrize("layout", ["two_columns", "single_column", "marked_divider"])

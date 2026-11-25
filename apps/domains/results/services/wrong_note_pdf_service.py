@@ -351,6 +351,7 @@ def build_wrong_note_pdf(
     from PIL import Image
     from reportlab.lib.colors import HexColor, white
     from reportlab.lib.pagesizes import A4
+    from reportlab.lib.textsplit import wordSplit
     from reportlab.lib.units import mm
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
@@ -608,8 +609,23 @@ def build_wrong_note_pdf(
             item,
             deadline_monotonic=deadline_monotonic,
         )
+        margin = 16 * mm
+        content_w = page_w - 2 * margin
+        text_pages = []
         if explanation_image is None:
-            explanation_parts = [None]
+            message = str(
+                (item.get("extra") or {}).get("explanation_text")
+                or "등록된 선생님 해설이 없습니다."
+            )
+            lines = []
+            for paragraph in message.splitlines():
+                wrapped = wordSplit(paragraph, content_w - 16 * mm, regular_font, 11)
+                lines.extend([line for _, line in wrapped] or [""])
+            lines_per_page = int((page_h - 109 * mm) // (6 * mm))
+            text_pages = [
+                lines[i:i + lines_per_page] for i in range(0, len(lines), lines_per_page)
+            ]
+            explanation_parts = [None] * len(text_pages)
         else:
             explanation_parts = _split_tall_image(
                 explanation_image,
@@ -619,8 +635,6 @@ def build_wrong_note_pdf(
 
         for part_index, explanation_part in enumerate(explanation_parts, start=1):
             _remaining_seconds(deadline_monotonic)
-            margin = 16 * mm
-            content_w = page_w - 2 * margin
             pdf.setFillColor(HexColor(_INK))
             pdf.rect(0, page_h - 23 * mm, page_w, 23 * mm, fill=1, stroke=0)
             pdf.setFillColor(white)
@@ -672,21 +686,14 @@ def build_wrong_note_pdf(
                 )
                 explanation_part.close()
             else:
-                explanation_text = str((item.get("extra") or {}).get("explanation_text") or "")
                 pdf.setFillColor(HexColor(_MUTED))
                 pdf.setFont(regular_font, 11)
-                message = explanation_text or "등록된 선생님 해설이 없습니다."
-                pdf.drawString(
-                    image_x + 8 * mm,
-                    image_y + image_h - 15 * mm,
-                    _ellipsize(
-                        pdf,
-                        message,
-                        font_name=regular_font,
-                        font_size=11,
-                        max_width=content_w - 16 * mm,
-                    ),
-                )
+                for line_index, line in enumerate(text_pages[part_index - 1]):
+                    pdf.drawString(
+                        image_x + 8 * mm,
+                        image_y + image_h - (15 + 6 * line_index) * mm,
+                        line,
+                    )
 
             pdf.setFillColor(HexColor(_MUTED))
             pdf.setFont(regular_font, 8)

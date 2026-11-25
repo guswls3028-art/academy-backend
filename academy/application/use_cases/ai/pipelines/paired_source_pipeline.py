@@ -147,6 +147,8 @@ def attach_paired_source_results(
                 cleanup_tmp_for_path(answer_local_path)
     elif answer_requested:
         source_issues.append("answer_source_preserved_manual_review")
+    else:
+        answers = list(result_payload.get("answers") or [])
 
     matched_answers = [
         answer

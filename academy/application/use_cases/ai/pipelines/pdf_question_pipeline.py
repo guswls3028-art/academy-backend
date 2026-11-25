@@ -63,6 +63,15 @@ _CIRCLED_ANSWER_TRANSLATION = str.maketrans(
     {character: str(index) for index, character in enumerate("①②③④⑤⑥⑦⑧⑨", 1)}
 )
 
+_CHOICE_KEY_HEADING = re.compile(
+    r"^[ \t]*(?:빠른[ \t]*정답|정답(?:표|[ \t]*및[ \t]*해설)?)"
+    r"(?:[ \t]*\([^\n()]{1,30}\))?[ \t]*$", re.MULTILINE
+)
+_LABELLED_CHOICE = re.compile(
+    r"^[ \t]*(\d{1,3})[.)][ \t]*\[(?:정답|답)\][ \t]*([①-⑨1-9])[ \t]*$",
+    re.MULTILINE,
+)
+
 
 def run_pdf_question_pipeline(
     *,
@@ -117,6 +126,7 @@ def run_pdf_question_pipeline(
     questions: List[Dict] = []
     solution_tail_start: Optional[int] = None
     excluded_pages: set[int] = set()
+    embedded_answers: List[Dict] = []
 
     if is_pdf:
         text_blocks_by_page, full_text_by_page = _extract_pdf_text(local_path)
@@ -136,6 +146,12 @@ def run_pdf_question_pipeline(
             full_text_by_page,
             pages,
         )
+        if source_role == "problem":
+            labelled_start, embedded_answers = _find_embedded_choice_key(
+                full_text_by_page, pages,
+            )
+            if labelled_start is not None:
+                solution_tail_start = labelled_start
         excluded_pages = _find_academy_review_cover_pages(
             full_text_by_page,
             pages,
@@ -259,14 +275,15 @@ def run_pdf_question_pipeline(
         tenant_id=tenant_id,
     )
 
-    explanations = (
-        _extract_explanations(
-            full_text_by_page,
-            solution_tail_start=solution_tail_start,
+    explanations = []
+    if embedded_answers:
+        explanations = _extract_labelled_choice_explanations(
+            text_blocks_by_page, embedded_answers,
         )
-        if is_pdf
-        else []
-    )
+    elif is_pdf:
+        explanations = _extract_explanations(
+            full_text_by_page, solution_tail_start=solution_tail_start,
+        )
 
     record_progress(
         job.id, "extracting_text", 75,
@@ -373,6 +390,8 @@ def run_pdf_question_pipeline(
         "exam_id": payload.get("exam_id"),
         "segmentation_method": segmentation_method,
     }
+    if embedded_answers:
+        result["answers"] = embedded_answers
 
     logger.info(
         "PDF_QUESTION_PIPELINE_DONE | job_id=%s | questions=%d | explanations=%d (unmatched=%d)",
@@ -439,6 +458,76 @@ def _find_solution_tail_start(
         logger.info("PDF_SOLUTION_TAIL_FOUND | page=%d", page_idx)
         return page_idx
     return None
+
+
+def _find_embedded_choice_key(
+    texts: Dict[int, str], pages: List[Dict],
+) -> Tuple[Optional[int], List[Dict]]:
+    """Recognize a separate answer section only with matching original numbers."""
+    for start, text in sorted(texts.items()):
+        if not _CHOICE_KEY_HEADING.search(text) or not _LABELLED_CHOICE.search(text):
+            continue
+        body = [
+            n for page in pages if page["page_index"] < start
+            for n in page.get("numbers", [])
+        ]
+        entries = []
+        for idx, page_text in sorted(texts.items()):
+            if idx < start:
+                continue
+            for match in _LABELLED_CHOICE.finditer(page_text):
+                entries.append({
+                    "question_number": int(match[1]),
+                    "answer": match[2].translate(_CIRCLED_ANSWER_TRANSLATION),
+                    "page_index": idx,
+                    "source": "source_file",
+                })
+        numbers = [entry["question_number"] for entry in entries]
+        if len(body) != len(numbers) or len(numbers) != len(set(numbers)) or set(body) != set(numbers):
+            continue
+        # A later paper in the same file must keep its own questions.
+        if any(
+            re.search(r"(?m)^[ \t]*\d{1,3}[.)][ \t]+(?!\[(?:정답|답)\])\S", page_text)
+            for idx, page_text in texts.items() if idx >= start
+        ):
+            continue
+        return start, entries
+    return None, []
+
+
+def _extract_labelled_choice_explanations(
+    blocks: Dict[int, List[Dict]], answers: List[Dict],
+) -> List[Dict]:
+    entries: List[Dict] = []
+    for idx in sorted({answer["page_index"] for answer in answers}):
+        # Keep teacher text across page breaks, stripping only the printed
+        # grade/subject masthead. The folio alternates sides on facing pages.
+        text = "\n".join(
+            block["text"] for block in blocks.get(idx, [])
+            if not (
+                re.search(r"(?:고\s*[1-3]|[1-3]\s*학년)", block["text"])
+                and re.search(r"영\s*역", block["text"])
+                and len(block["text"]) < 70
+                and not _LABELLED_CHOICE.search(block["text"])
+            )
+        )
+        matches = list(_LABELLED_CHOICE.finditer(text))
+        if not matches:
+            continue
+        # The preceding solution may continue across a physical page break.
+        if entries:
+            prefix = text[:matches[0].start()]
+            if prefix.strip():
+                entries[-1]["text"] = (entries[-1]["text"] + "\n" + prefix.strip())[:2000]
+                entries[-1]["continues_on_next_page"] = True
+        for i, match in enumerate(matches):
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            entries.append({
+                "question_number": int(match[1]),
+                "text": text[match.end():end].strip()[:2000],
+                "page_index": idx,
+            })
+    return entries
 
 
 def _find_academy_review_cover_pages(
@@ -1056,6 +1145,8 @@ def _crop_and_upload_explanation_images(
     result: Dict[int, str] = {}
     for explanation in explanations:
         number = explanation.get("question_number")
+        if explanation.get("continues_on_next_page"):
+            continue
         page = pages_by_index.get(int(explanation.get("page_index") or 0))
         if not number or not page:
             continue
