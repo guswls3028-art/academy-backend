@@ -31,7 +31,7 @@ def missing_homework_assignments(*, tenant, homework, student_ids=None, lock=Fal
     from apps.domains.homework_results.models import HomeworkScore
     from apps.domains.progress.models import AssessmentCorrection
     from apps.support.submissions.dependencies import homework_submission_revisions
-    from apps.support.submissions.homework_acceptance import homework_accepted_keys
+    from apps.support.submissions.homework_acceptance_queries import homework_accepted_keys
 
     assignments = HomeworkAssignment.objects.filter(
         tenant=tenant, homework=homework, session_id=homework.session_id,
