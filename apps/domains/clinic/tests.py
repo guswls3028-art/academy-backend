@@ -2785,11 +2785,43 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
                 score=90, max_score=100, passed=True, teacher_approved=False,
             )
         self.assertTrue(read_card())
+        # A stored zero can pass an explicit zero cutoff. An absent score cannot
+        # prove a scored pass, including on historical rows with a stale pass flag.
+        score.score = 0
+        score.save(update_fields=["score"])
+        self.assertTrue(read_card())
         score.passed = False
         score.save(update_fields=["passed"])
         self.assertFalse(read_card())
+        score.score = None
         score.passed = True
-        score.save(update_fields=["passed"])
+        score.save(update_fields=["score", "passed"])
+        self.assertFalse(read_card())
+        score.score = 90
+        score.save(update_fields=["score"])
+        self.assertTrue(read_card())
+
+        sibling = self.make_student(self.tenant, "today_sibling")
+        self.make_enrollment(self.tenant, sibling, self.data["lecture"])
+        parent = self._make_idcard_parent([self.student, sibling])
+        foreign = self.make_student(self.make_tenant("today_foreign"), "today_foreign_student")
+        self.client.force_authenticate(user=parent)
+        for child, expected in ((self.student, True), (sibling, False), (self.student, True)):
+            selected = self.client.get(
+                "/api/v1/clinic/idcard/", **self._headers(self.tenant), HTTP_X_STUDENT_ID=str(child.id),
+            )
+            self.assertEqual(selected.status_code, 200, selected.data)
+            self.assertEqual(selected.data["student_name"], child.name)
+            self.assertIs(selected.data["today_assessments_passed"], expected)
+            self.assertEqual([b["participant_id"] for b in selected.data["valid_bookings"]], [booking.id] if expected else [])
+            self.assertEqual([item["clinic_link_id"] for item in selected.data["current_targets"]], [link.id] if expected else [])
+        denied = self.client.get(
+            "/api/v1/clinic/idcard/", **self._headers(self.tenant), HTTP_X_STUDENT_ID=str(foreign.id),
+        )
+        self.assertEqual(denied.status_code, 403, denied.data)
+        for field in ("today_assessments_passed", "current_booking", "current_targets", "student_name"):
+            self.assertNotIn(field, denied.data)
+        self.client.force_authenticate(user=self.student.user)
         correction = AssessmentCorrection.objects.create(
             tenant=self.tenant, enrollment=enrollment, session=current, source_id=assignments[0].pk,
             source_type="homework", completed=False,
@@ -2801,9 +2833,11 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         progress.refresh_from_db()
         self.assertFalse(progress.homework_passed)
         self.assertFalse(progress.homework_submitted)
+        score.score = None
+        score.save(update_fields=["score"])
+        self.assertFalse(read_card())
         progress.homework_passed = True
         progress.save(update_fields=["homework_passed"])
-        self.assertTrue(read_card())
         self.assertTrue(read_card())
         # An unresolved item from today's actual class always takes priority.
         moved_schedule = SessionSchedule.objects.create(session=old_session, date=today)

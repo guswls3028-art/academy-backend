@@ -16,7 +16,7 @@ from apps.domains.submissions.tests.test_homework_media_submission import Homewo
 
 
 class HomeworkFileReviewPasscardTests(HomeworkMediaFixtureMixin, TestCase):
-    def _homework_review_http_fixture(self):
+    def _homework_review_http_fixture(self, *, start_graded=True):
         self.homework.meta = {"default_max_score": 100}
         self.homework.save(update_fields=["meta"])
         headers = {"HTTP_HOST": "localhost", "HTTP_X_TENANT_CODE": self.tenant.code}
@@ -58,10 +58,11 @@ class HomeworkFileReviewPasscardTests(HomeworkMediaFixtureMixin, TestCase):
             self.assertIs(response.data["passed"], value == 90)
             score_version = response.data["updated_at"]
 
-        change_score(90)
-        score = django_apps.get_model("homework_results", "HomeworkScore").objects.get(
+        if start_graded:
+            change_score(90)
+        score = django_apps.get_model("homework_results", "HomeworkScore").objects.filter(
             session=self.session, homework=self.homework, enrollment=self.enrollment, attempt_index=1,
-        )
+        ).first()
 
         def fingerprint():
             response = staff.get(f"/api/v1/submissions/submissions/students/{self.student.pk}/homework/", **headers)
@@ -152,12 +153,9 @@ class HomeworkFileReviewPasscardTests(HomeworkMediaFixtureMixin, TestCase):
         self.assertEqual(legacy_review_version(), manual_version.isoformat())
 
     def test_idcard_keeps_scored_pass_and_manual_incomplete_across_file_pass_and_cancel(self):
-        from apps.support.clinic import idcard_dependencies
-
-        if not hasattr(idcard_dependencies, "passed_todays_assessments"):
-            self.skipTest("Requires the passcard today-assessments contract from #853.")
-
-        headers, score, file_review, manual_review, _, _, upload, fingerprint, change_score = self._homework_review_http_fixture()
+        headers, _, file_review, manual_review, score_block, _, upload, fingerprint, change_score = (
+            self._homework_review_http_fixture(start_graded=False)
+        )
         today = timezone.localdate()
         self.session.date = today
         self.session.save(update_fields=["date"])
@@ -198,9 +196,14 @@ class HomeworkFileReviewPasscardTests(HomeworkMediaFixtureMixin, TestCase):
                 self.assertEqual(targets, {link.pk})
             self.assertIs(response.data["today_assessments_passed"], passed)
 
-        assert_card(True)
+        # A real upload, including one accepted by staff, is independent of a passing grade.
+        self.assertIsNone(score_block()["score"])
+        assert_card(False)
         accepted = file_review(True)
         self.assertEqual(accepted.status_code, 200, accepted.data)
+        self.assertIsNone(score_block()["score"])
+        assert_card(False)
+        change_score(90)
         assert_card(True)
         cancelled = file_review(False, accepted.data["teacher_accepted_updated_at"])
         self.assertEqual(cancelled.status_code, 200, cancelled.data)
@@ -219,6 +222,7 @@ class HomeworkFileReviewPasscardTests(HomeworkMediaFixtureMixin, TestCase):
         self.assertEqual(stale.data["code"], "HOMEWORK_MEDIA_CHANGED")
         accepted = file_review(True, cancelled.data["teacher_accepted_updated_at"])
         self.assertEqual(accepted.status_code, 200, accepted.data)
+        self.assertEqual(score_block()["score"], 0)
         assert_card(False, scored_pass=False)
         cancelled = file_review(False, accepted.data["teacher_accepted_updated_at"])
         self.assertEqual(cancelled.status_code, 200, cancelled.data)
@@ -236,6 +240,6 @@ class HomeworkFileReviewPasscardTests(HomeworkMediaFixtureMixin, TestCase):
         completed = manual_review(True, manual.data["correction_updated_at"].isoformat())
         self.assertEqual(completed.status_code, 200, completed.data)
         assert_card(True)
-        score.refresh_from_db()
-        self.assertEqual(score.score, 90)
-        self.assertTrue(score.passed)
+        final_grade = score_block()
+        self.assertEqual(final_grade["score"], 90)
+        self.assertTrue(final_grade["passed"])
