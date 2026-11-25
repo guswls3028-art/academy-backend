@@ -753,6 +753,8 @@ VOID      → {} (종단)
 
 **전이 SSOT:** `apps/billing/services/invoice_service.py`
 
+표시용 청구서 번호는 `INV-YYYYMM-{학원 코드}-NNN` 형식을 사용한다. 이 번호가 30자를 넘으면 새 청구서에 `INVYYYYMMDD-{36진수 학원 ID}`를 사용한다. 날짜는 청구 기간 시작일이다. 기존 번호와 결제사 주문 ID는 유지한다.
+
 - `process_billing`은 결제기한에 도달한 `INVOICE_REQUEST`를
   `SCHEDULED → PENDING`으로 전환한다. 자동카드는 결제 실행 직전에 같은
   전이를 거친다.

@@ -139,6 +139,8 @@ UI/API 소비자는 `monthly_supply_amount`, `monthly_tax_amount`,
 6. 세금계산서 요청 건은 `READY` 대기열에서 홈택스로 실제 발행한 뒤 국세청
    승인번호를 `발행 완료 기록`에 입력한다.
 
+격리 수납 회귀는 `python -m pytest -q tests/test_manual_settlement_journey.py`로 실행한다. 테스트 DB에 만든 두 학원의 소유자가 각각 로그인한다. 고객의 이체 활성화로 청구서를 생성한 뒤 신고, 플랫폼 승인·재시도, 고객 재조회, 결제 한 건과 수기 증빙 대기를 확인하고 공식 회수 명령으로 합성 학원·계정·수납 행을 정리한다. 공급사 자동발급은 꺼 둔다. 배포 인수 시에는 해당 빌드의 격리 환경에서 수납 가능한 합성 학원과 별도로 승인된 플랫폼 테스트 운영자를 사용한다.
+
 프론트 현재 계약은
 [`frontend/docs/USER-GUIDE-ADMIN.md`](../../../frontend/docs/USER-GUIDE-ADMIN.md#14-4-구독결제)에
 기록한다. 결제 설정 화면은 계좌이체 청구·입금 신고만 노출하고 카드 섹션은

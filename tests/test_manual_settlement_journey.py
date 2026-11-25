@@ -57,9 +57,11 @@ class ManualSettlementJourneyTests(LiveServerTestCase):
     def test_owner_submits_operator_confirms_and_owner_reloads(self):
         school_code = "qa-ymath-realuse-bank-school"
         platform_code = "qa-ymath-realuse-bank-ops"
-        password = secrets.token_urlsafe(24)
-        with patch.dict(os.environ, {"YMATH_REALUSE_SCENARIO_PASSWORD": password}):
+        owner_password = secrets.token_urlsafe(24)
+        operator_password = secrets.token_urlsafe(24)
+        with patch.dict(os.environ, {"YMATH_REALUSE_SCENARIO_PASSWORD": owner_password}):
             self.scenario(school_code)
+        with patch.dict(os.environ, {"YMATH_REALUSE_SCENARIO_PASSWORD": operator_password}):
             self.scenario(platform_code)
         school = Tenant.objects.get(code=school_code)
         platform = Tenant.objects.get(code=platform_code)
@@ -67,11 +69,12 @@ class ManualSettlementJourneyTests(LiveServerTestCase):
         self.assertFalse(operator.is_superuser)
         school_users = list(get_user_model().objects.filter(tenant=school).values_list("pk", flat=True))
 
+        self.assertFalse(Invoice.objects.filter(tenant=school).exists())
         transfer = "/billing/bank-transfer/"
         queue = "/billing/admin/bank-transfer/notices/"
         with self.settings(OWNER_TENANT_ID=platform.pk):
-            owner = self.login(school_code, password)
-            reviewer = self.login(platform_code, password)
+            owner = self.login(school_code, owner_password)
+            reviewer = self.login(platform_code, operator_password)
             self.api(owner, "GET", queue, status=403)
             self.api(owner, "PATCH", "/billing/business-profile/", {
                 "business_name": "QA Academy", "representative_name": "QA Owner",
@@ -85,6 +88,9 @@ class ManualSettlementJourneyTests(LiveServerTestCase):
                 "deposited_at": timezone.now().isoformat(), "tax_invoice_requested": True,
             }, status=201)
             self.assertEqual(submitted["status"], "SUBMITTED")
+            [pending] = self.api(owner, "GET", transfer)["invoices"]
+            self.assertEqual(pending["bank_transfer_notice"]["id"], submitted["id"])
+            self.assertEqual(pending["bank_transfer_notice"]["status"], "SUBMITTED")
             items = self.api(reviewer, "GET", queue + "?status=SUBMITTED")["results"]
             self.assertIn((submitted["id"], school_code), [(item["id"], item["tenant_code"]) for item in items])
             confirm = f"{queue}{submitted['id']}/confirm/"
@@ -107,6 +113,7 @@ class ManualSettlementJourneyTests(LiveServerTestCase):
             self.assertEqual(issue.status, "READY")
 
         credentials = list(OutstandingToken.objects.filter(user_id__in=school_users).values_list("pk", flat=True))
+        self.assertTrue(credentials)
         result = self.scenario(school_code, destroy=True)
         self.assertEqual(result["remaining"], {"tenants": 0, "users": 0})
         self.assertFalse(any(result["residue"].values()))
