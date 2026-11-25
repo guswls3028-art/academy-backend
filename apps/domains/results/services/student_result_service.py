@@ -190,6 +190,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         pass_score=pass_score,
         attempt_id=result.attempt_id,
         tenant=tenant,
+        initial_scores=initial_scores,
     )
     data["exam_id"] = exam_id
     data["meta_status"] = achievement_data["meta_status"]

@@ -476,6 +476,8 @@ def run_ai_sqs_worker(
                     continue
 
                 if not message:
+                    if _shutdown:
+                        break
                     consecutive_errors = 0
                     if worker_kind != "tools" and IDLE_SCALE_IN_ENABLED:
                         empty_polls += 1
@@ -503,6 +505,13 @@ def run_ai_sqs_worker(
                 # of the envelope's execution tier (Tools jobs often say basic).
                 tier_from_msg = tier
                 payload = message.get("payload", {})
+
+                # SIGTERM can arrive during ReceiveMessage or the rate-limit wait.
+                # Return the delivery before claiming a DB lease on a draining host.
+                if _shutdown:
+                    if receipt_handle and not queue.extend_visibility(receipt_handle, tier, 0):
+                        logger.warning("AI_SHUTDOWN_REDELIVERY_DEFERRED | job_id=%s", job_id)
+                    break
 
                 if not receipt_handle or not job_id or not job_type:
                     logger.error("Invalid message: job_id=%s receipt_handle=%s", job_id, bool(receipt_handle))

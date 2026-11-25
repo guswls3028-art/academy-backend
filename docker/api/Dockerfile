@@ -28,7 +28,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libngtcp2-crypto-ossl0="${LIBNGTCP2_VERSION}" \
     libcurl4t64="${LIBCURL_VERSION}" \
     libbrotli1="${LIBBROTLI_VERSION}" \
-    tesseract-ocr \
+    /usr/local/share/academy/tesseract/tesseract-ocr.deb \
+    /usr/local/share/academy/tesseract/libtesseract5.deb \
     tesseract-ocr-kor \
     && dpkg --configure -a \
     && test "$(dpkg-query -W -f='${Version}' libbrotli1)" = "${LIBBROTLI_VERSION}" \
@@ -99,6 +100,9 @@ EXPOSE 8000
 # - GUNICORN_WORKERS: 워커 수 (기본값: 4)
 # - GUNICORN_WORKER_CONNECTIONS: 연결 수 (기본값: 1000)
 # ALB idle timeout 60초보다 길게 연결을 유지해 upstream 재사용 중 502를 방지한다.
+# Verify the installed CLI/SONAME and trusted English/Korean data after Python dependencies.
+RUN python /usr/local/bin/verify-tesseract.py
+
 CMD ["sh", "-c", \
     "exec gunicorn \
     --bind 0.0.0.0:8000 \

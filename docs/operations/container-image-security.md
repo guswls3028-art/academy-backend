@@ -5,12 +5,94 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-11-25 glibc stable 수정 검증 및 High 예외 종료
+
+Debian trixie stable의 `glibc 2.41-12+deb13u5`는
+[CVE-2026-19499](https://security-tracker.debian.org/tracker/CVE-2026-19499)와
+[CVE-2026-5435](https://security-tracker.debian.org/tracker/CVE-2026-5435)의 공식 수정판이다.
+공식 InRelease 서명, ARM64 패키지 목록과 바이너리 SHA-256, 패키지 메타데이터 및
+AArch64 ELF를 확인했다. 탐지 감소만으로 예외를 종료한 것이 아니다.
+
+[정규 배포 45490658504](https://github.com/guswls3028-art/academy-backend/actions/runs/45490658504)의
+source는 `352df7e7c382dbf017de4f3a055a882eea51d5fd`다.
+[운영 성공 manifest](https://github.com/guswls3028-art/academy-backend/blob/6e9b9baae1dad7008fc749dc80d3289ae8175a2b/docs/reports/release-manifest.latest.json)의
+여섯 immutable ARM64 이미지에서 manifest/config와 패키지 변경 레이어의 SHA-256을
+검증하고 최종 dpkg 상태의 `libc6`·`libc-bin`이 모두 `2.41-12+deb13u5`임을 읽었다.
+운영 ASG·Batch digest를 같은 이미지에 연결했으며, 운영 컨테이너 안에서 별도
+취약 입력 재현이나 패키지 교체를 실행하지 않았다. 여섯 COMPLETE scan은
+High 0·Critical 0이다.
+
+동일 후보의 격리 개발 저장·실제 인코딩과 production 자원 접근 거절,
+preprod CDN 재생·임시 인스턴스 종료, 운영 API/DB·영상 재생 및 영향 OMR 읽기
+검증을 재사용한다. 합성 개발 자료는 잔여 객체·tenant·user 모두 0이며 공유 운영
+잠금 반환을 확인했다.
+
+따라서 `glibc / 2.41-12+deb13u4`의 두 exact 예외를 High 정본에서 제거한다.
+기존 exact identity 건수 계약에 맞춰 여섯 저장소의 High 상한도 2에서 0으로
+축소한다. 두 finding이 다시 나타나거나 다른 High/Critical이 검출되면 후보는
+실패한다. 10월 21일 무기한 승인은 만료 처리하지 않고 아래 이력으로 보존한다.
+SASL 수용, 기존 native/platform HOLD와 새 후보의 필수 릴리스 검증은 변경하지 않는다.
+
+## 보안 스캔으로 배포가 멈춘 경우
+
+배포 담당자는 실패한 실행·단계와 이미지별 저장소·digest·CVE·패키지·버전을
+공유 배포 기록에 남기고, 원인 해소를 우선 맡는다. 새 앱 변경의 준비 검사와
+서버 변경에 의존하지 않는 배포는 검증된 런타임 및 기존 슬롯 조건에 맞춰 진행한다.
+현재 진행 중인 실사용 검사와 운영 이용을 먼저 보호한다.
+
+배포판 패키지와 공식 업스트림 태그를 함께 확인한다. 수정 PR을 닫았거나
+별도 브랜치에 반영한 경우 지원 중인 유지보수 브랜치의 정확한 커밋과
+조상 관계를 확인한다. 지원되는 패키지와 수정 커밋을 찾으면 호환성 및
+출처를 검증하고, 새 후보에서 여섯 이미지의 최신 완료 스캔과 기존 실사용
+절차를 수행한다. 차단이 지속되면 담당자, 확인한 출처와 다음 확인 조건을
+남기고 기존 복구 감시에 연결한다.
+
+## 2026-11-24 OpenSSL 3.5 유지보수 스냅샷
+
+[배포 44934386925](https://github.com/guswls3028-art/academy-backend/actions/runs/44934386925)의
+완료 스캔은 기존 `openssl / 3.5.7-1~deb13u3`에서 신규 High 7건을 검출했다.
+공식 [OpenSSL 3.5 유지보수 커밋](https://github.com/openssl/openssl/commit/1ad851363d5b8588b0d40edcc045fd633e93f0c2)에는
+해당 일곱 건의 수정이 포함됐다. [Debian 보안 추적기](https://security-tracker.debian.org/tracker/source-package/openssl)에는
+stable 패키지의 해당 수정이 아직 게시되지 않아 공통 base를 3.5 유지보수 소스로 빌드한다.
+
+`docker/native-security/build-openssl.sh`는 해당 소스와 Debian stable
+`3.5.9-1~deb13u1` 패키징의 SHA-256을 대조한다. 기존 Debian 아키텍처 설정,
+패치, 패키지 이름과 공유 라이브러리 ABI로 빌드하며 Debian의 네이티브
+테스트와 심볼 검사를 적용한다. 설치 버전의 `~dev20261124+git1ad85136` 표기는
+유지보수 스냅샷을 식별한다. 런타임에는 같은 소스로 빌드한 CLI, 공유 라이브러리,
+legacy provider를 설치하고 Python TLS 런타임과 provider 로드를 확인한다.
+출처와 체크섬은 이미지의
+`/usr/local/share/academy/native-security/openssl-build.json`에 보존한다.
+
+정식 후보는 독립된 새 여섯 개 digest에 기존 ECR 정책을 적용한다.
+다른 신규 보고나 스캐너의 패키지 판정은 새 scan으로 확인한다.
+정식 Debian 호환 수정판이 게시되면 동일 ABI, 패키지 식별과 운영 경로를
+검증한 뒤 패키징 대체 범위를 다시 결정한다.
+
+## 2026-11-24 Kerberos stable 보안 갱신
+
+[QA 이미지 45386280631](https://github.com/guswls3028-art/academy-backend/actions/runs/45386280631)의
+새 base 완료 스캔에는 이전 OpenSSL 항목이 없었고, 기존
+`krb5 / 1.21.3-5+deb13u1+academy1`에서 High 6건이 검출됐다.
+[DSA-6650-1](https://security-tracker.debian.org/tracker/DSA-6650-1)은
+`CVE-2026-112314`, `CVE-2026-112320`–`CVE-2026-112323`,
+`CVE-2026-119079`의 stable 수정판을 `1.21.3-5+deb13u2`로 명시한다.
+
+`build-krb5.sh`는 공식 보안 소스의 해시와 동일 버전의 signed APT 패키지로
+클라이언트 라이브러리 네 개를 함께 갱신한다. stable 보안 패치와 이전
+`krb5_rd_cred` 수정 두 건을 적용해 `1.21.3-5+deb13u2+academy1`을 만든다.
+기존 공개 심볼, 패키지 간 버전 의존성과 Kerberos/GSSAPI 실행 검증을 유지한다.
+수정 후보의 정확한 새 digest에서 기존 ECR 정책을 다시 실행한다.
+
 ## 2026-11-13 PostgreSQL 클라이언트 라이브러리 수정
 
 배포 후보의 ECR scan이 Debian trixie `libpq5`의 source package인
 `postgresql-17 / 17.11-0+deb13u1`에서 신규 High 38건을 검출했다. Debian sid의
 공식 수정 패키지 `libpq5`와 `libpq-dev` `18.7-1` 두 개만 임시 APT 목록에서
 서명 검증 후 내려받고, arm64·amd64별 SHA-256과 패키지 메타데이터를 검증한다.
+APT 목록은 [2026-11-14 Debian snapshot](https://snapshot.debian.org/archive/debian/20261114T090000Z/)을 가리킨다.
+이 보존본의 목록 만료 검사는 해당 임시 소스에서만 해제하며 Debian 서명과
+두 패키지의 기존 체크섬 검증을 유지한다.
 런타임에는 `libpq5`만 설치하며 나머지 APT 패키지는 기존 trixie 소스를 사용한다.
 [차단된 배포](https://github.com/guswls3028-art/academy-backend/actions/runs/43398146196) ·
 [PostgreSQL 보안 릴리스](https://www.postgresql.org/about/news/postgresql-187-1712-1616-1520-1425-and-19-rc-2-released-3442/)
@@ -248,7 +330,10 @@ APT 단계에서 `libbrotli1`을 해당 stable 수정 버전으로 명시 설치
 
 <a id="glibc-approval-20261021"></a>
 
-## 2026-10-21 온라인 제출 수정 배포의 glibc 두 예외 무기한 승인
+## 2026-10-21 온라인 제출 수정 배포의 glibc 두 예외 무기한 승인 (이력: 2026-11-25 종료)
+
+이 절은 당시의 명시 승인과 잔여 위험을 보존한다. 두 예외는 위의 공식 stable
+수정판 운영 검증 후 정본에서 제거했으며, 현재 후보에 적용하는 승인이 아니다.
 
 [온라인 제출 수정 PR669](https://github.com/guswls3028-art/academy-backend/pull/669)의
 [배포39552635486](https://github.com/guswls3028-art/academy-backend/actions/runs/39552635486)은
@@ -1178,7 +1263,7 @@ SQLite FTS5 생성·쓰기·검색도 실행한다.
 
 당시 두 SSOT의 허용 identity를 비우고 여섯 repository의 High 상한을 모두
 0으로 낮췄다. 해당 vendor-fixed 취약점의 예외는 현재도 복원하지 않는다.
-현재 후보는 이 문서 상단의 exact·기한부 정책과 여섯 immutable digest 완료
+현재 후보는 두 SSOT의 빈 허용 identity 목록과 여섯 immutable digest 완료
 scan을 적용한다. 검토되지 않은 새 finding은 계속 후보를 중단한다.
 이전 만료일·identity 교체·부분집합 및 사라진 항목 보고 테스트는 `tests/fixtures/security-20260919/`의
 명시적 과거 스냅샷으로 유지한다. 해당 fixture는 배포 허가에 사용하지 않는다.
@@ -1484,3 +1569,34 @@ python -m pytest tests/test_ecr_critical_scan_gate.py -q
 python -m pytest tests/test_release_performance_contract.py -q
 pwsh scripts/v1/test-workflow-governance-contract.ps1
 ```
+
+
+## Tesseract 5.5.4: Trixie-native OCR package repair
+
+V1 run45456790122 stopped before development on CVE-2026-88048 in the AI image's
+Debian Trixie tesseract5.5.0-1. No rollout occurred. The fixed Debian source is
+5.5.4-1; the forky CLI requires ICU78 whereas Trixie supplies ICU76, so runtime
+images must not install forky binaries or add its apt distribution.
+
+`docker/native-security/build-tesseract.sh` checks the exact SHA256 of the official
+Debian signed DSC and all three source archives, verifies the DSC with Debian's
+maintainer keyring, and uses the unchanged Debian packaging/build/tests on Trixie.
+Only the local package revision becomes5.5.4-1+academy1. Source identity remains
+`tesseract`; CLI `tesseract` and SONAME `libtesseract.so.5` remain. Debian generates
+native runtime dependencies; no dependency field is weakened or borrowed from forky.
+
+The base builder validates installed packages using normal generated English and
+Korean text and trusted system language packs. It exports only the two runtime
+debs; API, AI CPU and Tools install and verify those same packages after their
+Python dependencies. Korean, English and orientation packs remain available.
+Messaging/Video do not install OCR packages. The benign verifier neither loads
+untrusted traineddata nor reproduces the vulnerability. Static tests alone do
+not prove the rebuild or OCR: official arm64 native-image CI must build and pass
+the actual verifier, followed by all affected service-image checks and fresh ECR
+scans under unchanged acceptance/severity gates. No successful scan or live
+convergence is claimed until the release operator verifies exact digests and
+normal isolated development/preprod/runtime gates.
+
+Primary metadata: [Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-88048),
+[fixed Debian source](https://deb.debian.org/debian/pool/main/t/tesseract/tesseract_5.5.4-1.dsc),
+[forky runtime dependencies](https://packages.debian.org/forky/tesseract-ocr).

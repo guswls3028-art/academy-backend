@@ -559,6 +559,7 @@ class ScheduledNotification(models.Model):
     trigger = models.CharField(max_length=60, db_index=True)
     send_at = models.DateTimeField(db_index=True)
     payload = models.JSONField(help_text="enqueue_alimtalk kwargs (to, text, message_mode, template_id, etc.)")
+    grade_homework_review = models.JSONField(null=True, blank=True)
     dispatch_key = models.UUIDField(
         default=uuid4,
         null=True,

@@ -7,11 +7,11 @@
 
 동작:
 1. session.date가 어제(또는 지정 날짜)인 세션 조회
-2. 해당 세션의 HomeworkAssignment 중 HomeworkScore가 없거나 score=None인 학생 추출
+2. 해당 과제의 현재 배정 중 제출·통과·채점·검사 보류 증거가 없는 학생 추출
 3. AutoSendConfig(trigger="assignment_not_submitted")이 enabled인 테넌트만 발송
 4. 학부모에게 알림톡 발송
 
-스케줄러(cron/EventBridge)로 매일 1회 실행 권장.
+운영 자동 스케줄은 등록되어 있지 않다.
 """
 
 import logging
@@ -21,8 +21,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from apps.support.messaging.assignment_not_submitted_dependencies import (
-    assignments_for_homework_session,
-    first_attempt_homework_is_not_submitted,
+    missing_homework_assignments,
     homeworks_for_session,
     sessions_for_assignment_not_submitted,
 )
@@ -108,29 +107,9 @@ class Command(BaseCommand):
 
             for homework in homeworks:
                 # 과제 대상자
-                assignments = assignments_for_homework_session(
-                    homework=homework,
-                    session=session,
-                )
-
+                assignments = missing_homework_assignments(tenant=tenant, homework=homework)
                 for assignment in assignments:
-                    enrollment = assignment.enrollment
-                    student = enrollment.student if enrollment else None
-                    if not student:
-                        continue
-                    if getattr(student, "deleted_at", None):
-                        continue
-                    if enrollment.status != "ACTIVE":
-                        continue
-
-                    is_not_submitted = first_attempt_homework_is_not_submitted(
-                        homework=homework,
-                        enrollment=enrollment,
-                    )
-                    if not is_not_submitted:
-                        skip_count += 1
-                        continue
-
+                    student = assignment.enrollment.student
                     if dry_run:
                         self.stdout.write(
                             f"  [DRY] tenant={tenant_id} student={student.name} "

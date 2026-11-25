@@ -458,9 +458,17 @@ class SendMessageRequestSerializer(serializers.Serializer):
                 raise serializers.ValidationError({
                     "alimtalk_extra_vars_per_student": "학생별 치환값 형식이 올바르지 않습니다.",
                 })
-            if len(values) > 50 or any(
+            reviewed_states = values.get("_homework_notice_states")
+            if "_homework_notice_states" in values and (
+                attrs.get("block_category") != "grades" or not attrs.get("session_id")
+                or not isinstance(reviewed_states, str)
+            ):
+                raise serializers.ValidationError({"alimtalk_extra_vars_per_student": "과제 상태는 차시 성적 화면에서 확인해 주세요."})
+            # The review snapshot is not a template substitution or provider field.
+            # The resolver bounds it against the session's actual referenced assignments.
+            if len(values) - int(reviewed_states is not None) > 50 or any(
                 len(str(key)) > 50 or len(str(value)) > 1000
-                for key, value in values.items()
+                for key, value in values.items() if key != "_homework_notice_states"
             ):
                 raise serializers.ValidationError({
                     "alimtalk_extra_vars_per_student": "학생별 치환값의 항목 또는 길이가 허용 범위를 초과했습니다.",

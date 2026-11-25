@@ -6,6 +6,7 @@ from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
+from rest_framework.renderers import JSONRenderer
 
 from apps.domains.student_app.tests import test_grades_summary_homework as fixtures
 from apps.support.omr.score_shape import get_exam_score_shape
@@ -209,6 +210,75 @@ class GradesSummaryQueryBudgetTests(TestCase):
             tenant=self.tenant, student=self.student, include_grade_board_details=False,
         )
         self.assertNotIn("learning_todo_eligible", analytics_rows["exams"][0])
+
+    def test_item_analysis_prefetch_preserves_response_and_avoids_deferred_queries(self):
+        from apps.support.student_app import results_summary
+
+        parent_user = fixtures.User.objects.create_user(username="item-parent", tenant=self.tenant)
+        fixtures.TenantMembership.ensure_active(tenant=self.tenant, user=parent_user, role="parent")
+        parent = apps.get_model("parents", "Parent").objects.create(
+            tenant=self.tenant, user=parent_user, name="Parent", phone="01099998888",
+        )
+        self.student.parent = parent
+        self.student.save(update_fields=["parent"])
+        empty = self._score_exam(title="Legacy without items", order=99, score=65, max_score=100)
+        counts = {}
+        for order in range(1, 13):
+            exam, sheet, questions, result = self._add_exam(order, "manual")
+            if order == 1:
+                result.total_score = 0
+                result.save(update_fields=["total_score"])
+                self.ResultItem.objects.filter(result=result).update(score=0, is_correct=False)
+                zero_id = exam.pk
+            elif order == 2:
+                self.ResultItem.objects.filter(result=result, question=questions[-1]).update(
+                    score=0, is_correct=False, include_in_wrong_note=True,
+                )
+                apps.get_model("progress", "AssessmentCorrection").objects.create(
+                    tenant=self.tenant, session=exam.sessions.get(), enrollment=self.enrollment,
+                    source_type="exam", source_id=exam.pk, completed=True,
+                    source_fingerprint=fixtures._exam_correction_fingerprint(result),
+                )
+                completed_id = exam.pk
+            elif order == 3:
+                template = self.Exam.objects.create(tenant=self.tenant, title="Legacy template", exam_type="template")
+                sheet.exam = template
+                sheet.save(update_fields=["exam"])
+                AnswerKey.objects.filter(exam=exam).update(exam=template)
+                exam.template_exam = template
+                exam.save(update_fields=["template_exam"])
+                legacy_id = exam.pk
+            if order not in (3, 12):
+                continue
+            for role, user in (("student", self.user), ("parent", parent_user)):
+                for scope in ("", "rows"):
+                    with self.subTest(history=order, role=role, scope=scope):
+                        def call():
+                            request = self.factory.get("/api/v1/student/grades/", {"scope": scope},
+                                HTTP_X_STUDENT_ID=str(self.student.pk))
+                            request.tenant = self.tenant
+                            fixtures.force_authenticate(request, user=user)
+                            return fixtures.MyGradesSummaryView.as_view()(request)
+
+                        # Restore the original three-level prefetch for the control read.
+                        with patch.object(results_summary, "Prefetch", create=True,
+                                          return_value="items__question__sheet"), CaptureQueriesContext(connection) as before:
+                            control = call()
+                        with CaptureQueriesContext(connection) as after:
+                            actual = call()
+                        self.assertEqual(actual.status_code, 200)
+                        self.assertEqual(JSONRenderer().render(actual.data), JSONRenderer().render(control.data))
+                        self.assertEqual(len(before) - len(after), 2)
+                        rows = {row["exam_id"]: row for row in actual.data["exams"]}
+                        self.assertEqual(rows[zero_id]["total_score"], 0)
+                        self.assertEqual(rows[zero_id]["wrong_question_numbers"], [1, 2, 3, 4, 5])
+                        self.assertEqual(rows[completed_id]["correction_status"], "COMPLETED")
+                        self.assertEqual(rows[legacy_id]["total_questions"], 5)
+                        self.assertEqual(rows[empty.target_id]["total_questions"], 0)
+                        if order == 3:
+                            counts[(role, scope)] = len(after)
+                        else:
+                            self.assertEqual(len(after), counts[(role, scope)])
 
     def test_summary_limits_ranking_to_exams_with_published_comparison_fields(self):
         from apps.support.student_app import results_summary

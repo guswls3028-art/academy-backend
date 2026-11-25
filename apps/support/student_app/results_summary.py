@@ -5,7 +5,7 @@ from __future__ import annotations
 from math import isfinite
 from typing import Any
 
-from django.db.models import F, Max
+from django.db.models import F, Max, Prefetch
 from django.utils import timezone
 
 from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
@@ -233,12 +233,22 @@ def build_student_grades_summary(
     }
     result_analysis_map = {}
     if result_ids:
-        from apps.domains.results.models import Result
+        from apps.domains.results.models import Result, ResultItem
 
         result_rows = list(
             Result.objects
             .filter(id__in=result_ids)
-            .prefetch_related("items__question__sheet")
+            .prefetch_related(Prefetch(
+                "items",
+                # This request-local cache serves only analysis and correction fingerprints.
+                # Keep their fields and relation keys; omit wide crop/region and sheet data.
+                queryset=ResultItem.objects.select_related("question__sheet").only(
+                    "id", "result_id", "question_id", "answer", "is_correct",
+                    "include_in_wrong_note", "score", "max_score", "question__id",
+                    "question__number", "question__sheet_id", "question__sheet__id",
+                    "question__sheet__exam_id",
+                ),
+            ))
         )
         result_by_id = {int(result.id): result for result in result_rows}
         result_analysis_map = {
@@ -421,6 +431,11 @@ def build_student_grades_summary(
     remediated_homework_keys, teacher_completed_homework_keys = homework_remediation_keys(
         tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=homework_ids,
     )
+    from apps.support.submissions.homework_acceptance import homework_accepted_keys
+
+    accepted_homework_keys = homework_accepted_keys(
+        tenant=tenant, enrollment_ids=enrollment_ids, homework_ids=homework_ids,
+    )
     submitted_revisions = homework_submission_revisions(
         tenant=tenant,
         enrollment_ids=enrollment_ids,
@@ -481,12 +496,13 @@ def build_student_grades_summary(
         session_title, lecture_title = _session_titles(score.session)
 
         is_pass_1st = bool(score.passed)
+        teacher_accepted = key in accepted_homework_keys
         remediated = key in remediated_homework_keys
         submission_key = (score.enrollment_id, score.homework_id)
         media_locked = submission_key in submission_media_lock_keys
         max_attempt = homework_retake_counts.get(submission_key, 1)
 
-        if is_pass_1st:
+        if is_pass_1st or teacher_accepted:
             achievement = "PASS"
         elif remediated:
             achievement = "REMEDIATED"
@@ -513,7 +529,8 @@ def build_student_grades_summary(
             "title": score.homework.title if score.homework else f"과제 #{score.homework_id}",
             "score": safe_score,
             "max_score": effective_max,
-            "passed": is_pass_1st,
+            "passed": is_pass_1st or teacher_accepted,
+            "teacher_accepted": teacher_accepted,
             "achievement": achievement,
             "submission_state": submission_state,
             "teacher_resolved": key in teacher_completed_homework_keys,
@@ -547,7 +564,8 @@ def build_student_grades_summary(
             or submitted_revision != unscored_reviewed_revisions[key]
         )
         remediated = key in remediated_homework_keys
-        video_makeup = key in video_makeup_keys and not remediated
+        teacher_accepted = key in accepted_homework_keys
+        video_makeup = key in video_makeup_keys and not (remediated or teacher_accepted)
         if (
             (int(assignment.enrollment_id), int(assignment.session_id)) in absent_learning_pairs
             and submission_key not in submitted_revisions
@@ -567,10 +585,11 @@ def build_student_grades_summary(
             "title": homework.title if homework else f"과제 #{assignment.homework_id}",
             "score": None,
             "max_score": effective_max,
-            "passed": None if awaiting_review or video_makeup else False,
+            "passed": True if teacher_accepted else None if awaiting_review or video_makeup else False,
+            "teacher_accepted": teacher_accepted,
             "achievement": (
-                "REMEDIATED"
-                if remediated
+                "PASS" if teacher_accepted else
+                "REMEDIATED" if remediated
                 else None if awaiting_review or video_makeup else "NOT_SUBMITTED"
             ),
             "inspection_status": HomeworkScore.MetaStatus.VIDEO_MAKEUP if video_makeup else None,

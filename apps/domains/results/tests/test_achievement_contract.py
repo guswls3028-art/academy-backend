@@ -17,6 +17,9 @@ compute_exam_achievement 는 유틸 SSOT 이다. 두 로직이 정책상 동등�
 from django.contrib.auth import get_user_model
 from django.apps import apps as django_apps
 from django.test import TestCase
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
+from unittest.mock import patch
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.domains.clinic.tests import ClinicTestMixin
@@ -70,6 +73,65 @@ class AchievementContractTest(TestCase, ClinicTestMixin):
     # ──────────────────────────────
     # Helpers
     # ──────────────────────────────
+    def test_student_detail_reuses_initial_scores_without_changing_response(self):
+        from apps.domains.results.utils.initial_exam_score import load_initial_exam_scores
+
+        parent_user = self.make_user("detail_reuse_parent")
+        parent = django_apps.get_model("parents", "Parent").objects.create(
+            tenant=self.tenant, user=parent_user, name="Parent", phone="01088882222",
+        )
+        self.student.parent = parent
+        self.student.save(update_fields=["parent"])
+        for role, user in (("student", self.student.user), ("parent", parent_user)):
+            TenantMembership.ensure_active(tenant=self.tenant, user=user, role=role)
+            for scenario, score, status in (
+                ("zero", 0, None), ("pass", 85, None), ("missing", 0, "NOT_SUBMITTED"),
+                ("legacy", 40, None), ("retake", 0, None),
+            ):
+                with self.subTest(role=role, scenario=scenario):
+                    exam = self._make_exam(f"detail_{role}_{scenario}")
+                    ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+                    if scenario == "legacy":
+                        Result.objects.create(target_type="exam", target_id=exam.id,
+                            enrollment=self.enrollment, total_score=score, max_score=100)
+                    else:
+                        initial, result = self._make_attempt_and_result(exam, score=score, meta_status=status)
+                        if scenario == "retake":
+                            initial.meta = {"initial_snapshot": {"total_score": score, "max_score": 100}}
+                            initial.is_representative = False
+                            initial.save(update_fields=["meta", "is_representative"])
+                            result.attempt = ExamAttempt.objects.create(
+                                exam=exam, enrollment=self.enrollment, attempt_index=2,
+                                is_retake=True, is_representative=True, status="done", submission_id=0,
+                            )
+                            result.total_score = 85
+                            result.save(update_fields=["attempt", "total_score"])
+
+                    def request():
+                        req = APIRequestFactory().get(f"/student/results/me/exams/{exam.id}/",
+                            **({"HTTP_X_STUDENT_ID": str(self.student.id)} if role == "parent" else {}))
+                        req.user, req.tenant = user, self.tenant
+                        return req
+
+                    def old_achievement(**kwargs):
+                        kwargs.pop("initial_scores", None)
+                        return compute_exam_achievement(**kwargs)
+
+                    with patch("apps.domains.results.services.student_result_service.compute_exam_achievement",
+                               side_effect=old_achievement), CaptureQueriesContext(connection) as before_queries:
+                        before = get_my_exam_result_data(request(), exam.id, tenant=self.tenant)
+                    with patch("apps.domains.results.services.student_result_service.load_initial_exam_scores",
+                               wraps=load_initial_exam_scores) as first_load, patch(
+                        "apps.domains.results.utils.exam_achievement.load_initial_exam_scores",
+                        wraps=load_initial_exam_scores,
+                    ) as repeated_load, CaptureQueriesContext(connection) as after_queries:
+                        after = get_my_exam_result_data(request(), exam.id, tenant=self.tenant)
+                    self.assertEqual(after, before)
+                    self.assertEqual(after["total_score"], None if status else score)
+                    first_load.assert_called_once_with(exam_ids=[exam.id], enrollment_ids=[self.enrollment.id])
+                    repeated_load.assert_not_called()
+                    self.assertEqual(len(before_queries) - len(after_queries), 2)
+
     def _make_exam(self, title: str, *, pass_score=60.0) -> Exam:
         exam = Exam.objects.create(
             tenant=self.tenant, title=title,
