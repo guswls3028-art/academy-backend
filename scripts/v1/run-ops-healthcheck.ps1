@@ -128,17 +128,23 @@ try {
     Add-Issue "/healthz 연결 실패 — 서버가 다운되었을 수 있습니다"
 }
 
+$dbReady = $false
 try {
     $healthCode = $null
     try {
         $resp = Invoke-WebRequest -Uri "$API_DOMAIN/health" -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
         $healthCode = $resp.StatusCode
+        $health = $resp.Content | ConvertFrom-Json -AsHashtable -NoEnumerate -ErrorAction Stop
+        $dbReady = $healthCode -eq 200 -and $health -is [System.Collections.IDictionary] -and
+            $health.service -is [string] -and $health.service -ceq "academy-api" -and
+            $health.status -is [string] -and $health.status -ceq "healthy" -and
+            $health.database -is [string] -and $health.database -ceq "connected"
     } catch {
         if ($_.Exception.Response) {
             $healthCode = [int]$_.Exception.Response.StatusCode
         }
     }
-    if ($healthCode -eq 200) {
+    if ($dbReady) {
         Write-Check "✅" "/health:  200 (DB 연결 정상)"
     } else {
         Write-Check "❌" "/health:  $healthCode (DB 연결 문제 가능)"
@@ -254,39 +260,44 @@ Write-Host ""
 # ══════════════════════════════════════════════════════════════
 # [4/10] 최근 배포 (GitHub Actions)
 # ══════════════════════════════════════════════════════════════
-Write-Host "[4/10] 최근 배포 (GitHub Actions)"
+Write-Host "[4/10] 배포와 최근 작업 (GitHub Actions)"
 
-try {
-    $ghRuns = gh run list --repo $GH_REPO --limit 3 --json status,conclusion,name,createdAt,headBranch,event 2>&1
-    $runs = $ghRuns | ConvertFrom-Json
-
-    if ($runs -and $runs.Count -gt 0) {
+$runQueries = @(
+    @{ Label = "최근 운영 배포"; Filters = @("--workflow", "v1-build-and-push-latest.yml", "--branch", "main", "--limit", "1") },
+    @{ Label = "최근 전체 작업"; Filters = @("--limit", "3") }
+)
+$displayedRuns = @{}
+foreach ($query in $runQueries) {
+    $label = $query.Label
+    Write-Host "  $label"
+    try {
+        $filters = $query.Filters
+        $ghRuns = gh run list --repo $GH_REPO @filters --json databaseId,name,headBranch,headSha,createdAt,status,conclusion 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "gh run list failed" }
+        $runs = $ghRuns | ConvertFrom-Json -ErrorAction Stop
+        if (-not $runs) {
+            Write-Check "⚠️" "$label 실행 내역 없음"
+            Add-Warning "$label 실행 내역 없음"
+        }
         foreach ($run in $runs) {
-            $runName = $run.name
-            if ($runName.Length -gt 30) { $runName = $runName.Substring(0, 27) + "..." }
-            $branch = $run.headBranch
-            $created = $run.createdAt
-            if ($created -and $created.Length -gt 16) { $created = $created.Substring(0, 16).Replace("T", " ") }
-            $status = $run.status
-            $conclusion = $run.conclusion
-
-            if ($conclusion -eq "success") {
-                Write-Check "✅" "$runName ($branch) $created — 성공"
-            } elseif ($conclusion -eq "failure") {
-                Write-Check "❌" "$runName ($branch) $created — 실패"
-                Add-Warning "최근 GitHub Actions 실행 실패: $runName"
-            } elseif ($status -eq "in_progress") {
-                Write-Check "⏳" "$runName ($branch) $created — 진행 중"
+            if ($displayedRuns.ContainsKey($run.databaseId)) { continue }
+            $displayedRuns[$run.databaseId] = $true
+            $created = ([datetimeoffset]$run.createdAt).ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'")
+            $revision = $run.headSha.Substring(0, 8)
+            $detail = "$($run.name) #$($run.databaseId) ($($run.headBranch)@$revision) $created"
+            if ($run.status -ne "completed") {
+                Write-Check "⏳" "$detail — $($run.status)"
+            } elseif ($run.conclusion -eq "success") {
+                Write-Check "✅" "$detail — 성공"
             } else {
-                Write-Check "⚠️" "$runName ($branch) $created — $status/$conclusion"
+                Write-Check "⚠️" "$detail — $($run.conclusion)"
+                Add-Warning "$label $($run.conclusion): $($run.name) #$($run.databaseId)"
             }
         }
-    } else {
-        Write-Check "⚠️" "최근 실행 내역 없음"
+    } catch {
+        Write-Check "⚠️" "$label 조회 실패"
+        Add-Warning "$label 조회 실패"
     }
-} catch {
-    Write-Check "⚠️" "GitHub CLI(gh) 조회 실패 — gh auth login 필요할 수 있음"
-    Add-Warning "GitHub Actions 조회 실패"
 }
 
 Write-Host ""
@@ -309,6 +320,8 @@ try {
 
     if ($rdsStatus -eq "available") {
         Write-Check "✅" "상태: $rdsStatus ($rdsClass, $rdsEngine)"
+    } elseif ($rdsStatus -eq "backing-up" -and $dbReady) {
+        Write-Check "ℹ️" "상태: backing-up (백업 진행 중, API의 DB 연결 확인됨)"
     } else {
         Write-Check "❌" "상태: $rdsStatus — 비정상!"
         Add-Issue "RDS 상태가 '$rdsStatus' — 즉시 확인 필요"
@@ -542,50 +555,35 @@ Write-Host ""
 Write-Host "[8/10] CloudWatch 알람"
 
 try {
-    $alarmsJson = aws cloudwatch describe-alarms `
-        --state-value ALARM `
+    $alarmsJson = aws cloudwatch describe-alarms --alarm-types MetricAlarm CompositeAlarm `
         --region $REGION --output json 2>&1
-    $alarms = ($alarmsJson | ConvertFrom-Json).MetricAlarms
-
-    if ($alarms -and $alarms.Count -gt 0) {
-        $serviceAlarms = @()
-        $controlAlarms = @()
-        foreach ($alarm in $alarms) {
-            if (Test-ScalingControlAlarm $alarm) {
-                $controlAlarms += $alarm
-            } else {
-                $serviceAlarms += $alarm
-            }
-        }
-
-        if ($serviceAlarms.Count -gt 0) {
-            Write-Check "❌" "$($serviceAlarms.Count)개 서비스 알람이 ALARM 상태!"
-            foreach ($alarm in $serviceAlarms) {
-                Write-Check "  🔴" "$($alarm.AlarmName): $($alarm.MetricName) $($alarm.ComparisonOperator) $($alarm.Threshold)"
-                Add-Issue "CloudWatch 알람 발생: $($alarm.AlarmName)"
-            }
-        } else {
-            Write-Check "✅" "서비스 알람 정상 (서비스 ALARM 상태 없음)"
-        }
-
-        if ($controlAlarms.Count -gt 0) {
-            foreach ($alarm in $controlAlarms) {
-                Write-Check "  ℹ️" "$($alarm.AlarmName): 스케일링 제어 알람 상태=$($alarm.StateValue) ($($alarm.ComparisonOperator) $($alarm.Threshold))"
-            }
-        }
-    } else {
-        Write-Check "✅" "모든 알람 정상 (ALARM 상태 없음)"
+    if ($LASTEXITCODE -ne 0) { throw "CloudWatch describe-alarms failed" }
+    $response = $alarmsJson | ConvertFrom-Json -ErrorAction Stop
+    if ($null -eq $response.MetricAlarms -or $null -eq $response.CompositeAlarms) {
+        throw "CloudWatch alarm inventory incomplete"
+    }
+    $impactAlarm = $response.CompositeAlarms | Where-Object AlarmName -eq "academy-api-UserImpact"
+    if ($impactAlarm.StateValue -eq "OK") {
+        Write-Check "✅" "academy-api-UserImpact: OK"
+    } elseif (-not $impactAlarm) {
+        Write-Check "⚠️" "academy-api-UserImpact 경보를 확인할 수 없음"
+        Add-Warning "academy-api-UserImpact 경보를 확인할 수 없음"
     }
 
-    # Also check INSUFFICIENT_DATA (may indicate misconfigured alarms)
-    $insuffJson = aws cloudwatch describe-alarms `
-        --state-value INSUFFICIENT_DATA `
-        --region $REGION --output json 2>&1
-    $insuffAlarms = ($insuffJson | ConvertFrom-Json).MetricAlarms
-
-    if ($insuffAlarms -and $insuffAlarms.Count -gt 0) {
-        Write-Check "⚠️" "$($insuffAlarms.Count)개 알람 데이터 부족 (INSUFFICIENT_DATA)"
-        Add-Warning "$($insuffAlarms.Count)개 CloudWatch 알람 데이터 부족"
+    $allAlarms = @($response.MetricAlarms) + @($response.CompositeAlarms)
+    foreach ($alarm in $allAlarms) {
+        if ($alarm.StateValue -eq "ALARM") {
+            if (Test-ScalingControlAlarm $alarm) {
+                Write-Check "ℹ️" "$($alarm.AlarmName): 스케일링 제어 알람 ALARM"
+            } else {
+                $condition = if ($alarm.MetricName) { " ($($alarm.MetricName) $($alarm.ComparisonOperator) $($alarm.Threshold))" }
+                Write-Check "❌" "$($alarm.AlarmName): ALARM$condition"
+                Add-Issue "CloudWatch 알람 발생: $($alarm.AlarmName)"
+            }
+        } elseif ($alarm.StateValue -eq "INSUFFICIENT_DATA") {
+            Write-Check "⚠️" "$($alarm.AlarmName): INSUFFICIENT_DATA"
+            Add-Warning "CloudWatch 알람 데이터 부족: $($alarm.AlarmName)"
+        }
     }
 } catch {
     Write-Check "⚠️" "CloudWatch 알람 조회 실패"
