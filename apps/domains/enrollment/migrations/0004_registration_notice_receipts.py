@@ -26,6 +26,12 @@ class Migration(migrations.Migration):
                 ('lecture', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='lectures.lecture')),
                 ('tenant', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='core.tenant')),
             ],
+            options={
+                'indexes': [models.Index(fields=['tenant', 'lecture', 'actor_id', '-id'], name='enroll_notice_latest')],
+                'constraints': [
+                    models.UniqueConstraint(fields=('tenant', 'actor_id', 'request_id'), name='enroll_notice_request_uniq'),
+                ],
+            },
         ),
         migrations.CreateModel(
             name='EnrollmentNoticeRecipient',
@@ -45,21 +51,11 @@ class Migration(migrations.Migration):
                 ('next_attempt_at', models.DateTimeField(null=True)),
                 ('registration', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='recipients', to='enrollment.enrollmentnoticeregistration')),
             ],
-        ),
-        migrations.AddIndex(
-            model_name='enrollmentnoticeregistration',
-            index=models.Index(fields=['tenant', 'lecture', 'actor_id', '-id'], name='enroll_notice_latest'),
-        ),
-        migrations.AddConstraint(
-            model_name='enrollmentnoticeregistration',
-            constraint=models.UniqueConstraint(fields=('tenant', 'actor_id', 'request_id'), name='enroll_notice_request_uniq'),
-        ),
-        migrations.AddIndex(
-            model_name='enrollmentnoticerecipient',
-            index=models.Index(fields=['status', 'next_attempt_at', 'id'], name='enroll_notice_due'),
-        ),
-        migrations.AddConstraint(
-            model_name='enrollmentnoticerecipient',
-            constraint=models.UniqueConstraint(fields=('registration', 'student_id', 'role'), name='enroll_notice_role_uniq'),
+            options={
+                'indexes': [models.Index(fields=['status', 'next_attempt_at', 'id'], name='enroll_notice_due')],
+                'constraints': [
+                    models.UniqueConstraint(fields=('registration', 'student_id', 'role'), name='enroll_notice_role_uniq'),
+                ],
+            },
         ),
     ]
