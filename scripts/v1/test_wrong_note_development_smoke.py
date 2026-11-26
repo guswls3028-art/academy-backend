@@ -1,4 +1,3 @@
-import re
 import unittest
 from pathlib import Path
 
@@ -19,13 +18,11 @@ class WrongNoteDevelopmentReleaseContract(unittest.TestCase):
         self.assertIn("wrong_note_smoke == 'true'", steps[smoke]["if"])
         self.assertIn("deployment_lock.py renew", steps[smoke]["run"])
         detect = next(s["run"] for s in jobs["detect-changes"]["steps"] if s.get("id") == "changes")
-        pattern = re.search(r"if grep -qE '([^']+)' <<< \"\$CHANGED_RELEASE\"", detect)[1]
-        for path in ("apps/domains/results/services/wrong_note_batch_service.py",
-                     "academy/application/use_cases/ai/pipelines/paired_source_pipeline.py",
-                     "academy/framework/workers/ai_sqs_worker.py", "apps/core/services/development_qa_queue_ack.py",
-                     "apps/core/services/wrong_note_development_scenario.py"):
-            self.assertRegex(path, pattern)
-        self.assertNotRegex("apps/domains/attendance/views/calendar.py", pattern)
+        for entry, end in (('if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then', "exit 0"),
+                           ("force_full_build() {", "exit 0")):
+            branch = detect.split(entry, 1)[1].split(end, 1)[0]
+            self.assertIn('echo "wrong_note_smoke=true"', branch)
+            self.assertIn('echo "build_tools=true"', branch)
 
 
 if __name__ == "__main__":

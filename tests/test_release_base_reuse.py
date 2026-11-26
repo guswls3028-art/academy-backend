@@ -78,7 +78,7 @@ def classify(tmp_path: Path, *, base: str = "", runtime: str = "", runtime_diffs
 def test_common_code_rebuilds_all_runtimes_without_recompiling_base(tmp_path, changed):
     outputs = classify(tmp_path, base=changed, runtime=changed)
     assert outputs == {
-        "wrong_note_smoke": "false",
+        "wrong_note_smoke": "true" if changed == "apps/infrastructure/storage/r2.py" else "false",
         "build_all": "false",
         "build_base": "false",
         "build_api": "true",
@@ -115,6 +115,9 @@ def test_previous_base_source_does_not_reintroduce_already_shipped_app_changes(t
 @pytest.mark.parametrize("path", [
     "apps/domains/attendance/utils/excel.py",
     "apps/domains/landing_public/services/resource_reader.py",
+    "apps/domains/results/services/wrong_note_batch_service.py",
+    "apps/domains/results/services/wrong_note_batch_archive.py",
+    "apps/domains/results/services/range_wrong_note_service.py",
 ])
 def test_domain_formatter_change_rebuilds_its_tools_consumer(tmp_path, tools_only, path):
     outputs = classify(
@@ -259,6 +262,15 @@ def test_unshipped_base_change_still_rebuilds_all_when_runtime_diff_is_empty(tmp
 @pytest.mark.parametrize("release_path,tools_path,expected", [
     ("apps/domains/results/services/range_wrong_note_service.py", "", "true"),
     ("apps/core/services/development_qa_queue_ack.py", "", "true"),
+    ("apps/domains/ai/callbacks.py", "", "true"),
+    ("apps/support/ai/callback_dependencies.py", "", "true"),
+    ("apps/domains/results/models/wrong_note_pdf.py", "", "true"),
+    ("academy/domain/tools/question_splitter.py", "", "true"),
+    ("apps/domains/results/services/wrong_note_batch_service.py", "", "true"),
+    ("academy/application/use_cases/ai/pipelines/paired_source_pipeline.py", "", "true"),
+    ("academy/framework/workers/ai_sqs_worker.py", "", "true"),
+    ("apps/core/services/wrong_note_development_scenario.py", "", "true"),
+    ("apps/domains/attendance/views/calendar.py", "", "false"),
     ("", "apps/domains/results/services/range_wrong_note_service.py", "false"),
 ])
 def test_wrong_note_verification_uses_the_last_successful_release(tmp_path, release_path, tools_path, expected):

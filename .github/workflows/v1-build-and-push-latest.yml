@@ -204,7 +204,15 @@ jobs:
           # multi-commit diff, grep can exit early and make echo fail with SIGPIPE.
           changed_matches() { grep -qE "$1" <<< "$CHANGED"; }
           # Evaluate against the last successful release, so an earlier failed promotion cannot skip its smoke.
-          if grep -qE '^(academy/application/use_cases/ai/pipelines/(pdf_question|paired_source)_pipeline\.py|academy/adapters/ai/detection/|academy/framework/workers/ai_sqs_worker\.py|apps/domains/(results/(services|views)/[^/]*(wrong_note|answer_matching)|exams/views/(segmentation_review|pdf_question_extract)_view)|apps/support/results/[^/]*wrong_note|apps/core/(services/(wrong_note_development_scenario|development_qa_(ownership|ai_cleanup|queue_ack))|management/commands/verify_development_wrong_notes)\.py|scripts/v1/run-wrong-note-development-smoke\.ps1)' <<< "$CHANGED_RELEASE"; then
+          if grep -qE \
+            -e '^academy/application/use_cases/ai/pipelines/(pdf_question|paired_source)_pipeline\.py$' \
+            -e '^academy/(adapters/ai/detection/|domain/tools/question_splitter\.py$|framework/workers/ai_sqs_worker\.py$)' \
+            -e '^apps/domains/(ai/callbacks\.py$|results/(urls\.py$|models/wrong_note_pdf\.py$|(services|views)/[^/]*(wrong_note|answer_matching)))' \
+            -e '^apps/domains/exams/views/(segmentation_review|pdf_question_extract)_view\.py$' \
+            -e '^apps/(support/(ai/callback_dependencies\.py$|results/[^/]*wrong_note)|infrastructure/storage/r2\.py$)' \
+            -e '^apps/core/(services/(wrong_note_development_scenario|development_qa_(ownership|ai_cleanup|queue_ack))|management/commands/verify_development_wrong_notes)\.py$' \
+            -e '^scripts/v1/run-wrong-note-development-smoke\.ps1$' \
+            <<< "$CHANGED_RELEASE"; then
             echo "wrong_note_smoke=true" >> "$GITHUB_OUTPUT"
           else
             echo "wrong_note_smoke=false" >> "$GITHUB_OUTPUT"
