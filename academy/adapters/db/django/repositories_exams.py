@@ -67,23 +67,67 @@ def answer_key_answers_for_exam(exam_id: int, *, tenant) -> dict:
     return answer_key.answers if answer_key and answer_key.answers else {}
 
 
-def exam_target_info_map(exam_ids, tenant=None) -> dict[int, dict]:
+def _session_location(session):
+    return {
+        "session_id": session.id,
+        "session_title": session.title,
+        "lecture_id": session.lecture_id,
+        "lecture_title": session.lecture.title,
+    }
+
+
+def submission_exam_contexts(submissions, enrollment_map, *, tenant) -> dict[int, dict]:
+    """Resolve each staff inbox row from tenant-owned batch and roster evidence."""
+    from collections import defaultdict
+
+    from django.db.models import Prefetch
+
+    from apps.domains.enrollment.models import SessionEnrollment
     from apps.domains.exams.models import Exam
+    from apps.domains.lectures.models import Session
+    from apps.domains.submissions.models.omr_batch import OmrUploadBatchItem
 
-    info: dict[int, dict] = {}
-    if not exam_ids:
-        return info
+    sessions = Session.objects.filter(lecture__tenant=tenant).select_related("lecture").order_by("id")
+    exams = Exam.objects.filter(tenant=tenant, id__in={s.target_id for s in submissions})
+    exams = exams.prefetch_related(Prefetch("sessions", queryset=sessions, to_attr="inbox_sessions"))
+    exams_by_id = {exam.id: exam for exam in exams}
+    session_ids = {session.id for exam in exams_by_id.values() for session in exam.inbox_sessions}
+    roster = defaultdict(set)
+    for enrollment_id, session_id in SessionEnrollment.objects.filter(
+        tenant=tenant, enrollment_id__in=enrollment_map, session_id__in=session_ids,
+    ).values_list("enrollment_id", "session_id"):
+        roster[enrollment_id].add(session_id)
 
-    queryset = Exam.objects.filter(id__in=exam_ids)
-    if tenant is not None:
-        queryset = queryset.filter(tenant=tenant)
+    batches = {
+        submission_id: (exam_id, session_id, lecture_id)
+        for submission_id, exam_id, session_id, lecture_id in OmrUploadBatchItem.objects.filter(
+            batch__tenant=tenant, submission_id__in=[s.id for s in submissions],
+            batch__session_id__isnull=False,
+        ).values_list("submission_id", "batch__exam_id", "batch__session_id", "batch__lecture_id")
+    }
+    contexts = {}
+    for submission in submissions:
+        exam = exams_by_id.get(submission.target_id)
+        if exam is None:
+            continue
+        candidates = exam.inbox_sessions
+        chosen = None
+        batch = batches.get(submission.id)
+        enrollment = enrollment_map.get(submission.enrollment_id)
+        if batch:
+            chosen = next((s for s in candidates if (exam.id, s.id, s.lecture_id) == batch), None)
+        elif enrollment and len(candidates) > 1:
+            lecture_sessions = [s for s in candidates if s.lecture_id == enrollment.lecture_id]
+            enrolled = [s for s in lecture_sessions if s.id in roster[enrollment.id]]
+            candidates = enrolled or lecture_sessions or candidates
+            if len(candidates) == 1:
+                chosen = candidates[0]
+        elif len(candidates) == 1:
+            chosen = candidates[0]
 
-    for exam in queryset.prefetch_related("sessions__lecture").order_by("id"):
-        session = exam.sessions.order_by("id").first()
-        info[exam.id] = {
+        contexts[submission.id] = {
             "target_title": exam.title,
-            "lecture_id": session.lecture_id if session else None,
-            "lecture_title": session.lecture.title if session and session.lecture else "",
-            "session_id": session.id if session else None,
+            "session_choices": [_session_location(s) for s in candidates] if not chosen else [],
+            **(_session_location(chosen) if chosen else {}),
         }
-    return info
+    return contexts

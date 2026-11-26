@@ -132,13 +132,11 @@ class PendingSubmissionsView(APIView):
 
         # ── Batch-collect IDs for efficient lookups ─────────────
         enrollment_ids: set[int] = set()
-        exam_ids: set[int] = set()
 
         for s in submissions:
             eid = s.enrollment_id
             if eid:
                 enrollment_ids.add(int(eid))
-            exam_ids.add(int(s.target_id))
 
         # ── Enrollment → student + lecture (batch) ──────────────
         # 🔐 tenant 필터: Submission이 tenant 스코프라도 enrollment_id 자체에는
@@ -149,9 +147,7 @@ class PendingSubmissionsView(APIView):
             enrollment_map = enrollment_repo.enrollment_student_map_by_ids(enrollment_ids, tenant=tenant)
 
         # ── Exam targets → title + session info (batch) ────────
-        exam_map: Dict[int, Dict[str, Any]] = {}
-        if exam_ids:
-            exam_map = exams_repo.exam_target_info_map(exam_ids, tenant=tenant)
+        exam_map = exams_repo.submission_exam_contexts(submissions, enrollment_map, tenant=tenant)
 
         # ── Build response items ────────────────────────────────
         items: list[Dict[str, Any]] = []
@@ -173,7 +169,7 @@ class PendingSubmissionsView(APIView):
                 student_name = getattr(student, "name", "") or ""
 
             # Target info (title, session, lecture)
-            target_info = exam_map.get(int(s.target_id), {})
+            target_info = exam_map.get(s.id, {})
 
             # File type from file_key extension
             file_key = s.file_key or ""
@@ -188,13 +184,11 @@ class PendingSubmissionsView(APIView):
             #   target_missing  — Exam/Homework 본체가 없음 (삭제 또는 cross-tenant)
             #   session_missing — Exam/Homework 는 있으나 sessions 매칭 실패
             #   (target_resolved=True 일 때는 None)
-            target_title = target_info.get("target_title")
-            target_lecture_id = target_info.get("lecture_id")
             target_session_id = target_info.get("session_id")
-            target_resolved = bool(target_title and target_lecture_id and target_session_id)
+            target_resolved = bool(target_info and (target_session_id or target_info["session_choices"]))
             if target_resolved:
                 target_resolved_reason = None
-            elif not target_title:
+            elif not target_info:
                 target_resolved_reason = "target_missing"
             else:
                 target_resolved_reason = "session_missing"
@@ -244,6 +238,8 @@ class PendingSubmissionsView(APIView):
                     "lecture_id": target_info.get("lecture_id"),
                     "lecture_title": target_info.get("lecture_title", ""),
                     "session_id": target_info.get("session_id"),
+                    "session_title": target_info.get("session_title", ""),
+                    "session_choices": target_info.get("session_choices", []),
                     "target_resolved": target_resolved,
                     "target_resolved_reason": target_resolved_reason,
                     "omr_readiness": omr_readiness,

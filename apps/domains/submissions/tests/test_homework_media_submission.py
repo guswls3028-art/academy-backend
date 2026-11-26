@@ -628,6 +628,25 @@ class HomeworkSubmissionMediaTests(HomeworkMediaFixtureMixin, TestCase):
         self.assertEqual(len(legacy.data), 200)
         self.assertEqual(legacy.data[0]["media_set_fingerprint"], expected_fingerprint)
 
+    def test_selected_enrollment_list_keeps_context_and_excludes_other_students(self):
+        evidence = Submission.objects.create(
+            tenant=self.tenant, user=self.student_user, enrollment=self.enrollment,
+            target_type=Submission.TargetType.HOMEWORK, target_id=self.homework.id,
+            source=Submission.Source.HOMEWORK_IMAGE, status=Submission.Status.DONE,
+        )
+        path = f"/api/v1/submissions/submissions/homework/{self.homework.id}/"
+        view = HomeworkSubmissionsListView.as_view()
+        for enrollment_id, expected in ((self.enrollment.id, [evidence.id]), (self.enrollment.id + 1, [])):
+            response = view(self._request(
+                "get", path, user=self.teacher, data={"page": 1, "enrollment_id": enrollment_id},
+            ), homework_id=self.homework.id)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual([row["id"] for row in response.data["results"]], expected)
+            if expected:
+                row = response.data["results"][0]
+                self.assertEqual(row["session_title"], self.session.title)
+                self.assertEqual(row["homework_lecture_title"], self.lecture.title)
+
     def test_paginated_teacher_list_rejects_invalid_pages_and_preserves_scope(self):
         path = f"/api/v1/submissions/submissions/homework/{self.homework.id}/"
         view = HomeworkSubmissionsListView.as_view()
@@ -1453,10 +1472,22 @@ class HomeworkSubmissionMediaTests(HomeworkMediaFixtureMixin, TestCase):
     @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
     def test_homework_review_alert_tracks_only_current_delivered_files(self, _upload):
         from apps.support.results.dashboard_dependencies import pending_homework_file_counts
+        from apps.domains.submissions.views.homework_review_queue_view import HomeworkReviewQueueView
         from apps.support.submissions.dependencies import homework_submission_revisions
 
         def assert_pending(expected):
             self.assertEqual(pending_homework_file_counts(tenant=self.tenant), expected)
+            view = HomeworkReviewQueueView.as_view()
+            response = view(self._request("get", "/queue/", user=self.teacher))
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.data["count"], sum(expected.values()))
+            if expected:
+                row, = response.data["results"]
+                self.assertEqual((row["homework_id"], row["enrollment_id"]), (self.homework.pk, self.enrollment.pk))
+                self.assertEqual(row["student_name"], self.student.name)
+                self.assertEqual(row["lecture_title"], self.lecture.title)
+                self.assertEqual(row["session_title"], self.session.display_label)
+                self.assertGreater(row["file_count"], 0)
 
         assert_pending({})
         first = self._post(file=_jpeg())
@@ -1465,6 +1496,9 @@ class HomeworkSubmissionMediaTests(HomeworkMediaFixtureMixin, TestCase):
         assert_pending(counts)
         other = Tenant.objects.create(code="qa-homework-review-other", name="Other")
         self.assertEqual(pending_homework_file_counts(tenant=other), {})
+        from apps.support.results.dashboard_dependencies import pending_homework_submission_page
+        self.assertEqual(pending_homework_submission_page(tenant=other, page_number=1, page_size=30)["results"], [])
+        self.assertEqual(HomeworkReviewQueueView.as_view()(self._request("get", "/queue/")).status_code, 403)
         media = SubmissionMedia.objects.get(pk=first.data["id"])
         for status in (SubmissionMedia.Status.FAILED, SubmissionMedia.Status.UPLOADING):
             SubmissionMedia.objects.filter(pk=media.pk).update(status=status)

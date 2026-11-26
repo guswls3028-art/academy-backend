@@ -89,7 +89,12 @@ class HomeworkSubmissionsListView(APIView):
         if not homework_submission_target_exists(homework_id=int(homework_id), tenant=tenant):
             qs = qs.none()
 
-        session_id = staff_homework_file_targets(tenant=tenant).filter(pk=homework_id).values_list("session_id", flat=True).first()
+        target = staff_homework_file_targets(tenant=tenant).filter(pk=homework_id).values(
+            "session_id", "session__title", "session__lecture__title",
+        ).first() or {}
+        if "enrollment_id" in request.query_params:
+            enrollment_id = parse_query_int(request.query_params, "enrollment_id", min_value=1)
+            qs = qs.filter(enrollment_id=enrollment_id, enrollment__tenant=tenant).exclude(status=Submission.Status.SUPERSEDED)
 
         paginator = None
         if "page" in request.query_params or "page_size" in request.query_params:
@@ -184,7 +189,9 @@ class HomeworkSubmissionsListView(APIView):
                 {
                     "id": int(s.id),
                     "enrollment_id": int(enrollment_id) if enrollment_id else 0,
-                    "session_id": session_id,
+                    "session_id": target.get("session_id"),
+                    "session_title": target.get("session__title", ""),
+                    "homework_lecture_title": target.get("session__lecture__title", ""),
                     "student_id": student_id,
                     "student_name": student_name,
                     "student_phone": student_phone_v or None,

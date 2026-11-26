@@ -739,6 +739,39 @@ class TestC2AdminInboxesGuard(_SecurityFixtureMixin, TestCase):
                           user=self.student_user)
         self.assertEqual(resp.status_code, 403)
 
+    def test_shared_exam_inbox_uses_upload_session_then_roster_and_keeps_ambiguous_rows(self):
+        from apps.domains.submissions.models.omr_batch import OmrUploadBatch, OmrUploadBatchItem
+
+        other = LectureSession.objects.create(lecture=self.lecture, order=2, title="S2")
+        self.exam.sessions.add(other)
+        foreign_lecture = Lecture.objects.create(
+            tenant=_make_tenant("Other", "inbox_other"), title="Private", name="Private", subject="MATH",
+        )
+        foreign_session = LectureSession.objects.create(lecture=foreign_lecture, order=1, title="Private")
+        self.exam.sessions.add(foreign_session)
+
+        def inbox_row():
+            resp = self._call(PendingSubmissionsView.as_view, "get",
+                              "/api/v1/submissions/submissions/pending/", user=self.teacher)
+            self.assertEqual(resp.status_code, 200)
+            return next(row for row in resp.data if row["id"] == self.peer_submission.id)
+
+        self.assertEqual(inbox_row()["session_id"], self.session.id)
+        SessionEnrollment.objects.create(tenant=self.tenant, session=other, enrollment=self.peer_enrollment)
+        ambiguous = inbox_row()
+        self.assertTrue(ambiguous["target_resolved"])
+        self.assertIsNone(ambiguous["session_id"])
+        self.assertEqual([s["session_id"] for s in ambiguous["session_choices"]], [self.session.id, other.id])
+
+        batch = OmrUploadBatch.objects.create(tenant=self.tenant, created_by=self.admin, exam_id=self.exam.id,
+                                              session_id=other.id, lecture_id=self.lecture.id, total_count=1)
+        OmrUploadBatchItem.objects.create(tenant=self.tenant, exam_id=self.exam.id, batch=batch, ordinal=1,
+                                          submission=self.peer_submission)
+        resolved = inbox_row()
+        self.assertEqual((resolved["lecture_id"], resolved["session_id"], resolved["session_title"]),
+                         (self.lecture.id, other.id, other.title))
+        self.assertEqual(resolved["session_choices"], [])
+
     def test_pending_submissions_teacher_allowed(self):
         view = PendingSubmissionsView.as_view()
         resp = self._call(lambda: view, "get",

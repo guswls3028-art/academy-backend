@@ -4908,6 +4908,72 @@
         ],
         "type": "object"
       },
+      "HomeworkReviewQueuePage": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "page": {
+            "type": "integer"
+          },
+          "pages": {
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/HomeworkReviewQueueRow"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "page",
+          "pages",
+          "results"
+        ],
+        "type": "object"
+      },
+      "HomeworkReviewQueueRow": {
+        "properties": {
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "file_count": {
+            "type": "integer"
+          },
+          "homework_id": {
+            "type": "integer"
+          },
+          "homework_title": {
+            "type": "string"
+          },
+          "lecture_title": {
+            "type": "string"
+          },
+          "session_title": {
+            "type": "string"
+          },
+          "student_name": {
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "file_count",
+          "homework_id",
+          "homework_title",
+          "lecture_title",
+          "session_title",
+          "student_name",
+          "submitted_at"
+        ],
+        "type": "object"
+      },
       "HomeworkScore": {
         "properties": {
           "clinic_required": {
@@ -59568,6 +59634,50 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OmrUploadBatchInitializeConflict"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "submissions"
+        ]
+      }
+    },
+    "/api/v1/submissions/submissions/homework/review-queue/": {
+      "get": {
+        "operationId": "submissions_submissions_homework_review_queue_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeworkReviewQueuePage"
                 }
               }
             },
