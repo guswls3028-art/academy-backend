@@ -32,7 +32,7 @@ class Sheet(BaseModel):
 
     # Beta teacher score strips. Owner: docs/domain/omr.md.
     essay_score_marks = models.BooleanField(
-        default=False,
+        default=True,
         db_default=False,
         help_text="서술형 칸마다 교사 점수 마킹칸을 인쇄하고 스캔에서 읽는다(Beta).",
     )
