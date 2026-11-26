@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from apps.shared.utils.student_contact import student_contact_phone
 from apps.support.messaging.student_dependencies import students_for_tenant
 
 RecipientTarget = Literal["student", "parent"]
@@ -54,7 +55,7 @@ def resolve_student_message_recipients(
         student.id: student
         for student in students_for_tenant(tenant, deleted="deleted" if withdrawn_only else "active")
         .filter(id__in=unique_ids)
-        .only("id", "name", "phone", "parent_phone", "deleted_at")
+        .only("id", "name", "phone", "parent_phone", "uses_identifier", "deleted_at")
     }
 
     recipients: list[StudentMessageRecipient] = []
@@ -62,7 +63,7 @@ def resolve_student_message_recipients(
         student = students_by_id.get(student_id)
         if not student:
             continue
-        phone = normalize_phone(student.phone if send_to == "student" else student.parent_phone)
+        phone = student_contact_phone(student, send_to)
         recipients.append(
             StudentMessageRecipient(
                 student_id=student.id,

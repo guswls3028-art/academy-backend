@@ -13,7 +13,7 @@ from apps.domains.enrollment.models import Enrollment, EnrollmentNoticeRecipient
 from apps.domains.messaging.security import build_recipient_fingerprint_candidates
 from apps.domains.messaging.services.registration_service import send_welcome_messages
 from apps.domains.students.models import Student
-from .registration_notices import _contact
+from .notice_contacts import ENROLLMENT_NOTICE_PREFIX, registration_notice_contact
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ def _admit(recipient):
     if not Enrollment.objects.filter(tenant_id=batch.tenant_id, lecture_id=batch.lecture_id,
                                      student_id=student.pk, status="ACTIVE").exists():
         return "failed"
-    phone, user_id = _contact(student, recipient.role)
+    phone, user_id = registration_notice_contact(student, recipient.role)
     if (user_id != recipient.account_id or user_id not in locked or not locked[user_id].is_active
             or recipient.recipient_fingerprint not in build_recipient_fingerprint_candidates(phone)):
         return "failed"
@@ -51,6 +51,7 @@ def _admit(recipient):
     send_welcome_messages(
         created_students=[student], student_password=student_password, parent_password_by_phone=parent_passwords,
         recipient_roles=(recipient.role,), admitted_outboxes=outboxes, first_enrollment_since=recipient.initial_notice_since,
+        domain_object_id=f"{ENROLLMENT_NOTICE_PREFIX}{recipient.pk}",
         origin_type=recipient.source_origin_type or "enrollment_registration",
         origin_id=recipient.source_origin_id or f"registration:{batch.pk}:{recipient.pk}",
     )

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from django.utils.html import strip_tags
+from apps.shared.utils.student_contact import student_contact_phone
 from apps.support.community.qna_notification_dependencies import (
     active_staff_profiles_for_qna,
     enqueue_qna_alimtalk,
@@ -67,9 +68,7 @@ def notify_qna_answered(post, reply, *, send_to: str = "student", actor_user=Non
     if not student:
         return 0
 
-    phone = _normalize_phone(
-        getattr(student, "parent_phone", "") if send_to == "parent" else getattr(student, "phone", "")
-    )
+    phone = student_contact_phone(student, send_to)
     if not _is_valid_phone(phone):
         logger.info(
             "qna answer alimtalk skipped: post=%s send_to=%s no valid phone",

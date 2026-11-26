@@ -2,6 +2,7 @@
 
 import re
 
+from apps.shared.utils.student_contact import student_contact_phone
 from apps.support.messaging.student_dependencies import students_for_tenant
 
 
@@ -24,18 +25,15 @@ def current_recipient_phones(tenant, logs):
     if not targets:
         return {}
     students = {
-        row["id"]: row
+        row.pk: row
         for row in students_for_tenant(tenant, deleted="active").filter(
             id__in={student_id for student_id, _ in targets.values()},
-        ).values("id", "phone", "parent_phone", "uses_identifier")
+        ).only("id", "phone", "parent_phone", "uses_identifier")
     }
     contacts = {}
     for log_id, (student_id, role) in targets.items():
         student = students.get(student_id)
         if student is None:
             continue
-        if role == "parent":
-            contacts[log_id] = student["parent_phone"] or ""
-        else:
-            contacts[log_id] = "" if student["uses_identifier"] else student["phone"] or ""
+        contacts[log_id] = student_contact_phone(student, role)
     return contacts

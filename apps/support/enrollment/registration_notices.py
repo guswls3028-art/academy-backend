@@ -10,9 +10,10 @@ from apps.domains.enrollment.selectors import get_lecture_for_tenant_or_404
 from apps.domains.enrollment.services.lifecycle import bulk_create_enrollments
 from apps.domains.messaging.models import NotificationLog, ScheduledNotification
 from apps.domains.messaging.permissions import can_send_messages
-from apps.domains.messaging.security import build_recipient_fingerprint, normalize_recipient_phone
+from apps.domains.messaging.security import build_recipient_fingerprint
 from apps.domains.students.models import Student
 from apps.domains.students.services.account_notice import PENDING_NOTICE_CLEARED
+from .notice_contacts import registration_notice_contact
 
 
 class RegistrationRequestConflict(APIException):
@@ -24,29 +25,18 @@ def can_select_notice_modes(request):
     return can_send_messages(request, request.tenant)
 
 
-def _contact(student, role):
-    if role == "student":
-        phone = normalize_recipient_phone(student.phone)
-        return (phone, student.user_id) if not student.uses_identifier else ("", None)
-    phone = normalize_recipient_phone(student.parent_phone)
-    parent = student.parent
-    if not parent or parent.tenant_id != student.tenant_id or normalize_recipient_phone(parent.phone) != phone:
-        return "", None
-    return phone, parent.user_id
-
-
 def _recipient(registration, student, role, first, now):
     mode = getattr(registration, role + "_notice")
-    phone, account_id = _contact(student, role)
+    phone, account_id = registration_notice_contact(student, role)
     status = "queued"
     if mode == "skip":
         status = "skipped"
     elif mode == "auto" and not first:
         status = "not_first"
-    elif not phone or len(phone) < 10 or not account_id:
+    elif not phone or not account_id:
         status = "no_recipient"
     elif (role == "student" and mode == "auto" and registration.parent_notice != "skip"
-          and phone == _contact(student, "parent")[0]):
+          and phone == registration_notice_contact(student, "parent")[0]):
         status = "shared_recipient"
     initial = mode == "auto" and first and status == "queued"
     return EnrollmentNoticeRecipient(

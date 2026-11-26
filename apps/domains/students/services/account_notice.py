@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from ..models import Student
 from apps.core.services.account_credentials import account_notice_password
+from apps.shared.utils.student_contact import student_contact_phone
 
 logger = logging.getLogger(__name__)
 
@@ -100,13 +101,9 @@ def stage_pending_account_notice(
 
 
 def _expected_recipient_count(student: Student) -> int:
-    phone = (student.phone or "").replace("-", "").strip()
-    parent_phone = (student.parent_phone or "").replace("-", "").strip()
-    parent_count = int(len(parent_phone) >= 10)
-    student_count = int(
-        len(phone) >= 10 and phone != parent_phone
-    )
-    return parent_count + student_count
+    phone = student_contact_phone(student, "student")
+    parent_phone = student_contact_phone(student, "parent")
+    return int(bool(parent_phone)) + int(bool(phone and phone != parent_phone))
 
 
 def initial_account_notice_state(student: Student) -> dict:

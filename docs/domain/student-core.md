@@ -6,7 +6,9 @@
 기본 자동은 계정 안내 대기가 있는 신규 학생의 첫 활성 수강에만 적용한다. 같은 번호가 두 역할에
 등록돼 있으면 기본 자동은 학생 정보도 담긴 학부모 안내 한 건을 예약한다. 명시 발송은 추가 수강과
 이미 수강 중인 학생에게도 새로운 안내를 요청할 수 있다. 학생 번호가 없는 경우 학생 전용 발송은
-수신번호 없음으로 표시한다. 최초 안내의 미발송 선택은 이후 다른 강의 등록으로 되살아나지 않는다.
+수신번호 없음으로 표시한다. 등록과 발송 직전 모두 공통 연락처 규칙을 적용한다. 식별자 전용
+학생, 미입력 대체 번호, 형식이 잘못된 번호는 해당 역할의 수신 대상에서 제외한다. 학부모는
+현재 연결된 계정의 번호도 일치해야 한다. 최초 안내의 미발송 선택은 이후 다른 강의 등록으로 되살아나지 않는다.
 
 교직원용 `POST /api/v1/enrollments/register-with-notices/`는 수강 등록·수납 연계와 역할별 결정을
 한 트랜잭션으로 저장한다. 수신 선택 변경은 해당 학원의 owner/admin/teacher만 가능하다.
@@ -18,8 +20,10 @@
 전화번호를 접수증에 저장하지 않는다. 학생 한 명은 등록 커밋 직후 발송 처리를 시작하고, 일괄 등록과
 중단된 처리는 분당 예약 처리기가 같은 저장 행에서 이어간다. 계정·수강·연락처를 다시 확인하고 승인
 템플릿 outbox를 만든다. 사전 접수의 일시적 오류는 최대 세 번 시도하고 종결 실패는 운영 명령
-오류와 수강 결과에 표시한다. 발송 전 연락처 변경·삭제·수강 취소는 실패로 표시한다. 공급사 호출
-이후의 재시도·미확정 처리는 기존 알림톡 정책을 따른다.
+오류와 수강 결과에 표시한다. 새 발송 작업은 등록 수신자 행을 참조한다. 메시징 워커가 공급사를
+호출하기 직전에도 해당 학원·학생·역할·연결 계정·현재 번호·활성 수강을 대조한다. 대기 중
+정보가 바뀌거나 삭제되면 해당 건은 실패로 종료한다. 교직원은 현재 정보를 확인한 후 새로운
+발송을 선택할 수 있다. 공급사 호출 이후의 재시도·미확정 처리는 기존 알림톡 정책을 따른다.
 
 결과는 해당 요청의 outbox와 워커 기록을 기준으로 대기·처리·공급사 접수·실패·미확정을 구분한다.
 발송 이력의 최종 확인은 `POST /api/v1/enrollments/verify-registration-notice/`에서 학원·요청자·강의·
@@ -203,6 +207,7 @@ Required invariants:
 - if student phone exists, `omr_code` is the last 8 digits of student phone.
 - if student phone is absent, `omr_code` is the last 8 digits of parent phone.
 - no fake student phone is created only to satisfy downstream code.
+- Account notices and recovery ignore a legacy student phone on identifier-only records. An eligible registered guardian phone remains available for flows that permit it. Messaging verifies roster destinations again before external delivery (see [messaging policy](../ssot/messaging-policy.md)).
 - `uses_identifier=True` means the student has no student phone and is identified by the account/OMR identifier flow.
 - when staff first records a distinct real student phone for an identifier-mode
   account, the same transaction updates `Student.phone`, `User.phone`,

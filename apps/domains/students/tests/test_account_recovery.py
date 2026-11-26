@@ -44,6 +44,22 @@ class AccountRecoveryDispatchTests(TestCase):
             is_active=True,
         )
 
+    def test_identifier_account_uses_only_registered_guardian_contact(self):
+        from apps.domains.students.services.account_notice import _expected_recipient_count
+        from apps.domains.students.services.account_recovery import (
+            resolve_recovery_account, resolve_staff_account_for_student,
+        )
+
+        self.student.uses_identifier = True
+        self.student.save(update_fields=["uses_identifier"])
+        self.assertEqual(_expected_recipient_count(self.student), 1)
+        account = resolve_staff_account_for_student(student=self.student, target="student")
+        self.assertEqual(account.send_to, self.student.parent_phone)
+        scope = {"tenant": self.tenant, "target": "student", "name": self.student.name}
+        self.assertIsNone(resolve_recovery_account(**scope, phone=self.student.phone))
+        self.assertEqual(resolve_recovery_account(**scope, phone=self.student.parent_phone).send_to,
+                         self.student.parent_phone)
+
     def _post(self, data: dict):
         request = self.factory.post(
             "/api/v1/auth/account-recovery/dispatch/",
