@@ -148,8 +148,8 @@ def verify_registration_notice(*, tenant, actor_id, lecture, request_id, log_id)
         Q(source_tenant=tenant) | Q(source_tenant__isnull=True, tenant=tenant),
         pk=log_id, message_mode="alimtalk",
     ).exclude(business_idempotency_key="").first()
-    if not log or not log.provider_message_id:
-        raise NotFound("공급사 접수 이력을 찾을 수 없습니다.")
+    if not log:
+        raise NotFound("발송 이력을 찾을 수 없습니다.")
     recipient = registration.recipients.filter(business_key=log.business_idempotency_key).first()
     if not recipient:
         raise NotFound("이 수강 등록에 해당하는 발송 이력이 없습니다.")
