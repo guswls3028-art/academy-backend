@@ -20,6 +20,7 @@ SPECTACULAR_SETTINGS = {
     "COMPONENT_SPLIT_REQUEST": True,
     "DISABLE_ERRORS_AND_WARNINGS": True,
     "ENUM_NAME_OVERRIDES": {
+        "EnrollmentNoticeMode": "apps.domains.enrollment.serializers.ENROLLMENT_NOTICE_MODES",
         "WrongNoteDocumentStatus": "apps.domains.results.models.WrongNotePDF.Status",
         "StaffBoardCategory": "apps.domains.staffs.models.StaffBoardPost.Category",
         "SurveyKind": "apps.domains.surveys.models.Survey.Kind",

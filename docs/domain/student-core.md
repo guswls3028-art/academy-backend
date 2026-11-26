@@ -1,5 +1,32 @@
 # Student Domain Core SSOT
 
+## 수강 등록과 계정 안내
+
+강의 수강을 확정하는 교직원은 학생·학부모별로 첫 수강 자동, 이번에 발송, 이번에는 미발송을 선택한다.
+기본 자동은 계정 안내 대기가 있는 신규 학생의 첫 활성 수강에만 적용한다. 같은 번호가 두 역할에
+등록돼 있으면 기본 자동은 학생 정보도 담긴 학부모 안내 한 건을 예약한다. 명시 발송은 추가 수강과
+이미 수강 중인 학생에게도 새로운 안내를 요청할 수 있다. 학생 번호가 없는 경우 학생 전용 발송은
+수신번호 없음으로 표시한다. 최초 안내의 미발송 선택은 이후 다른 강의 등록으로 되살아나지 않는다.
+
+교직원용 `POST /api/v1/enrollments/register-with-notices/`는 수강 등록·수납 연계와 역할별 결정을
+한 트랜잭션으로 저장한다. 수신 선택 변경은 해당 학원의 owner/admin/teacher만 가능하다.
+요청 UUID는 학원·요청자에 귀속된다. 같은 요청을 다시 전송해도 안내와 수강은 한 번만 생성되며,
+이미 사용한 UUID의 조건을 바꾸면 409다. 기존 `bulk_create/` 호출자는 기존 자동 규칙을 사용한다.
+
+`GET /api/v1/enrollments/registration-notices/`는 강의와 로그인한 요청자 범위에서 UUID로 지정한
+등록 결과 또는 최근 결과를 반환한다. 선택한 학생과 역할별 수신번호 지문을 저장하며 비밀번호나
+전화번호를 접수증에 저장하지 않는다. 분당 예약 처리기가 계정·수강·연락처를 다시 확인하고 승인
+템플릿 outbox를 만든다. 사전 접수의 일시적 오류는 최대 세 번 시도하고 종결 실패는 운영 명령
+오류와 수강 결과에 표시한다. 발송 전 연락처 변경·삭제·수강 취소는 실패로 표시한다. 공급사 호출
+이후의 재시도·미확정 처리는 기존 알림톡 정책을 따른다.
+
+결과는 해당 요청의 outbox와 워커 기록을 기준으로 대기·처리·공급사 접수·실패·미확정을 구분한다.
+발송 이력의 최종 확인은 `POST /api/v1/enrollments/verify-registration-notice/`에서 학원·요청자·강의·
+등록 UUID·발송 이력 ID를 대조한 후 그 한 건의 공급사 결과를 조회한다. 최종 성공/실패는 해당
+등록에 저장되어 새로고침 후에도 보이며, 카카오 결과 4000만 전달 성공으로 표시한다.
+상세 권한과 채널은 [알림톡 정책](../ssot/messaging-policy.md)을 따른다. 등록 재시도·명시
+중복·미발송·연락처 변경·다른 요청자/학원·결과 재조회는 `test_registration_notices.py`에서 검증한다.
+
 **Status:** Active
 **Last checked:** 2026-09-20 KST
 **Truth basis:** code inspection of `apps/domains/students/`, `apps/domains/enrollment/`, staff attendance projections, `apps/core/views/account_recovery.py`, `apps/core/services/password.py`, `apps/domains/results/services/submission_scope_guard.py`, `apps/domains/results/services/student_result_service.py`, and frontend shared student contracts.
