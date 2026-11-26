@@ -47,6 +47,7 @@ class NotificationLogRedactionTests(TestCase):
             message_body="임시 비밀번호: 12345678",
             message_mode="alimtalk",
             provider_message_id="group-create-1",
+            provider_reference_kind="group",
             notification_type="password_reset_student",
         )
 
@@ -54,6 +55,7 @@ class NotificationLogRedactionTests(TestCase):
         log = NotificationLog.objects.get()
         self.assertEqual(log.message_body, SENSITIVE_MESSAGE_PLACEHOLDER)
         self.assertEqual(log.provider_message_id, "group-create-1")
+        self.assertEqual(log.provider_reference_kind, "group")
 
     def test_target_sanitizer_handles_legacy_formatted_phone(self):
         create_notification_log(
@@ -82,12 +84,14 @@ class NotificationLogRedactionTests(TestCase):
             success=True,
             message_body="인증번호: 112233",
             provider_message_id="group-finalize-1",
+            provider_reference_kind="group",
             notification_type="password_find_otp",
         )
 
         log = NotificationLog.objects.get(id=log_id)
         self.assertEqual(log.message_body, SENSITIVE_MESSAGE_PLACEHOLDER)
         self.assertEqual(log.provider_message_id, "group-finalize-1")
+        self.assertEqual(log.provider_reference_kind, "group")
         self.assertEqual(log.target_id, "parent:7")
 
     def test_non_sensitive_body_keeps_body_but_masks_secret_like_lines(self):

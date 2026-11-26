@@ -348,8 +348,23 @@ class RegistrationNoticesTests(APITestCase):
                     business_idempotency_key=outbox.business_idempotency_key, provider_message_id="fixture",
                     success=True, status="sent")
         self.assertEqual(self.latest().data["students"][0]["student"], {"status": "accepted", "log_id": log.pk})
+        for state, success, reference, kind, expected in (
+            ("failed", False, "sdk-message", "message", "failed"),
+            ("failed", False, "", "none", "failed"),
+            ("sent", True, "", "none", "accepted"),
+            ("sent", True, "", None, "ambiguous"),
+            ("ambiguous", False, "mixed-group", "group", "ambiguous"),
+            ("ambiguous", False, "", "none", "ambiguous"),
+        ):
+            with self.subTest(state=state, reference_kind=kind, expected=expected):
+                NotificationLog.objects.filter(pk=log.pk).update(
+                    status=state, success=success, provider_message_id=reference, provider_reference_kind=kind)
+                self.assertEqual(self.latest().data["students"][0]["student"], {"status": expected, "log_id": log.pk})
+                self.assertEqual(ScheduledNotification.objects.count(), 1)
+        log.provider_message_id = "fixture"
+        log.provider_reference_kind = "group"
         log.status = "ambiguous"
-        log.save(update_fields=["status"])
+        log.save(update_fields=["status", "provider_message_id", "provider_reference_kind"])
         self.assertEqual(self.latest().data["students"][0]["student"]["status"], "ambiguous")
         verify = {"lecture": self.lecture.pk, "request_id": self.data["request_id"], "log_id": log.pk}
         receipt = {"status": "delivered", "status_code": "4000", "checked_at": timezone.now(),

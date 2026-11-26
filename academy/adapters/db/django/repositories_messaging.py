@@ -59,6 +59,9 @@ def create_notification_log(
     recipient_fingerprint: str = "",
     origin_type: str = "",
     origin_id: str = "",
+    *,
+    provider_reference_kind: str | None = None,
+    failure_status: str = "failed",
 ) -> bool:
     """
     NotificationLog 1건 생성. Worker에서 직접 ORM 접근 대신 이 함수만 사용.
@@ -74,6 +77,8 @@ def create_notification_log(
     )
 
     _validate_notification_tenant_ids(tenant_id, source_tenant_id)
+    if not success and failure_status not in {"failed", "ambiguous", "retryable_failed"}:
+        raise ValueError(f"invalid notification failure status: {failure_status}")
 
     # DB-level dedup: 동일 SQS 메시지에 대해 이미 성공 기록이 있으면 스킵
     if sqs_message_id and success:
@@ -85,7 +90,7 @@ def create_notification_log(
     NotificationLog.objects.create(
         tenant_id=tenant_id,
         success=success,
-        status="sent" if success else "failed",
+        status="sent" if success else failure_status,
         amount_deducted=amount_deducted,
         recipient_summary=recipient_summary[:500] if recipient_summary else "",
         template_summary=template_summary[:255] if template_summary else "",
@@ -97,6 +102,7 @@ def create_notification_log(
         message_mode=message_mode[:20] if message_mode else "",
         sqs_message_id=sqs_message_id[:128] if sqs_message_id else "",
         provider_message_id=provider_message_id[:128] if provider_message_id else "",
+        provider_reference_kind=provider_reference_kind,
         notification_type=notification_type[:30] if notification_type else "",
         source_tenant_id=source_tenant_id,
         target_type=target_type[:30] if target_type else "",
@@ -329,6 +335,7 @@ def finalize_notification(
     failure_reason: str = "",
     message_body: str = "",
     provider_message_id: str = "",
+    provider_reference_kind: str | None = None,
     notification_type: str = "",
     failure_status: str = "failed",
     provider_definitely_not_accepted: bool = False,
@@ -368,6 +375,7 @@ def finalize_notification(
         template_summary=template_summary[:255] if template_summary else "",
         failure_reason=failure_reason[:500] if failure_reason else "",
         provider_message_id=provider_message_id[:128] if provider_message_id else "",
+        provider_reference_kind=provider_reference_kind,
         message_body=sanitize_message_body_for_log(
             message_body,
             notification_type=notification_type,

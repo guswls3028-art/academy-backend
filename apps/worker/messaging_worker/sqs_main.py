@@ -22,6 +22,7 @@ from libs.queue import get_queue_client, QueueUnavailableError
 from libs.redis.idempotency import acquire_job_lock, release_job_lock, RedisLockUnavailableError
 
 from apps.worker.messaging_worker.config import load_config
+from apps.worker.messaging_worker.solapi_receipts import receipt_reference, send_solapi_message
 
 # 트리거명 → 사용자 친화적 라벨 (발송 내역 표시용)
 _TRIGGER_LABELS: dict[str, str] = {
@@ -493,6 +494,30 @@ def _build_variables_dict(replacements: Optional[list]) -> Optional[dict]:
     return variables if variables else None
 
 
+def _solapi_exception_result(e: Exception, *, provider_called: bool) -> dict:
+    rejected_reason = _classify_definitely_rejected_provider_exception(e)
+    description = str(e)
+    reason = rejected_reason or next((code for code in _NON_RETRYABLE_SEND_FAILURES if code in description), "")
+    if not reason and any(token in description.lower() for token in ("forbidden", "허용되지 않은 ip", "unauthorized ip", "unauthorized)")):
+        reason = "forbidden"
+    reason = reason or ("provider_result_unconfirmed" if provider_called else "provider_request_failed")
+    logger.warning("Alimtalk submission failed reason=%s", reason)
+    return {
+        "status": "error",
+        "reason": reason,
+        "provider_called": provider_called,
+        **(
+            {
+                "provider_outcome": "rejected",
+                "definitely_not_accepted": True,
+                "provider_retryable": False,
+            }
+            if rejected_reason
+            else {}
+        ),
+    }
+
+
 def send_one_alimtalk_own_solapi(
     to: str, sender: str, pf_id: str, template_id: str,
     replacements: Optional[list] = None,
@@ -530,43 +555,9 @@ def send_one_alimtalk_own_solapi(
                 "provider_called": False,
             }
         provider_called = True
-        response = client.send(message)
-        group_id = getattr(getattr(response, "group_info", None), "group_id", None)
-        count = getattr(getattr(response, "group_info", None), "count", None)
-        if count is not None and getattr(count, "registered_success", 0) == 0:
-            return {
-                "status": "error",
-                "reason": "alimtalk_failed_or_rejected",
-                "group_id": group_id,
-                "provider_called": True,
-                "provider_outcome": "rejected",
-                "definitely_not_accepted": True,
-                "provider_retryable": False,
-            }
-        logger.info("send_alimtalk_own ok to=%s**** group_id=%s", to[:4], group_id)
-        return {
-            "status": "ok",
-            "group_id": group_id,
-            "provider_called": True,
-            "provider_outcome": "accepted",
-        }
+        return send_solapi_message(client, message, to)
     except Exception as e:
-        logger.warning("alimtalk_own failed to=%s****: %s", to[:4], e)
-        rejected_reason = _classify_definitely_rejected_provider_exception(e)
-        return {
-            "status": "error",
-            "reason": rejected_reason or str(e)[:500],
-            "provider_called": provider_called,
-            **(
-                {
-                    "provider_outcome": "rejected",
-                    "definitely_not_accepted": True,
-                    "provider_retryable": False,
-                }
-                if rejected_reason
-                else {}
-            ),
-        }
+        return _solapi_exception_result(e, provider_called=provider_called)
 
 
 def send_one_alimtalk(
@@ -640,45 +631,9 @@ def send_one_alimtalk(
                 "provider_retryable": False,
             }
         provider_called = True
-        response = client.send(message)
-        group_id = getattr(getattr(response, "group_info", None), "group_id", None)
-        count = getattr(getattr(response, "group_info", None), "count", None)
-        if count is not None and getattr(count, "registered_success", 0) == 0:
-            reason = "alimtalk_failed_or_rejected"
-            logger.warning("alimtalk no success to=%s****", to[:4])
-            return {
-                "status": "error",
-                "reason": reason,
-                "group_id": group_id,
-                "provider_called": True,
-                "provider_outcome": "rejected",
-                "definitely_not_accepted": True,
-                "provider_retryable": False,
-            }
-        logger.info("send_alimtalk ok to=%s**** group_id=%s", to[:4], group_id)
-        return {
-            "status": "ok",
-            "group_id": group_id,
-            "provider_called": True,
-            "provider_outcome": "accepted",
-        }
+        return send_solapi_message(client, message, to)
     except Exception as e:
-        logger.warning("alimtalk failed to=%s****: %s", to[:4], e)
-        rejected_reason = _classify_definitely_rejected_provider_exception(e)
-        return {
-            "status": "error",
-            "reason": rejected_reason or str(e)[:500],
-            "provider_called": provider_called,
-            **(
-                {
-                    "provider_outcome": "rejected",
-                    "definitely_not_accepted": True,
-                    "provider_retryable": False,
-                }
-                if rejected_reason
-                else {}
-            ),
-        }
+        return _solapi_exception_result(e, provider_called=provider_called)
 
 
 def main() -> int:
@@ -1529,12 +1484,7 @@ def main() -> int:
                                 from academy.adapters.db.django.repositories_messaging import (
                                     create_notification_log, finalize_notification,
                                 )
-                                provider_message_id = str(
-                                    result.get("group_id")
-                                    or result.get("messagekey")
-                                    or result.get("refkey")
-                                    or ""
-                                )[:128]
+                                provider_message_id, provider_reference_kind = receipt_reference(result)
                                 charged_amount = (
                                     Decimal(str(base_price)) if deducted else Decimal("0")
                                 )
@@ -1547,6 +1497,7 @@ def main() -> int:
                                             template_summary=_get_template_summary(event_type_msg, template_id, message_mode),
                                             message_body=text[:2000],
                                             provider_message_id=provider_message_id,
+                                            provider_reference_kind=provider_reference_kind,
                                             notification_type=event_type_msg,
                                         )
                                     else:
@@ -1560,6 +1511,7 @@ def main() -> int:
                                             message_mode=message_mode,
                                             sqs_message_id=message_id,
                                             provider_message_id=provider_message_id,
+                                            provider_reference_kind=provider_reference_kind,
                                             notification_type=event_type_msg,
                                             source_tenant_id=source_tenant_id_msg,
                                             target_type=target_type_msg,
@@ -1580,12 +1532,12 @@ def main() -> int:
                                         ) + (raw_reason or "")[:400]
                                     else:
                                         failure_reason = raw_reason
+                                    failure_status = {
+                                        "terminal": "failed",
+                                        "retry": "retryable_failed",
+                                        "ambiguous": "ambiguous",
+                                    }[failure_disposition]
                                     if claim_log_id is not None:
-                                        failure_status = {
-                                            "terminal": "failed",
-                                            "retry": "retryable_failed",
-                                            "ambiguous": "ambiguous",
-                                        }[failure_disposition]
                                         finalize_notification(
                                             claim_log_id,
                                             success=False,
@@ -1597,6 +1549,7 @@ def main() -> int:
                                             failure_reason=failure_reason[:500],
                                             message_body=text[:2000],
                                             provider_message_id=provider_message_id,
+                                            provider_reference_kind=provider_reference_kind,
                                             notification_type=event_type_msg,
                                             failure_status=failure_status,
                                             provider_definitely_not_accepted=bool(
@@ -1607,13 +1560,15 @@ def main() -> int:
                                         create_notification_log(
                                             tenant_id=int(tenant_id),
                                             success=False,
-                                            amount_deducted=Decimal("0"),
+                                            failure_status=failure_status,
+                                            amount_deducted=charged_amount if failure_disposition == "ambiguous" else Decimal("0"),
                                             recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
                                             failure_reason=failure_reason[:500],
                                             message_body=text[:2000],
                                             message_mode=message_mode,
                                             sqs_message_id=message_id,
                                             provider_message_id=provider_message_id,
+                                            provider_reference_kind=provider_reference_kind,
                                             notification_type=event_type_msg,
                                             source_tenant_id=source_tenant_id_msg,
                                             target_type=target_type_msg,

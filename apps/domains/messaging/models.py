@@ -53,6 +53,8 @@ class NotificationLog(models.Model):
         db_index=True,
         help_text="Solapi group/message id returned by the provider",
     )
+    # NULL on historical logs. New submissions distinguish an absent ID from a group or message ID.
+    provider_reference_kind = models.CharField(max_length=7, null=True, blank=True)
     business_idempotency_key = models.CharField(
         max_length=64, blank=True, default="",
         help_text="SHA-256 hash of business dedup key (tenant+channel+event+target+recipient). Empty for legacy.",

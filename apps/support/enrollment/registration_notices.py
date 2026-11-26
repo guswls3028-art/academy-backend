@@ -113,7 +113,8 @@ def _delivery(recipient, outboxes, logs):
         status = "delivered" if status == "delivered" else "failed"
     elif log:
         if log.status == "sent":
-            status = "accepted" if log.success and log.provider_message_id else "ambiguous"
+            confirmed = bool(log.provider_message_id) or log.provider_reference_kind == "none"
+            status = "accepted" if log.success and confirmed else "ambiguous"
         elif log.status in ("failed", "ambiguous"):
             status = log.status
         elif log.status in ("processing", "sending", "retryable_failed"):
@@ -171,7 +172,7 @@ def registration_result(registration):
     logs = {row.business_idempotency_key: row for row in NotificationLog.objects.filter(
         Q(source_tenant_id=tenant_id) | Q(source_tenant__isnull=True, tenant_id=tenant_id),
         message_mode="alimtalk", business_idempotency_key__in=keys,
-    ).only("id", "business_idempotency_key", "status", "success", "provider_message_id")}
+    ).only("id", "business_idempotency_key", "status", "success", "provider_message_id", "provider_reference_kind")}
     students = {sid: {"id": sid, "name": names.get(sid, "삭제된 학생")} for sid in registration.student_ids}
     for recipient in recipients:
         students[recipient.student_id][recipient.role] = _delivery(recipient, outboxes, logs)
