@@ -1070,6 +1070,24 @@ student·tenant와 각 시험의 강의 연결 또는 과제 배정을 다시 �
 원본 시험의 문제·선생님 해설 이미지를 사용한다. 기존 단일 시험·회차 API는
 `source_selection=[]`일 때 그대로 동작한다.
 
+교직원은 **강의 → 차시 성적 → 출력 → 오답노트**에서 시작·끝 정규 차시를
+고르고 시험·과제별로 학생이 틀린 원래 번호를 입력한다. 양 끝을 포함하며
+보강과 다른 강의는 제외한다. 여러 차시에 걸친 시험은 범위 안의 첫 정규
+차시에 한 번 표시한다. 활성 수강생의 시험 명시 배정, 명시 명단이 없는
+시험의 연결 차시 수강·출결, 과제의 개별 배정을 서버에서 검사한다.
+워크북 원본·문항 이미지·확정 정답이 없는 번호는 출력 전에 알려준다.
+입력은 인쇄 선택으로만 저장되며 시험 성적이나 과제 제출을 변경하지 않는다.
+
+요청은 학생별 1~100문항, 한 번에 최대 200명이다. 동일한 선택과 원본은
+같은 배치로 돌아간다. 각 학생의 자료 식별자·번호·내용 지문을 기록한 후
+Tools가 원본을 다시 조회해 학생별 PDF를 차례로 저장한다. 한 명은 PDF,
+여러 명은 학생 이름과 수강 ID로 구분된 PDF가 든 ZIP을 받는다. 문제는
+앞에, 정답과 선생님 해설은 뒤에 배치한다. 배정이나 정답이 바뀌면
+최신 범위에서 다시 요청한다. 일시적인 파일 오류는 실패한 학생만 재시도하고
+이미 생성된 학생 파일을 재사용한다. 상태와 10분간 유효한 다운로드 주소는
+해당 학원의 교직원만 조회할 수 있다. 최근 30분에 개별 작업이 세 번 이상
+실패하면 기존 운영 알림이 학생 정보 없이 배치와 작업 ID를 집계한다.
+
 여기서 회차는 화면 배치 순서인 `Session.order`가 아니라 정규 수업 번호인
 `Session.regular_order`다. 보강(`session_type=SUPPLEMENT`)은 정규 회차 범위에
 포함하지 않는다. 따라서 정규 수업 사이에 보강을 삽입하거나 카드를
@@ -1132,6 +1150,11 @@ API는 호환 별칭으로 유지한다.
 | GET | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 표와 버전 조회. 혼합형 행의 `objective_status`(`omr_pending`·`omr_restore`·`omr_review_required`·`omr_processing`) 포함 |
 | POST | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 미리보기 또는 원자적 확정. 응답에 `objective_pending_count`·`objective_restore_count`와 행별 `objective_status` 포함 |
 | GET | `/results/wrong-notes/sources/?student_id=` | 학생의 모든 강의에서 선택 가능한 시험·워크북과 수록 문항 수 조회 |
+| GET | `/results/wrong-notes/range/` | 강의·시작·끝 정규 차시에 속하는 자료와 문항 번호, 학생별 배정 조회 |
+| POST | `/results/wrong-notes/batches/` | 범위 내 학생별 자료·번호를 검증하고 개인 PDF 생성 요청을 기록 |
+| GET | `/results/wrong-notes/batches/{id}/` | 학생별 진행 상태 및 실패 사유 재조회 |
+| POST | `/results/wrong-notes/batches/{id}/retry/` | 완료 파일을 유지하며 중단되거나 실패한 출력 재개 |
+| GET | `/results/wrong-notes/batches/{id}/download/` | 완료된 학생 PDF 또는 반별 ZIP의 만료형 주소 발급 |
 | POST | `/results/wrong-notes/preview/` | 선택 원본의 통합 문항과 fingerprint 미리보기 |
 | POST | `/results/wrong-notes/documents/` | 기존 enrollment 범위 또는 학생 `source_selection` 통합 문서 job 생성 |
 | GET | `/results/admin/exams/{id}/result-import/template/` | 시험 전용 엑셀 양식 다운로드 |

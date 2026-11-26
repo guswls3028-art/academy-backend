@@ -525,6 +525,10 @@ def build_wrong_note_pdf(
             image_floor = work_y + reserved_work_h + 7 * mm
             max_draw_h = image_top - image_floor
             if image is None:
+                if item.get("_required_problem_image"):
+                    raise WrongNotePDFEmptyError(
+                        f"{source_label} {item['question_number']}번 문제 이미지를 읽지 못했습니다. 원본을 확인한 후 다시 시도해 주세요."
+                    )
                 image_h = min(78 * mm, max_draw_h)
                 image_y = image_top - image_h
                 pdf.setDash(4, 3)
@@ -802,7 +806,20 @@ def generate_and_store_wrong_note_pdf(
 ) -> str:
     deadline_monotonic = time.monotonic() + PDF_GENERATION_DEADLINE_SECONDS
     source_selection = list(getattr(job, "source_selection", None) or [])
-    if source_selection:
+    if getattr(job, "batch_id", None):
+        from apps.domains.results.services.range_wrong_note_service import RangeSelectionError, WrongNoteRange
+
+        scope = WrongNoteRange(
+            tenant_id=tenant.id, lecture_id=job.lecture_id,
+            first=job.from_session_order, last=job.to_session_order,
+            enrollment_id=enrollment.pk, selection=source_selection,
+        )
+        try:
+            items = scope.select(enrollment.pk, source_selection)
+        except RangeSelectionError as exc:
+            raise WrongNotePDFStaleError(str(exc)) from exc
+        total = len(items)
+    elif source_selection:
         try:
             total, items, _ = list_wrong_notes_for_selection(
                 tenant_id=int(tenant.id),
@@ -865,7 +882,7 @@ def generate_and_store_wrong_note_pdf(
                 else None
             ),
             exam_id=int(job.exam_id) if job.exam_id else None,
-            source_selection_count=len(source_selection),
+            source_selection_count=0 if getattr(job, "batch_id", None) else len(source_selection),
             deadline_monotonic=deadline_monotonic,
         )
         content_type = "application/pdf"

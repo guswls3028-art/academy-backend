@@ -971,6 +971,100 @@
         ],
         "type": "string"
       },
+      "BatchDownload": {
+        "properties": {
+          "filename": {
+            "type": "string"
+          },
+          "url": {
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "url"
+        ],
+        "type": "object"
+      },
+      "BatchInputRequest": {
+        "properties": {
+          "from_session_order": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "lecture_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "students": {
+            "items": {
+              "$ref": "#/components/schemas/StudentSelectionRequest"
+            },
+            "type": "array"
+          },
+          "to_session_order": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "from_session_order",
+          "lecture_id",
+          "students",
+          "to_session_order"
+        ],
+        "type": "object"
+      },
+      "BatchResponse": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WrongNoteDocumentStatus"
+          },
+          "students": {
+            "items": {
+              "$ref": "#/components/schemas/BatchStudentStatus"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "detail",
+          "id",
+          "status",
+          "students"
+        ],
+        "type": "object"
+      },
+      "BatchStudentStatus": {
+        "properties": {
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "error_message": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WrongNoteDocumentStatus"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "error_message",
+          "name",
+          "status"
+        ],
+        "type": "object"
+      },
       "BillingCycleEnum": {
         "description": "* `MONTHLY` - 월납\n* `ONE_TIME` - 일시납",
         "enum": [
@@ -15039,6 +15133,73 @@
         ],
         "type": "object"
       },
+      "RangeSource": {
+        "properties": {
+          "enrollment_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "question_numbers": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "session_order": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/TypeEnum"
+          },
+          "unavailable_numbers": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "enrollment_ids",
+          "id",
+          "question_numbers",
+          "ready",
+          "session_order",
+          "title",
+          "type",
+          "unavailable_numbers"
+        ],
+        "type": "object"
+      },
+      "RangeStudent": {
+        "properties": {
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "student_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "name",
+          "student_id"
+        ],
+        "type": "object"
+      },
       "RecordPaymentPaymentMethodEnum": {
         "description": "* `CARD` - CARD\n* `BANK_TRANSFER` - BANK_TRANSFER\n* `CASH` - CASH\n* `OTHER` - OTHER",
         "enum": [
@@ -18173,6 +18334,32 @@
           "school"
         ],
         "type": "string"
+      },
+      "SourceSelectionRequest": {
+        "properties": {
+          "id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "numbers": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          },
+          "type": {
+            "$ref": "#/components/schemas/TypeEnum"
+          }
+        },
+        "required": [
+          "id",
+          "numbers",
+          "type"
+        ],
+        "type": "object"
       },
       "SourceTypeEnum": {
         "description": "* `s3` - 직접 업로드\n* `youtube` - YouTube 링크",
@@ -21668,6 +21855,25 @@
           }
         ]
       },
+      "StudentSelectionRequest": {
+        "properties": {
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceSelectionRequest"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "sources"
+        ],
+        "type": "object"
+      },
       "StudentSession": {
         "properties": {
           "date": {
@@ -24304,6 +24510,16 @@
         ],
         "type": "object"
       },
+      "WrongNoteDocumentStatus": {
+        "description": "* `PENDING` - Pending\n* `RUNNING` - Running\n* `DONE` - Done\n* `FAILED` - Failed",
+        "enum": [
+          "PENDING",
+          "RUNNING",
+          "DONE",
+          "FAILED"
+        ],
+        "type": "string"
+      },
       "WrongNoteItem": {
         "description": "오답노트 단일 문항 아이템\n\n✅ 의도:\n- ResultFact/ResultItem 구조가 프로젝트마다 조금 달라도\n  View에서 dict로 만들어 serialize 가능하게 \"단순 Serializer\"로 고정",
         "properties": {
@@ -24388,6 +24604,42 @@
           "max_score",
           "question_id",
           "score"
+        ],
+        "type": "object"
+      },
+      "WrongNoteRangeResponse": {
+        "properties": {
+          "from_session_order": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "lecture_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/RangeSource"
+            },
+            "type": "array"
+          },
+          "students": {
+            "items": {
+              "$ref": "#/components/schemas/RangeStudent"
+            },
+            "type": "array"
+          },
+          "to_session_order": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "from_session_order",
+          "lecture_id",
+          "sources",
+          "students",
+          "to_session_order"
         ],
         "type": "object"
       },
@@ -51585,6 +51837,168 @@
         ]
       }
     },
+    "/api/v1/results/wrong-notes/batches/": {
+      "post": {
+        "operationId": "results_wrong_notes_batches_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchInputRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchInputRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchInputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/wrong-notes/batches/{batch_id}/": {
+      "get": {
+        "operationId": "results_wrong_notes_batches_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/wrong-notes/batches/{batch_id}/download/": {
+      "get": {
+        "operationId": "results_wrong_notes_batches_download_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchDownload"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/wrong-notes/batches/{batch_id}/retry/": {
+      "post": {
+        "operationId": "results_wrong_notes_batches_retry_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
     "/api/v1/results/wrong-notes/documents/": {
       "post": {
         "description": "오답노트 PDF/HWPX 생성 요청.\n\nAPI 요청에서는 job을 내구성 있게 기록하고 tools worker 큐에 발행한다.\n실제 문서 생성과 R2 저장은 ALB 요청 제한 밖에서 비동기로 처리한다.\n\n응답:\n{\n  \"job_id\": 1,\n  \"status\": \"PENDING\",\n  \"status_url\": \"https://.../results/wrong-notes/documents/1/\",\n  \"output_format\": \"pdf\"\n}",
@@ -51722,6 +52136,63 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/WrongNoteSelectedPreviewResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/wrong-notes/range/": {
+      "get": {
+        "operationId": "results_wrong_notes_range_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from_session_order",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lecture_id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to_session_order",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WrongNoteRangeResponse"
                 }
               }
             },

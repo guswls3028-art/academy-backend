@@ -482,6 +482,23 @@ def rule_user_incidents(window_minutes: int | None = None):
     }
 
 
+def rule_wrong_note_batch_failures():
+    from django.apps import apps
+
+    documents = apps.get_model("results", "WrongNotePDF")
+    failures = documents.objects.filter(
+        batch_id__isnull=False, status="FAILED", updated_at__gte=timezone.now() - timedelta(minutes=30),
+    )
+    total = failures.count()
+    if total < 3:
+        return None
+    return {
+        "title": f"차시 오답노트 출력 실패 {total}건 (최근 30분)",
+        "total": total,
+        "rows": list(failures.order_by("-updated_at").values("id", "batch_id")[:20]),
+    }
+
+
 def rule_stale_workers(min_age_minutes: int = 5):
     """N분+ heartbeat 미갱신 워커. SQS 워커 process 멈춤 즉시 감지."""
     from apps.core.models import WorkerHeartbeatModel
@@ -790,6 +807,7 @@ RULES: list[Rule] = [
     Rule("audit_failed_24h", "24h 실패 작업 임계 초과", rule_audit_failed_24h, "danger"),
     Rule("unanswered_inbox", "24h+ 미답변 문의", rule_unanswered_inbox, "warning"),
     Rule("stale_workers", "워커 heartbeat 정지", rule_stale_workers, "danger"),
+    Rule("wrong_note_batch_failures", "차시 오답노트 출력 반복 실패", rule_wrong_note_batch_failures, "danger"),
     Rule("circuit_open", "외부 API circuit open", rule_circuit_breaker_open, "danger"),
 ]
 

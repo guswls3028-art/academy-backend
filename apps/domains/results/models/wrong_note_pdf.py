@@ -3,6 +3,12 @@ from django.db import models
 from apps.api.common.models import BaseModel
 
 
+class WrongNoteBatch(BaseModel):
+    lecture = models.ForeignKey("lectures.Lecture", on_delete=models.CASCADE)
+    request_key = models.CharField(max_length=64, unique=True)
+    student_count = models.PositiveIntegerField()
+
+
 class WrongNotePDF(BaseModel):
     """
     오답노트 PDF 생성 Job
@@ -23,6 +29,9 @@ class WrongNotePDF(BaseModel):
         on_delete=models.CASCADE,
         db_column="enrollment_id",
         related_name="wrong_note_pdf_jobs",
+    )
+    batch = models.ForeignKey(
+        WrongNoteBatch, null=True, blank=True, on_delete=models.CASCADE, related_name="documents",
     )
     lecture = models.ForeignKey(
         "lectures.Lecture",
