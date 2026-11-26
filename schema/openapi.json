@@ -60039,6 +60039,20 @@
               "minimum": 1,
               "type": "integer"
             }
+          },
+          {
+            "description": "* `0` - 0\n* `1` - 1",
+            "in": "query",
+            "name": "session_choices",
+            "schema": {
+              "default": "0",
+              "enum": [
+                "0",
+                "1"
+              ],
+              "minLength": 1,
+              "type": "string"
+            }
           }
         ],
         "responses": {

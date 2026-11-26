@@ -61,6 +61,7 @@ class PendingInboxQuerySerializer(serializers.Serializer):
     page = serializers.IntegerField(min_value=1, max_value=1_000_000, default=1)
     page_size = serializers.IntegerField(min_value=1, max_value=200, default=50)
     filter = serializers.ChoiceField(choices=("all", "pending", "done", "failed"), default="all")
+    session_choices = serializers.ChoiceField(choices=("0", "1"), default="0")
     failed_type = serializers.ChoiceField(choices=("all", "real_failed", "discarded"), default="all")
 
     def to_internal_value(self, data):
@@ -147,7 +148,10 @@ class PendingSubmissionsView(APIView):
             enrollment_map = enrollment_repo.enrollment_student_map_by_ids(enrollment_ids, tenant=tenant)
 
         # ── Exam targets → title + session info (batch) ────────
-        exam_map = exams_repo.submission_exam_contexts(submissions, enrollment_map, tenant=tenant)
+        supports_session_choices = params["session_choices"] == "1"
+        exam_map = exams_repo.submission_exam_contexts(
+            submissions, enrollment_map, tenant=tenant, supports_session_choices=supports_session_choices,
+        )
 
         # ── Build response items ────────────────────────────────
         items: list[Dict[str, Any]] = []
@@ -185,7 +189,7 @@ class PendingSubmissionsView(APIView):
             #   session_missing — Exam/Homework 는 있으나 sessions 매칭 실패
             #   (target_resolved=True 일 때는 None)
             target_session_id = target_info.get("session_id")
-            target_resolved = bool(target_info and (target_session_id or target_info["session_choices"]))
+            target_resolved = bool(target_info and (target_session_id or target_info.get("session_choices")))
             if target_resolved:
                 target_resolved_reason = None
             elif not target_info:
@@ -238,8 +242,10 @@ class PendingSubmissionsView(APIView):
                     "lecture_id": target_info.get("lecture_id"),
                     "lecture_title": target_info.get("lecture_title", ""),
                     "session_id": target_info.get("session_id"),
-                    "session_title": target_info.get("session_title", ""),
-                    "session_choices": target_info.get("session_choices", []),
+                    **({
+                        "session_title": target_info.get("session_title", ""),
+                        "session_choices": target_info.get("session_choices", []),
+                    } if supports_session_choices else {}),
                     "target_resolved": target_resolved,
                     "target_resolved_reason": target_resolved_reason,
                     "omr_readiness": omr_readiness,

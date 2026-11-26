@@ -59,6 +59,7 @@ def _serialize_submissions(submissions, exam_map, enrollment_map):
                 "lecture_id": t.get("lecture_id"),
                 "lecture_title": t.get("lecture_title", ""),
                 "session_id": t.get("session_id"),
+                **({"session_choices": t["session_choices"]} if "session_choices" in t else {}),
                 "enrollment_id": int(s.enrollment_id) if s.enrollment_id else None,
                 "student_name": student_name,
                 "status": s.status,
@@ -129,7 +130,10 @@ class AdminResultsLandingStatsView(APIView):
 
         all_subs = pending_subs + recent_done
         enrollment_map = _enrollment_student_map(all_subs, tenant)
-        exam_map = exams_repo.submission_exam_contexts(all_subs, enrollment_map, tenant=tenant)
+        exam_map = exams_repo.submission_exam_contexts(
+            all_subs, enrollment_map, tenant=tenant,
+            supports_session_choices=request.query_params.get("session_choices") == "1",
+        )
 
         return Response(
             {

@@ -750,17 +750,37 @@ class TestC2AdminInboxesGuard(_SecurityFixtureMixin, TestCase):
         foreign_session = LectureSession.objects.create(lecture=foreign_lecture, order=1, title="Private")
         self.exam.sessions.add(foreign_session)
 
-        def inbox_row():
+        def inbox_row(query="?session_choices=1"):
             resp = self._call(PendingSubmissionsView.as_view, "get",
-                              "/api/v1/submissions/submissions/pending/", user=self.teacher)
+                              f"/api/v1/submissions/submissions/pending/{query}", user=self.teacher)
             self.assertEqual(resp.status_code, 200)
-            return next(row for row in resp.data if row["id"] == self.peer_submission.id)
+            rows = resp.data["results"] if isinstance(resp.data, dict) else resp.data
+            return next(row for row in rows if row["id"] == self.peer_submission.id)
+
+        def landing_row(query):
+            resp = self._call(AdminResultsLandingStatsView.as_view, "get",
+                              f"/api/v1/results/admin/landing-stats/{query}", user=self.teacher)
+            self.assertEqual(resp.status_code, 200)
+            return next(row for row in resp.data["pending_top"] if row["id"] == self.peer_submission.id)
 
         self.assertEqual(inbox_row()["session_id"], self.session.id)
         SessionEnrollment.objects.create(tenant=self.tenant, session=other, enrollment=self.peer_enrollment)
         ambiguous = inbox_row()
         self.assertTrue(ambiguous["target_resolved"])
         self.assertIsNone(ambiguous["session_id"])
+        self.assertEqual(inbox_row("?page=1&session_choices=1"), ambiguous)
+        for query in ("", "?page=1"):
+            legacy = inbox_row(query)
+            self.assertTrue(legacy["target_resolved"])
+            self.assertEqual((legacy["lecture_id"], legacy["session_id"]), (self.lecture.id, self.session.id))
+            self.assertNotIn("session_choices", legacy)
+            self.assertNotIn("session_title", legacy)
+        legacy_summary = landing_row("")
+        self.assertEqual(legacy_summary["session_id"], self.session.id)
+        self.assertNotIn("session_choices", legacy_summary)
+        current_summary = landing_row("?session_choices=1")
+        self.assertIsNone(current_summary["session_id"])
+        self.assertEqual(current_summary["session_choices"], ambiguous["session_choices"])
         self.assertEqual([s["session_id"] for s in ambiguous["session_choices"]], [self.session.id, other.id])
 
         batch = OmrUploadBatch.objects.create(tenant=self.tenant, created_by=self.admin, exam_id=self.exam.id,

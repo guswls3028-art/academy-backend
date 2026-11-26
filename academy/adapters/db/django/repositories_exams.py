@@ -76,7 +76,7 @@ def _session_location(session):
     }
 
 
-def submission_exam_contexts(submissions, enrollment_map, *, tenant) -> dict[int, dict]:
+def submission_exam_contexts(submissions, enrollment_map, *, tenant, supports_session_choices: bool) -> dict[int, dict]:
     """Resolve each staff inbox row from tenant-owned batch and roster evidence."""
     from collections import defaultdict
 
@@ -91,6 +91,18 @@ def submission_exam_contexts(submissions, enrollment_map, *, tenant) -> dict[int
     exams = Exam.objects.filter(tenant=tenant, id__in={s.target_id for s in submissions})
     exams = exams.prefetch_related(Prefetch("sessions", queryset=sessions, to_attr="inbox_sessions"))
     exams_by_id = {exam.id: exam for exam in exams}
+    if not supports_session_choices:
+        # Earlier clients require a concrete navigation target for every linked exam.
+        # Preserve their historical first-link ordering within the requesting tenant.
+        legacy = {
+            exam.id: {
+                "target_title": exam.title,
+                **(_session_location(exam.inbox_sessions[0]) if exam.inbox_sessions else {}),
+            }
+            for exam in exams_by_id.values()
+        }
+        return {s.id: legacy[s.target_id] for s in submissions if s.target_id in legacy}
+
     session_ids = {session.id for exam in exams_by_id.values() for session in exam.inbox_sessions}
     roster = defaultdict(set)
     for enrollment_id, session_id in SessionEnrollment.objects.filter(

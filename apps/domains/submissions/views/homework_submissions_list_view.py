@@ -90,11 +90,14 @@ class HomeworkSubmissionsListView(APIView):
             qs = qs.none()
 
         target = staff_homework_file_targets(tenant=tenant).filter(pk=homework_id).values(
-            "session_id", "session__title", "session__lecture__title",
+            "session_id", "session__title", "session__lecture_id", "session__lecture__title",
         ).first() or {}
         if "enrollment_id" in request.query_params:
             enrollment_id = parse_query_int(request.query_params, "enrollment_id", min_value=1)
-            qs = qs.filter(enrollment_id=enrollment_id, enrollment__tenant=tenant).exclude(status=Submission.Status.SUPERSEDED)
+            qs = qs.filter(
+                enrollment_id=enrollment_id, enrollment__tenant=tenant, enrollment__student__tenant=tenant,
+                enrollment__lecture_id=target.get("session__lecture_id"), enrollment__student__deleted_at__isnull=True,
+            ).exclude(status=Submission.Status.SUPERSEDED) if target else qs.none()
 
         paginator = None
         if "page" in request.query_params or "page_size" in request.query_params:

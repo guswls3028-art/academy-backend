@@ -70,23 +70,25 @@ def _homework_review_candidates(*, tenant):
 
 
 def _unreviewed_rows(tenant, candidates):
+    from itertools import islice
+
     from apps.support.submissions.dependencies import homework_submission_revisions
 
-    rows = list(candidates)
-    previously_graded = [row for row in rows if row["reviewed_revision"]]
-    current = {}
-    if previously_graded:
-        # A failing grade can be followed by a new upload. Compare the same
-        # evidence revision that the grading write recorded, in one batch.
-        current = homework_submission_revisions(
-            tenant=tenant,
-            enrollment_ids={row["enrollment_id"] for row in previously_graded},
-            homework_ids={row["target_id"] for row in previously_graded},
-        )
-    for row in rows:
-        key = row["enrollment_id"], row["target_id"]
-        if not row["reviewed_revision"] or (key in current and current[key] != row["reviewed_revision"]):
-            yield row
+    records = candidates.iterator(chunk_size=500)
+    while rows := list(islice(records, 500)):
+        previously_graded = [row for row in rows if row["reviewed_revision"]]
+        current = {}
+        if previously_graded:
+            # A failing grade can be followed by a new upload.
+            current = homework_submission_revisions(
+                tenant=tenant,
+                enrollment_ids={row["enrollment_id"] for row in previously_graded},
+                homework_ids={row["target_id"] for row in previously_graded},
+            )
+        for row in rows:
+            key = row["enrollment_id"], row["target_id"]
+            if not row["reviewed_revision"] or (key in current and current[key] != row["reviewed_revision"]):
+                yield row
 
 
 def pending_homework_file_counts(*, tenant: Any) -> dict[int, int]:
@@ -99,7 +101,7 @@ def pending_homework_file_counts(*, tenant: Any) -> dict[int, int]:
 
 
 def pending_homework_submission_page(*, tenant, page_number, page_size):
-    from django.core.paginator import Paginator
+    from itertools import islice
     from django.db.models import Count, Max, Q
     from django.db.models.functions import Coalesce, Greatest
     from apps.domains.submissions.models import SubmissionMedia
@@ -114,12 +116,22 @@ def pending_homework_submission_page(*, tenant, page_number, page_size):
         file_count=Count("media_files", filter=current_media) + Count("pk", filter=legacy, distinct=True),
         submitted_at=Greatest(Max("created_at"), Coalesce(Max("media_files__uploaded_at", filter=current_media), Max("created_at"))),
     ).order_by("-submitted_at", "target_id", "enrollment_id")
-    page = Paginator(list(_unreviewed_rows(tenant, candidates)), page_size).get_page(page_number)
+    # Keep only the requested page. If a concurrent review emptied the final
+    # page, return the last remaining page and its actual number.
+    pending = _unreviewed_rows(tenant, candidates)
+    pages = count = 0
+    selected = []
+    while batch := list(islice(pending, page_size)):
+        pages += 1
+        count += len(batch)
+        if pages <= page_number:
+            selected = batch
+    pages = max(pages, 1)
     targets = staff_homework_file_targets(tenant=tenant).select_related("session__lecture").in_bulk(
-        {row["target_id"] for row in page.object_list},
+        {row["target_id"] for row in selected},
     )
     results = []
-    for row in page.object_list:
+    for row in selected:
         homework = targets.get(row["target_id"])
         if homework is None:  # Concurrent removal after the pending query.
             continue
@@ -129,7 +141,7 @@ def pending_homework_submission_page(*, tenant, page_number, page_size):
             "lecture_title": homework.session.lecture.title, "session_title": homework.session.display_label,
             "submitted_at": row["submitted_at"], "file_count": row["file_count"],
         })
-    return {"count": page.paginator.count, "page": page.number, "pages": page.paginator.num_pages, "results": results}
+    return {"count": count, "page": min(page_number, pages), "pages": pages, "results": results}
 
 
 def failed_video_count_since(*, tenant: Any, cutoff: Any) -> int:

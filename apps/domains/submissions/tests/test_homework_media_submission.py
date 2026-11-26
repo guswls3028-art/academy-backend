@@ -1471,8 +1471,8 @@ class HomeworkSubmissionMediaTests(HomeworkMediaFixtureMixin, TestCase):
 
     @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
     def test_homework_review_alert_tracks_only_current_delivered_files(self, _upload):
-        from apps.support.results.dashboard_dependencies import pending_homework_file_counts
         from apps.domains.submissions.views.homework_review_queue_view import HomeworkReviewQueueView
+        from apps.support.results.dashboard_dependencies import pending_homework_file_counts, pending_homework_submission_page
         from apps.support.submissions.dependencies import homework_submission_revisions
 
         def assert_pending(expected):
@@ -1496,7 +1496,6 @@ class HomeworkSubmissionMediaTests(HomeworkMediaFixtureMixin, TestCase):
         assert_pending(counts)
         other = Tenant.objects.create(code="qa-homework-review-other", name="Other")
         self.assertEqual(pending_homework_file_counts(tenant=other), {})
-        from apps.support.results.dashboard_dependencies import pending_homework_submission_page
         self.assertEqual(pending_homework_submission_page(tenant=other, page_number=1, page_size=30)["results"], [])
         self.assertEqual(HomeworkReviewQueueView.as_view()(self._request("get", "/queue/")).status_code, 403)
         media = SubmissionMedia.objects.get(pk=first.data["id"])
@@ -1515,6 +1514,10 @@ class HomeworkSubmissionMediaTests(HomeworkMediaFixtureMixin, TestCase):
         second = self._post(file=_mp4(), position=1)
         self.assertEqual(second.status_code, 201)
         assert_pending(counts)
+        latest = pending_homework_submission_page(tenant=self.tenant, page_number=42, page_size=1)
+        self.assertEqual((latest["count"], latest["page"], latest["pages"]), (1, 1, 1))
+        self.assertEqual(latest["results"][0]["file_count"], 2)
+        self.assertEqual(latest["results"][0]["submitted_at"], SubmissionMedia.objects.get(pk=second.data["id"]).uploaded_at)
         score.delete()
         assert_pending(counts)
         SubmissionMedia.objects.filter(pk=second.data["id"]).update(removed_at=timezone.now())
