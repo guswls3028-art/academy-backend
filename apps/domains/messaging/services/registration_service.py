@@ -235,7 +235,7 @@ def send_welcome_messages(
 
         # 학부모용 — registration_approved_parent 템플릿
         if "parent" in recipient_roles and parent_phone and len(parent_phone) >= 10 and tmpl_parent and sid_parent:
-            pwd = parent_password_by_phone.get(parent_phone)
+            pwd = parent_password_by_phone.get(parent_phone) or parent_password_by_phone.get(student.parent_phone)
             if not pwd:
                 logger.error(
                     "send_welcome_messages SKIP parent: phone=%s no password in mapping, refusing to send with empty/default password",

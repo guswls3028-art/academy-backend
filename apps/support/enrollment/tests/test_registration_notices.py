@@ -88,6 +88,8 @@ class RegistrationNoticesTests(APITestCase):
         self.assertEqual(Enrollment.objects.filter(tenant=self.tenant, lecture=self.lecture).count(), 2)
 
     def test_real_templates_and_original_recipient_bindings_reach_durable_outboxes(self):
+        # Legacy/imported roster rows can retain formatting while the account uses digits.
+        type(self.student).objects.filter(pk=self.student.pk).update(parent_phone="010-1234-5678")
         for role in ("student", "parent"):
             template = MessageTemplate.objects.create(
                 tenant=self.tenant, name="등록 " + role, body="#{학생이름} #{학생아이디} #{사이트링크}",
