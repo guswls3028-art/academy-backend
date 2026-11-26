@@ -135,8 +135,10 @@ def _validate_dawon_demo_access(request, token):
         raise PermissionDenied("학생 명단 검수는 데모 관리자에게만 허용됩니다.")
     if role == "admin":
         from apps.core.dawon_course_operations import allows_course_operation
+        from apps.core.dawon_nonlecture_operations import allows_nonlecture_operation
         from apps.domains.clinic.dawon_demo import is_demo_tenant
-        if is_demo_tenant(getattr(request, "tenant", None)) and not _restricted_actions.search(path) and allows_course_operation(request):
+        if (is_demo_tenant(getattr(request, "tenant", None)) and not _restricted_actions.search(path)
+                and (allows_course_operation(request) or allows_nonlecture_operation(request))):
             return
         if (method == "PATCH" or (method == "POST" and _dawon_counsel_reply.fullmatch(path))) and _allows_dawon_workflow_write(request, role):
             return

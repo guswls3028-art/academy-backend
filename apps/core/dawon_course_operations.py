@@ -47,5 +47,11 @@ def allows_course_operation(request):
         return (isinstance(request.data, dict)
                 and not set(request.data) - {"title", "content", "node_ids", "is_urgent", "is_pinned"}
                 and PostEntity.objects.filter(pk=post[1], tenant=request.tenant, post_type="notice").exists())
+    if request.method == "PATCH" and re.fullmatch(rf"lectures/lectures/{_ID}(?:/schedule-settings)?", path):
+        fields = {
+            "title", "subject", "description", "start_date", "end_date", "lecture_time",
+            "color", "chip_label", "schedule_mode", "schedule_defaults",
+        }
+        return isinstance(request.data, dict) and bool(request.data) and set(request.data) <= fields
     pattern = _OPERATIONS.get(request.method)
     return bool(pattern and pattern.fullmatch(path))
