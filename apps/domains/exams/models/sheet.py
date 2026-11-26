@@ -32,7 +32,7 @@ class Sheet(BaseModel):
 
     # Beta teacher score strips. Owner: docs/domain/omr.md.
     essay_score_marks = models.BooleanField(
-        default=False,
+        default=True,
         db_default=False,
         help_text="서술형 칸마다 교사 점수 마킹칸을 인쇄하고 스캔에서 읽는다(Beta).",
     )
@@ -42,12 +42,19 @@ class Sheet(BaseModel):
         db_default="",
         help_text="인쇄를 꺼도 기존 서술형 교사 채점란을 판독한다(Beta).",
     )
+    essay_score_grid_hidden = models.BooleanField(default=False, db_default=False)
 
     file = models.FileField(
         upload_to="exams/sheets/",
         null=True,
         blank=True,
     )
+
+    @property
+    def print_essay_score_grid_by_default(self) -> bool:
+        # Older untouched sheets had scanning off. A saved scan shape together
+        # with an off flag records that the teacher stopped printing new grids.
+        return self.essay_score_marks or not (self.essay_score_grid_hidden or self.essay_score_marks_scan_shape)
 
     class Meta:
         db_table = "exams_sheet"

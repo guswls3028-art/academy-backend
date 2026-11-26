@@ -11,6 +11,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from apps.core.models import Tenant, TenantMembership
+from apps.domains.exams.services.structure_copy_service import copy_exam_structure
 from apps.domains.results.models import Result, ResultItem
 from apps.domains.results.services.grading_service import grade_submission
 from apps.domains.results.services.manual_exam_grading import (
@@ -57,6 +58,7 @@ class OmrEssayScoreProposalTests(TestCase):
         self.exam.sessions.add(self.session)
         self.sheet = Sheet.objects.create(
             exam=self.exam, name="MAIN", total_questions=2, choice_count=1, essay_count=1,
+            essay_score_marks=False,  # An existing sheet created before the new default.
         )
         self.choice = ExamQuestion.objects.create(
             sheet=self.sheet, number=1, score=80, question_kind=ExamQuestion.QuestionKind.CHOICE,
@@ -118,6 +120,38 @@ class OmrEssayScoreProposalTests(TestCase):
 
     # -- setting -------------------------------------------------------------
 
+    def test_new_essay_exam_prints_without_configuring_marks_and_respects_opt_out(self):
+        exam = Exam.objects.create(
+            tenant=self.tenant, title="자동 채점란", exam_type=Exam.ExamType.REGULAR,
+            grading_mode=Exam.GradingMode.MIXED, manual_grading_method="score",
+        )
+        init = self.client.post(
+            f"/api/v1/exams/{exam.id}/questions/init/",
+            {"choice_count": 1, "essay_count": 2, "choice_score": 1, "essay_score": 8},
+            format="json", HTTP_HOST="api.hakwonplus.com", HTTP_X_TENANT_CODE=self.tenant.code,
+        )
+        self.assertEqual(init.status_code, 200, init.content)
+        options = {"essay_score_grid": "auto"}
+        preview = self._api("post", "preview/", options, exam=exam)
+        self.assertEqual(preview.status_code, 200, preview.content)
+        self.assertEqual(preview.content.count(b'class="bu essay-score-bubble"'), 18)
+        self.assertIn(b'class="es-a"', preview.content)
+        self.assertEqual(self._api("post", "pdf/", options, exam=exam).status_code, 200)
+        saved = self._api("patch", "essay-score-marks/", {"enabled": False}, exam=exam)
+        self.assertFalse(saved.data["print_by_default"])
+        hidden = self._api("post", "preview/", options, exam=exam)
+        self.assertNotIn(b'class="bu essay-score-bubble"', hidden.content)
+        copy = Exam.objects.create(
+            tenant=self.tenant, title="끄기 설정을 복사한 시험", exam_type=Exam.ExamType.REGULAR,
+            grading_mode=Exam.GradingMode.MIXED, manual_grading_method="score",
+        )
+        copy_exam_structure(source_exam=exam, target_exam=copy)
+        self.assertFalse(self._api("get", "essay-score-marks/", exam=copy).data["print_by_default"])
+        self.assertEqual(Sheet.objects.get(exam=copy).essay_score_marks_scan_shape, "")
+        choice_only = self._api("post", "preview/", {**options, "mc_count": 3, "essay_count": 0})
+        self.assertEqual(choice_only.status_code, 200)
+        self.assertNotIn(b'class="bu essay-score-bubble"', choice_only.content)
+
     def test_teacher_prints_paper_score_bubbles_from_both_entries_without_changing_grading(self):
         teacher = User.objects.create_user(username="paper-teacher", tenant=self.tenant)
         TenantMembership.ensure_active(tenant=self.tenant, user=teacher, role="teacher")
@@ -128,7 +162,7 @@ class OmrEssayScoreProposalTests(TestCase):
         state = self._api("get", "essay-score-marks/")
         self.assertEqual(state.status_code, 200, state.content)
         self.assertFalse(state.data["available"])
-        params = {"mc_count": 1, "essay_count": 1, "essay_score_grid": "paper"}
+        params = {"mc_count": 1, "essay_count": 1, "essay_score_grid": "auto"}
         for base in (f"/api/v1/exams/{self.exam.id}/omr/", "/api/v1/tools/omr/"):
             with self.subTest(base=base):
                 def post(path, data):
@@ -150,7 +184,7 @@ class OmrEssayScoreProposalTests(TestCase):
                     self.assertEqual(digits, list("012345678"))
                 plain = post("preview/", {"mc_count": 1, "essay_count": 1})
                 self.assertNotIn(b'data-essay-score-question=', plain.content)
-                for invalid in ({"essay_count": 0}, {"essay_score_grid": "exam"}, {"essay_score_grid": "typo"}):
+                for invalid in ({"essay_count": 0, "essay_score_grid": "paper"}, {"essay_score_grid": "exam"}, {"essay_score_grid": "typo"}):
                     self.assertEqual(post("pdf/", {**params, **invalid}).status_code, 400)
         self.sheet.refresh_from_db()
         self.exam.refresh_from_db()

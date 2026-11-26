@@ -38,6 +38,7 @@ def _copy_sheet(source_exam: Exam, template_exam: Exam) -> dict[int, int]:
         choice_count=source_sheet.choice_count,
         essay_count=source_sheet.essay_count,
         essay_score_marks=source_sheet.essay_score_marks,
+        essay_score_grid_hidden=not source_sheet.print_essay_score_grid_by_default,
         file=source_sheet.file,
     )
 

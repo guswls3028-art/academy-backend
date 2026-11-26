@@ -46,6 +46,7 @@ class OMRDocument:
     essay_score_marks: tuple[dict[str, Any], ...] = ()
     essay_score_questions: tuple[dict[str, Any], ...] = ()
     essay_score_layout_marks: tuple[dict[str, Any], ...] = ()
+    print_essay_score_grid_by_default: bool = True
 
     # -- 테넌트 브랜딩 --
     logo_url: Optional[str] = None  # presigned URL (HTML preview용)
@@ -187,6 +188,7 @@ class OMRDocument:
             "essay_count": self.essay_count,
             "essay_numbering": self.essay_numbering,
             "essay_score_marks": bool(self.essay_score_marks or self.essay_score_questions),
+            "print_by_default": self.print_essay_score_grid_by_default,
             "include_optional_essay_area": self.include_optional_essay_area,
             "can_include_optional_essay_area": self.can_include_optional_essay_area,
             "render_essay_count": self.render_essay_count,

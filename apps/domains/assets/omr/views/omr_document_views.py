@@ -79,7 +79,7 @@ def _parse_omr_params(data: dict) -> dict:
 def _prepare_print(doc: OMRDocument, data) -> tuple[OMRDocument | None, Response | None]:
     grid = None
     if "essay_score_grid" in data:
-        grid = serializers.ChoiceField(choices=("paper", "exam")).run_validation(data["essay_score_grid"])
+        grid = serializers.ChoiceField(choices=("auto", "paper", "exam")).run_validation(data["essay_score_grid"])
     errors = doc.validate()
     if grid == "paper" and not doc.essay_count:
         errors.append("교사 채점란을 인쇄하려면 서술형 문항을 추가해 주세요.")
@@ -87,7 +87,12 @@ def _prepare_print(doc: OMRDocument, data) -> tuple[OMRDocument | None, Response
         errors.append("저장된 시험 문항과 채점란 설정을 확인한 뒤 다시 인쇄해 주세요.")
     if errors:
         return None, Response({"detail": errors}, status=status.HTTP_400_BAD_REQUEST)
-    return (doc.with_paper_score_grid() if grid == "paper" else doc), None
+    if grid == "paper" or (
+        grid == "auto" and doc.essay_count and doc.print_essay_score_grid_by_default
+        and not doc.essay_score_layout_marks
+    ):
+        doc = doc.with_paper_score_grid()
+    return doc, None
 
 
 def _safe_filename(title: str) -> str:

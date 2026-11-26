@@ -79,14 +79,20 @@ class OMRDocumentService:
         _mc_count = mc_count
         resolved_choice_numbers = choice_question_numbers
         resolved_essay_numbers = essay_question_numbers
-        contract = None
-        if _mc_count is None:
+        try:
             sheet_exam = resolve_template_exam_for_tenant(exam, tenant)
-            sheet = getattr(sheet_exam, "sheet", None)
-            if sheet:
-                from apps.support.omr.contract_builder import build_omr_sheet_contract
+        except ValueError:
+            if mc_count is None:
+                raise
+            sheet_exam = None
+        sheet = getattr(sheet_exam, "sheet", None)
+        contract = None
+        if sheet is not None:
+            from apps.support.omr.contract_builder import build_omr_sheet_contract
 
-                contract = build_omr_sheet_contract(sheet=sheet, exam=exam)
+            contract = build_omr_sheet_contract(sheet=sheet, exam=exam)
+        if _mc_count is None:
+            if contract is not None:
                 _mc_count = contract.choice_count if contract.total_questions > 0 else 20
                 if essay_count is None:
                     essay_count = contract.essay_count
@@ -101,8 +107,6 @@ class OMRDocumentService:
         # Teacher score strips follow the exam contract geometry. The exam print
         # screen always echoes its counts, so compare the effective shape; a
         # request that changes the shape prints without strips.
-        if contract is None:
-            contract = OMRDocumentService._exam_contract_or_none(exam=exam, tenant=tenant)
         essay_score_questions: tuple = ()
         essay_score_layout_marks: tuple = ()
         if contract is not None and contract.essay_score_marks:
@@ -140,24 +144,12 @@ class OMRDocumentService:
             essay_question_numbers=tuple(resolved_essay_numbers or ()),
             essay_score_questions=essay_score_questions,
             essay_score_layout_marks=essay_score_layout_marks,
+            print_essay_score_grid_by_default=sheet is None or sheet.print_essay_score_grid_by_default,
             logo_url=logo_url,
             logo_key=logo_key,
             logo_variant=logo_variant,
             brand_color=brand_color,
         )
-
-    @staticmethod
-    def _exam_contract_or_none(*, exam, tenant):
-        try:
-            sheet_exam = resolve_template_exam_for_tenant(exam, tenant)
-        except ValueError:
-            return None
-        sheet = getattr(sheet_exam, "sheet", None)
-        if sheet is None:
-            return None
-        from apps.support.omr.contract_builder import build_omr_sheet_contract
-
-        return build_omr_sheet_contract(sheet=sheet, exam=exam)
 
     @staticmethod
     def from_params(
