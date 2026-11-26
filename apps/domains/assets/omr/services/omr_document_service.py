@@ -144,7 +144,7 @@ class OMRDocumentService:
             essay_question_numbers=tuple(resolved_essay_numbers or ()),
             essay_score_questions=essay_score_questions,
             essay_score_layout_marks=essay_score_layout_marks,
-            print_essay_score_grid_by_default=sheet is None or sheet.print_essay_score_grid_by_default,
+            print_essay_score_grid_by_default=sheet is None or sheet.essay_score_marks,
             logo_url=logo_url,
             logo_key=logo_key,
             logo_variant=logo_variant,

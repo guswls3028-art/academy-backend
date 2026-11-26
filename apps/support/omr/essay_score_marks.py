@@ -29,7 +29,6 @@ def _state(*, sheet, exam, contract=None) -> dict[str, Any]:
     if sheet is None:
         return {
             "enabled": False,
-            "print_by_default": True,
             "available": False,
             "printed": False,
             "reason": "시험 문항을 먼저 등록해 주세요.",
@@ -46,7 +45,6 @@ def _state(*, sheet, exam, contract=None) -> dict[str, Any]:
     ) if supports_essay_score_marks(exam) else {"available": False, "reason": SCORE_METHOD_REQUIRED}
     return {
         "enabled": bool(sheet.essay_score_marks),
-        "print_by_default": sheet.print_essay_score_grid_by_default,
         "available": bool(availability["available"]),
         # True when the next printed sheet carries the strip.
         "printed": bool(contract.essay_score_marks),
@@ -97,15 +95,10 @@ def set_essay_score_marks(*, exam, tenant, enabled: bool) -> dict[str, Any]:
     scan_shape = sheet.essay_score_marks_scan_shape
     if enabled or contract.essay_score_marks:
         scan_shape = essay_score_marks_scan_shape(contract)
-    hidden = not enabled
-    if (
-        sheet.essay_score_marks != enabled or sheet.essay_score_marks_scan_shape != scan_shape
-        or sheet.essay_score_grid_hidden != hidden
-    ):
+    if sheet.essay_score_marks != enabled or sheet.essay_score_marks_scan_shape != scan_shape:
         sheet.essay_score_marks = enabled
         sheet.essay_score_marks_scan_shape = scan_shape
-        sheet.essay_score_grid_hidden = hidden
-        sheet.save(update_fields=["essay_score_marks", "essay_score_marks_scan_shape", "essay_score_grid_hidden", "updated_at"])
+        sheet.save(update_fields=["essay_score_marks", "essay_score_marks_scan_shape", "updated_at"])
     return _state(sheet=sheet, exam=exam)
 
 
