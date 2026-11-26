@@ -4,8 +4,9 @@ import re
 from uuid import uuid5
 
 from django.contrib.auth import get_user_model
-from django.contrib.auth.hashers import check_password, make_password
+from django.contrib.auth.hashers import PBKDF2PasswordHasher
 from django.db import transaction
+from django.db.models import Q
 from drf_spectacular.utils import extend_schema
 from rest_framework import serializers
 from rest_framework.exceptions import NotFound, ValidationError
@@ -65,7 +66,11 @@ class ImportInput(serializers.Serializer):
 
 
 def owned_students(tenant):
-    return Student.objects.filter(tenant=tenant, user__tenant=tenant, user__is_staff=False,
+    # The native soft-delete clears the user's tenant when its last membership is deactivated.
+    identity_scope = Q(user__tenant=tenant) | Q(
+        deleted_at__isnull=False, user__tenant__isnull=True, user__is_active=False
+    )
+    return Student.objects.filter(identity_scope, tenant=tenant, user__is_staff=False,
                                   user__is_superuser=False, user__password__startswith="!",
                                   parent__isnull=True, phone__isnull=True, parent_phone="").exclude(pk=2)
 
@@ -75,9 +80,14 @@ def owned_identity(student):
     privileged = TenantMembership.objects.filter(user_id=student.user_id, is_active=True).exclude(
         tenant_id=student.tenant_id, role="student"
     ).exists()
+    linked = student.user.tenant_id == student.tenant_id
+    if not linked and student.deleted_at and student.user.tenant_id is None and not student.user.is_active:
+        linked = TenantMembership.objects.filter(
+            tenant_id=student.tenant_id, user_id=student.user_id, role="student", is_active=False
+        ).exists()
     return bool(IDENTITY.fullmatch(identifier)
                 and student.pk != 2
-                and student.user.tenant_id == student.tenant_id
+                and linked
                 and not student.user.is_staff and not student.user.is_superuser
                 and not student.user.has_usable_password()
                 and not student.phone and not student.parent_phone and not student.parent_id
@@ -234,11 +244,12 @@ class DawonRosterCredentialView(StaffRequest):
         data = payload.validated_data
         student = DawonRosterStudentView().student(request, student_id)
         user = student.user
+        hasher = PBKDF2PasswordHasher()
         if data["action"] == "set":
             # Leading "!" preserves the original unusable-account contract.
-            user.password = CREDENTIAL_PREFIX + make_password(data["password"], hasher="pbkdf2_sha256")
+            user.password = CREDENTIAL_PREFIX + hasher.encode(data["password"], hasher.salt())
             user.save(update_fields=["password"])
             return Response({"configured": True})
         configured = user.password.startswith(CREDENTIAL_PREFIX)
-        matches = configured and check_password(data["password"], user.password[len(CREDENTIAL_PREFIX):])
+        matches = configured and hasher.verify(data["password"], user.password[len(CREDENTIAL_PREFIX):])
         return Response({"matches": matches})

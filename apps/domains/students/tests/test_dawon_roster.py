@@ -59,7 +59,14 @@ class DawonRosterTest(TestCase):
         self.assertEqual(self.call("patch", f"{self.legacy.pk}/", {"name": "보호"}).status_code, 404)
         self.assertEqual(self.call("delete", route).status_code, 204)
         self.assertEqual(self.call("get", payload={"deleted": "true"}).data["rows"][0]["id"], id_)
+        deleted = Student.objects.select_related("user").get(pk=id_)
+        self.assertFalse(deleted.user.is_active)
+        self.assertIsNone(deleted.user.tenant_id)
+        self.assertEqual(self.call("post", route, tenant=self.other).status_code, 404)
         self.assertEqual(self.call("post", route).status_code, 200)
+        self.assertTrue(TenantMembership.objects.filter(
+            tenant=self.tenant, user_id=deleted.user_id, role="student", is_active=True
+        ).exists())
         self.assertIsNone(Student.objects.get(pk=id_).deleted_at)
         self.legacy.refresh_from_db()
         self.assertEqual(self.legacy.name, "예시 보존")
