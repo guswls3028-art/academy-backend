@@ -152,6 +152,8 @@ class LectureRangePrintTests(TestCase):
             for name in archive.namelist():
                 with fitz.open(stream=archive.read(name), filetype="pdf") as doc:
                     text = "\n".join(page.get_text() for page in doc)
+                    self.assertIn("2~3차시", text)
+                    self.assertNotIn("주차별", text)
                     self.assertTrue(any(page.get_images() for page in doc))
                 if name.startswith("Alpha_"):
                     self.assertIn("EX-ONE", text)

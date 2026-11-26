@@ -103,6 +103,13 @@ def _delete_with_ack(queue, message: dict, tier: str) -> bool:
                 "AI_JOB_SQS_ACK | job_id=%s | queue=%s | message_id=%s",
                 job_id, queue_name, message_id,
             )
+            if os.getenv("ACADEMY_RUNTIME_ENV") == "development":
+                try:
+                    from apps.core.services.development_qa_queue_ack import record_ack
+                    record_ack(message)
+                except Exception as exc:
+                    logger.error("DEVELOPMENT_QA_ACK_RECORD_FAILED | job_id=%s | error_type=%s",
+                                 job_id, type(exc).__name__)
         else:
             logger.error("AI_JOB_SQS_ACK_IDENTITY_MISSING | job_id=%s", job_id)
     return deleted

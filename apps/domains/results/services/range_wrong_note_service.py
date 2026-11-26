@@ -54,7 +54,7 @@ class WrongNoteRange:
                 solution_key = explanation_image_key(question=q, tenant_id=tenant_id)
                 items[q.number] = {
                     "source_type": kind, "source_id": source_id, "exam_id": exam.pk,
-                    "exam_title": title, "session_order": order, "session_title": "",
+                    "exam_title": title, "session_order": order, "session_title": f"{order}차시",
                     "question_number": q.number, "question_id": q.pk,
                     "answer_type": q.question_kind or "", "correct_answer": answer,
                     "attempt_created_at": max(q.updated_at, explanation.updated_at) if explanation else q.updated_at,

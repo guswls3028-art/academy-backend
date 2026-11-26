@@ -6,12 +6,16 @@ post-delete Inspect can check the same Redis keys without storing credentials.
 """
 import os
 import re
+import time
 
 from django.db import connection
 
 from apps.core.management.commands.setup_ymath_realuse_scenario import assert_isolated_runtime
 from apps.core.models import OpsAuditLog, Tenant
-from apps.core.services.development_qa_ownership import same_setup_owner, verify_setup_owner
+from apps.core.services.development_qa_ownership import (
+    WRONG_NOTE_SETUP_SCHEMA, same_setup_owner, verify_setup_owner,
+)
+from apps.core.services.development_qa_queue_ack import WORKERS, require_acks
 from apps.domains.ai.models import AIJobModel, AIResultModel
 from libs.redis.client import get_redis_client
 
@@ -23,26 +27,31 @@ FIELDS = ("ai_jobs", "ai_results", "ai_redis_keys")
 
 
 class OwnedQaAI:
-    def __init__(self, tenant_code, tenant_id, capability):
+    def __init__(self, tenant_code, tenant_id, capability, *, wrong_note_smoke=False):
         assert_isolated_runtime()
         if (os.environ.get("REDIS_HOST") != "127.0.0.1"
                 or os.environ.get("REDIS_PORT", "6379") != "6379"):
             raise PermissionError("QA AI cache must be the isolated host-local service")
-        if (not re.fullmatch(r"qa-ymath-realuse-fe-[0-9]+-[0-9]+-[a-f0-9]{12}", tenant_code)
+        namespace = "wn" if wrong_note_smoke else "fe"
+        if (not re.fullmatch(rf"qa-ymath-realuse-{namespace}-[0-9]+-[0-9]+-[a-f0-9]{{12}}", tenant_code)
                 or type(tenant_id) is not int or tenant_id <= 0
                 or not re.fullmatch(r"[a-f0-9]{64}", capability)):
             raise PermissionError("Invalid QA AI scope")
         self.code, self.tenant_id = tenant_code, tenant_id
         # SET_NULL preserves this setup seal after tenant deletion.
         seals = list(OpsAuditLog.objects.filter(
-            action="development.qa.setup", result="success",
+            action="development.wrong-note.setup" if wrong_note_smoke else "development.qa.setup", result="success",
             payload__tenant_code=tenant_code, payload__tenant_id=tenant_id,
         )[:2])
         if len(seals) != 1:
             raise PermissionError("Missing or ambiguous QA AI ownership")
 
         self.seal = seals[0]
-        self.owner = verify_setup_owner(tenant_code, tenant_id, capability, self.seal.payload)
+        self.owner = verify_setup_owner(
+            tenant_code, tenant_id, capability, self.seal.payload,
+            schema=WRONG_NOTE_SETUP_SCHEMA if wrong_note_smoke else None,
+        )
+        self.actor = "wrong-note-development-runner" if wrong_note_smoke else "frontend-release-runner"
         tenants = list(Tenant.objects.filter(pk=tenant_id).values_list("code", flat=True))
         if tenants not in ([], [tenant_code]) or self.seal.target_tenant_id not in (None, tenant_id):
             raise PermissionError("QA AI tenant identity mismatch")
@@ -127,8 +136,25 @@ class OwnedQaAI:
             "ai_redis_keys": len(unknown) + exact_count,
         }, unknown
 
+    def _drain_print_jobs(self, jobs, *, timeout=100):
+        if not any(j.job_type in ("question_segmentation", "wrong_note_pdf_generation") for j in jobs):
+            return jobs
+        deadline = time.monotonic() + timeout
+        while any(j.job_type in WORKERS and (j.status not in TERMINAL or not j.completed_at or j.locked_by
+                  or j.locked_at or j.lease_expires_at) for j in jobs):
+            if time.monotonic() >= deadline:
+                raise PermissionError("Owned development print jobs are still running")
+            time.sleep(1)
+            jobs = self._jobs()
+        require_acks(self.seal, jobs)
+        return jobs
+
     def inspect(self):
         jobs = self._jobs()
+        # The fixed SSM Inspect releases its tenant row lock before this call.
+        # Consumer callbacks may need that lock to persist their final children.
+        if self.present and not connection.in_atomic_block:
+            jobs = self._drain_print_jobs(jobs)
         receipt = self._receipts()
         if not self.present and receipt is None:
             raise PermissionError("Absent QA AI scope requires a cleanup receipt")
@@ -145,6 +171,7 @@ class OwnedQaAI:
             if (job.status not in TERMINAL or job.completed_at is None
                     or job.locked_by or job.locked_at or job.lease_expires_at):
                 raise PermissionError("QA AI job is not terminal and unleased")
+        require_acks(self.seal, jobs)
         ids = [j.job_id for j in jobs]
         before, unknown = self._residue(ids)
         if unknown or before["ai_jobs"] != len(ids):
@@ -156,7 +183,7 @@ class OwnedQaAI:
         if self.prepare() != plan:
             raise PermissionError("QA AI cleanup plan changed")
         OpsAuditLog.objects.create(
-            action=RECEIPT_ACTION, actor_username="frontend-release-runner",
+            action=RECEIPT_ACTION, actor_username=self.actor,
             target_tenant_id=self.tenant_id, payload=plan, result="success")
         keys = self._keys(plan["job_ids"])
         if keys:

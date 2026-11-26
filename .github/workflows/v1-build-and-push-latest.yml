@@ -77,6 +77,7 @@ jobs:
       build_base: ${{ steps.base-reuse.outputs.rebuild == 'true' || steps.changes.outputs.build_base == 'true' }}
       force_full: ${{ steps.base-reuse.outputs.rebuild == 'true' || steps.changes.outputs.build_all == 'true' }}
       short_sha: ${{ steps.meta.outputs.short_sha }}
+      wrong_note_smoke: ${{ steps.changes.outputs.wrong_note_smoke }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -121,6 +122,7 @@ jobs:
           # workflow_dispatch → 강제 전체 빌드+배포
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "workflow_dispatch — force full build"
+            echo "wrong_note_smoke=true" >> "$GITHUB_OUTPUT"
             echo "build_all=true" >> $GITHUB_OUTPUT
             echo "build_base=true" >> $GITHUB_OUTPUT
             echo "build_api=true" >> $GITHUB_OUTPUT
@@ -138,6 +140,7 @@ jobs:
           MANIFEST="$RUNNER_TEMP/release-baseline/release-manifest.latest.json"
           force_full_build() {
             echo "$1 — full build"
+            echo "wrong_note_smoke=true" >> "$GITHUB_OUTPUT"
             echo "build_all=true" >> $GITHUB_OUTPUT
             echo "build_base=true" >> $GITHUB_OUTPUT
             echo "build_api=true" >> $GITHUB_OUTPUT
@@ -200,6 +203,12 @@ jobs:
           # Avoid echo|grep -q under GitHub's `bash -o pipefail`: on a large
           # multi-commit diff, grep can exit early and make echo fail with SIGPIPE.
           changed_matches() { grep -qE "$1" <<< "$CHANGED"; }
+          # Evaluate against the last successful release, so an earlier failed promotion cannot skip its smoke.
+          if grep -qE '^(academy/application/use_cases/ai/pipelines/(pdf_question|paired_source)_pipeline\.py|academy/adapters/ai/detection/|academy/framework/workers/ai_sqs_worker\.py|apps/domains/(results/(services|views)/[^/]*(wrong_note|answer_matching)|exams/views/(segmentation_review|pdf_question_extract)_view)|apps/support/results/[^/]*wrong_note|apps/core/(services/(wrong_note_development_scenario|development_qa_(ownership|ai_cleanup|queue_ack))|management/commands/verify_development_wrong_notes)\.py|scripts/v1/run-wrong-note-development-smoke\.ps1)' <<< "$CHANGED_RELEASE"; then
+            echo "wrong_note_smoke=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "wrong_note_smoke=false" >> "$GITHUB_OUTPUT"
+          fi
           # Local tooling, candidate-only controller code and test suites do
           # not change product behavior.
           # Exclude them from accumulated per-image diffs as well as push triggers,
@@ -343,7 +352,7 @@ jobs:
           # ai_sqs_worker and worker_job_types import these modules outside queueing/.
           changed_matches "^apps/domains/ai/(callbacks|job_types)\.py$" && TOOLS=true
           changed_matches "^apps/domains/ai/gateway\.py$" && TOOLS=true
-          changed_matches "^apps/domains/results/services/(wrong_note_pdf_(service|worker)|wrong_note_service|answer_matching)\.py$" && TOOLS=true
+          changed_matches "^apps/domains/results/services/(wrong_note_pdf_(service|worker)|wrong_note_batch_(archive|service)|range_wrong_note_service|wrong_note_service|answer_matching)\.py$" && TOOLS=true
           changed_matches "^apps/domains/assets/omr/renderer/fonts/" && TOOLS=true
           changed_matches "^apps/domains/submissions/services/(ai_omr_result_mapper|lifecycle)\.py$" && TOOLS=true
           changed_matches "^apps/support/ai/callback_dependencies\.py$" && TOOLS=true
@@ -1212,6 +1221,18 @@ jobs:
             -ExpectedReleaseId "${{ steps.development-env.outputs.release_id }}" `
             -ExpectedProductionDatabaseName "${{ steps.development-env.outputs.production_database_name }}" `
             -Ci
+
+      - name: Verify student PDFs on the sole active development release
+        if: needs.detect-changes.outputs.wrong_note_smoke == 'true'
+        shell: pwsh
+        run: |
+          python scripts/v1/deployment_lock.py renew --owner "$env:ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
+          if ($LASTEXITCODE -ne 0) { throw "Shared deployment lock renewal failed." }
+          ./scripts/v1/run-wrong-note-development-smoke.ps1 `
+            -ManifestPath /tmp/api-development-candidate/release-manifest.candidate.json `
+            -ReleaseId "${{ steps.development-env.outputs.release_id }}" `
+            -ProductionDatabase "${{ steps.development-env.outputs.production_database_name }}" `
+            -LockOwner "$env:ACADEMY_DEPLOY_LOCK_OWNER"
 
   # ============================================================
   # Phase 4: Isolated preprod server (before any production mutation)

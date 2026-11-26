@@ -6,6 +6,7 @@ import hmac
 
 STANDARD_SETUP_SCHEMA = "frontend-development-qa/v1"
 MULTIPART_SETUP_SCHEMA = "frontend-development-qa/video-multipart-v1"
+WRONG_NOTE_SETUP_SCHEMA = "backend-development-qa/wrong-note-v1"
 
 
 def same_setup_owner(record, expected):
@@ -26,7 +27,10 @@ def verify_setup_owner(tenant_code, tenant_id, capability, record, *, schema=Non
     if not isinstance(record, dict):
         raise PermissionError("Invalid QA setup ownership")
     stored_schema = record.get("schema")
-    if stored_schema not in (STANDARD_SETUP_SCHEMA, MULTIPART_SETUP_SCHEMA) or (
+    allowed = (WRONG_NOTE_SETUP_SCHEMA,) if schema == WRONG_NOTE_SETUP_SCHEMA else (
+        STANDARD_SETUP_SCHEMA, MULTIPART_SETUP_SCHEMA,
+    )
+    if stored_schema not in allowed or (
         schema is not None and stored_schema != schema
     ):
         raise PermissionError("Invalid QA setup ownership schema")

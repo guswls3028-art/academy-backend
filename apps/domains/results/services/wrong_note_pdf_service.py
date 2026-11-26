@@ -318,7 +318,7 @@ def _session_label(item: dict[str, Any]) -> str:
     order = item.get("session_order")
     title = str(item.get("session_title") or "")
     if order is not None and title:
-        if title.replace(" ", "") in {f"{order}주차", f"{order}회차"}:
+        if title.replace(" ", "") in {f"{order}주차", f"{order}회차", f"{order}차시"}:
             return title
         return f"{order}주차 · {title}"
     if order is not None:
@@ -346,6 +346,7 @@ def build_wrong_note_pdf(
     to_session_order: int | None = None,
     exam_id: int | None,
     source_selection_count: int = 0,
+    lecture_range: bool = False,
     deadline_monotonic: float | None = None,
 ) -> bytes:
     from PIL import Image
@@ -387,7 +388,7 @@ def build_wrong_note_pdf(
     pdf.drawString(
         20 * mm,
         page_h - 58 * mm,
-        "틀린 문항과 다시 볼 문항을 주차별로 묶었습니다.",
+        "선택한 차시에서 다시 풀 문제를 모았습니다." if lecture_range else "틀린 문항과 다시 볼 문항을 주차별로 묶었습니다.",
     )
 
     pdf.setFillColor(HexColor(_INK))
@@ -402,7 +403,8 @@ def build_wrong_note_pdf(
     elif exam_id is not None:
         scope_text = str(rows[0].get("exam_title") or "선택 시험")
     elif to_session_order is not None:
-        scope_text = f"{from_session_order}~{to_session_order}회차"
+        unit = "차시" if lecture_range else "회차"
+        scope_text = f"{from_session_order}~{to_session_order}{unit}"
     else:
         scope_text = f"{from_session_order}회차부터 누적"
     image_count = sum(1 for item in rows if item.get("has_question_image"))
@@ -882,6 +884,7 @@ def generate_and_store_wrong_note_pdf(
                 else None
             ),
             exam_id=int(job.exam_id) if job.exam_id else None,
+            lecture_range=bool(getattr(job, "batch_id", None)),
             source_selection_count=0 if getattr(job, "batch_id", None) else len(source_selection),
             deadline_monotonic=deadline_monotonic,
         )
