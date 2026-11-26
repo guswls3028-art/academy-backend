@@ -315,6 +315,38 @@ class OmrEssayScoreProposalTests(TestCase):
         )
         self.assertNotIn("essay_score_marks", build_omr_payload(scan)["template_meta"])
 
+    def test_old_scored_paper_is_ignored_after_removing_the_essay_allocation(self):
+        for enabled in (True, False):
+            self.assertEqual(self._api("patch", "essay-score-marks/", {"enabled": enabled}).status_code, 200)
+        submission = self._graded_scan(self.enrollment, [{"question_number": 2, "status": "ok", "score": 0}])
+        self.essay.score = 0
+        self.essay.save(update_fields=["score"])
+
+        meta = build_omr_payload(submission)["template_meta"]
+        self.assertNotIn("essay_score_questions", meta)
+        self.assertNotIn("essay_score_marks", meta)
+        self.assertEqual(self._row(self.enrollment)["omr_essay_scores"], {})
+        result = Result.objects.get(target_type="exam", target_id=self.exam.id, enrollment=self.enrollment)
+        self.assertEqual((result.objective_score, result.total_score), (80, 80))
+
+    def test_saved_scan_only_proposes_still_allocated_essay_questions(self):
+        self.sheet.essay_count = 2
+        self.sheet.total_questions = 3
+        self.sheet.save(update_fields=["essay_count", "total_questions"])
+        other = ExamQuestion.objects.create(
+            sheet=self.sheet, number=3, score=8, question_kind=ExamQuestion.QuestionKind.ESSAY,
+        )
+        self._graded_scan(self.enrollment, [
+            {"question_number": 2, "status": "ok", "score": 3},
+            {"question_number": 3, "status": "ok", "score": 4},
+        ])
+        self.essay.score = 0
+        self.essay.save(update_fields=["score"])
+
+        proposals = self._row(self.enrollment)["omr_essay_scores"]
+        self.assertEqual(set(proposals), {str(other.id)})
+        self.assertEqual(proposals[str(other.id)]["score"], 4)
+
     def test_linked_exam_uses_its_own_grading_method_for_printing_and_enable(self):
         self.exam.exam_type = Exam.ExamType.TEMPLATE
         self.exam.save(update_fields=["exam_type"])
