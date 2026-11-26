@@ -114,6 +114,23 @@ def _validate_dawon_demo_access(request, token):
 
     path = request.path
     method = request.method
+    roster_root = "/api/v1/students/demo-roster/"
+    if path.startswith(roster_root) or path in {
+        "/api/v1/students/demo-messages/", "/api/v1/students/demo-staff/month-close/",
+    }:
+        roster_detail = re.fullmatch(r"/api/v1/students/demo-roster/[1-9][0-9]{0,17}/", path)
+        if role == "admin" and (
+            (path == roster_root and method in {"GET", "HEAD", "POST"})
+            or (roster_detail and method in {"PATCH", "POST", "DELETE"})
+            or (method == "POST" and re.fullmatch(r"/api/v1/students/demo-roster/[1-9][0-9]{0,17}/credential/", path))
+            or (path == "/api/v1/students/demo-messages/" and method in {"GET", "HEAD", "POST"})
+            or (path == "/api/v1/students/demo-staff/month-close/" and method == "POST")
+        ):
+            from apps.domains.clinic.contracts import is_demo_tenant
+
+            if is_demo_tenant(getattr(request, "tenant", None)):
+                return
+        raise PermissionDenied("학생 명단 검수는 데모 관리자에게만 허용됩니다.")
     if role == "admin":
         from apps.core.dawon_course_operations import allows_course_operation
         from apps.domains.clinic.dawon_demo import is_demo_tenant

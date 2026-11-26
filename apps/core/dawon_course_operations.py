@@ -4,8 +4,8 @@ import re
 _ID = r"[1-9]\d{0,17}"
 # Keep unrelated staff records, account management, external delivery and paid jobs outside this surface.
 _READ = re.compile(
-    rf"(?:lectures/(?:lectures|sessions|attendance|sections|section-assignments)(?:/[\w/-]+)?"
-    rf"|enrollments(?:/[\w/-]+)?|exams(?:/[\w/-]+)?|homeworks?(?:/[\w/-]+)?"
+    rf"(?:lectures/attendance-qr|lectures/(?:lectures|sessions|attendance|sections|section-assignments)(?:/[\w/-]+)?"
+    rf"|progress/clinic-links|enrollments(?:/[\w/-]+)?|exams(?:/[\w/-]+)?|homeworks?(?:/[\w/-]+)?"
     rf"|results/admin/(?:sessions|exams|attempt-history|student-grades|clinic-targets)(?:/[\w/-]+)?"
     rf"|submissions(?:/{_ID})?|media/(?:videos|video-permissions|video-progress)(?:/[\w/-]+)?"
     rf"|clinic/(?:sessions(?:/(?:tree|locations|{_ID}(?:/availability)?))?|participants(?:/{_ID})?)"
@@ -16,6 +16,7 @@ _OPERATIONS = {
     "POST": re.compile(
         rf"(?:lectures/sessions(?:/with-schedules|/{_ID}/schedules)?"
         rf"|lectures/attendance/(?:bulk_create|bulk_set_present|bulk_undo_present)"
+        rf"|progress/clinic-links/{_ID}/(?:resolve|waive|carry-over|unresolve|submit-retake|update-retake)|results/admin/clinic-targets/waive-missing"
         rf"|enrollments/session-enrollments(?:/bulk_create)?|exams(?:/{_ID}/(?:spawn-regular|questions/init|structure/ensure|save-as-template|enrollments)|/answer-keys)?"
         rf"|homeworks(?:/{_ID}/(?:save-as-template|source-exam))?|homework/(?:assignments|enrollments|scores)"
         rf"|results/admin/sessions/{_ID}/(?:score-draft/commit|reorder|exams)|media/videos/(?:youtube|reorder|folders|bulk-policy))"
@@ -37,6 +38,8 @@ def allows_course_operation(request):
     path = request.path.removeprefix("/api/v1/").removesuffix("/")
     if request.method in {"GET", "HEAD"}:
         return bool(_READ.fullmatch(path))
+    if request.method == "POST" and path == "lectures/attendance-qr":
+        return isinstance(request.data, dict) and request.data.get("kind") == "class"
     if request.method == "POST" and path == "community/posts":
         return isinstance(request.data, dict) and request.data.get("post_type") == "notice"
     if request.method == "PATCH" and (post := re.fullmatch(rf"community/posts/({_ID})", path)):

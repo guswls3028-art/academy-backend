@@ -1,8 +1,9 @@
 """Director read models for the dedicated demo. Keep the original clinic, counsel and enrollment records."""
 from collections import defaultdict
+from django.utils import timezone
 from django.db.models import Exists, F, OuterRef, Q
 from rest_framework.exceptions import NotFound
-from rest_framework.fields import ChoiceField, IntegerField
+from rest_framework.fields import ChoiceField, DateField, IntegerField
 
 from apps.domains.clinic.models import SessionParticipant
 from apps.domains.community.models import PostEntity, PostReply
@@ -77,6 +78,9 @@ def care_directory(tenant, query, *, teacher=None):
             source = source.filter(created_by__class_groups=group)
         if term:
             source = source.filter(created_by__name__icontains=term)
+        if query.get("status"):
+            state = ChoiceField(choices=("waiting", "answered")).run_validation(query["status"])
+            source = source.filter(answered=state == "answered")
         source = source.select_related("created_by").order_by("-created_at","-pk")
     else:
         source = DawonCounselAppointment.objects.filter(enrollment__tenant=tenant,enrollment__student__tenant=tenant,
@@ -86,6 +90,11 @@ def care_directory(tenant, query, *, teacher=None):
         if term:
             source = source.filter(enrollment__student__name__icontains=term)
         source = source.select_related("enrollment__student","enrollment__lecture__class_group_link__group").order_by("-day","-pk")
+    if kind in {"requests", "appointments"}:
+        field = "created_at__date" if kind == "requests" else "day"
+        for param, op in (("from", "gte"), ("to", "lte")):
+            if query.get(param):
+                source = source.filter(**{f"{field}__{op}": DateField().run_validation(query[param])})
     detail = "record" in query
     if detail:
         source = source.filter(pk=IntegerField(min_value=1,max_value=2**63-1).run_validation(query["record"]))
@@ -99,7 +108,7 @@ def care_directory(tenant, query, *, teacher=None):
         home = link.group.name if link and link.group.tenant_id == tenant.pk else ""
         if kind == "requests":
             student = item.created_by
-            fields = {"day":item.created_at.date(),"title":item.title,"status":"답변 완료" if item.answered else "답변 대기"}
+            fields = {"day":timezone.localdate(item.created_at),"title":item.title,"status":"답변 완료" if item.answered else "답변 대기"}
             if detail:
                 fields.update(body=item.content, can_reply=item.created_by_id == 2,
                               replies=list(item.replies.filter(tenant=tenant).order_by("created_at","pk").values_list("content",flat=True)))

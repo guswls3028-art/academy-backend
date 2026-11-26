@@ -154,6 +154,9 @@ def student_results(tenant, params, *, enrollment=None):
     page = IntegerField(min_value=1, max_value=1000000).run_validation(params.get("page", 1))
     scope = Enrollment.objects.filter(tenant=tenant, status="ACTIVE", student__tenant=tenant, student__deleted_at__isnull=True,
                                       lecture__tenant=tenant, lecture__class_group_link__group__tenant=tenant)
+    if params.get("class_type"):
+        from apps.support.results.dawon_school_report import class_type_groups
+        scope = scope.filter(lecture__class_group_link__group__in=class_type_groups(tenant, params["class_type"]))
     if enrollment is not None:
         scope = scope.filter(pk=enrollment.pk)
     for key, field in (("group", "lecture__class_group_link__group_id"), ("lecture", "lecture_id")):

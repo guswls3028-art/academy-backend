@@ -21,6 +21,9 @@ from .views import (
     StudentAccountNotificationLogView,
     StudentHomeworkOpenActivityView,
 )
+from .views.dawon_messages import DawonMessagePreviewView
+from .views.dawon_payroll_close import DawonPayrollCloseView
+from .views.dawon_roster import DawonRosterCredentialView, DawonRosterStudentView, DawonRosterView
 from .views.dawon_staff import DawonStaffClockView, DawonStaffView
 from .views.enrollment_matrix_view import (
     StudentEnrollmentMatrixView,
@@ -46,6 +49,11 @@ router.register(r"registration_requests", RegistrationRequestViewSet, basename="
 router.register(r"", StudentViewSet, basename="student")
 
 urlpatterns = [
+    path("demo-messages/", DawonMessagePreviewView.as_view(), name="dawon-demo-messages"),
+    path("demo-staff/month-close/", DawonPayrollCloseView.as_view(), name="dawon-demo-payroll-close"),
+    path("demo-roster/<int:student_id>/credential/", DawonRosterCredentialView.as_view(), name="dawon-demo-roster-credential"),
+    path("demo-roster/", DawonRosterView.as_view(), name="dawon-demo-roster"),
+    path("demo-roster/<int:student_id>/", DawonRosterStudentView.as_view(), name="dawon-demo-roster-student"),
     path("demo-staff/", DawonStaffView.as_view()),
     path("demo-staff/clock/", DawonStaffClockView.as_view()),
     path("teacher-alerts/", DawonTeacherAlertsView.as_view(), name="dawon-teacher-alerts"),

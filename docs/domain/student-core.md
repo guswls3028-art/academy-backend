@@ -15,6 +15,14 @@ documents still own their detailed contracts:
 - OMR scoring: `omr.md`
 - messaging and Alimtalk: `messaging-alimtalk.md`
 
+## Dawon demonstration operations
+
+The dedicated review tenant (719, code `dawon`, review flag enabled) exposes the director workspace through an explicitly selected demo administrator. The student and guardian entry points continue to use their own scope. Class membership, course ownership and historical results survive the retirement of the separate teacher UI.
+
+The daily operations endpoint joins the selected Seoul date to sessions, schedule slots, attendance, assignments, clinic sessions and counseling appointments. Class type and optional cohort narrow result and school-report queries before pagination. The alert queue filters by domain and disposition. The native clinic resolution view keeps tenant scoping; outbound resolution delivery is suppressed for this demo tenant.
+
+Demo roster import uses an idempotent batch identifier, reserves synthetic identities and supports edit, soft deletion and restoration. Only those identities permit a simulated credential to be set or checked. The salted value remains unusable for ordinary login. Message previews persist a non-delivering audit receipt keyed by tenant and batch, including template, recipient count and audience. A retry returns the same receipt; conflicting reuse is rejected. The synthetic month-close route validates the period and target, then uses the native staff lock and payroll snapshot service. Other tenants and public family roles cannot use these demo staff writes. See `apps/domains/students/tests/test_dawon_roster.py` and `test_demo_operations.py`, and the frontend `docs/DAWON-DEMO.md` for UI entry points and verification.
+
 ## 0. Product Rule
 
 Student is the product spine. A feature that displays, grades, notifies,

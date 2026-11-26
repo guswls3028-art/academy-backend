@@ -48,6 +48,17 @@ class DawonTeacherAlertsView(APIView):
             if "teacher" not in roles:
                 raise PermissionDenied()
             links = links.filter(reference_teacher=request.user)
+        class_type = request.query_params.get("classType")
+        group_id = request.query_params.get("scope")
+        if class_type:
+            from apps.support.results.dawon_school_report import class_type_groups
+            links = links.filter(group__in=class_type_groups(tenant, class_type))
+        if group_id:
+            if group_id == "null":
+                links = links.none()
+            else:
+                group_pk = serializers.IntegerField(min_value=1, max_value=2**63-1).run_validation(group_id)
+                links = links.filter(group_id=group_pk)
         lectures = dict(links.order_by("lecture__title", "lecture_id").values_list("lecture_id", "lecture__title"))
         selected = request.query_params.get("lecture_id")
         if not selected:

@@ -67,9 +67,13 @@ def monthly_payroll(tenant, people, first):
     period = dict(tenant=tenant, staff_id__in=ids, year=first.year, month=first.month)
     records = {row["staff_id"]: row for row in WorkRecord.objects.filter(**dated).values("staff_id").annotate(
         hours=Sum("work_hours"), earned=Sum("amount"), pending=Count("pk", filter=Q(end_time__isnull=True)),
-        incomplete=Count("pk", filter=Q(end_time__isnull=False) & (Q(amount__isnull=True) | Q(work_hours__isnull=True))))}
+        incomplete=Count("pk", filter=Q(end_time__isnull=False) & (Q(amount__isnull=True) | Q(work_hours__isnull=True))),
+        close_blocked=Count("pk", filter=Q(end_time__isnull=False) & (
+            Q(resolved_hourly_wage__isnull=True) | Q(current_break_started_at__isnull=False))))}
     expenses = dict(ExpenseRecord.objects.filter(**dated, status="APPROVED").values("staff_id").annotate(
         total=Sum("amount")).values_list("staff_id", "total"))
+    pending_expense = set(ExpenseRecord.objects.filter(**dated, status="PENDING").values_list("staff_id", flat=True))
+    previous_month = first < timezone.localdate().replace(day=1)
     snapshots = {item.staff_id: item for item in PayrollSnapshot.objects.filter(**period)}
     locked = set(WorkMonthLock.objects.filter(**period, is_locked=True).values_list("staff_id", flat=True))
     for row in people:
@@ -85,7 +89,9 @@ def monthly_payroll(tenant, people, first):
             state, hours, work, expense = "estimate", sums.get("hours") or 0, sums.get("earned") or 0, expenses.get(key, 0)
             total = work + expense
         row.update(state=state, hours=hours, work_amount=work, expense_amount=expense,
-                   total_amount=total, open_count=sums.get("pending", 0))
+                   total_amount=total, open_count=sums.get("pending", 0),
+                   can_close=(previous_month and state == "estimate" and row.get("pay_type") == "HOURLY"
+                              and not sums.get("pending") and not sums.get("close_blocked") and key not in pending_expense))
     return people
 
 
@@ -96,8 +102,9 @@ class DawonStaffView(StaffRequest):
         if request.query_params.get("view") == "payroll":
             month = request.query_params.get("month", "")
             first = month_start(month)
-            people = list(sample_staff(tenant).order_by("name", "pk").values("id", "name", "position"))
+            people = list(sample_staff(tenant).order_by("name", "pk").values("id", "name", "position", "pay_type"))
             for row in monthly_payroll(tenant, people, first):
+                row.pop("pay_type")
                 hours = row.pop("hours")
                 row["minutes"] = round(hours * 60) if hours is not None else None
             return Response({"month": month, "rows": people})

@@ -70,6 +70,13 @@ class DemoOperationsTests(TestCase):
         self.assertEqual(response.data["groups"], [{"id": group.pk, "name": group.name, "lesson_count": 2,
                          "total": 3, "marked": 1, "missing": 1, "unset": 1, "absent": 1}])
         self.assertEqual(response.data["lessons"], [])
+        day = self.operation(data={**query, "view": "day"})
+        self.assertEqual(day.status_code, 200)
+        self.assertEqual([row["session"] for row in day.data["agenda"]], [lesson.pk for lesson in lessons])
+        self.assertEqual(day.data["arrivals"], 0)
+        self.assertEqual(day.data["assignments"], [])
+        self.assertEqual(day.data["clinics"], [])
+        self.assertEqual(day.data["counsel"], [])
         from apps.domains.students.services.dawon_daily_attendance import daily_attendance
 
         with self.assertNumQueries(4):

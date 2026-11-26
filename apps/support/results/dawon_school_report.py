@@ -11,6 +11,17 @@ def is_dawon_school_report(tenant):
     return getattr(settings, "DAWON_REVIEW_CLASS_GROUPS", False) and (tenant.pk, tenant.code) == (719, "dawon")
 
 
+def class_type_groups(tenant, value):
+    from rest_framework.fields import ChoiceField
+    from apps.domains.students.models import ClassGroup
+
+    kind = ChoiceField(choices=(*ClassGroup.Kind.values, *ClassGroup.Track.values)).run_validation(value)
+    groups = ClassGroup.objects.filter(tenant=tenant)
+    if kind in ClassGroup.Kind.values:
+        return groups.filter(kind=kind)
+    return groups.filter(kind=ClassGroup.Kind.UNION, track=kind)
+
+
 def school_scope_at_submission(tenant, student, term, today):
     """Historical submissions cannot infer a past school from today's directory."""
     if not is_dawon_school_report(tenant) or term.academic_year != today.year - (today.month < 3):
@@ -23,7 +34,7 @@ def school_scope_at_submission(tenant, student, term, today):
     return {"school_at_submission": school, "year_grade_at_submission": student.grade}
 
 
-def school_report_cohorts(tenant, term, *, school=None, grade=None, class_group=None):
+def school_report_cohorts(tenant, term, *, school=None, grade=None, class_group=None, class_members=None):
     from apps.support.results.school_reports import _current_scores, _term_scores
 
     rows = _term_scores(tenant, term).filter(student__tenant=tenant, student__deleted_at__isnull=True).only(
@@ -32,6 +43,8 @@ def school_report_cohorts(tenant, term, *, school=None, grade=None, class_group=
     ).select_related("student").order_by("student_id")
     if class_group is not None:
         rows = rows.filter(student__class_groups=class_group)
+    if class_members is not None:
+        rows = rows.filter(student_id__in=class_members)
     groups = {}
     members = []
     for sid, history in groupby(rows.iterator(chunk_size=512), key=attrgetter("student_id")):

@@ -49,6 +49,15 @@ def queue_page(tenant, links, params):
         if params.get(param):
             selected = selected.filter(**{"group__"+param: ChoiceField(choices=choices).run_validation(params[param])})
     rows = scoped_rows(tenant, selected)
+    areas = {
+        "attendance": {"absence_streak"},
+        "exam": {"exam_drop", "recent_exam_drop", "top_reference_gap", "exam_rise"},
+        "homework": {"homework_missing", "homework_drop"},
+        "video": {"video_watch"},
+    }
+    if params.get("area"):
+        area = ChoiceField(choices=tuple(areas)).run_validation(params["area"])
+        rows = [row for row in rows if row["rule"] in areas[area]]
     if params.get("rule"):
         rule = ChoiceField(choices=DEFAULTS).run_validation(params["rule"])
         rows = [row for row in rows if row["rule"] == rule]

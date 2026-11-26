@@ -21,6 +21,10 @@ def send_clinic_resolution_notification(
     if not enrollment or not enrollment.student or not enrollment.tenant:
         return
 
+    from apps.domains.clinic.contracts import is_demo_tenant
+    if is_demo_tenant(enrollment.tenant):
+        return
+
     result_label = {
         "EXAM_PASS": "시험 통과",
         "HOMEWORK_PASS": "과제 통과",

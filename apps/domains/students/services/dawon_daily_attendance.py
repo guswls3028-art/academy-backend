@@ -9,7 +9,7 @@ from apps.domains.lectures.models import Session, SessionSchedule
 from apps.domains.students.models import ClassGroup
 
 
-def daily_attendance(tenant, params):
+def daily_attendance(tenant, params, *, include_agenda=False):
     day = DateField().run_validation(params.get("date"))
     selected = None
     if "group" in params:
@@ -83,8 +83,26 @@ def daily_attendance(tenant, params):
         for _, lesson in lesson_rows.values():
             lesson["students"].sort(key=lambda student: (student["name"], student["enrollment"]))
             detail.append(lesson)
-    return {
+    result = {
         "date": day.isoformat(), "groups": [summaries[group] for group in groups if group in summaries],
         "group_name": groups.get(selected), "lessons": detail,
         "status_labels": dict(Attendance._meta.get_field("status").choices),
     }
+
+    if include_agenda:
+        agenda = []
+        slots = SessionSchedule.objects.filter(session_id__in=lesson_rows, date=day).order_by("start_time", "pk")
+        for slot in slots:
+            group, lesson = lesson_rows[slot.session_id]
+            agenda.append({"session": slot.session_id, "schedule": slot.pk, "start": slot.start_time,
+                           "group": groups[group], "course": lesson["course_id"], "course_title": lesson["course"],
+                           "title": lesson["title"], "slot": slot.label})
+        for session_id in lesson_rows.keys() - scheduled:
+            group, lesson = lesson_rows[session_id]
+            agenda.append({"session": session_id, "schedule": None, "start": None, "group": groups[group],
+                           "course": lesson["course_id"], "course_title": lesson["course"],
+                           "title": lesson["title"], "slot": ""})
+        result["agenda"] = sorted(agenda, key=lambda row: (
+            row["start"] is None, row["start"], row["group"], row["course_title"], row["session"], row["schedule"] or 0))
+        result["arrivals"] = sum(status in {"PRESENT", "LATE", "EARLY_LEAVE"} for status, _ in units.values())
+    return result

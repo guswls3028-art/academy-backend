@@ -43,6 +43,9 @@ class WorkMonthLockViewSet(
     def get_queryset(self):
         return staff_repo.work_month_lock_queryset_tenant(self.request.tenant)
 
+    def close_staff(self, request, staff_id):
+        return staff_repo.staff_get_for_update(request.tenant.id, staff_id)
+
     def create(self, request, *args, **kwargs):
         staff_id_raw = request.data.get("staff")
         year_raw = request.data.get("year")
@@ -78,10 +81,7 @@ class WorkMonthLockViewSet(
                 # Same Staff mutex as WorkRecord/ExpenseRecord writers.  Once
                 # acquired, no writer can commit into this month between the
                 # lock row and immutable snapshot creation.
-                staff = staff_repo.staff_get_for_update(
-                    request.tenant.id,
-                    staff_id,
-                )
+                staff = self.close_staff(request, staff_id)
                 if staff.pay_type == "MONTHLY":
                     raise ValidationError(
                         "월급 직원은 현재 자동 정산 대상이 아닙니다. "

@@ -32,7 +32,7 @@ from apps.domains.students.services.dawon_followup import class_alerts, register
 from apps.domains.teachers.contracts import active_teachers
 
 
-def homework_progress(tenant, courses):
+def homework_progress(tenant, courses, *, sessions=None):
     submissions = Submission.objects.filter(
         tenant=tenant, target_type=Submission.TargetType.HOMEWORK,
         target_id=OuterRef("homework_id"), enrollment_id=OuterRef("enrollment_id"),
@@ -46,7 +46,10 @@ def homework_progress(tenant, courses):
         session__lecture_id__in=courses, enrollment__lecture_id=F("session__lecture_id"),
         enrollment__tenant=tenant, enrollment__status="ACTIVE", enrollment__student__tenant=tenant,
         enrollment__student__deleted_at__isnull=True,
-    ).annotate(
+    )
+    if sessions is not None:
+        rows = rows.filter(session_id__in=sessions)
+    rows = rows.annotate(
         uploaded=Exists(submissions),
         absent=Exists(scores.filter(meta__status=HomeworkScore.MetaStatus.NOT_SUBMITTED)),
         deferred=Exists(scores.filter(meta__status=HomeworkScore.MetaStatus.VIDEO_MAKEUP)),
@@ -92,7 +95,7 @@ class DawonDemoOperationsView(APIView):
         )
 
     @extend_schema(responses={200: schema.operations}, parameters=[
-        OpenApiParameter("view", str, enum=["attendance", "care", "learners", "student_results"]),
+        OpenApiParameter("view", str, enum=["day", "attendance", "care", "learners", "student_results"]),
         OpenApiParameter("q", str), OpenApiParameter("page", int), OpenApiParameter("lecture", int),
         OpenApiParameter("status", str, enum=["graded", "absent", "pending", "no_exam"]),
         OpenApiParameter("sort", str, enum=["name", "recent", "decline", "improvement", "lowest"]),
@@ -105,6 +108,26 @@ class DawonDemoOperationsView(APIView):
         tenant = request.tenant
         if request.query_params.get("view") == "student_results":
             return Response(student_results(tenant, request.query_params), headers={"Cache-Control":"private, no-store"})
+        if request.query_params.get("view") == "day":
+            data = daily_attendance(tenant, request.query_params, include_agenda=True)
+            sessions = {row["session"] for row in data["agenda"]}
+            courses = {row["course"] for row in data["agenda"]}
+            items = Homework.objects.filter(tenant=tenant, homework_type=Homework.HomeworkType.REGULAR,
+                                            session_id__in=sessions).exclude(status="DRAFT").order_by("session_id", "pk")
+            progress = homework_progress(tenant, courses, sessions=sessions)
+            data["assignments"] = [
+                {**row, **progress[row["id"]]} for row in items.values("id", "title", "session_id")
+            ]
+            from apps.domains.clinic.models import Session as ClinicSession
+            from apps.domains.students.models import DawonCounselAppointment
+            data["clinics"] = list(ClinicSession.objects.filter(tenant=tenant, date=data["date"])
+                                   .order_by("start_time", "pk").values("id", "title", "start_time", "location"))
+            data["counsel"] = list(DawonCounselAppointment.objects.filter(
+                day=data["date"], enrollment__tenant=tenant, enrollment__student__tenant=tenant,
+                enrollment__student__deleted_at__isnull=True, enrollment__lecture__tenant=tenant,
+            ).order_by("enrollment__student__name", "pk").values(
+                "id", student=F("enrollment__student__name"), course=F("enrollment__lecture__title")))
+            return Response(data, headers={"Cache-Control": "private, no-store"})
         if request.query_params.get("view") == "attendance":
             return Response(daily_attendance(tenant, request.query_params), headers={"Cache-Control": "private, no-store"})
         if request.query_params.get("view") in {"care", "learners"}:
