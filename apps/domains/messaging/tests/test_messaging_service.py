@@ -172,6 +172,11 @@ class TestSendEventNotification(_DispatchThroughQueueMixin, TestCase):
         self.assertEqual(mock_enqueue.call_args.kwargs["to"], "01099998888")
         self.assertEqual(mock_enqueue.call_args.kwargs["target_type"], "student")
 
+        student.uses_identifier = True
+        self.assertFalse(send_event_notification(tenant=tenant, trigger="exam_score_published",
+                                                 student=student, send_to="student"))
+        mock_enqueue.assert_called_once()
+
     @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
@@ -1315,6 +1320,7 @@ class TestRecipientWhitelist(TestCase):
     def test_allowed_number(self):
         from apps.domains.messaging.policy import check_recipient_allowed
         self.assertTrue(check_recipient_allowed("01031217466"))
+        self.assertFalse(check_recipient_allowed("010-0000-0000"))
         self.assertTrue(check_recipient_allowed("01034137466"))
 
     @patch.dict("os.environ", {"MESSAGING_TEST_WHITELIST": "01031217466,01034137466"})
@@ -1349,6 +1355,7 @@ class TestRecipientWhitelist(TestCase):
         self.assertFalse(check_recipient_allowed("01099998888"))
         self.assertFalse(check_recipient_allowed("010-9999-8888"))
         self.assertTrue(check_recipient_allowed("01031217466"))
+        self.assertFalse(check_recipient_allowed("010-0000-0000"))
 
 
 class TestDryRunMode(TestCase):

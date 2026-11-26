@@ -122,6 +122,7 @@ def build_omr_payload(submission: Submission) -> dict[str, Any]:
             sheet.essay_score_marks_scan_shape
             and supports_essay_score_marks(exam)
             and sheet.essay_score_marks_scan_shape == essay_score_marks_scan_shape(contract)
+            and any(q.kind == "essay" and (q.score or 0) > 0 for q in contract.questions)
         ):
             # Keep recognizing prints already in circulation after disabling printing.
             essay_numbers = list(contract.essay_question_numbers)

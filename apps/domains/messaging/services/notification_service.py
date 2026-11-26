@@ -6,6 +6,8 @@
 import logging
 import re
 
+from apps.shared.utils.student_contact import student_contact_phone
+
 logger = logging.getLogger(__name__)
 
 
@@ -160,11 +162,7 @@ def send_event_notification(
         return False
 
     # 수신자 전화번호
-    phone = None
-    if send_to == "parent":
-        phone = (getattr(student, "parent_phone", "") or "").replace("-", "").strip()
-    else:
-        phone = (getattr(student, "phone", "") or "").replace("-", "").strip()
+    phone = student_contact_phone(student, send_to)
     if not phone or len(phone) < 10:
         logger.debug(
             "send_event_notification skipped: trigger=%s no valid phone for send_to=%s",

@@ -9,6 +9,7 @@ from django.db import transaction
 from apps.core.models.user import user_display_username
 from apps.core.services.account_credentials import account_notice_password
 from apps.domains.students.models import Student
+from apps.shared.utils.student_contact import contact_phone, student_contact_phone
 from apps.support.students.account_recovery_dependencies import (
     account_recovery_delivery_disabled,
     send_account_recovery_alimtalk,
@@ -79,7 +80,7 @@ def send_student_account_credentials_notice(
 ) -> bool:
     """Send the current student login ID and the changed password if known."""
 
-    send_to = _normalize_phone(to) or _normalize_phone(student.phone) or _normalize_phone(student.parent_phone)
+    send_to = contact_phone(to) or student_contact_phone(student, "student") or student_contact_phone(student, "parent")
     if not send_to:
         logger.info("student account notice skipped: no recipient student_id=%s", getattr(student, "id", None))
         return False
@@ -149,7 +150,7 @@ def send_parent_account_credentials_notice(
 
 
 def send_student_password_changed_notice(*, student: Student, password: str, to: str | None = None) -> bool:
-    send_to = _normalize_phone(to) or _normalize_phone(student.phone) or _normalize_phone(student.parent_phone)
+    send_to = contact_phone(to) or student_contact_phone(student, "student") or student_contact_phone(student, "parent")
     if not send_to:
         logger.info("student password notice skipped: no recipient student_id=%s", getattr(student, "id", None))
         return False
