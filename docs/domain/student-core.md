@@ -175,6 +175,7 @@ Required invariants:
 - if student phone exists, `omr_code` is the last 8 digits of student phone.
 - if student phone is absent, `omr_code` is the last 8 digits of parent phone.
 - no fake student phone is created only to satisfy downstream code.
+- Account notices and recovery ignore a legacy student phone on identifier-only records. An eligible registered guardian phone remains available for flows that permit it. Messaging verifies roster destinations again before external delivery (see [messaging policy](../ssot/messaging-policy.md)).
 - `uses_identifier=True` means the student has no student phone and is identified by the account/OMR identifier flow.
 - when staff first records a distinct real student phone for an identifier-mode
   account, the same transaction updates `Student.phone`, `User.phone`,

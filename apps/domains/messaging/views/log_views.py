@@ -66,6 +66,8 @@ def _safe_failure_projection(log: NotificationLog) -> tuple[str, str]:
         )
     if not raw:
         return "", ""
+    if "recipient_contact_changed" in raw:
+        return "recipient_contact_changed", "수신 연락처가 변경되어 발송하지 않았습니다. 현재 연락처를 확인한 뒤 다시 발송해 주세요."
     if any(marker in raw for marker in ("notenoughbalance", "insufficient_balance", "balance")):
         return "insufficient_balance", "알림톡 잔액이 부족해 발송하지 못했습니다."
     if any(marker in raw for marker in ("recipient_blocked", "denylist", "recipient_not_allowed")):

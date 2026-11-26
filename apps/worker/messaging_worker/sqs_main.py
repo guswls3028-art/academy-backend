@@ -114,6 +114,7 @@ logger = logging.getLogger("messaging_worker")
 _NON_RETRYABLE_SEND_FAILURES = (
     "clinic_booking_closed",
     "grade_homework_review_changed",
+    "recipient_contact_changed",
     "alimtalk_failed_or_rejected",
     "alimtalk_requires_pf_id_and_template_id",
     "InvalidParameterValue",
@@ -1455,6 +1456,9 @@ def main() -> int:
                         nonlocal provider_send_started
                         if provider_send_started:
                             return True
+                        from apps.support.messaging.student_dependencies import assert_current_delivery_contact
+
+                        assert_current_delivery_contact(data, business_tenant_id=business_tenant_id)
                         _assert_clinic_reminder_delivery_active(
                             data, business_tenant_id=business_tenant_id,
                         )

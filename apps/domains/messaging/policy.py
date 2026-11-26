@@ -13,6 +13,8 @@ import logging
 
 from django.conf import settings
 
+from apps.shared.utils.student_contact import NO_PHONE_PLACEHOLDER
+
 logger = logging.getLogger(__name__)
 
 SCHOOL_REPORT_REQUEST_TRIGGER = "school_report_request"
@@ -319,6 +321,8 @@ def check_recipient_allowed(to: str) -> bool:
         True if allowed, False if blocked
     """
     normalized = (to or "").replace("-", "").strip()
+    if "".join(normalized.split()) == NO_PHONE_PLACEHOLDER:
+        return False
     denylist = get_messaging_recipient_denylist()
     if normalized in denylist:
         logger.warning(

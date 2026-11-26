@@ -754,7 +754,9 @@ def _load_candidates(
         if Parent.objects.filter(user_id=parent_user.id).count() != 1:
             raise CommandError(f"parent_user_profile_drift:student_id={student.id}")
 
-        student_phone = _normalize_phone(student.phone)
+        from apps.shared.utils.student_contact import student_contact_phone
+
+        student_phone = student_contact_phone(student, "student")
         parent_phone = _normalize_phone(student.parent_phone)
         canonical_parent_phone = _normalize_phone(parent.phone)
         if (
