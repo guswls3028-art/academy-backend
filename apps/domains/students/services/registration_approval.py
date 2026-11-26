@@ -11,6 +11,7 @@ from apps.core.models.user import user_internal_username
 from apps.core.services.login_identifier import normalize_login_identifier
 from apps.core.services.password import adopt_password_hash
 from apps.core.services.account_credentials import account_notice_password, recover_password, remember_account_password
+from apps.shared.utils.student_contact import student_contact_phone
 from apps.support.students.lifecycle_dependencies import (
     find_parent_account,
     locked_parent_account_by_phone_for_registration,
@@ -596,7 +597,7 @@ def _approve_with_existing_student(
     reg.save(update_fields=["status", "student", "initial_password_plain", "initial_password_ciphertext", "parent_initial_password_ciphertext", "parent_initial_password_mode", "updated_at"])
     notice = RegistrationApprovalNotice(
         student_name=student.name,
-        student_phone=student.phone or "",
+        student_phone=student_contact_phone(student, "student"),
         student_id=student.ps_number,
         student_password="",
         parent_phone=student.parent_phone,
@@ -696,7 +697,7 @@ def approve_registration_request(
     created_student = result.student
     notice = RegistrationApprovalNotice(
         student_name=reg.name,
-        student_phone=created_student.phone or "",
+        student_phone=student_contact_phone(created_student, "student"),
         student_id=created_student.ps_number,
         student_password=account_notice_password(created_student.user),
         parent_phone=parent_phone,
@@ -822,7 +823,7 @@ def resolve_deleted_registration_request(
 
     notice = RegistrationApprovalNotice(
         student_name=student.name,
-        student_phone=student.phone or "",
+        student_phone=student_contact_phone(student, "student"),
         student_id=student.ps_number,
         student_password=account_notice_password(student.user),
         parent_phone=student.parent_phone,

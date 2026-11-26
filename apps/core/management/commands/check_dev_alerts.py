@@ -564,7 +564,7 @@ def rule_circuit_breaker_open():
 
 
 def rule_messaging_delivery_health(window_minutes: int = 30):
-    """Alert on shared Alimtalk balance risk and confirmed retryable rejections."""
+    """Report balance risk and repeated pre-provider dependency failures."""
     from apps.domains.messaging.models import NotificationLog
     from apps.domains.messaging.services.solapi_client import get_solapi_client
 
@@ -588,6 +588,23 @@ def rule_messaging_delivery_health(window_minutes: int = 30):
         }
         for row in failure_groups
     ]
+
+    import_failures = (
+        NotificationLog.objects.filter(
+            sent_at__gte=since, message_mode="alimtalk", status="retryable_failed",
+            failure_reason__icontains="No module named",
+        )
+        .exclude(business_idempotency_key="")
+        .values("source_tenant__code", "tenant__code")
+        .annotate(count=Count("business_idempotency_key", distinct=True))
+        .filter(count__gte=2)
+        .order_by("source_tenant__code", "tenant__code")
+    )
+    rows.extend(
+        {"tenant": row["source_tenant__code"] or row["tenant__code"] or "unknown",
+         "state": "worker_dependency_failure", "count": row["count"], "window_minutes": window_minutes}
+        for row in import_failures
+    )
 
     threshold = Decimal(
         str(getattr(settings, "MESSAGING_PROVIDER_LOW_BALANCE_ALERT_THRESHOLD", 10_000))
@@ -616,7 +633,7 @@ def rule_messaging_delivery_health(window_minutes: int = 30):
     if not rows:
         return None
     return {
-        "title": f"📨 알림톡 공급자 잔액/재시도 확인 필요 — {len(rows)}건",
+        "title": f"📨 알림톡 발송 상태 확인 필요 — {len(rows)}건",
         "rows": rows,
         "total": sum(int(row.get("count", 1)) for row in rows),
     }

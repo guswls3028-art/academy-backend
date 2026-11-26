@@ -69,6 +69,22 @@ class MessagingDeliveryAlertTests(TestCase):
         self.assertEqual(result["rows"][0]["count"], 1)
 
     @patch("apps.domains.messaging.services.solapi_client.get_solapi_client")
+    def test_two_distinct_dependency_failures_alert_without_raw_reasons(self, get_client):
+        get_client.return_value.get_balance.return_value = SimpleNamespace(balance=Decimal("25000"))
+        for number in range(2):
+            NotificationLog.objects.create(
+                tenant=self.owner, source_tenant=self.customer, status="retryable_failed",
+                success=False, message_mode="alimtalk", failure_reason="No module named 'private-example'",
+                business_idempotency_key=f"synthetic-alert-{number}",
+            )
+            if number == 0:
+                self.assertIsNone(rule_messaging_delivery_health())
+        result = rule_messaging_delivery_health()
+        self.assertEqual(result["rows"], [{
+            "tenant": self.customer.code, "state": "worker_dependency_failure", "count": 2, "window_minutes": 30,
+        }])
+
+    @patch("apps.domains.messaging.services.solapi_client.get_solapi_client")
     def test_provider_failure_alert_and_logs_exclude_raw_response(self, get_client):
         sentinel = "synthetic-private-provider-response"
         get_client.return_value.get_balance.side_effect = RuntimeError(sentinel)
