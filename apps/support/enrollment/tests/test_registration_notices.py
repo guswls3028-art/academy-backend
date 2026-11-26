@@ -1,5 +1,7 @@
+from decimal import Decimal
+from types import SimpleNamespace
 from uuid import uuid4
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
@@ -328,6 +330,43 @@ class RegistrationNoticesTests(APITestCase):
                 call_command("process_scheduled_notifications")
         self.assertEqual(EnrollmentNoticeRecipient.objects.filter(status="failed").count(), 2)
         self.assertFalse(ScheduledNotification.objects.exists())
+
+    def test_rejected_sdk_receipt_is_saved_for_the_student_and_not_sent_again(self):
+        from solapi.error.MessageNotReceiveError import MessageNotReceivedError
+        from academy.adapters.db.django.repositories_messaging import (
+            claim_notification_slot, finalize_notification, mark_notification_sending,
+        )
+        from apps.worker.messaging_worker.sqs_main import send_one_alimtalk
+        from apps.worker.messaging_worker.solapi_receipts import receipt_reference
+
+        self.post(parent_notice="skip")
+        with patch("apps.support.enrollment.notice_dispatch.send_welcome_messages", side_effect=self.emit_fixture):
+            process_registration_notices(limit=2)
+        recipient = EnrollmentNoticeRecipient.objects.get(role="student")
+        claim = dict(tenant_id=self.tenant.pk, message_mode="alimtalk", business_idempotency_key=recipient.business_key,
+                     sqs_message_id="fixture-one-message", recipient_fingerprint=recipient.recipient_fingerprint)
+        claimed, log_id = claim_notification_slot(**claim)
+        self.assertTrue(claimed)
+        provider = Mock()
+        provider.send.side_effect = MessageNotReceivedError([
+            SimpleNamespace(to=self.student.phone, message_id="failed-message-reference")])
+        with patch("apps.worker.messaging_worker.sqs_main._get_solapi_client", return_value=provider):
+            result = send_one_alimtalk(None, self.student.phone, "fixture", "channel", "template",
+                                       before_provider_call=lambda: mark_notification_sending(log_id))
+        reference, kind = receipt_reference(result)
+        finalize_notification(log_id, success=False, amount_deducted=Decimal("0"), failure_reason=result["reason"],
+                              provider_message_id=reference, provider_reference_kind=kind,
+                              provider_definitely_not_accepted=result["definitely_not_accepted"])
+        log = NotificationLog.objects.get(pk=log_id)
+        self.assertEqual((log.status, log.provider_reference_kind, log.provider_message_id),
+                         ("failed", "message", "failed-message-reference"))
+        saved = self.latest().data["students"][0]
+        self.assertEqual(saved["student"], {"status": "failed", "log_id": log_id})
+        self.assertIsNone(saved["parent"]["log_id"])
+        self.post(parent_notice="skip")
+        self.assertEqual(claim_notification_slot(**claim), (False, None))
+        self.assertEqual(ScheduledNotification.objects.count(), 1)
+        provider.send.assert_called_once()
 
     def test_scheduler_retry_correlates_only_this_registration_and_never_claims_final_delivery(self):
         self.post(parent_notice="skip")
