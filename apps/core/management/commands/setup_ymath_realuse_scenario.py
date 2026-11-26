@@ -302,7 +302,8 @@ def ensure_development_notification_fixture(tenant: Tenant, trigger: str) -> Non
     from apps.domains.messaging.default_templates import get_default_templates
     from apps.domains.messaging.models import AutoSendConfig, MessageTemplate
 
-    if trigger not in {"clinic_cancelled", "assignment_not_submitted"}:
+    clinic_triggers = {"clinic_cancelled", "clinic_reservation_created"}
+    if trigger not in clinic_triggers and trigger != "assignment_not_submitted":
         raise CommandError("Unsupported development messaging fixture.")
     if not get_template_type(trigger) or not get_solapi_template_id(trigger):
         raise CommandError("Development notification requires an approved common template mapping.")
@@ -339,7 +340,7 @@ def ensure_development_notification_fixture(tenant: Tenant, trigger: str) -> Non
     if config is None:
         config = AutoSendConfig(tenant=tenant, trigger=trigger)
     config.template = template
-    config.enabled = trigger == "clinic_cancelled"
+    config.enabled = trigger in clinic_triggers
     config.message_mode = "alimtalk"
     config.minutes_before = definition.get("minutes_before")
     config.delay_mode = "immediate"
@@ -503,6 +504,7 @@ class Command(BaseCommand):
             tenant.save(update_fields=["name", "is_active"])
             if _is_persistent_development_runtime():
                 ensure_development_notification_fixture(tenant, "clinic_cancelled")
+                ensure_development_notification_fixture(tenant, "clinic_reservation_created")
                 ensure_development_notification_fixture(tenant, "assignment_not_submitted")
             self._ensure_scenario_provenance(tenant)
 

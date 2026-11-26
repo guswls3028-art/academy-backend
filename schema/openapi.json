@@ -1449,6 +1449,21 @@
         ],
         "type": "string"
       },
+      "ClinicNotificationTeacher": {
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
       "ClinicPlanReplaceRequest": {
         "properties": {
           "planned_clinic_link_ids": {
@@ -1633,6 +1648,11 @@
           "memo": {
             "description": "세션 메모 (운영용)",
             "type": "string"
+          },
+          "notification_teacher_id": {
+            "description": "담당 교직원 ID. 교직원 요청에서만 제공됩니다.",
+            "nullable": true,
+            "type": "integer"
           },
           "participant_count": {
             "readOnly": true,
@@ -1914,6 +1934,10 @@
             "readOnly": true,
             "type": "array"
           },
+          "requested_after_cutoff": {
+            "readOnly": true,
+            "type": "boolean"
+          },
           "requested_date": {
             "format": "date",
             "nullable": true,
@@ -2024,6 +2048,7 @@
           "preferred_start_time",
           "profile_photo_url",
           "recipient_contacts",
+          "requested_after_cutoff",
           "self_cancel_reason",
           "session_date",
           "session_duration_minutes",
@@ -2472,6 +2497,11 @@
           "memo": {
             "description": "세션 메모 (운영용)",
             "type": "string"
+          },
+          "notification_teacher_id": {
+            "description": "담당 교직원 ID. 교직원 요청에서만 제공됩니다.",
+            "nullable": true,
+            "type": "integer"
           },
           "section": {
             "description": "대상 반. section_mode에서만 사용. 비어있으면 전체.",
@@ -10403,6 +10433,11 @@
           "memo": {
             "description": "세션 메모 (운영용)",
             "type": "string"
+          },
+          "notification_teacher_id": {
+            "description": "담당 교직원 ID. 교직원 요청에서만 제공됩니다.",
+            "nullable": true,
+            "type": "integer"
           },
           "section": {
             "description": "대상 반. section_mode에서만 사용. 비어있으면 전체.",
@@ -26735,6 +26770,38 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ClinicSession"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "clinic"
+        ]
+      }
+    },
+    "/api/v1/clinic/sessions/notification-teachers/": {
+      "get": {
+        "description": "현재 학원에서 클리닉 예약 알림을 받을 수 있는 담당 교직원을 반환합니다.",
+        "operationId": "clinic_sessions_notification_teachers_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ClinicNotificationTeacher"
+                  },
+                  "type": "array"
                 }
               }
             },

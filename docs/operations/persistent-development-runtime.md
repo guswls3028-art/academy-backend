@@ -641,10 +641,12 @@ pwsh scripts/v1/connect-api-development.ps1 -AwsProfile <profile>
 `setup_ymath_realuse_scenario`처럼 production DB/R2에서 실행을 거부하는 명령으로만
 만든다. 실제 학생·학부모·성적·연락처와 운영 비밀값은 복제하지 않는다.
 이 명령은 `SOLAPI_MOCK=true`, `MESSAGING_DRY_RUN_TRIGGERS` 빈 값인 상시 개발
-런타임에서만 `clinic_cancelled`의 승인된 공용 봉투 매핑을 확인하고, 일회용 QA
+런타임에서만 `clinic_cancelled`와 `clinic_reservation_created`의 승인된 공용 봉투 매핑을 확인하고, 일회용 QA
 tenant에 tenant-owned content template과 활성 알림톡 config를 만든다. 학생+학부모
 취소 접수 검증에는 합성 학생 연락처만 사용한다. 성공 판정은 취소 상태 저장과 두
 durable outbox 생성, 전용 개발 SQS·mock worker 처리이며 실제 Solapi 호출은 0건이다.
+마감 후 예약 신청은 학생·학부모·지정 교직원 3건, 뒤이은 승인은 학생·학부모 2건을
+각 예약 발생 식별자로 구분해 개발 worker의 성공 로그와 `mock-` 제공자 ID로 확인한다.
 
 검수는 desktop과 390px에서 로그인, 대상 화면 DOM, 상호작용, 새로고침 후 상태,
 가로 overflow와 콘솔/API 오류를 확인한다. 종료 시 같은 명령의 `--destroy`로 정확한

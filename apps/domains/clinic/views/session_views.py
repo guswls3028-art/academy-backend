@@ -37,6 +37,11 @@ from ..services.lifecycle import booking_availability_for_session
 logger = logging.getLogger(__name__)
 
 
+class ClinicNotificationTeacherSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+
+
 class ClinicAvailabilitySlotSerializer(serializers.Serializer):
     start_date = serializers.DateField()
     end_date = serializers.DateField()
@@ -88,7 +93,11 @@ class SessionViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated(), TenantResolvedAndStaff()]
         return [IsAuthenticated(), TenantResolvedAndMember()]
 
-    @action(detail=False, methods=["get"], url_path="notification-teachers")
+    @extend_schema(
+        description="현재 학원에서 클리닉 예약 알림을 받을 수 있는 담당 교직원을 반환합니다.",
+        responses=ClinicNotificationTeacherSerializer(many=True),
+    )
+    @action(detail=False, methods=["get"], url_path="notification-teachers", pagination_class=None, filter_backends=[])
     def notification_teachers(self, request):
         from ..contracts import clinic_notification_teachers, teacher_mobile
 

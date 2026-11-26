@@ -41,7 +41,9 @@ class NotificationTeacherField(serializers.IntegerField):
 
 
 class ClinicSessionSerializer(serializers.ModelSerializer):
-    notification_teacher_id = NotificationTeacherField(required=False, allow_null=True)
+    notification_teacher_id = NotificationTeacherField(
+        required=False, allow_null=True, help_text="담당 교직원 ID. 교직원 요청에서만 제공됩니다.",
+    )
     participant_count = serializers.SerializerMethodField()
     booked_count = serializers.SerializerMethodField()
 
@@ -65,7 +67,8 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
         super().__init__(*args, **kwargs)
         self._range_available_slots = {}
         request = self.context.get("request")
-        if not is_effective_staff(getattr(request, "user", None), getattr(request, "tenant", None)):
+        schema_request = getattr(self.context.get("view"), "swagger_fake_view", False)
+        if not schema_request and not is_effective_staff(getattr(request, "user", None), getattr(request, "tenant", None)):
             self.fields.pop("notification_teacher_id", None)
         if request and hasattr(request, "tenant") and request.tenant:
             self.fields["target_lecture_ids"].child_relation.queryset = (
