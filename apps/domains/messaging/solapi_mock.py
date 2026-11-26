@@ -1,5 +1,5 @@
 """
-Mock Solapi — DEBUG=True 일 때 실제 API 호출 없이 콘솔에 발송될 JSON만 로깅.
+Mock Solapi — 개발 환경에서 모의 접수 ID와 건수를 기록한다.
 
 실제 API를 쓰면 잔액이 차감되고, 템플릿 미승인 시 에러가 나므로
 개발/테스트 시에는 이 Mock을 사용.
@@ -7,25 +7,11 @@ Mock Solapi — DEBUG=True 일 때 실제 API 호출 없이 콘솔에 발송될 
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from typing import Any, Optional, Union
 
 logger = logging.getLogger(__name__)
-
-
-def _message_to_log_payload(message: Any) -> dict:
-    """RequestMessage(또는 리스트)를 로그용 dict로 변환."""
-    if hasattr(message, "model_dump"):
-        return message.model_dump(exclude_none=True)
-    if hasattr(message, "dict"):
-        return message.dict(exclude_none=True)
-    if isinstance(message, list):
-        return [_message_to_log_payload(m) for m in message]
-    if isinstance(message, dict):
-        return message
-    return {"raw": str(message)}
 
 
 class MockSolapiMessageService:
@@ -43,29 +29,11 @@ class MockSolapiMessageService:
         messages: Union[list, Any],
         request_config: Optional[Any] = None,
     ) -> Any:
-        """
-        실제 발송 대신 JSON을 예쁘게 로그하고, 성공 응답 형태의 Mock 객체 반환.
-        """
-        if not isinstance(messages, list):
-            messages = [messages]
-        request_config_payload = None
-        if request_config:
-            if hasattr(request_config, "model_dump"):
-                request_config_payload = request_config.model_dump(exclude_none=True)
-            elif hasattr(request_config, "dict"):
-                request_config_payload = request_config.dict(exclude_none=True)
-            else:
-                request_config_payload = str(request_config)
-        payload = {
-            "messages": _message_to_log_payload(messages),
-            "request_config": request_config_payload,
-        }
-        logger.info(
-            "[MockSolapi] 발송 스킵 (실제 API 미호출)\n%s",
-            json.dumps(payload, indent=2, ensure_ascii=False),
-        )
+        """Return a simulated receipt without serializing recipient or credential data."""
+        count = len(messages) if isinstance(messages, list) else 1
         group_id = f"mock-{uuid.uuid4().hex[:12]}"
-        return _MockSendResponse(group_id=group_id, count=len(messages))
+        logger.info("[MockSolapi] 모의 접수 group_id=%s count=%d", group_id, count)
+        return _MockSendResponse(group_id=group_id, count=count)
 
 
 class _MockSendResponse:
