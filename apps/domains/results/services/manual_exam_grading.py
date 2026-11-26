@@ -195,7 +195,7 @@ def build_manual_grading_sheet(*, exam: Any, tenant: Any) -> dict[str, Any]:
     proposal_questions = {
         question.number: question
         for question in questions
-        if question.kind == "essay" and question.question_id in editable_ids
+        if question.kind == "essay" and question.has_assigned_points and question.question_id in editable_ids
     } if supports_essay_score_marks(exam) else {}
     essay_reads = omr_essay_score_reads_for_manual_grading(
         tenant=tenant,
