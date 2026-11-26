@@ -331,7 +331,10 @@ def ensure_development_notification_fixture(tenant: Tenant, trigger: str) -> Non
         template.category = definition["category"]
         template.name = definition["name"]
         template.subject = definition.get("subject", "")
-        template.body = definition["body"]
+        if trigger != "clinic_reservation_created":
+            template.body = definition["body"]
+        elif not templates:
+            template.body = "#{예약상태} · #{날짜} #{시간}"
         template.is_system = True
         template.is_user_default = False
         template.full_clean()

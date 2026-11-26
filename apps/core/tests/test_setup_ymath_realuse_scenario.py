@@ -298,6 +298,7 @@ class SetupYmathRealuseScenarioTests(TestCase):
         self.assertEqual(booking.message_mode, "alimtalk")
         self.assertEqual(booking.template.tenant_id, tenant.id)
         self.assertEqual(booking.template.category, MessageTemplate.Category.CLINIC)
+        self.assertEqual(booking.template.body, "#{예약상태} · #{날짜} #{시간}")
 
         config = AutoSendConfig.objects.select_related("template").get(
             tenant=tenant,
