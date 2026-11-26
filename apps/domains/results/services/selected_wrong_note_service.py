@@ -269,7 +269,7 @@ def list_wrong_note_sources_for_student(*, tenant_id: int, student_id: int) -> l
                     "lecture_id": int(enrollment.lecture_id),
                     "lecture_title": str(enrollment.lecture.title or ""),
                     "title": str(exam.title or "시험"),
-                    "session_order": None,
+                    "session_order": exam.first_regular_order,
                     "wrong_note_count": int(total),
                     "ready": True,
                 }

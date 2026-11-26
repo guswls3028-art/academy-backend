@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.db.models import Prefetch
+from django.db.models import Min, Prefetch, Q
 
 
 def regular_exam_ids_by_lecture_and_order(
@@ -263,6 +263,7 @@ def get_selected_workbook_score(*, enrollment_id: int, homework: Any) -> Any | N
 
 def selected_regular_exams_for_lecture(*, tenant_id: int, lecture_id: int):
     from apps.domains.exams.models import Exam
+    from apps.domains.lectures.models import Session
 
     return (
         Exam.objects.filter(
@@ -271,7 +272,15 @@ def selected_regular_exams_for_lecture(*, tenant_id: int, lecture_id: int):
             is_active=True,
             sessions__lecture_id=int(lecture_id),
         )
-        .distinct()
+        .annotate(
+            first_regular_order=Min(
+                "sessions__regular_order",
+                filter=Q(
+                    sessions__lecture_id=int(lecture_id),
+                    sessions__session_type=Session.SessionType.REGULAR,
+                ),
+            )
+        )
         .order_by("title", "id")
     )
 
