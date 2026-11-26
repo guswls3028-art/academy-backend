@@ -77,9 +77,11 @@ class RegistrationNoticesTests(APITestCase):
             AutoSendConfig.objects.update_or_create(
                 tenant=self.tenant, trigger="registration_approved_" + role, defaults={"template": template},
             )
-        self.assertEqual(self.post().status_code, 201)
-        with patch("apps.domains.messaging.policy.get_owner_tenant_id", return_value=self.tenant.pk):
-            self.assertEqual(process_registration_notices(limit=10), 0)
+        with patch("apps.domains.messaging.policy.get_owner_tenant_id", return_value=self.tenant.pk), \
+             patch("apps.domains.messaging.scheduled.process_due_notifications") as handoff, \
+             self.captureOnCommitCallbacks(execute=True):
+            self.assertEqual(self.post().status_code, 201)
+        self.assertEqual(handoff.call_count, 2)
         outboxes = ScheduledNotification.objects.filter(tenant=self.tenant)
         for role, phone in (("student", self.student.phone), ("parent", self.student.parent_phone)):
             recipient = EnrollmentNoticeRecipient.objects.get(role=role)

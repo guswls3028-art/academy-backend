@@ -100,6 +100,11 @@ def register_with_notices(*, tenant, actor_id, lecture, students, request_id, st
     if consumed:
         # A later lecture, retry of the old API, or initial-notice recovery must respect this decision.
         Student.objects.filter(tenant=tenant, pk__in=consumed).update(**PENDING_NOTICE_CLEARED, updated_at=now)
+    if len(ids) == 1 and any(recipient.status == "queued" for recipient in recipients):
+        # Preserve prompt delivery for the ordinary single-student flow. A process restart
+        # or admission failure leaves the exact same durable jobs for the periodic consumer.
+        from .notice_dispatch import process_registration_notices
+        transaction.on_commit(lambda: process_registration_notices(registration=registration, limit=2), robust=True)
     return registration
 
 

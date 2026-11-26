@@ -88,8 +88,10 @@ def _process_recipient(recipient_id, tenant_id):
     return exhausted
 
 
-def process_registration_notices(*, limit, time_budget=20):
+def process_registration_notices(*, limit, time_budget=20, registration=None):
     due = EnrollmentNoticeRecipient.objects.filter(status="queued", next_attempt_at__lte=timezone.now())
+    if registration is not None:
+        due = due.filter(registration=registration, registration__tenant_id=registration.tenant_id)
     jobs = list(due.order_by("next_attempt_at", "pk").values_list("pk", "registration__tenant_id")[:limit])
     failed = 0
     deadline = time.monotonic() + time_budget
