@@ -80,12 +80,23 @@ class SessionViewSet(viewsets.ModelViewSet):
             "partial_update",
             "destroy",
             "bulk_create",
+            "notification_teachers",
             "send_reminder",
             "tree",
         }
         if self.action in staff_only_actions:
             return [IsAuthenticated(), TenantResolvedAndStaff()]
         return [IsAuthenticated(), TenantResolvedAndMember()]
+
+    @action(detail=False, methods=["get"], url_path="notification-teachers")
+    def notification_teachers(self, request):
+        from ..contracts import clinic_notification_teachers, teacher_mobile
+
+        teachers = clinic_notification_teachers(request.tenant.pk).only("id", "name", "phone")
+        return Response([
+            {"id": teacher.pk, "name": teacher.name or f"교직원 {teacher.pk}"}
+            for teacher in teachers if teacher_mobile(teacher)
+        ])
 
     @staticmethod
     def _booking_policy_signature(tenant):
@@ -542,6 +553,7 @@ class SessionViewSet(viewsets.ModelViewSet):
                 "section_type": s.section.section_type if s.section_id else None,
                 "allow_time_preference": s.allow_time_preference,
                 "allow_multi_slot_booking": s.allow_multi_slot_booking,
+                "notification_teacher_id": s.notification_teacher_id,
                 "booking_mode": s.booking_mode,
                 "booking_interval_minutes": s.booking_interval_minutes,
                 "booking_max_stay_minutes": s.booking_max_stay_minutes,
@@ -686,6 +698,7 @@ class SessionViewSet(viewsets.ModelViewSet):
                         booking_interval_minutes=booking_interval_minutes,
                         booking_max_stay_minutes=booking_max_stay_minutes,
                         created_by=created_by,
+                        notification_teacher_id=data.get("notification_teacher_id"),
                     )
                     if target_lecture_ids:
                         session.target_lectures.set(target_lecture_ids)

@@ -1,6 +1,6 @@
 # PATH: apps/domains/clinic/views/settings_views.py
 from django.db import transaction
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -11,12 +11,25 @@ from apps.core.parsing import parse_bool
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.core.services.tenant_access import get_authorized_tenant_role
 from ..capabilities import clinic_capabilities_for
+from ..booking_cutoff import cutoff_settings
 from ..color_utils import get_effective_clinic_colors
 
 
 # ============================================================
 # Clinic Settings (패스카드 색상 등)
 # ============================================================
+class BookingCutoffSettingsSerializer(serializers.Serializer):
+    booking_cutoff_mode = serializers.ChoiceField(choices=("none", "previous_day", "before_start"))
+    booking_cutoff_time = serializers.TimeField(input_formats=["%H:%M", "%H:%M:%S"])
+    booking_cutoff_minutes = serializers.IntegerField(min_value=1, max_value=525600)
+    allow_late_requests = serializers.BooleanField()
+
+    def validate_booking_cutoff_time(self, value):
+        if value.second or value.microsecond:
+            raise ValidationError("마감 시각은 분 단위로 설정해 주세요.")
+        return value
+
+
 class ClinicSettingsView(APIView):
     """
     GET/PATCH /clinic/settings/
@@ -30,6 +43,7 @@ class ClinicSettingsView(APIView):
         if not saved or not isinstance(saved, list) or len(saved) < 3:
             saved = ["#ef4444", "#3b82f6", "#22c55e"]
         return {
+            **cutoff_settings(tenant),
             "colors": get_effective_clinic_colors(tenant)[:3],
             "use_daily_random": getattr(tenant, "clinic_use_daily_random", False),
             "auto_approve_booking": getattr(tenant, "clinic_auto_approve_booking", False),
@@ -63,7 +77,8 @@ class ClinicSettingsView(APIView):
             "booking_interval_minutes",
             "booking_max_stay_minutes",
         }
-        if policy_fields.intersection(request.data) and get_authorized_tenant_role(
+        cutoff = BookingCutoffSettingsSerializer(data=request.data, partial=True)
+        if (policy_fields | set(cutoff.fields)).intersection(request.data) and get_authorized_tenant_role(
             request.user,
             tenant,
         ) not in {"owner", "admin"}:
@@ -71,7 +86,12 @@ class ClinicSettingsView(APIView):
 
         with transaction.atomic():
             tenant = Tenant.objects.select_for_update().get(pk=tenant.pk)
+            cutoff.is_valid(raise_exception=True)
             update_fields = []
+            for key, value in cutoff.validated_data.items():
+                field_name = f"clinic_{key}"
+                setattr(tenant, field_name, value)
+                update_fields.append(field_name)
             if "use_daily_random" in request.data:
                 tenant.clinic_use_daily_random = parse_bool(
                     request.data["use_daily_random"], field_name="use_daily_random",

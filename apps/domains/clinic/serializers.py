@@ -6,6 +6,8 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from .models import Session, SessionParticipant, Test, Submission
+from .booking_cutoff import booking_cutoff_at, cutoff_settings
+from .contracts import clinic_notification_teachers, teacher_mobile
 from .services.lifecycle import booking_availability_for_session
 from .time_ranges import (
     participant_booking_window,
@@ -28,7 +30,18 @@ from apps.support.clinic.session_dependencies import (
 )
 
 
+class NotificationTeacherField(serializers.IntegerField):
+    def to_internal_value(self, value):
+        user_id = super().to_internal_value(value)
+        tenant = self.context["request"].tenant
+        teacher = clinic_notification_teachers(tenant.pk).filter(pk=user_id).first()
+        if not teacher_mobile(teacher):
+            raise serializers.ValidationError("연락처가 등록된 이 학원의 담당 선생님을 선택해 주세요.")
+        return user_id
+
+
 class ClinicSessionSerializer(serializers.ModelSerializer):
+    notification_teacher_id = NotificationTeacherField(required=False, allow_null=True)
     participant_count = serializers.SerializerMethodField()
     booked_count = serializers.SerializerMethodField()
 
@@ -52,6 +65,8 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
         super().__init__(*args, **kwargs)
         self._range_available_slots = {}
         request = self.context.get("request")
+        if not is_effective_staff(getattr(request, "user", None), getattr(request, "tenant", None)):
+            self.fields.pop("notification_teacher_id", None)
         if request and hasattr(request, "tenant") and request.tenant:
             self.fields["target_lecture_ids"].child_relation.queryset = (
                 lectures_for_tenant(request.tenant)
@@ -74,7 +89,14 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Session
-        exclude = ("target_lectures",)
+        exclude = ("target_lectures", "notification_teacher")
+
+    def to_representation(self, instance):
+        result = super().to_representation(instance)
+        tenant = getattr(self.context.get("request"), "tenant", None) or instance.tenant
+        cutoff = booking_cutoff_at(tenant, session_window(instance)[0])
+        result.update(cutoff_settings(tenant), booking_cutoff_at=cutoff.isoformat() if cutoff else None)
+        return result
 
     def validate(self, attrs):
         instance = self.instance
@@ -704,6 +726,7 @@ class ClinicSessionBulkCreateSerializer(serializers.Serializer):
     POST /clinic/sessions/bulk-create/ 전용 직렬화기
     - dates 배열 (최대 20일) + 공통 세션 필드
     """
+    notification_teacher_id = NotificationTeacherField(required=False, allow_null=True)
     title = serializers.CharField(required=False, allow_blank=True, default="")
     start_time = serializers.TimeField()
     duration_minutes = serializers.IntegerField(min_value=1)

@@ -99,6 +99,10 @@ class Session(TimestampModel):
         help_text="시간 범위 예약의 최대 체류 분 스냅샷입니다.",
     )
 
+    notification_teacher = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="+",
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -283,6 +287,7 @@ class SessionParticipant(TimestampModel):
         db_default="",
         help_text="학생·학부모가 남긴 요청사항. 작성 출처가 명확한 경우에만 저장.",
     )
+    requested_after_cutoff = models.BooleanField(default=False, db_default=False, editable=False)
     preferred_start_time = models.TimeField(
         null=True,
         blank=True,

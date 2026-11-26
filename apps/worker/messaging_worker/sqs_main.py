@@ -1459,6 +1459,11 @@ def main() -> int:
                         from apps.support.messaging.student_dependencies import assert_current_delivery_contact
 
                         assert_current_delivery_contact(data, business_tenant_id=business_tenant_id)
+                        if data.get("event_type") == "clinic_reservation_created":
+                            from apps.domains.clinic.contracts import booking_notice_is_current
+
+                            if not booking_notice_is_current(data, business_tenant_id):
+                                raise ValueError("clinic_booking_closed")
                         _assert_clinic_reminder_delivery_active(
                             data, business_tenant_id=business_tenant_id,
                         )

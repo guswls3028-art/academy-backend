@@ -155,16 +155,21 @@ def create_notification_outboxes(
         observer_recipients = get_messaging_observer_recipients(tenant_id)
         original_outboxes = []
         for item in notifications:
+            payload = dict(item["payload"])
+            teacher_id = payload.pop("clinic_teacher_reference_id", None)
             original_outbox = _create_scheduled_notification_unlocked(
                 tenant_id=tenant_id,
                 trigger=item["trigger"],
                 send_at=item["send_at"],
-                payload=item["payload"],
+                payload=payload,
             )
             original_outboxes.append(original_outbox)
             for observer_payload in build_messaging_observer_payloads(
                 original_outbox=original_outbox,
-                recipients=observer_recipients,
+                recipients=(
+                    [r for r in observer_recipients if r.user_id != teacher_id]
+                    if teacher_id is not None else observer_recipients
+                ),
             ):
                 if original_outbox.grade_homework_review is not None:
                     observer_payload[OUTBOX_GUARD_KEY] = original_outbox.grade_homework_review
@@ -565,6 +570,13 @@ def _claim_due_notifications(
             )
 
         for notification in due:
+            if notification.trigger == "clinic_reservation_created":
+                from apps.domains.clinic.contracts import booking_notice_is_current
+
+                if not booking_notice_is_current(notification.payload or {}, notification.tenant_id):
+                    _cancel_stale_notification(notification, "clinic_booking_closed")
+                    terminal_count += 1
+                    continue
             if _clinic_participant_reminder_is_stale(notification):
                 _cancel_stale_notification(notification, "clinic_participant_closed")
                 terminal_count += 1

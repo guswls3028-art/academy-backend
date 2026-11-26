@@ -162,7 +162,18 @@ def send_event_notification(
         return False
 
     # 수신자 전화번호
-    phone = student_contact_phone(student, send_to)
+    target_teacher = None
+    if send_to == "clinic_teacher":
+        if trigger != "clinic_reservation_created" or not (context or {}).get("_booking_teacher_id"):
+            return False
+        from apps.domains.clinic.contracts import booking_notice_teacher, teacher_mobile
+
+        target_teacher = booking_notice_teacher(tenant.id, context["_participant_id"], context["_booking_teacher_id"])
+        phone = teacher_mobile(target_teacher)
+        if phone and phone in {student_contact_phone(student, role) for role in ("student", "parent")}:
+            return True
+    else:
+        phone = student_contact_phone(student, send_to)
     if not phone or len(phone) < 10:
         logger.debug(
             "send_event_notification skipped: trigger=%s no valid phone for send_to=%s",
@@ -184,6 +195,10 @@ def send_event_notification(
     if use_unified:
         # template.body = #{선생님메모}에 들어갈 안내 문구 (선생님 편집 가능)
         content_body = (content_template.body or "").strip()
+        if trigger == "clinic_reservation_created" and (context or {}).get("_reservation_state"):
+            from apps.domains.messaging.clinic_booking_notices import booking_notice_body
+
+            content_body = booking_notice_body(content_body, context["_reservation_state"])
 
         # Solapi replacements: 선생님메모 + 학원이름 + 학생이름 + 도메인 변수 + 사이트링크
         replacements = build_unified_replacements(
@@ -265,7 +280,7 @@ def send_event_notification(
         )
         return False
 
-    target_type = "parent" if send_to == "parent" else "student"
+    target_type = send_to
     payload = {
         "tenant_id": owner_id,
         "to": phone,
@@ -276,8 +291,8 @@ def send_event_notification(
         "alimtalk_replacements": replacements,
         "event_type": trigger,
         "target_type": target_type,
-        "target_id": student_id,
-        "target_name": name,
+        "target_id": target_teacher.pk if target_teacher else student_id,
+        "target_name": (target_teacher.name or "") if target_teacher else name,
         "source_tenant_id": tenant.id if int(tenant.id) != int(owner_id) else None,
         "occurrence_key": stable_occurrence,
         "source_domain": source_domain,
@@ -285,6 +300,8 @@ def send_event_notification(
         "domain_object_id": domain_object_id,
         "actor_id": actor_id,
     }
+    if trigger == "clinic_reservation_created" and (context or {}).get("_booking_teacher_id"):
+        payload["clinic_teacher_reference_id"] = context["_booking_teacher_id"]
 
     if send_at is not None:
         try:

@@ -1,4 +1,5 @@
 # PATH: apps/core/models/tenant.py
+from datetime import time
 from decimal import Decimal
 
 from django.db import models
@@ -99,6 +100,10 @@ class Tenant(models.Model):
         help_text="매일 자동 3색 사용 시 True",
     )
     # 예약 신청 시 자동 승인 (학생 신청이 pending 대신 booked로 저장)
+    clinic_booking_cutoff_mode = models.CharField(max_length=16, default="none", db_default="none")
+    clinic_booking_cutoff_time = models.TimeField(default=time(21), db_default=time(21))
+    clinic_booking_cutoff_minutes = models.PositiveIntegerField(default=120, db_default=120)
+    clinic_allow_late_requests = models.BooleanField(default=False, db_default=False)
     clinic_auto_approve_booking = models.BooleanField(
         default=False,
         help_text="True면 학생 예약 신청을 자동 승인(booked)합니다.",
