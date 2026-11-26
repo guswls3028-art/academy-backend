@@ -9,6 +9,7 @@ from apps.core.models import Tenant, TenantMembership
 from apps.domains.results.models import Result, ResultItem, WrongNotePDF
 from apps.domains.results.services.selected_wrong_note_service import (
     WrongNoteSourceSelectionError,
+    list_wrong_note_sources_for_student,
     list_wrong_notes_for_selection,
 )
 from apps.domains.results.views.wrong_note_pdf_view import WrongNotePDFCreateView
@@ -187,6 +188,34 @@ class SelectedWrongNoteSourceTests(TestCase):
         self.assertIsNone(job.exam_id)
         self.assertEqual(job.source_selection, normalized)
         self.assertEqual(job.output_format, WrongNotePDF.OutputFormat.HWPX)
+
+    def test_source_catalog_shows_first_regular_session_in_each_enrollment(self):
+        earlier = Session.objects.create(
+            lecture=self.lecture2, order=2, regular_order=2, title="2차시",
+        )
+        exam = Exam.objects.create(
+            tenant=self.tenant, title="공통 시험", exam_type=Exam.ExamType.REGULAR,
+        )
+        exam.sessions.add(self.session1, earlier, self.session2)
+        supplement = Session.objects.create(
+            lecture=self.lecture1, order=2, session_type=Session.SessionType.SUPPLEMENT,
+            title="보강",
+        )
+        makeup_exam = Exam.objects.create(
+            tenant=self.tenant, title="보강 시험", exam_type=Exam.ExamType.REGULAR,
+        )
+        makeup_exam.sessions.add(supplement)
+        sources = list_wrong_note_sources_for_student(
+            tenant_id=self.tenant.id, student_id=self.student.id,
+        )
+        self.assertCountEqual(
+            [(row["enrollment_id"], row["id"], row["session_order"]) for row in sources],
+            [
+                (self.enrollment1.id, exam.id, 1),
+                (self.enrollment2.id, exam.id, 2),
+                (self.enrollment1.id, makeup_exam.id, None),
+            ],
+        )
 
     def test_selection_rejects_another_students_enrollment(self):
         other_user = User.objects.create_user(

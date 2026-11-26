@@ -318,7 +318,7 @@ def _session_label(item: dict[str, Any]) -> str:
     order = item.get("session_order")
     title = str(item.get("session_title") or "")
     if order is not None and title:
-        if title.replace(" ", "") in {f"{order}주차", f"{order}회차"}:
+        if title.replace(" ", "") in {f"{order}주차", f"{order}회차", f"{order}차시"}:
             return title
         return f"{order}주차 · {title}"
     if order is not None:
@@ -346,11 +346,13 @@ def build_wrong_note_pdf(
     to_session_order: int | None = None,
     exam_id: int | None,
     source_selection_count: int = 0,
+    lecture_range: bool = False,
     deadline_monotonic: float | None = None,
 ) -> bytes:
     from PIL import Image
     from reportlab.lib.colors import HexColor, white
     from reportlab.lib.pagesizes import A4
+    from reportlab.lib.textsplit import wordSplit
     from reportlab.lib.units import mm
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
@@ -386,7 +388,7 @@ def build_wrong_note_pdf(
     pdf.drawString(
         20 * mm,
         page_h - 58 * mm,
-        "틀린 문항과 다시 볼 문항을 주차별로 묶었습니다.",
+        "선택한 차시에서 다시 풀 문제를 모았습니다." if lecture_range else "틀린 문항과 다시 볼 문항을 주차별로 묶었습니다.",
     )
 
     pdf.setFillColor(HexColor(_INK))
@@ -401,7 +403,8 @@ def build_wrong_note_pdf(
     elif exam_id is not None:
         scope_text = str(rows[0].get("exam_title") or "선택 시험")
     elif to_session_order is not None:
-        scope_text = f"{from_session_order}~{to_session_order}회차"
+        unit = "차시" if lecture_range else "회차"
+        scope_text = f"{from_session_order}~{to_session_order}{unit}"
     else:
         scope_text = f"{from_session_order}회차부터 누적"
     image_count = sum(1 for item in rows if item.get("has_question_image"))
@@ -524,6 +527,10 @@ def build_wrong_note_pdf(
             image_floor = work_y + reserved_work_h + 7 * mm
             max_draw_h = image_top - image_floor
             if image is None:
+                if item.get("_required_problem_image"):
+                    raise WrongNotePDFEmptyError(
+                        f"{source_label} {item['question_number']}번 문제 이미지를 읽지 못했습니다. 원본을 확인한 후 다시 시도해 주세요."
+                    )
                 image_h = min(78 * mm, max_draw_h)
                 image_y = image_top - image_h
                 pdf.setDash(4, 3)
@@ -608,8 +615,23 @@ def build_wrong_note_pdf(
             item,
             deadline_monotonic=deadline_monotonic,
         )
+        margin = 16 * mm
+        content_w = page_w - 2 * margin
+        text_pages = []
         if explanation_image is None:
-            explanation_parts = [None]
+            message = str(
+                (item.get("extra") or {}).get("explanation_text")
+                or "등록된 선생님 해설이 없습니다."
+            )
+            lines = []
+            for paragraph in message.splitlines():
+                wrapped = wordSplit(paragraph, content_w - 16 * mm, regular_font, 11)
+                lines.extend([line for _, line in wrapped] or [""])
+            lines_per_page = int((page_h - 109 * mm) // (6 * mm))
+            text_pages = [
+                lines[i:i + lines_per_page] for i in range(0, len(lines), lines_per_page)
+            ]
+            explanation_parts = [None] * len(text_pages)
         else:
             explanation_parts = _split_tall_image(
                 explanation_image,
@@ -619,8 +641,6 @@ def build_wrong_note_pdf(
 
         for part_index, explanation_part in enumerate(explanation_parts, start=1):
             _remaining_seconds(deadline_monotonic)
-            margin = 16 * mm
-            content_w = page_w - 2 * margin
             pdf.setFillColor(HexColor(_INK))
             pdf.rect(0, page_h - 23 * mm, page_w, 23 * mm, fill=1, stroke=0)
             pdf.setFillColor(white)
@@ -672,21 +692,14 @@ def build_wrong_note_pdf(
                 )
                 explanation_part.close()
             else:
-                explanation_text = str((item.get("extra") or {}).get("explanation_text") or "")
                 pdf.setFillColor(HexColor(_MUTED))
                 pdf.setFont(regular_font, 11)
-                message = explanation_text or "등록된 선생님 해설이 없습니다."
-                pdf.drawString(
-                    image_x + 8 * mm,
-                    image_y + image_h - 15 * mm,
-                    _ellipsize(
-                        pdf,
-                        message,
-                        font_name=regular_font,
-                        font_size=11,
-                        max_width=content_w - 16 * mm,
-                    ),
-                )
+                for line_index, line in enumerate(text_pages[part_index - 1]):
+                    pdf.drawString(
+                        image_x + 8 * mm,
+                        image_y + image_h - (15 + 6 * line_index) * mm,
+                        line,
+                    )
 
             pdf.setFillColor(HexColor(_MUTED))
             pdf.setFont(regular_font, 8)
@@ -795,7 +808,20 @@ def generate_and_store_wrong_note_pdf(
 ) -> str:
     deadline_monotonic = time.monotonic() + PDF_GENERATION_DEADLINE_SECONDS
     source_selection = list(getattr(job, "source_selection", None) or [])
-    if source_selection:
+    if getattr(job, "batch_id", None):
+        from apps.domains.results.services.range_wrong_note_service import RangeSelectionError, WrongNoteRange
+
+        scope = WrongNoteRange(
+            tenant_id=tenant.id, lecture_id=job.lecture_id,
+            first=job.from_session_order, last=job.to_session_order,
+            enrollment_id=enrollment.pk, selection=source_selection,
+        )
+        try:
+            items = scope.select(enrollment.pk, source_selection)
+        except RangeSelectionError as exc:
+            raise WrongNotePDFStaleError(str(exc)) from exc
+        total = len(items)
+    elif source_selection:
         try:
             total, items, _ = list_wrong_notes_for_selection(
                 tenant_id=int(tenant.id),
@@ -858,7 +884,8 @@ def generate_and_store_wrong_note_pdf(
                 else None
             ),
             exam_id=int(job.exam_id) if job.exam_id else None,
-            source_selection_count=len(source_selection),
+            lecture_range=bool(getattr(job, "batch_id", None)),
+            source_selection_count=0 if getattr(job, "batch_id", None) else len(source_selection),
             deadline_monotonic=deadline_monotonic,
         )
         content_type = "application/pdf"

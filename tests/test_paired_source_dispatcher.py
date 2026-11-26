@@ -154,6 +154,8 @@ def test_dispatcher_does_not_erase_primary_explanation_without_paired_source(
             "explanations": [
                 {"question_number": 1, "text": "문제지 뒤쪽 교사 원문"}
             ],
+            "answers": [{"question_number": 1, "answer": "2"}],
+            "answer_source_mode": "embedded_numbered_key",
         },
     )
 
@@ -170,6 +172,9 @@ def test_dispatcher_does_not_erase_primary_explanation_without_paired_source(
         {"question_number": 1, "text": "문제지 뒤쪽 교사 원문"}
     ]
     assert result.result["teacher_explanation_count"] == 1
+    assert result.result["answers"] == [{"question_number": 1, "answer": "2"}]
+    assert result.result["answer_source_requested"] is True
+    assert result.result["missing_answer_numbers"] == []
     _download.assert_not_called()
     run_pipeline.assert_not_called()
     _cleanup.assert_not_called()

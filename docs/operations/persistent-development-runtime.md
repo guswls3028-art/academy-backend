@@ -581,8 +581,50 @@ OpenAI source/게시 권한은 [공급자 전환 계약](openai-provider.md)이 
    비활성 상태여야 한다.
 5. 모든 검증이 성공한 뒤에만 candidate를 active로 승격하고 이전 개발 인스턴스를
    종료한다. 실패하면 candidate만 종료하고 기존 active 인스턴스를 보존한다.
-6. 이어서 별도 임시 preprod EC2 게이트가 통과해야 한다.
+6. 오답노트 출력·문항 분리 관련 변경 또는 전체 재빌드 때는 이전 개발 인스턴스의
+   종료 뒤 같은 배포 lock 안에서 아래 오답노트 실사용 게이트까지 통과해야 한다.
+   이후 별도 임시 preprod EC2 게이트가 통과해야 한다.
 7. 그 뒤에만 운영 migration과 ASG/ALB 무중단 교체를 허용한다.
+
+### 차시 범위 오답노트의 개발 실사용 검증
+
+`verify-api-development`의 학생별 PDF 검사는 마지막 성공 manifest부터 관련 파일이
+달라진 경우, 수동 전체 빌드 또는 비교할 수 없는 기준 때문에 전체 빌드하는 경우에 실행한다.
+검사 전후에 공유 lock, 유일한 관리 대상 개발 호스트, active·verified release 태그, API·AI·Tools
+실행 digest, loopback 8000 리스너 소유권을 대조한다. 교체 중인 두 호스트가 같은 개발
+큐를 읽으므로 기존 인스턴스 종료 전에는 이 검사를 실행하지 않는다.
+
+`run-wrong-note-development-smoke.ps1`은 API 컨테이너의 `verify_development_wrong_notes`를
+호출한다. 정확한 release와 개발 DB/role, 운영 DB 접속 거부, 개발 전용 큐·버킷과 호스트 Redis가
+일치해야 합성 계정을 만든다. 교직원 로그인 → 합성 시험 25문항·워크북 5문항 자료 업로드 →
+실제 AI 소비 → 문항·정답 승인 및 재조회 → 정규 1~2차시 학생 두 명 묶음 요청을 실행한다.
+같은 요청의 배치 재사용, 학생별 Tools 작업 완료, 실제 서명 주소로 받은 ZIP의 학생명·개별
+문제 이미지/번호·정답을 대조한다. `WRONG_NOTE_REAL_USE_PASS`에는 문항·출력 건수와
+정리 건수가 들어간다. 개발 AI·Tools 소비자는 SQS DeleteMessage 성공 뒤 소유한 작업의
+setup 감사 ID, release, job ID·종류, 큐, 워커 종류, SQS MessageId를 기록한다.
+정규 검사와 프런트엔드 고정 Cleanup 모두 문항 분리·오답 PDF 시나리오의 작업 및 후속
+매치업 색인 작업에 대해 이 기록과 DB 종료·lease 해제를 대조한다. 정확한 소비 증거가
+없으면 정리를 멈추며 개발 큐 전체를 조회하거나 비우지 않는다.
+프런트엔드 고정 Inspect는 이 시나리오의 테넌트가 살아 있으면 DB lock 밖에서 문항
+분리·색인·출력 작업 종료를 최대 100초 기다린다. Cleanup은 소유권, 종료 상태와 ACK를 다시 확인한다.
+DeleteMessage 이후 DB 연결 오류가 발생하면 소비자는 같은 MessageId의 감사 저장을 최대 세 번
+시도한다. 모두 실패하면 원래 컨테이너의 `AI_JOB_SQS_ACK`와 `DEVELOPMENT_QA_ACK_RECORD_FAILED`를
+정확한 release·작업·큐와 함께 보존한다. 감사 저장이 확인되지 않은 scope의 정리와 승격은 차단된다.
+
+매 실행은 새 `qa-ymath-realuse-wn-*` 코드와 전용 생성 seal을 발급한다. 개발 호스트의 API
+컨테이너 내부 접근 제한 파일에 복구 capability를 보관하고 관리자 출력에는 포함하지 않는다.
+일회용 tenant의 처리가 끝나면 해당 R2 prefix와 정확한 AI job/result·Redis 키를 앞뒤로
+조회하고 접근 토큰, 감사 활동, tenant와 계정 정리 결과를 확인한다. 새 작업을 덮어쓰거나
+기존 FE QA seal을 채택하지 않는다. 성공 시 복구 파일을 지우고 건수·소유권 감사만 보존한다.
+
+API 변경 요청의 응답이 끊기거나 정리가 완료되지 않으면 해당 단계에서 preprod 진입을 차단한다.
+배포 담당자는 SSM 명령 ID와 같은 호스트·release를 유지하고 실행 중이던 요청과 작업의 종료를
+확인한 뒤 같은 manifest·release·운영 DB 이름과 유효한 공유 lock 소유자로 스크립트의
+`-CleanupOnly`를 실행한다. 성공 marker와 zero readback 이후에만 다음 교체를 진행한다.
+이 단계에서 이전 인스턴스는 이미 종료되었다. 기존 검증 개발 기준으로 되돌릴 때는 배포
+담당자가 교체 전 기록한 이전 API·AI·Tools·Messaging 네 digest, release ID, API와 worker
+SSM 버전을 기존 `deploy-api-development.ps1`에 고정해 새 호스트를 정상 배포하고 유일
+active·health·identity를 다시 확인한다. 정규 검사의 실패가 이 복구 배포를 자동 실행하지 않는다.
 
 ## 사용과 확인
 
