@@ -105,6 +105,10 @@ def handle_wrong_note_pdf_generation_job(ai_job: AIJob) -> AIResult:
             enrollment=pdf_job.enrollment,
             tenant=tenant,
         )
+        if pdf_job.batch_id:
+            from apps.domains.results.services.wrong_note_batch_archive import assemble_final_archive
+
+            assemble_final_archive(pdf_job, tenant)
         return AIResult.done(
             ai_job.id,
             {

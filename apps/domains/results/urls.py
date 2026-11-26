@@ -63,6 +63,10 @@ from apps.domains.results.views.question_stats_views import (
 )
 
 from apps.domains.results.views.wrong_note_view import WrongNoteView
+from apps.domains.results.views.wrong_note_batch_view import (
+    WrongNoteRangeView, WrongNoteBatchCreateView, WrongNoteBatchDetailView,
+    WrongNoteBatchDownloadView, WrongNoteBatchRetryView,
+)
 from apps.domains.results.views.wrong_note_pdf_view import WrongNotePDFCreateView
 from apps.domains.results.views.wrong_note_pdf_status_view import WrongNotePDFStatusView
 from apps.domains.results.views.wrong_note_source_view import (
@@ -213,6 +217,11 @@ urlpatterns = [
         name="admin-clinic-targets-waive-missing",
     ),
     path("wrong-notes", WrongNoteView.as_view(), name="wrong-note"),
+    path("wrong-notes/range/", WrongNoteRangeView.as_view(), name="wrong-note-range"),
+    path("wrong-notes/batches/", WrongNoteBatchCreateView.as_view(), name="wrong-note-batch-create"),
+    path("wrong-notes/batches/<int:batch_id>/", WrongNoteBatchDetailView.as_view(), name="wrong-note-batch"),
+    path("wrong-notes/batches/<int:batch_id>/retry/", WrongNoteBatchRetryView.as_view(), name="wrong-note-batch-retry"),
+    path("wrong-notes/batches/<int:batch_id>/download/", WrongNoteBatchDownloadView.as_view(), name="wrong-note-batch-download"),
     path(
         "wrong-notes/sources/",
         WrongNoteSourceCatalogView.as_view(),

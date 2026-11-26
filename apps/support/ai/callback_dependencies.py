@@ -96,6 +96,12 @@ def get_matchup_problem_model():
     return MatchupProblem
 
 
+def advance_wrong_note_batch(batch_id, tenant_id):
+    from apps.domains.results.services.wrong_note_batch_service import advance_batch
+
+    advance_batch(batch_id, tenant_id)
+
+
 def get_wrong_note_pdf_callback_dependencies():
     from apps.domains.results.models import WrongNotePDF
     from apps.domains.results.services.wrong_note_pdf_service import (

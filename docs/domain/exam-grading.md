@@ -329,6 +329,14 @@ OMR, 실패·진행 중 접수, 누락된 문항 snapshot은 이 호환 규칙�
 
 ## 원본 시험지 등록과 자동 분리
 
+문제지 뒤에 빠른 정답표와 번호별 `[답]` 또는 `[정답]` 해설이 있으면,
+인식한 문제 번호와 정답 번호가 중복 없이 모두 일치하는지 확인해 원본 정답을
+검수 후보로 연결한다. 이어지는 다른 시험이 감지되면 이 경계를 적용하지 않는다.
+번호별 정답이 원본의 빠른 정답표와 다르면 그 번호의 정답은 교직원 검수 때 입력한다.
+별도 정답지를 올린 경우 해당 자료를 우선한다. 다음 쪽으로 이어지는 텍스트
+해설은 연결해서 보관하며, 오답노트 PDF는 텍스트 해설을 본문 폭에 맞춰
+여러 줄과 페이지에 나누어 싣는다.
+
 1. 정규 시험을 만들며 시험명, 만점, 커트라인, 채점 방식과 혼합형 선택
    문항 수를 확정한다.
 2. 같은 tenant의 빈 시험 ID와 필수 `file`(문제지), 선택 `answer_file`(정답지),
@@ -1054,12 +1062,31 @@ fingerprint는 원래 번호를 사용한다. 다른 tenant 시험 문항은 조
 범위 안의 가장 이른 회차를 표시한다.
 
 학생 상세의 **통합 오답노트**는 같은 학생의 여러 수강 강의에서 시험과
-워크북을 각각 선택해 한 문서로 묶는다. 선택 원본은
+워크북을 각각 선택해 한 문서로 묶는다. 자료 목록은 시험마다 해당 수강 강의에서
+가장 이른 정규 차시를 표시한다. 보강에만 연결된 시험의 정규 차시는 비어 있다. 선택 원본은
 `{type: exam|homework, id, enrollment_id}`로 고정하며, 서버가 모든 enrollment의
 student·tenant와 각 시험의 강의 연결 또는 과제 배정을 다시 검증한다. 워크북은
 `HomeworkScore.meta.question_marks`에서 X 또는 O·복습 문항을 읽고 연결된 비노출
 원본 시험의 문제·선생님 해설 이미지를 사용한다. 기존 단일 시험·회차 API는
 `source_selection=[]`일 때 그대로 동작한다.
+
+교직원은 **강의 → 차시 성적 → 성적 도구 → 차시별 오답노트**에서 시작·끝 정규 차시를
+고르고 시험·과제별로 학생이 틀린 원래 번호를 입력한다. 양 끝을 포함하며
+보강과 다른 강의는 제외한다. 여러 차시에 걸친 시험은 범위 안의 첫 정규
+차시에 한 번 표시한다. 활성 수강생의 시험 명시 배정, 명시 명단이 없는
+시험의 연결 차시 수강·출결, 과제의 개별 배정을 서버에서 검사한다.
+워크북 원본·문항 이미지·확정 정답이 없는 번호는 출력 전에 알려준다.
+입력은 인쇄 선택으로만 저장되며 시험 성적이나 과제 제출을 변경하지 않는다.
+
+요청은 학생별 1~100문항, 한 번에 최대 200명이다. 동일한 선택과 원본은
+같은 배치로 돌아간다. 각 학생의 자료 식별자·번호·내용 지문을 기록한 후
+Tools가 원본을 다시 조회해 학생별 PDF를 차례로 저장한다. 한 명은 PDF,
+여러 명은 학생 이름과 수강 ID로 구분된 PDF가 든 ZIP을 받는다. 문제는
+앞에, 정답과 선생님 해설은 뒤에 배치한다. 배정이나 정답이 바뀌면
+최신 범위에서 다시 요청한다. 일시적인 파일 오류는 실패한 학생만 재시도하고
+이미 생성된 학생 파일을 재사용한다. 상태와 10분간 유효한 다운로드 주소는
+해당 학원의 교직원만 조회할 수 있다. 최근 30분에 개별 작업이 세 번 이상
+실패하면 기존 운영 알림이 학생 정보 없이 배치와 작업 ID를 집계한다.
 
 여기서 회차는 화면 배치 순서인 `Session.order`가 아니라 정규 수업 번호인
 `Session.regular_order`다. 보강(`session_type=SUPPLEMENT`)은 정규 회차 범위에
@@ -1123,6 +1150,11 @@ API는 호환 별칭으로 유지한다.
 | GET | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 표와 버전 조회. 혼합형 행의 `objective_status`(`omr_pending`·`omr_restore`·`omr_review_required`·`omr_processing`) 포함 |
 | POST | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 미리보기 또는 원자적 확정. 응답에 `objective_pending_count`·`objective_restore_count`와 행별 `objective_status` 포함 |
 | GET | `/results/wrong-notes/sources/?student_id=` | 학생의 모든 강의에서 선택 가능한 시험·워크북과 수록 문항 수 조회 |
+| GET | `/results/wrong-notes/range/` | 강의·시작·끝 정규 차시에 속하는 자료와 문항 번호, 학생별 배정 조회 |
+| POST | `/results/wrong-notes/batches/` | 범위 내 학생별 자료·번호를 검증하고 개인 PDF 생성 요청을 기록 |
+| GET | `/results/wrong-notes/batches/{id}/` | 학생별 진행 상태 및 실패 사유 재조회 |
+| POST | `/results/wrong-notes/batches/{id}/retry/` | 완료 파일을 유지하며 중단되거나 실패한 출력 재개 |
+| GET | `/results/wrong-notes/batches/{id}/download/` | 완료된 학생 PDF 또는 반별 ZIP의 만료형 주소 발급 |
 | POST | `/results/wrong-notes/preview/` | 선택 원본의 통합 문항과 fingerprint 미리보기 |
 | POST | `/results/wrong-notes/documents/` | 기존 enrollment 범위 또는 학생 `source_selection` 통합 문서 job 생성 |
 | GET | `/results/admin/exams/{id}/result-import/template/` | 시험 전용 엑셀 양식 다운로드 |

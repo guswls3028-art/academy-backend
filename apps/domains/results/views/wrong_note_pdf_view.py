@@ -185,6 +185,7 @@ class WrongNotePDFCreateView(APIView):
             stale_before = timezone.now() - timedelta(minutes=5)
             WrongNotePDF.objects.filter(
                 enrollment__tenant=request.tenant,
+                batch__isnull=True,
                 status__in=[
                     WrongNotePDF.Status.PENDING,
                     WrongNotePDF.Status.RUNNING,
@@ -197,6 +198,7 @@ class WrongNotePDFCreateView(APIView):
             )
             if WrongNotePDF.objects.filter(
                 enrollment__tenant=request.tenant,
+                batch__isnull=True,
                 status__in=[
                     WrongNotePDF.Status.PENDING,
                     WrongNotePDF.Status.RUNNING,

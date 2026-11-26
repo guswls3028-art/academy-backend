@@ -5,6 +5,7 @@ The grading grid only proposes those scores; saving stays the teacher's action.
 """
 from __future__ import annotations
 
+import pymupdf
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -56,6 +57,7 @@ class OmrEssayScoreProposalTests(TestCase):
         self.exam.sessions.add(self.session)
         self.sheet = Sheet.objects.create(
             exam=self.exam, name="MAIN", total_questions=2, choice_count=1, essay_count=1,
+            essay_score_marks=False,  # An existing sheet created before the new default.
         )
         self.choice = ExamQuestion.objects.create(
             sheet=self.sheet, number=1, score=80, question_kind=ExamQuestion.QuestionKind.CHOICE,
@@ -116,6 +118,112 @@ class OmrEssayScoreProposalTests(TestCase):
         return next(row for row in sheet["rows"] if row["enrollment_id"] == enrollment.id)
 
     # -- setting -------------------------------------------------------------
+
+    def test_new_essay_exam_prints_without_configuring_marks_and_respects_opt_out(self):
+        exam = Exam.objects.create(
+            tenant=self.tenant, title="자동 채점란", exam_type=Exam.ExamType.REGULAR,
+            grading_mode=Exam.GradingMode.MIXED, manual_grading_method="score",
+        )
+        init = self.client.post(
+            f"/api/v1/exams/{exam.id}/questions/init/",
+            {"choice_count": 1, "essay_count": 2, "choice_score": 1, "essay_score": 8},
+            format="json", HTTP_HOST="api.hakwonplus.com", HTTP_X_TENANT_CODE=self.tenant.code,
+        )
+        self.assertEqual(init.status_code, 200, init.content)
+        options = {"essay_score_grid": "auto"}
+        preview = self._api("post", "preview/", options, exam=exam)
+        self.assertEqual(preview.status_code, 200, preview.content)
+        self.assertEqual(preview.content.count(b'class="bu essay-score-bubble"'), 18)
+        self.assertIn(b'class="es-a"', preview.content)
+        self.assertEqual(self._api("post", "pdf/", options, exam=exam).status_code, 200)
+        exam.manual_grading_method = Exam.ManualGradingMethod.CORRECTNESS
+        exam.save(update_fields=["manual_grading_method"])
+        paper = self._api("post", "preview/", options, exam=exam)
+        self.assertEqual(paper.content.count(b'class="bu essay-score-bubble"'), 18)
+        self.assertNotIn(b'class="es-a"', paper.content)
+        saved = self._api("patch", "essay-score-marks/", {"enabled": False}, exam=exam)
+        self.assertFalse(saved.data["enabled"])
+        hidden = self._api("post", "preview/", options, exam=exam)
+        self.assertNotIn(b'class="bu essay-score-bubble"', hidden.content)
+        exam.sessions.add(self.session)
+        copied = self.client.post(
+            f"/api/v1/exams/{exam.id}/save-as-template/", {"title": "끄기 설정을 복사한 시험"},
+            format="json", HTTP_HOST="api.hakwonplus.com", HTTP_X_TENANT_CODE=self.tenant.code,
+        )
+        self.assertEqual(copied.status_code, 200, copied.content)
+        exam.refresh_from_db()
+        self.assertFalse(self._api("get", "defaults/", exam=exam.template_exam).data["print_by_default"])
+        self.assertEqual(Sheet.objects.get(exam=exam.template_exam).essay_score_marks_scan_shape, "")
+        choice_only = self._api("post", "preview/", {**options, "mc_count": 3, "essay_count": 0})
+        self.assertEqual(choice_only.status_code, 200)
+        self.assertNotIn(b'class="bu essay-score-bubble"', choice_only.content)
+
+    def test_existing_off_without_scan_history_stays_off_on_save_and_reopen(self):
+        # Both an untouched legacy sheet and an explicit off can have this pair.
+        self.assertFalse(self.sheet.essay_score_marks)
+        self.assertEqual(self.sheet.essay_score_marks_scan_shape, "")
+        for stage in ("existing", "reopened"):
+            with self.subTest(stage=stage):
+                if stage == "reopened":
+                    saved = self._api("patch", "essay-score-marks/", {"enabled": False})
+                    self.assertEqual(saved.status_code, 200)
+                    self.client = APIClient()
+                    self.client.force_authenticate(user=self.staff)
+                self.assertFalse(self._api("get", "defaults/").data["print_by_default"])
+                for options in ({}, {"essay_score_grid": "auto"}):
+                    preview = self._api("post", "preview/", options)
+                    self.assertEqual(preview.status_code, 200)
+                    self.assertNotIn(b'data-essay-score-question=', preview.content)
+                    pdf = self._api("post", "pdf/", options)
+                    self.assertEqual(pdf.status_code, 200)
+                    with pymupdf.open(stream=pdf.content, filetype="pdf") as document:
+                        page = document[0]
+                        width, height = page.rect.width, page.rect.height
+                        column = pymupdf.Rect(width * .91, height * .40, width, height * .62)
+                        self.assertFalse(any(w[4].isdigit() for w in page.get_text("words", clip=column)))
+        self.sheet.refresh_from_db()
+        self.assertFalse(self.sheet.essay_score_marks)
+        self.assertEqual(self.sheet.essay_score_marks_scan_shape, "")
+
+    def test_teacher_prints_paper_score_bubbles_from_both_entries_without_changing_grading(self):
+        teacher = User.objects.create_user(username="paper-teacher", tenant=self.tenant)
+        TenantMembership.ensure_active(tenant=self.tenant, user=teacher, role="teacher")
+        self.client.force_authenticate(user=teacher)
+        self.exam.sessions.clear()
+        self.exam.manual_grading_method = Exam.ManualGradingMethod.CORRECTNESS
+        self.exam.save(update_fields=["manual_grading_method"])
+        state = self._api("get", "essay-score-marks/")
+        self.assertEqual(state.status_code, 200, state.content)
+        self.assertFalse(state.data["available"])
+        params = {"mc_count": 1, "essay_count": 1, "essay_score_grid": "paper"}
+        for base in (f"/api/v1/exams/{self.exam.id}/omr/", "/api/v1/tools/omr/"):
+            with self.subTest(base=base):
+                def post(path, data):
+                    return self.client.post(base + path, data, format="json",
+                                            HTTP_HOST="api.hakwonplus.com", HTTP_X_TENANT_CODE=self.tenant.code)
+
+                preview = post("preview/", params)
+                self.assertEqual(preview.status_code, 200, preview.content)
+                self.assertEqual(preview.content.count(b'class="bu essay-score-bubble"'), 9)
+                self.assertNotIn(b'class="es-a"', preview.content)
+                pdf = post("pdf/", params)
+                self.assertEqual(pdf.status_code, 200)
+                with pymupdf.open(stream=pdf.content, filetype="pdf") as document:
+                    # The single essay's score column is on the right, midway down the A4.
+                    page = document[0]
+                    width, height = page.rect.width, page.rect.height
+                    score_column = pymupdf.Rect(width * .91, height * .40, width, height * .62)
+                    digits = [word[4] for word in page.get_text("words", clip=score_column, sort=True)]
+                    self.assertEqual(digits, list("012345678"))
+                plain = post("preview/", {"mc_count": 1, "essay_count": 1})
+                self.assertNotIn(b'data-essay-score-question=', plain.content)
+                for invalid in ({"essay_count": 0, "essay_score_grid": "paper"}, {"essay_score_grid": "exam"}, {"essay_score_grid": "typo"}):
+                    self.assertEqual(post("pdf/", {**params, **invalid}).status_code, 400)
+        self.sheet.refresh_from_db()
+        self.exam.refresh_from_db()
+        self.assertFalse(self.sheet.essay_score_marks)
+        self.assertEqual(self.sheet.essay_score_marks_scan_shape, "")
+        self.assertEqual(self.exam.manual_grading_method, Exam.ManualGradingMethod.CORRECTNESS)
 
     def test_setting_toggles_printed_strip_and_worker_payload(self):
         response = self._api("get", "essay-score-marks/")
@@ -206,6 +314,38 @@ class OmrEssayScoreProposalTests(TestCase):
             sheet=self.sheet, number=3, score=8, question_kind=ExamQuestion.QuestionKind.ESSAY,
         )
         self.assertNotIn("essay_score_marks", build_omr_payload(scan)["template_meta"])
+
+    def test_old_scored_paper_is_ignored_after_removing_the_essay_allocation(self):
+        for enabled in (True, False):
+            self.assertEqual(self._api("patch", "essay-score-marks/", {"enabled": enabled}).status_code, 200)
+        submission = self._graded_scan(self.enrollment, [{"question_number": 2, "status": "ok", "score": 0}])
+        self.essay.score = 0
+        self.essay.save(update_fields=["score"])
+
+        meta = build_omr_payload(submission)["template_meta"]
+        self.assertNotIn("essay_score_questions", meta)
+        self.assertNotIn("essay_score_marks", meta)
+        self.assertEqual(self._row(self.enrollment)["omr_essay_scores"], {})
+        result = Result.objects.get(target_type="exam", target_id=self.exam.id, enrollment=self.enrollment)
+        self.assertEqual((result.objective_score, result.total_score), (80, 80))
+
+    def test_saved_scan_only_proposes_still_allocated_essay_questions(self):
+        self.sheet.essay_count = 2
+        self.sheet.total_questions = 3
+        self.sheet.save(update_fields=["essay_count", "total_questions"])
+        other = ExamQuestion.objects.create(
+            sheet=self.sheet, number=3, score=8, question_kind=ExamQuestion.QuestionKind.ESSAY,
+        )
+        self._graded_scan(self.enrollment, [
+            {"question_number": 2, "status": "ok", "score": 3},
+            {"question_number": 3, "status": "ok", "score": 4},
+        ])
+        self.essay.score = 0
+        self.essay.save(update_fields=["score"])
+
+        proposals = self._row(self.enrollment)["omr_essay_scores"]
+        self.assertEqual(set(proposals), {str(other.id)})
+        self.assertEqual(proposals[str(other.id)]["score"], 4)
 
     def test_linked_exam_uses_its_own_grading_method_for_printing_and_enable(self):
         self.exam.exam_type = Exam.ExamType.TEMPLATE

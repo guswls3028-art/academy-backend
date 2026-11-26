@@ -27,6 +27,7 @@ from apps.support.ai.callback_dependencies import (
     get_post_entity_model,
     get_submission_ai_result_applier,
     get_wrong_note_pdf_callback_dependencies,
+    advance_wrong_note_batch,
     handle_matchup_proposal_path,
     invalidate_matchup_tenant_similar_cache,
     protected_matchup_problem_ids,
@@ -339,6 +340,11 @@ def _handle_wrong_note_pdf_result(
             error_message=error_message,
             updated_at=timezone.now(),
         )
+        if pdf_job.batch_id:
+            transaction.on_commit(
+                lambda: advance_wrong_note_batch(pdf_job.batch_id, int(ai_job.tenant_id)),
+                robust=True,
+            )
 
 
 

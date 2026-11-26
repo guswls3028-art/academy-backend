@@ -482,6 +482,23 @@ def rule_user_incidents(window_minutes: int | None = None):
     }
 
 
+def rule_wrong_note_batch_failures():
+    from django.apps import apps
+
+    documents = apps.get_model("results", "WrongNotePDF")
+    failures = documents.objects.filter(
+        batch_id__isnull=False, status="FAILED", updated_at__gte=timezone.now() - timedelta(minutes=30),
+    )
+    total = failures.count()
+    if total < 3:
+        return None
+    return {
+        "title": f"차시 오답노트 출력 실패 {total}건 (최근 30분)",
+        "total": total,
+        "rows": list(failures.order_by("-updated_at").values("id", "batch_id")[:20]),
+    }
+
+
 def rule_stale_workers(min_age_minutes: int = 5):
     """N분+ heartbeat 미갱신 워커. SQS 워커 process 멈춤 즉시 감지."""
     from apps.core.models import WorkerHeartbeatModel
@@ -547,7 +564,7 @@ def rule_circuit_breaker_open():
 
 
 def rule_messaging_delivery_health(window_minutes: int = 30):
-    """Alert on shared Alimtalk balance risk and confirmed retryable rejections."""
+    """Report balance risk and repeated pre-provider dependency failures."""
     from apps.domains.messaging.models import NotificationLog
     from apps.domains.messaging.services.solapi_client import get_solapi_client
 
@@ -571,6 +588,23 @@ def rule_messaging_delivery_health(window_minutes: int = 30):
         }
         for row in failure_groups
     ]
+
+    import_failures = (
+        NotificationLog.objects.filter(
+            sent_at__gte=since, message_mode="alimtalk", status="retryable_failed",
+            failure_reason__icontains="No module named",
+        )
+        .exclude(business_idempotency_key="")
+        .values("source_tenant__code", "tenant__code")
+        .annotate(count=Count("business_idempotency_key", distinct=True))
+        .filter(count__gte=2)
+        .order_by("source_tenant__code", "tenant__code")
+    )
+    rows.extend(
+        {"tenant": row["source_tenant__code"] or row["tenant__code"] or "unknown",
+         "state": "worker_dependency_failure", "count": row["count"], "window_minutes": window_minutes}
+        for row in import_failures
+    )
 
     threshold = Decimal(
         str(getattr(settings, "MESSAGING_PROVIDER_LOW_BALANCE_ALERT_THRESHOLD", 10_000))
@@ -599,7 +633,7 @@ def rule_messaging_delivery_health(window_minutes: int = 30):
     if not rows:
         return None
     return {
-        "title": f"📨 알림톡 공급자 잔액/재시도 확인 필요 — {len(rows)}건",
+        "title": f"📨 알림톡 발송 상태 확인 필요 — {len(rows)}건",
         "rows": rows,
         "total": sum(int(row.get("count", 1)) for row in rows),
     }
@@ -790,6 +824,7 @@ RULES: list[Rule] = [
     Rule("audit_failed_24h", "24h 실패 작업 임계 초과", rule_audit_failed_24h, "danger"),
     Rule("unanswered_inbox", "24h+ 미답변 문의", rule_unanswered_inbox, "warning"),
     Rule("stale_workers", "워커 heartbeat 정지", rule_stale_workers, "danger"),
+    Rule("wrong_note_batch_failures", "차시 오답노트 출력 반복 실패", rule_wrong_note_batch_failures, "danger"),
     Rule("circuit_open", "외부 API circuit open", rule_circuit_breaker_open, "danger"),
 ]
 

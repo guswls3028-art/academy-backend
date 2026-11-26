@@ -5,7 +5,7 @@ from .result import Result
 from .result_item import ResultItem
 from .result_fact import ResultFact
 from .exam_attempt import ExamAttempt
-from .wrong_note_pdf import WrongNotePDF
+from .wrong_note_pdf import WrongNoteBatch, WrongNotePDF
 from .exam_result import ExamResult
 from .score_edit_draft import ScoreEditDraft
 from .student_reported_score import StudentReportedScore
@@ -19,6 +19,7 @@ __all__ = [
     "ResultFact",
     "ExamAttempt",
     "WrongNotePDF",
+    "WrongNoteBatch",
     "ExamResult",
     "ScoreEditDraft",
     "StudentReportedScore",

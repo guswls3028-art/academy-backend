@@ -2730,6 +2730,120 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(resp.data["booking_status"], "required")
         self.assertEqual(resp.data["valid_bookings"], [])
 
+    def test_today_pass_is_visible_alongside_older_target_and_student_booking(self):
+        from django.apps import apps as django_apps
+
+        from apps.domains.enrollment.models import SessionEnrollment
+        from apps.domains.lectures.models import SessionSchedule, SessionScheduleMembership
+        from apps.domains.progress.models import AssessmentCorrection, SessionProgress
+
+        today = timezone.localdate()
+        enrollment = self.data["enrollments"][0]
+        old_session = self.data["lec_session"]
+        old_session.date = today - datetime.timedelta(days=7)
+        old_session.save(update_fields=["date"])
+        old_membership = SessionEnrollment.objects.create(tenant=self.tenant, enrollment=enrollment, session=old_session)
+        link = self._make_live_exam_clinic_link(enrollment, old_session)
+        booking = self.make_participant(
+            self.tenant, self.make_clinic_session(self.tenant, date=today - datetime.timedelta(days=1)),
+            self.student, enrollment=enrollment, status="attended", source="student_request",
+        )
+        current = self.make_lecture_session(self.data["lecture"], order=2)
+        membership = SessionEnrollment.objects.create(tenant=self.tenant, enrollment=enrollment, session=current)
+        schedule = SessionSchedule.objects.create(session=current, date=today)
+        SessionScheduleMembership.objects.create(schedule=schedule, session_enrollment=membership)
+
+        def read_card():
+            response = self.client.get("/api/v1/clinic/idcard/", **self._headers(self.tenant))
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["passcard_state"], "BOOKING_CONFIRMED")
+            self.assertEqual(response.data["current_result"], "FAIL")
+            self.assertEqual(response.data["current_booking"]["participant_id"], booking.id)
+            self.assertEqual([target["clinic_link_id"] for target in response.data["current_targets"]], [link.id])
+            return response.data["today_assessments_passed"]
+
+        self.assertFalse(read_card())
+        progress = SessionProgress.objects.create(
+            enrollment=enrollment, session=current, exam_attempted=True, exam_passed=True,
+            homework_submitted=False, homework_passed=False,
+        )
+        self.assertFalse(read_card())
+        assignments = []
+        Homework = django_apps.get_model("homework_results", "Homework")
+        HomeworkAssignment = django_apps.get_model("homework", "HomeworkAssignment")
+        HomeworkScore = django_apps.get_model("homework_results", "HomeworkScore")
+        for index in range(4):
+            homework = Homework.objects.create(tenant=self.tenant, session=current, title=f"과제 {index + 1}")
+            HomeworkAssignment.objects.create(
+                tenant=self.tenant, session=current, enrollment=enrollment, homework=homework,
+            )
+            assignments.append(homework)
+        for homework in assignments:
+            self.assertFalse(read_card())
+            score = HomeworkScore.objects.create(
+                enrollment=enrollment, session=current, homework=homework,
+                score=90, max_score=100, passed=True, teacher_approved=False,
+            )
+        self.assertTrue(read_card())
+        # A stored zero can pass an explicit zero cutoff. An absent score cannot
+        # prove a scored pass, including on historical rows with a stale pass flag.
+        score.score = 0
+        score.save(update_fields=["score"])
+        self.assertTrue(read_card())
+        score.passed = False
+        score.save(update_fields=["passed"])
+        self.assertFalse(read_card())
+        score.score = None
+        score.passed = True
+        score.save(update_fields=["score", "passed"])
+        self.assertFalse(read_card())
+        score.score = 90
+        score.save(update_fields=["score"])
+        self.assertTrue(read_card())
+
+        sibling = self.make_student(self.tenant, "today_sibling")
+        self.make_enrollment(self.tenant, sibling, self.data["lecture"])
+        parent = self._make_idcard_parent([self.student, sibling])
+        foreign = self.make_student(self.make_tenant("today_foreign"), "today_foreign_student")
+        self.client.force_authenticate(user=parent)
+        for child, expected in ((self.student, True), (sibling, False), (self.student, True)):
+            selected = self.client.get(
+                "/api/v1/clinic/idcard/", **self._headers(self.tenant), HTTP_X_STUDENT_ID=str(child.id),
+            )
+            self.assertEqual(selected.status_code, 200, selected.data)
+            self.assertEqual(selected.data["student_name"], child.name)
+            self.assertIs(selected.data["today_assessments_passed"], expected)
+            self.assertEqual([b["participant_id"] for b in selected.data["valid_bookings"]], [booking.id] if expected else [])
+            self.assertEqual([item["clinic_link_id"] for item in selected.data["current_targets"]], [link.id] if expected else [])
+        denied = self.client.get(
+            "/api/v1/clinic/idcard/", **self._headers(self.tenant), HTTP_X_STUDENT_ID=str(foreign.id),
+        )
+        self.assertEqual(denied.status_code, 403, denied.data)
+        for field in ("today_assessments_passed", "current_booking", "current_targets", "student_name"):
+            self.assertNotIn(field, denied.data)
+        self.client.force_authenticate(user=self.student.user)
+        correction = AssessmentCorrection.objects.create(
+            tenant=self.tenant, enrollment=enrollment, session=current, source_id=assignments[0].pk,
+            source_type="homework", completed=False,
+        )
+        self.assertFalse(read_card())
+        correction.completed = True
+        correction.save(update_fields=["completed"])
+        self.assertTrue(read_card())
+        progress.refresh_from_db()
+        self.assertFalse(progress.homework_passed)
+        self.assertFalse(progress.homework_submitted)
+        score.score = None
+        score.save(update_fields=["score"])
+        self.assertFalse(read_card())
+        progress.homework_passed = True
+        progress.save(update_fields=["homework_passed"])
+        self.assertTrue(read_card())
+        # An unresolved item from today's actual class always takes priority.
+        moved_schedule = SessionSchedule.objects.create(session=old_session, date=today)
+        SessionScheduleMembership.objects.create(schedule=moved_schedule, session_enrollment=old_membership)
+        self.assertFalse(read_card())
+
     def test_idcard_passed_student_still_sees_active_reservation(self):
         today = timezone.localdate()
         clinic_session = self.make_clinic_session(

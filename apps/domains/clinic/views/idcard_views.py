@@ -25,6 +25,7 @@ from apps.support.clinic.idcard_dependencies import (
     active_enrollments_for_student,
     clinic_link_source_projection,
     ordered_sessions_by_enrollment,
+    passed_todays_assessments,
     unresolved_auto_clinic_links,
 )
 from apps.support.clinic.session_dependencies import get_student_for_clinic_request
@@ -298,15 +299,20 @@ class StudentClinicIdcardView(APIView):
             current_targets.append(target)
 
         # 프로필 사진 URL (신원 확인용) - 기존 방식 사용
-        return Response(
-            _response_payload(
-                student_name=getattr(student, "name", "") or "",
-                profile_photo_url=_profile_photo_url(request, student),
-                colors=colors,
-                histories=histories,
-                current_targets=current_targets,
-                lectures=lectures,
-                valid_bookings=valid_bookings,
-                server_now=local_now,
+        payload = _response_payload(
+            student_name=getattr(student, "name", "") or "",
+            profile_photo_url=_profile_photo_url(request, student),
+            colors=colors,
+            histories=histories,
+            current_targets=current_targets,
+            lectures=lectures,
+            valid_bookings=valid_bookings,
+            server_now=local_now,
+        )
+        payload["today_assessments_passed"] = (
+            payload["passcard_state"] == "BOOKING_CONFIRMED"
+            and passed_todays_assessments(
+                tenant=tenant, student=student, clinic_links=clinic_links, today=local_now.date(),
             )
         )
+        return Response(payload)

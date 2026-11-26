@@ -31,7 +31,7 @@ def missing_homework_assignments(*, tenant, homework, student_ids=None, lock=Fal
     from apps.domains.homework_results.models import HomeworkScore
     from apps.domains.progress.models import AssessmentCorrection
     from apps.support.submissions.dependencies import homework_submission_revisions
-    from apps.support.submissions.homework_acceptance import homework_accepted_keys
+    from apps.support.submissions.homework_acceptance_queries import homework_accepted_keys
 
     assignments = HomeworkAssignment.objects.filter(
         tenant=tenant, homework=homework, session_id=homework.session_id,
@@ -70,7 +70,7 @@ def missing_homework_target(tenant, homework_id):
 
 
 def missing_homework_confirmation_valid(tenant, payload, *, confirmed_guards=None):
-    from apps.domains.messaging.services.recipients import normalize_phone
+    from apps.shared.utils.student_contact import student_contact_phone
 
     homework_id = payload.get("homework_id")
     recipients = payload.get("recipients")
@@ -84,7 +84,7 @@ def missing_homework_confirmation_valid(tenant, payload, *, confirmed_guards=Non
     current = {}
     for row in still_missing:
         student = row.enrollment.student
-        current[student.pk] = normalize_phone(student.parent_phone if payload["send_to"] == "parent" else student.phone)
+        current[student.pk] = student_contact_phone(student, payload["send_to"])
     if reviewed != current:
         return False
     if confirmed_guards is not None:

@@ -156,6 +156,57 @@ class StaffBoardTests(TestCase):
         self.assertEqual(self.request("get", detail).status_code, 404)
         self.assertEqual(self.post("resource", file=upload(), key=key).data["attachment_name"], "")
 
+    def test_reply_ownership_moderation_and_deleted_replay(self):
+        detail = f"{self.post().data['id']}/"
+        token = str(uuid4())
+        staff = self.users["staff"]
+        created = self.request("post", detail + "replies/", {"body": "첫 댓글"}, user=staff, key=token)
+        target = detail + f"replies/{created.data['id']}/"
+        self.assertTrue(created.data["can_edit"] and created.data["can_delete"])
+        other = self.request("get", detail).data["replies"][0]
+        self.assertFalse(other["can_edit"] or other["can_delete"])
+        self.assertEqual(self.request("patch", target, {"body": "다른 작성자"}).status_code, 403)
+        self.assertEqual(self.request("delete", target).status_code, 403)
+        self.assertEqual(self.request("delete", target, tenant=self.other).status_code, 404)
+        wrong_post = f"{self.post().data['id']}/replies/{created.data['id']}/"
+        self.assertEqual(self.request("delete", wrong_post, user=staff).status_code, 404)
+        self.assertEqual(self.request("patch", target, {"body": " "}, user=staff).status_code, 400)
+        self.assertEqual(self.request("patch", target, {"body": "정정"}, user=staff).status_code, 200)
+        self.assertEqual(self.request("get", detail).data["replies"][0]["body"], "정정")
+        self.assertEqual(self.request("delete", target, user=staff).status_code, 204)
+        self.assertEqual(self.request("get", detail).data["reply_count"], 0)
+        self.assertEqual(self.request("post", detail + "replies/", {"body": "첫 댓글"}, user=staff, key=token).status_code, 404)
+        # Pre-migration comments and account deletions retain their display name only.
+        legacy = StaffBoardPost.objects.get(pk=detail[:-1]).replies.create(author_name=staff.name, body="옛 댓글")
+        target = detail + f"replies/{legacy.pk}/"
+        self.assertFalse(self.request("get", detail, user=staff).data["replies"][0]["can_edit"])
+        self.assertEqual(self.request("patch", target, {"body": "변경"}, user=staff).status_code, 403)
+        self.assertEqual(self.request("delete", target, user=self.users["admin"]).status_code, 204)
+
+    @patch("apps.domains.staffs.views.board.put_small_storage_object")
+    def test_delete_post_removes_every_entry_and_detaches_storage_once(self, put):
+        token = str(uuid4())
+        def upload():
+            return self.post("resource", file=SimpleUploadedFile("note.txt", b"note"), key=token)
+        post = upload().data
+        detail = f"{post['id']}/"
+        self.request("post", detail + "replies/", {"body": "기록"}, user=self.users["staff"])
+        self.assertTrue(post["can_delete"])
+        self.assertFalse(self.request("get", detail, user=self.users["staff"]).data["can_delete"])
+        self.assertEqual(self.request("delete", detail, user=self.users["staff"]).status_code, 403)
+        self.assertEqual(self.request("delete", detail, tenant=self.other).status_code, 404)
+        self.assertEqual(self.request("delete", detail, user=self.users["student"]).status_code, 403)
+        with patch("apps.domains.staffs.views.board.schedule_detached_storage_cleanup") as cleanup:
+            for _ in range(2):
+                self.assertEqual(self.request("delete", detail, user=self.users["admin"]).status_code, 204)
+            cleanup.assert_called_once_with(tenant_id=self.tenant.pk, object_keys=[put.call_args.kwargs["key"]])
+        self.assertEqual(self.request("get", "").data["count"], 0)
+        self.assertEqual(self.request("get", detail).status_code, 404)
+        self.assertEqual(self.request("get", detail + "attachment/").status_code, 404)
+        self.assertEqual(self.request("post", detail + "replies/", {"body": "늦은 댓글"}).status_code, 404)
+        self.assertEqual(upload().status_code, 404)
+        self.assertEqual(StaffBoardPost.objects.get(pk=post["id"]).replies.count(), 1)
+
     def test_replay_post_and_reply(self):
         key = str(uuid4())
         initial = self.post(key=key)

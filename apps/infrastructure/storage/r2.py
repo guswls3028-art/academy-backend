@@ -295,6 +295,27 @@ def get_object_bytes_r2_storage(
         raise
 
 
+def copy_storage_object_to_file(*, key: str, destination, max_bytes: int) -> int:
+    """Copy a bounded storage object into an open file without buffering it in RAM."""
+    response = _get_s3_client(timeout_seconds=10).get_object(Bucket=_storage_bucket(), Key=key)
+    body = response["Body"]
+    try:
+        size = int(response["ContentLength"])
+        if size <= 0 or size > max_bytes:
+            raise ValueError("Storage object outside print archive size limit.")
+        written = 0
+        for chunk in body.iter_chunks(chunk_size=1024 * 1024):
+            written += len(chunk)
+            if written > size:
+                raise ValueError("Storage object exceeds its reported length.")
+            destination.write(chunk)
+        if written != size:
+            raise IOError("Incomplete storage object.")
+        return written
+    finally:
+        body.close()
+
+
 def head_object_r2_storage(*, key: str) -> tuple[bool, int]:
     """객체 존재 여부 및 크기(bytes)."""
     from botocore.exceptions import ClientError

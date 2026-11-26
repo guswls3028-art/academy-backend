@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from apps.domains.assets.omr.services.meta_generator import (
     MAX_MC_QUESTIONS,
+    build_essay_score_grid_metadata,
     essay_score_column_ranges,
     validate_layout,
 )
@@ -41,10 +42,11 @@ class OMRDocument:
     essay_question_numbers: tuple[int, ...] = ()
     essay_numbering: str = "continuous"
     # Teacher score strips from the exam's OMR contract (meta_generator SSOT).
-    # Only exam-bound documents whose shape equals the contract carry them.
+    # Only a matching, scan-enabled exam sheet carries the layout signature.
     essay_score_marks: tuple[dict[str, Any], ...] = ()
     essay_score_questions: tuple[dict[str, Any], ...] = ()
     essay_score_layout_marks: tuple[dict[str, Any], ...] = ()
+    print_essay_score_grid_by_default: bool = True
 
     # -- 테넌트 브랜딩 --
     logo_url: Optional[str] = None  # presigned URL (HTML preview용)
@@ -59,6 +61,17 @@ class OMRDocument:
     ) -> OMRDocument:
         """로고 바이너리가 추가된 새 인스턴스를 반환."""
         return replace(self, logo_bytes=logo_bytes, logo_mime=logo_mime)
+
+    def with_paper_score_grid(self) -> OMRDocument:
+        """Print bubbles for handwriting without signing this sheet for score recognition."""
+        grid = build_essay_score_grid_metadata(
+            choice_numbers=list(self.resolved_choice_question_numbers),
+            essay_numbers=list(self.resolved_essay_question_numbers),
+        )
+        return replace(
+            self, essay_score_questions=tuple(grid["essay_score_questions"]),
+            essay_score_layout_marks=(), essay_score_marks=(),
+        )
 
     @property
     def render_essay_count(self) -> int:
@@ -175,6 +188,7 @@ class OMRDocument:
             "essay_count": self.essay_count,
             "essay_numbering": self.essay_numbering,
             "essay_score_marks": bool(self.essay_score_marks or self.essay_score_questions),
+            "print_by_default": self.print_essay_score_grid_by_default,
             "include_optional_essay_area": self.include_optional_essay_area,
             "can_include_optional_essay_area": self.can_include_optional_essay_area,
             "render_essay_count": self.render_essay_count,

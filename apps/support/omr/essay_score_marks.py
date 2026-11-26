@@ -22,7 +22,7 @@ from apps.support.omr.contract_builder import (
 )
 
 
-SCORE_METHOD_REQUIRED = "서술형에 문항별 점수 입력을 사용하는 시험에서만 교사 채점란을 사용할 수 있습니다."
+SCORE_METHOD_REQUIRED = "스캔한 점수를 제안받으려면 서술형 채점 방식을 문항별 점수 입력으로 설정해 주세요."
 
 
 def _state(*, sheet, exam, contract=None) -> dict[str, Any]:

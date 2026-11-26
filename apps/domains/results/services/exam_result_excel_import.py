@@ -121,6 +121,7 @@ class QuestionSpec:
     number: int
     kind: str
     max_score: float
+    has_assigned_points: bool
 
 
 @dataclass(frozen=True)
@@ -1054,6 +1055,7 @@ def _question_specs(*, exam: Any, tenant: Any) -> list[QuestionSpec]:
             max_score=float(
                 score_shape.question_max_score(question.question_id, question.score)
             ),
+            has_assigned_points=(question.score or 0) > 0,
         )
         for question in questions
     ]

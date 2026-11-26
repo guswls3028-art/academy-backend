@@ -623,6 +623,15 @@ def _looks_like_header_folio(
     """A standalone current/total counter in a top corner is not a question."""
     if page_width <= 0 or page_height <= 0 or block.y1 > page_height * 0.13:
         return False
+    # A PDF producer may group the left folio, subject and right grade label
+    # into one page-wide text block. Its first line is otherwise read as Q2,
+    # Q4, etc. on the even pages of a two-sided exam.
+    if block.x1 - block.x0 >= page_width * 0.55 and re.fullmatch(
+        r"\s*\d{1,3}\s*\n(?:[^\n]{1,30}\n){0,2}"
+        r"[^\n]{0,24}영\s*역\s*\n\s*(?:고\s*[1-3]|[1-3]\s*학년)\s*",
+        block.text or "",
+    ):
+        return True
     if not (block.x1 <= page_width * 0.25 or block.x0 >= page_width * 0.75):
         return False
     counter = re.fullmatch(r"\s*(\d{1,3})\s*[/／]\s*(\d{1,3})\s*", block.text or "")
