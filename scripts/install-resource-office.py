@@ -46,6 +46,12 @@ def download_archive(archive, directory, architecture):
                     if total > 300 * 1024 * 1024:
                         raise ValueError("Office archive size limit")
                     target.write(chunk)
+                # HTTPResponse.read(size) can return EOF without raising on a short body.
+                declared = response.headers.get("Content-Length", "").strip()
+                if declared.isascii() and declared.isdecimal():
+                    missing = int(declared) - total
+                    if missing > 0:
+                        raise IncompleteRead(b"", missing)
             return
         except (URLError, TimeoutError, ConnectionError, IncompleteRead):
             if index == len(origins) - 1:
