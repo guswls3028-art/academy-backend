@@ -68,6 +68,25 @@ class RegistrationNoticesTests(APITestCase):
         second = self.post(request_id=str(uuid4()), student_notice="send", parent_notice="skip")
         self.assertEqual(second.data["students"][0]["student"]["status"], "queued")
 
+    def test_batch_scheduler_handles_new_and_existing_students_without_another_request(self):
+        second = create_student_account_fixture(
+            tenant=self.tenant, password="test-password",
+            student_data={"ps_number": "NOTICE002", "omr_code": "56789012", "name": "둘째",
+                          "phone": "01088887777", "parent_phone": "01077776666"},
+        )
+        self.assertEqual(self.post(student_notice="skip", parent_notice="skip").status_code, 201)
+        batch = self.post(students=[self.student.pk, second.pk], request_id=str(uuid4()),
+                          student_notice="auto", parent_notice="send")
+        self.assertEqual(batch.status_code, 201, batch.data)
+        self.assertEqual([r["student"]["status"] for r in batch.data["students"]], ["not_first", "queued"])
+        with patch("apps.support.enrollment.notice_dispatch.send_welcome_messages", side_effect=self.emit_fixture):
+            self.assertEqual(process_registration_notices(limit=1), 0)
+            self.assertEqual(ScheduledNotification.objects.count(), 1)
+            self.assertEqual(process_registration_notices(limit=5), 0)
+            self.assertEqual(process_registration_notices(limit=5), 0)
+        self.assertEqual(ScheduledNotification.objects.count(), 3)
+        self.assertEqual(Enrollment.objects.filter(tenant=self.tenant, lecture=self.lecture).count(), 2)
+
     def test_real_templates_and_original_recipient_bindings_reach_durable_outboxes(self):
         for role in ("student", "parent"):
             template = MessageTemplate.objects.create(
@@ -122,7 +141,7 @@ class RegistrationNoticesTests(APITestCase):
             business_tenant_id=self.tenant.id, trigger="registration_approved_" + role, admitted_outboxes=admitted_outboxes,
             tenant_id=self.tenant.id, source_tenant_id=self.tenant.id, target_type="account", target_id=f"{role}:{student.pk}",
             event_type="registration_approved_" + role, text="synthetic", message_mode="alimtalk",
-            template_id="approved-test", to=student.phone,
+            template_id="approved-test", to=student.phone if role == "student" else student.parent_phone,
         )
 
     def test_exhausted_pre_admission_jobs_signal_operator_without_outbox(self):
