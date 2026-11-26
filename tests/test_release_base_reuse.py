@@ -78,6 +78,7 @@ def classify(tmp_path: Path, *, base: str = "", runtime: str = "", runtime_diffs
 def test_common_code_rebuilds_all_runtimes_without_recompiling_base(tmp_path, changed):
     outputs = classify(tmp_path, base=changed, runtime=changed)
     assert outputs == {
+        "wrong_note_smoke": "false",
         "build_all": "false",
         "build_base": "false",
         "build_api": "true",
@@ -101,13 +102,13 @@ def test_common_code_rebuilds_all_runtimes_without_recompiling_base(tmp_path, ch
 def test_changed_base_input_rebuilds_every_consumer(tmp_path, changed):
     outputs = classify(tmp_path, base=changed, runtime=changed)
     assert set(outputs.values()) == {"true"}
-    assert len(outputs) == 7
+    assert len(outputs) == 8
 
 
 def test_previous_base_source_does_not_reintroduce_already_shipped_app_changes(tmp_path):
     outputs = classify(tmp_path, base="academy/domain/old_shipped.py")
     assert set(outputs.values()) == {"false"}
-    assert len(outputs) == 7
+    assert len(outputs) == 8
 
 
 @pytest.mark.parametrize("tools_only", [False, True])
@@ -145,7 +146,7 @@ def test_domain_formatter_change_rebuilds_its_tools_consumer(tmp_path, tools_onl
 ])
 def test_test_only_accumulated_diffs_do_not_rebuild_any_runtime(tmp_path, changed):
     outputs = classify(tmp_path, runtime=changed)
-    assert len(outputs) == 7
+    assert len(outputs) == 8
     assert set(outputs.values()) == {"false"}
 
 
@@ -253,6 +254,16 @@ def test_already_promoted_base_still_catches_up_a_lagged_runtime(tmp_path, chang
 def test_unshipped_base_change_still_rebuilds_all_when_runtime_diff_is_empty(tmp_path):
     outputs = classify(tmp_path, base="docker/native-security/build-fixed-libs.sh")
     assert set(outputs.values()) == {"true"}
+
+
+@pytest.mark.parametrize("release_path,tools_path,expected", [
+    ("apps/domains/results/services/range_wrong_note_service.py", "", "true"),
+    ("apps/core/services/development_qa_queue_ack.py", "", "true"),
+    ("", "apps/domains/results/services/range_wrong_note_service.py", "false"),
+])
+def test_wrong_note_verification_uses_the_last_successful_release(tmp_path, release_path, tools_path, expected):
+    outputs = classify(tmp_path, runtime_diffs={"RELEASE": release_path, "TOOLS": tools_path})
+    assert outputs["wrong_note_smoke"] == expected
 
 
 def test_api_only_input_keeps_selective_builds(tmp_path):
