@@ -64,6 +64,22 @@ class TestCreateInvoice(InvoiceServiceTestBase):
         self.assertTrue(inv.invoice_number.startswith("INV-202604-test_inv-"))
         self.assertTrue(inv.provider_order_id.startswith("ord_"))
 
+    def test_invoice_number_fits_for_long_codes_and_keeps_existing_boundary_format(self):
+        period = date(2026, 4, 13)
+        self.tenant.code = "a" * 15
+        self.assertEqual(
+            invoice_service._generate_invoice_number(self.tenant, period),
+            f"INV-202604-{'a' * 15}-001",
+        )
+        numbers = set()
+        for suffix in ("a", "b"):
+            tenant = Tenant.objects.create(name="QA long code", code="a" * 49 + suffix)
+            for day in (13, 14):
+                number = invoice_service._generate_invoice_number(tenant, period.replace(day=day))
+                self.assertLessEqual(len(number), Invoice._meta.get_field("invoice_number").max_length)
+                numbers.add(number)
+        self.assertEqual(len(numbers), 4)
+
     def test_manual_invoice_is_payable_immediately_and_due_date_is_deadline(self):
         self.program.billing_mode = "INVOICE_REQUEST"
         self.program.save(update_fields=["billing_mode"])
