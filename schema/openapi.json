@@ -57224,6 +57224,7 @@
               "enum": [
                 "attendance",
                 "care",
+                "day",
                 "learners",
                 "student_results"
               ],
