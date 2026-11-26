@@ -167,7 +167,7 @@ def verify_registration_notice(*, tenant, actor_id, lecture, request_id, log_id)
 def registration_result(registration):
     recipients = list(registration.recipients.all())
     tenant_id = registration.tenant_id
-    names = dict(Student.objects.filter(tenant_id=tenant_id, pk__in=registration.student_ids)
+    names = dict(Student.objects.filter(tenant_id=tenant_id, pk__in=registration.student_ids, deleted_at__isnull=True)
                  .values_list("pk", "name"))
     outboxes = dict(ScheduledNotification.objects.filter(
         tenant_id=tenant_id, pk__in=[r.outbox_id for r in recipients if r.outbox_id],

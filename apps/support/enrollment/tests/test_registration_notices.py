@@ -11,7 +11,7 @@ from apps.core.models import Tenant, TenantMembership
 from apps.domains.enrollment.models import Enrollment, EnrollmentNoticeRecipient, EnrollmentNoticeRegistration
 from apps.domains.lectures.test_support import create_lecture_fixture
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, NotificationLog, ScheduledNotification
-from apps.domains.messaging.services.registration_service import _dispatch_registration_durably
+from apps.domains.messaging.test_support import admit_registration_notification_fixture
 from apps.domains.students.test_support import create_student_account_fixture
 from apps.support.enrollment.notice_dispatch import process_registration_notices
 
@@ -109,20 +109,31 @@ class RegistrationNoticesTests(APITestCase):
         self.post(parent_notice="skip")
         self.student.phone = "01099998888"
         self.student.save(update_fields=["phone"])
-        with self.assertRaisesMessage(CommandError, "admission failed"):
-            call_command("process_scheduled_notifications")
+        call_command("process_scheduled_notifications")
         self.assertEqual(self.latest().data["students"][0]["student"]["status"], "failed")
         self.assertFalse(ScheduledNotification.objects.exists())
 
     def emit_fixture(self, *, created_students, recipient_roles, admitted_outboxes, **kwargs):
         student, = created_students
         role, = recipient_roles
-        _dispatch_registration_durably(
+        admit_registration_notification_fixture(
             business_tenant_id=self.tenant.id, trigger="registration_approved_" + role, admitted_outboxes=admitted_outboxes,
             tenant_id=self.tenant.id, source_tenant_id=self.tenant.id, target_type="account", target_id=f"{role}:{student.pk}",
             event_type="registration_approved_" + role, text="synthetic", message_mode="alimtalk",
             template_id="approved-test", to=student.phone,
         )
+
+    def test_exhausted_pre_admission_jobs_signal_operator_without_outbox(self):
+        self.post()
+        with patch("apps.support.enrollment.notice_dispatch.send_welcome_messages", return_value={"status": "skip"}):
+            for _ in range(2):
+                EnrollmentNoticeRecipient.objects.update(next_attempt_at=timezone.now())
+                self.assertEqual(process_registration_notices(limit=2), 0)
+            EnrollmentNoticeRecipient.objects.update(next_attempt_at=timezone.now())
+            with self.assertRaisesMessage(CommandError, "failed for 2 recipient"):
+                call_command("process_scheduled_notifications")
+        self.assertEqual(EnrollmentNoticeRecipient.objects.filter(status="failed").count(), 2)
+        self.assertFalse(ScheduledNotification.objects.exists())
 
     def test_scheduler_retry_correlates_only_this_registration_and_never_claims_final_delivery(self):
         self.post(parent_notice="skip")

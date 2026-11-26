@@ -72,6 +72,7 @@ def _process_recipient(recipient_id, tenant_id):
     if not recipient:
         return False
     recipient.attempts += 1
+    exhausted = False
     try:
         # Roll back credentials, outbox and on_commit hooks together on pre-admission failure.
         with transaction.atomic():
@@ -81,9 +82,10 @@ def _process_recipient(recipient_id, tenant_id):
                          tenant_id, recipient.pk, recipient.attempts)
         if recipient.attempts >= 3:
             recipient.status = "failed"
+            exhausted = True
     recipient.next_attempt_at = now + timedelta(minutes=recipient.attempts) if recipient.status == "queued" else None
     recipient.save(update_fields=["status", "next_attempt_at", "attempts", "outbox_id", "business_key"])
-    return recipient.status == "failed"
+    return exhausted
 
 
 def process_registration_notices(*, limit, time_budget=20):
