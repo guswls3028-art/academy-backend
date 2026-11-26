@@ -5,6 +5,7 @@ from django.db import transaction
 from django.db.models import Count, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from django.utils.http import content_disposition_header
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
@@ -27,6 +28,7 @@ from apps.domains.staffs.services.board_writes import BoardWrite
 
 FILE_LIMIT = 10 * 1024 * 1024
 REQUEST_KEY = OpenApiParameter("Idempotency-Key", OpenApiTypes.UUID, OpenApiParameter.HEADER)
+REPLY_ID = OpenApiParameter("reply_id", OpenApiTypes.INT, OpenApiParameter.PATH)
 
 
 class BoardStorageUnavailable(APIException):
@@ -39,10 +41,19 @@ class StaffBoardErrorSerializer(serializers.Serializer):
 
 
 class StaffBoardReplySerializer(serializers.ModelSerializer):
+    can_edit = serializers.SerializerMethodField()
+    can_delete = serializers.SerializerMethodField()
+
     class Meta:
         model = StaffBoardReply
-        fields = ("id", "body", "author_name", "created_at")
+        fields = ("id", "body", "author_name", "created_at", "can_edit", "can_delete")
         read_only_fields = ("id", "author_name", "created_at")
+
+    def get_can_edit(self, reply) -> bool:
+        return reply.author_id == self.context["request"].user.pk
+
+    def get_can_delete(self, reply) -> bool:
+        return self.context["view"].can_delete_content(reply)
 
 
 class StaffBoardPostSerializer(serializers.ModelSerializer):
@@ -50,18 +61,22 @@ class StaffBoardPostSerializer(serializers.ModelSerializer):
     reply_count = serializers.IntegerField(read_only=True, default=0)
     can_edit = serializers.SerializerMethodField()
     can_remove_attachment = serializers.SerializerMethodField()
+    can_delete = serializers.SerializerMethodField()
 
     class Meta:
         model = StaffBoardPost
         fields = ("id", "category", "title", "body", "author_name", "created_at",
-                  "attachment_name", "file", "reply_count", "can_edit", "can_remove_attachment")
+                  "attachment_name", "file", "reply_count", "can_edit", "can_remove_attachment", "can_delete")
         read_only_fields = ("id", "author_name", "created_at", "attachment_name")
 
     def get_can_edit(self, post) -> bool:
         return post.author_id == self.context["request"].user.pk
 
     def get_can_remove_attachment(self, post) -> bool:
-        return bool(post.attachment_key) and self.context["view"].can_remove_file(post)
+        return bool(post.attachment_key) and self.get_can_delete(post)
+
+    def get_can_delete(self, post) -> bool:
+        return self.context["view"].can_delete_content(post)
 
     def validate(self, attrs):
         file = attrs.get("file")
@@ -118,11 +133,17 @@ class StaffBoardViewSet(viewsets.GenericViewSet):
     def manages_board(self):
         return get_active_membership_role(self.request.user, self.request.tenant) in ("owner", "admin")
 
-    def can_remove_file(self, post):
-        return post.author_id == self.request.user.pk or self.manages_board
+    def can_delete_content(self, item):
+        return item.author_id == self.request.user.pk or self.manages_board
+
+    def locked_post(self, pk, *, include_deleted=False):
+        posts = StaffBoardPost.objects.select_for_update().filter(tenant=self.request.tenant)
+        if not include_deleted:
+            posts = posts.filter(deleted_at__isnull=True)
+        return get_object_or_404(posts, pk=pk)
 
     def get_queryset(self):
-        return StaffBoardPost.objects.filter(tenant=self.request.tenant).annotate(
+        return StaffBoardPost.objects.filter(tenant=self.request.tenant, deleted_at__isnull=True).annotate(
             reply_count=Count("replies")
         ).order_by("-id")
 
@@ -167,7 +188,7 @@ class StaffBoardViewSet(viewsets.GenericViewSet):
         write = BoardWrite(request, "post", serializer.validated_data, upload)
         previous = write.existing_result()
         if previous:
-            return Response(self.get_serializer(self.get_queryset().get(pk=previous)).data)
+            return Response(self.get_serializer(get_object_or_404(self.get_queryset(), pk=previous)).data)
         intent = reserve_staff_board_upload(tenant_id=request.tenant.pk) if upload else None
         with transaction.atomic():
             receipt = write.reserve()
@@ -175,7 +196,7 @@ class StaffBoardViewSet(viewsets.GenericViewSet):
             if previous:
                 if intent:
                     intent.delete()
-                return Response(self.get_serializer(self.get_queryset().get(pk=previous)).data)
+                return Response(self.get_serializer(get_object_or_404(self.get_queryset(), pk=previous)).data)
             if intent:
                 if lock_reserved_upload(intent) is None:
                     raise BoardStorageUnavailable()
@@ -194,8 +215,9 @@ class StaffBoardViewSet(viewsets.GenericViewSet):
         return Response(serializer.data, status=201)
 
     @extend_schema(request=StaffBoardEditSerializer, responses=StaffBoardPostSerializer)
+    @transaction.atomic
     def partial_update(self, request, pk=None):
-        post = self.get_object()
+        post = self.locked_post(pk)
         if post.author_id != request.user.pk:
             raise PermissionDenied()
         if not isinstance(request.data, Mapping) or not request.data or set(request.data) - {"title", "body"}:
@@ -205,23 +227,64 @@ class StaffBoardViewSet(viewsets.GenericViewSet):
         for field, value in serializer.validated_data.items():
             setattr(post, field, value)
         post.save(update_fields=list(serializer.validated_data))
-        return Response(self.get_serializer(post).data)
+        return Response(self.get_serializer(self.get_queryset().get(pk=post.pk)).data)
 
     @extend_schema(parameters=[REQUEST_KEY], request=StaffBoardReplySerializer,
                    responses={200: StaffBoardReplySerializer, 201: StaffBoardReplySerializer, 409: StaffBoardErrorSerializer})
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def replies(self, request, pk=None):
-        post = self.get_object()
-        reply = StaffBoardReplySerializer(data=request.data)
+        post = self.locked_post(pk)
+        context = self.get_serializer_context()
+        reply = StaffBoardReplySerializer(data=request.data, context=context)
         reply.is_valid(raise_exception=True)
         write = BoardWrite(request, f"post/{post.pk}/reply", reply.validated_data)
-        with transaction.atomic():
-            receipt = write.reserve()
-            previous = write.result(receipt)
-            if previous:
-                return Response(StaffBoardReplySerializer(post.replies.get(pk=previous)).data)
-            write.finish(receipt, reply.save(post=post, author_name=author_name(request.user)))
+        receipt = write.reserve()
+        previous = write.result(receipt)
+        if previous:
+            return Response(StaffBoardReplySerializer(get_object_or_404(post.replies, pk=previous), context=context).data)
+        write.finish(receipt, reply.save(post=post, author=request.user, author_name=author_name(request.user)))
         return Response(reply.data, status=201)
+
+    @extend_schema(parameters=[REPLY_ID], request=StaffBoardReplySerializer, responses=StaffBoardReplySerializer)
+    @action(detail=True, methods=["patch"], url_path=r"replies/(?P<reply_id>[0-9]+)")
+    @transaction.atomic
+    def edit_reply(self, request, pk=None, reply_id=None):
+        reply = get_object_or_404(self.locked_post(pk).replies, pk=reply_id)
+        if reply.author_id != request.user.pk:
+            raise PermissionDenied()
+        if not isinstance(request.data, Mapping) or set(request.data) != {"body"}:
+            raise serializers.ValidationError("댓글 내용만 수정할 수 있습니다.")
+        serializer = StaffBoardReplySerializer(reply, data=request.data, context=self.get_serializer_context())
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    @extend_schema(parameters=[REPLY_ID], request=None, responses={204: None})
+    @edit_reply.mapping.delete
+    @transaction.atomic
+    def delete_reply(self, request, pk=None, reply_id=None):
+        reply = get_object_or_404(self.locked_post(pk).replies, pk=reply_id)
+        if not self.can_delete_content(reply):
+            raise PermissionDenied()
+        reply.delete()
+        return Response(status=204)
+
+    @extend_schema(responses={204: None})
+    @transaction.atomic
+    def destroy(self, request, pk=None):
+        post = self.locked_post(pk, include_deleted=True)
+        if not self.can_delete_content(post):
+            raise PermissionDenied()
+        if post.deleted_at is None:
+            post.deleted_at = timezone.now()
+            key = post.attachment_key
+            post.attachment_key = ""
+            post.attachment_name = ""
+            post.save(update_fields=["deleted_at", "attachment_key", "attachment_name"])
+            if key:
+                schedule_detached_storage_cleanup(tenant_id=request.tenant.pk, object_keys=[key])
+        return Response(status=204)
 
     @extend_schema(
         responses={
@@ -253,8 +316,8 @@ class StaffBoardViewSet(viewsets.GenericViewSet):
     @attachment.mapping.delete
     def remove_attachment(self, request, pk=None):
         with transaction.atomic():
-            post = get_object_or_404(StaffBoardPost.objects.select_for_update(), tenant=request.tenant, pk=pk)
-            if not self.can_remove_file(post):
+            post = self.locked_post(pk)
+            if not self.can_delete_content(post):
                 raise PermissionDenied()
             if post.attachment_key:
                 key = post.attachment_key
