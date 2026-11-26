@@ -115,12 +115,14 @@ def _validate_dawon_demo_access(request, token):
     path = request.path
     method = request.method
     roster_root = "/api/v1/students/demo-roster/"
-    if path.startswith(roster_root) or path in {
+    staff_clock = re.fullmatch(r"/api/v1/students/demo-staff/[1-9][0-9]{0,17}/clock/", path)
+    if path.startswith(roster_root) or staff_clock or path in {
         "/api/v1/students/demo-messages/", "/api/v1/students/demo-staff/month-close/",
     }:
         roster_detail = re.fullmatch(r"/api/v1/students/demo-roster/[1-9][0-9]{0,17}/", path)
         if role == "admin" and (
-            (path == roster_root and method in {"GET", "HEAD", "POST"})
+            (staff_clock and method in {"GET", "HEAD", "POST"})
+            or (path == roster_root and method in {"GET", "HEAD", "POST"})
             or (roster_detail and method in {"PATCH", "POST", "DELETE"})
             or (method == "POST" and re.fullmatch(r"/api/v1/students/demo-roster/[1-9][0-9]{0,17}/credential/", path))
             or (path == "/api/v1/students/demo-messages/" and method in {"GET", "HEAD", "POST"})

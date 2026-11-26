@@ -10,7 +10,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.messaging.models import NotificationLog
-from apps.domains.staffs.models import PayrollSnapshot, Staff, WorkMonthLock, WorkRecord, WorkType
+from apps.domains.staffs.models import PayrollSnapshot, Staff, StaffWorkType, WorkMonthLock, WorkRecord, WorkType
 from apps.domains.students.models import Student, Tag
 from apps.domains.students.services.dawon_staff import EMPLOYEE, FIXTURES, WORK_MARK, WORK_TYPE
 
@@ -137,3 +137,33 @@ class DawonRosterTest(TestCase):
         current = {**request, "year": first.year, "month": first.month}
         self.assertEqual(self.call("post", "month-close/", current, api=api).status_code, 400)
         self.assertEqual(self.call("post", "month-close/", request, role="teacher", api=api).status_code, 404)
+
+
+    def test_admin_staff_clock_uses_selected_identity_and_rejects_other_record(self):
+        employee = get_user_model().objects.create_user(
+            username=EMPLOYEE, tenant=self.tenant, name=FIXTURES[EMPLOYEE][0],
+        )
+        staff = Staff.objects.create(tenant=self.tenant, user=employee, name=employee.name, phone="", position="INSTRUCTOR")
+        work = WorkType.objects.create(tenant=self.tenant, name=WORK_TYPE, description=WORK_MARK, base_hourly_wage=20000)
+        StaffWorkType.objects.create(tenant=self.tenant, staff=staff, work_type=work)
+        previous = timezone.localdate() - timedelta(days=1)
+        closed = WorkRecord.objects.create(
+            tenant=self.tenant, staff=staff, work_type=work, date=previous,
+            start_time=time(13), end_date=previous, end_time=time(15), memo=WORK_MARK,
+        )
+        api = "demo-staff"
+        route = f"{staff.pk}/clock/"
+        self.assertEqual(self.call("get", route, api=api).data["current"], None)
+        started = self.call("post", route, {"action": "start"}, api=api)
+        self.assertEqual(started.status_code, 200, started.data)
+        active = started.data["current"]["id"]
+        self.assertEqual(self.call("get", route, api=api).data["current"]["id"], active)
+        wrong = self.call("post", route, {"action": "end", "record": closed.pk}, api=api)
+        self.assertEqual(wrong.status_code, 400)
+        self.assertIsNone(WorkRecord.objects.get(pk=active).end_time)
+        self.assertEqual(WorkRecord.objects.get(pk=closed.pk).end_time, time(15))
+        ended = self.call("post", route, {"action": "end", "record": active}, api=api)
+        self.assertEqual(ended.status_code, 200, ended.data)
+        self.assertIsNone(self.call("get", route, api=api).data["current"])
+        self.assertIsNotNone(WorkRecord.objects.get(pk=active).end_time)
+        self.assertEqual(self.call("get", route, role="teacher", api=api).status_code, 404)

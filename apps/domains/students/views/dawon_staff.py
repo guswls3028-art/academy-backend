@@ -51,6 +51,13 @@ def selected_staff(tenant, pk):
 
 
 
+def clock_assignment(staff):
+    return StaffWorkType.objects.filter(
+        tenant=staff.tenant, staff=staff, work_type__tenant=staff.tenant,
+        work_type__name=WORK_TYPE, work_type__description=WORK_MARK, work_type__is_active=True,
+    )
+
+
 def month_start(month):
     try:
         first = date.fromisoformat(month + "-01")
@@ -127,7 +134,11 @@ class DawonStaffView(StaffRequest):
         pending = row["open_count"]
         records = WorkRecord.objects.filter(tenant=tenant, staff=staff, date__year=first.year,
                                             date__month=first.month).order_by("-date", "-start_time", "-pk")
-        return Response({"month": month, "payroll": payroll, "open_count": pending, "records": list(
+        can_clock = clock_assignment(staff).exists() or WorkRecord.objects.filter(
+            staff=staff, tenant=tenant, end_time__isnull=True, work_type__tenant=tenant,
+            work_type__name=WORK_TYPE, work_type__description=WORK_MARK,
+        ).exists()
+        return Response({"month": month, "payroll": payroll, "open_count": pending, "can_clock": can_clock, "records": list(
             records.values("id", "date", "start_time", "end_time", "end_date", "work_hours", "amount"))})
 
     @extend_schema(request={"application/json": schema.record(staff=schema.integer, position=schema.position)},
@@ -156,7 +167,7 @@ class DawonStaffClockView(StaffRequest):
         return WorkRecord.objects.filter(tenant=staff.tenant, staff=staff, end_time__isnull=True).first()
 
     @extend_schema(responses={200: schema.staff_clock})
-    def get(self, request):
+    def get(self, request, **kwargs):
         staff = self.staff(request)
         row = self.current(staff)
         return Response({"staff": staff.name, "current": {
@@ -165,16 +176,13 @@ class DawonStaffClockView(StaffRequest):
 
     @extend_schema(request={"application/json": schema.clock_request}, responses={200: schema.staff_clock})
     @transaction.atomic
-    def post(self, request):
+    def post(self, request, **kwargs):
         if not isinstance(request.data, dict):
             raise ValidationError("지원하지 않는 근태 요청입니다.")
         staff = self.staff(request)
         now = timezone.localtime()
         if request.data == {"action": "start"}:
-            assignment = StaffWorkType.objects.filter(
-                tenant=staff.tenant, staff=staff, work_type__tenant=staff.tenant,
-                work_type__name=WORK_TYPE, work_type__description=WORK_MARK, work_type__is_active=True,
-            ).first()
+            assignment = clock_assignment(staff).first()
             if not assignment:
                 raise ValidationError("배정된 체험 근무 유형이 없습니다.")
             start_work_record(staff=staff, work_type_id=assignment.work_type_id, date=now.date(),
@@ -187,3 +195,17 @@ class DawonStaffClockView(StaffRequest):
         else:
             raise ValidationError("지원하지 않는 근태 요청입니다.")
         return self.get(request)
+
+
+@extend_schema(exclude=True)
+class DawonAdminStaffClockView(DawonStaffClockView):
+    role = "admin"
+
+    def staff(self, request):
+        return selected_staff(request.tenant, self.kwargs["staff_id"])
+
+    def current(self, staff):
+        return WorkRecord.objects.filter(
+            tenant=staff.tenant, staff=staff, end_time__isnull=True, work_type__tenant=staff.tenant,
+            work_type__name=WORK_TYPE, work_type__description=WORK_MARK,
+        ).first()
