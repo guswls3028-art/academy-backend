@@ -216,6 +216,43 @@ class ManualSendRequestTests(ManualSendFixture, TestCase):
         self.assertEqual(ScheduledNotification.objects.count(), 0)
         self.enqueue.assert_not_called()
 
+    def test_identifier_phone_excluded_now_and_on_schedule_parent_delivers_once(self):
+        self.student.uses_identifier = True
+        self.student.save(update_fields=["uses_identifier"])
+        for schedule in ({}, {"scheduled_send_at": (timezone.now() + timedelta(hours=1)).isoformat()}):
+            response = self.post(self.payload(**schedule))
+            self.assertEqual(response.status_code, 422)
+            self.assertEqual(response.data["accepted_count"], 0)
+        self.assertFalse(ScheduledNotification.objects.exists())
+        self.enqueue.assert_not_called()
+        self.assertEqual(self.post(self.payload(send_to="parent")).data["accepted_count"], 1)
+        self.assertTrue(self.post(self.payload(send_to="parent")).data["replayed"])
+        self.enqueue.assert_called_once()
+        self.assertEqual(self.enqueue.call_args.kwargs["to"], self.student.parent_phone)
+
+    def test_worker_rechecks_contact_without_retargeting(self):
+        from apps.support.messaging.student_dependencies import assert_current_delivery_contact
+        from apps.worker.messaging_worker.sqs_main import _send_failure_disposition
+
+        data = {"event_type": "manual_send", "target_type": "student", "target_id": self.student.pk,
+                "to": self.student.phone}
+        assert_current_delivery_contact(data, business_tenant_id=self.tenant.pk)
+        with self.assertRaisesRegex(ValueError, "recipient_contact_changed"):
+            assert_current_delivery_contact(data, business_tenant_id=self.owner.pk)
+        self.student.uses_identifier = True
+        self.student.save(update_fields=["uses_identifier"])
+        with self.assertRaisesRegex(ValueError, "recipient_contact_changed"):
+            assert_current_delivery_contact(data, business_tenant_id=self.tenant.pk)
+        assert_current_delivery_contact({**data, "target_type": "parent", "to": self.student.parent_phone},
+                                        business_tenant_id=self.tenant.pk)
+        self.student.phone = "01098765432"
+        self.student.uses_identifier = False
+        self.student.save(update_fields=["phone", "uses_identifier"])
+        with self.assertRaisesRegex(ValueError, "recipient_contact_changed"):
+            assert_current_delivery_contact(data, business_tenant_id=self.tenant.pk)
+        assert_current_delivery_contact({**data, "to": self.student.phone}, business_tenant_id=self.tenant.pk)
+        self.assertEqual(_send_failure_disposition("recipient_contact_changed", provider_send_started=False), "terminal")
+
     def test_queue_outage_replay_keeps_one_durable_retry(self):
         self.enqueue.return_value = False
         first = self.post()

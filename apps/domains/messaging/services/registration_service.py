@@ -5,6 +5,8 @@
 
 import logging
 
+from apps.shared.utils.student_contact import contact_phone, student_contact_phone
+
 logger = logging.getLogger(__name__)
 
 
@@ -176,8 +178,8 @@ def send_welcome_messages(
     for student in created_students:
         name = (getattr(student, "name", "") or "").strip()
         ps_number = (getattr(student, "ps_number", "") or "").strip()
-        phone = (getattr(student, "phone", "") or "").replace("-", "").strip()
-        parent_phone = (getattr(student, "parent_phone", "") or "").replace("-", "").strip()
+        phone = student_contact_phone(student, "student")
+        parent_phone = student_contact_phone(student, "parent")
         same_recipient = _same_recipient(phone, parent_phone)
         password_for_student = student_password_by_id.get(
             getattr(student, "id", None),
@@ -302,8 +304,8 @@ def send_registration_approved_messages(
     from apps.domains.messaging.policy import MessagingPolicyError
 
     sent = 0
-    student_phone = (student_phone or "").replace("-", "").strip()
-    parent_phone = (parent_phone or "").replace("-", "").strip()
+    student_phone = contact_phone(student_phone)
+    parent_phone = contact_phone(parent_phone)
     same_recipient = _same_recipient(student_phone, parent_phone)
     site_url = (site_url or "").strip()
     notice = REGISTRATION_APPROVED_NOTICE
