@@ -5,6 +5,21 @@ from __future__ import annotations
 from typing import Any
 
 
+class EnrollmentImportError(ValueError):
+    """User-safe enrollment input/identity error, without infrastructure details."""
+
+
+def restore_withdrawn_session_for_import(*, tenant, session, enrollment):
+    from apps.domains.attendance.roster_membership import RosterMembershipError, write_session_roster_membership
+
+    try:
+        return write_session_roster_membership(
+            tenant=tenant, session=session, enrollment=enrollment, allow_session_reregistration=True,
+        )
+    except RosterMembershipError as exc:
+        raise EnrollmentImportError(str(exc)) from exc
+
+
 class StudentImportDependencyError(Exception):
     def __init__(self, detail: str):
         super().__init__(detail)

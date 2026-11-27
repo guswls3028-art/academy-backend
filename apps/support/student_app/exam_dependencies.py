@@ -10,11 +10,12 @@ import logging
 import uuid
 from datetime import timedelta
 
-from django.db.models import Count, F, Q, Subquery, Value
+from django.db.models import BigIntegerField, Count, F, Q, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.support.student_app.learning_todo_policy import ongoing_lecture_filter
+from apps.support.attendance.learning_todo_eligibility import INELIGIBLE_LEARNING_TODO_STATUSES
 
 logger = logging.getLogger(__name__)
 MISSING_EXAM_ENROLLMENT: tuple[None, None] = (None, None)
@@ -54,10 +55,10 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0, in
     enrollment_ids = list(enrollments.values_list("id", flat=True))
     if not enrollment_ids:
         return Exam.objects.none()
-    absent_session_ids = Attendance.objects.filter(
+    excluded_session_ids = Attendance.objects.filter(
         tenant=tenant,
         enrollment_id__in=enrollment_ids,
-        status="ABSENT",
+        status__in=INELIGIBLE_LEARNING_TODO_STATUSES,
     ).values("session_id")
     # A different lecture's roster cannot make an unselected exam target actionable.
     eligible_session = (
@@ -72,7 +73,7 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0, in
             session__lecture__tenant=tenant,
             session__exams__id=OuterRef("pk"),
         )
-        .exclude(session_id__in=absent_session_ids)
+        .exclude(session_id__in=excluded_session_ids)
     )
     historical_result = Result.objects.filter(
         target_type="exam",
@@ -96,7 +97,7 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0, in
         target_id=OuterRef("pk"),
         enrollment_id__in=enrollment_ids,
     )
-    absent_linked_attendance = Attendance.objects.filter(
+    excluded_linked_attendance = Attendance.objects.filter(
         tenant=tenant,
         enrollment_id__in=enrollment_ids,
         enrollment__tenant=tenant,
@@ -106,7 +107,7 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0, in
         enrollment__exam_enrollments__exam_id=OuterRef("pk"),
         session__lecture__tenant=tenant,
         session__exams__id=OuterRef("pk"),
-        status="ABSENT",
+        status__in=INELIGIBLE_LEARNING_TODO_STATUSES,
     )
     return (
         Exam.objects.filter(
@@ -122,12 +123,17 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0, in
             Q() if include_closed else Q(close_at__isnull=True) | Q(close_at__gte=now),
         )
         .annotate(
-            student_session_id=Subquery(Session.objects.filter(
-                exams__id=OuterRef("pk"),
-                lecture__tenant=tenant,
-                lecture__enrollments__id__in=enrollment_ids,
-                lecture__enrollments__exam_enrollments__exam_id=OuterRef("pk"),
-            ).order_by("date", "order", "id").values("id")[:1]),
+            student_session_id=Coalesce(
+                Subquery(eligible_session.order_by("session__date", "session__order", "session_id")
+                         .values("session_id")[:1]),
+                Subquery(Session.objects.filter(
+                    exams__id=OuterRef("pk"),
+                    lecture__tenant=tenant,
+                    lecture__enrollments__id__in=enrollment_ids,
+                    lecture__enrollments__exam_enrollments__exam_id=OuterRef("pk"),
+                ).order_by("date", "order", "id").values("id")[:1]),
+                output_field=BigIntegerField(),
+            ),
             learning_todo_eligible=Exists(eligible_session),
             has_historical_result=Exists(historical_result),
             recorded_result_attempt_count=Coalesce(
@@ -139,11 +145,11 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0, in
             ),
             has_historical_attempt=Exists(historical_attempt),
             has_historical_submission=Exists(historical_submission),
-            has_absent_linked_attendance=Exists(absent_linked_attendance),
+            has_excluded_linked_attendance=Exists(excluded_linked_attendance),
         )
         .filter(
             Q(learning_todo_eligible=True)
-            | Q(has_absent_linked_attendance=False)
+            | Q(has_excluded_linked_attendance=False)
             | Q(has_historical_result=True)
             | Q(has_historical_attempt=True)
             | Q(has_historical_submission=True)

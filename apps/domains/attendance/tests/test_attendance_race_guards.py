@@ -20,7 +20,9 @@ class AttendanceRaceGuardTests(SimpleTestCase):
         self.assertIn("self._lock_attendance_rows", object_source)
         self.assertIn("self.filter_queryset(self.get_queryset())", object_source)
         self.assertIn("self.check_object_permissions", object_source)
-        for method in (AttendanceViewSet.update, AttendanceViewSet.partial_update, AttendanceViewSet.destroy):
+        # DRF routes PATCH to the same atomic update as PUT with partial=True.
+        self.assertIn("return self.update(", inspect.getsource(AttendanceViewSet.partial_update))
+        for method in (AttendanceViewSet.update, AttendanceViewSet.destroy):
             source = inspect.getsource(method)
             self.assertIn("@transaction.atomic", source)
             self.assertIn("self.get_object()", source)
@@ -38,5 +40,4 @@ class AttendanceRaceGuardTests(SimpleTestCase):
         self.assertLess(bulk_source.index("self._lock_attendance_rows"), bulk_source.index('.update(status="PRESENT")'))
         self.assertLess(undo_source.index("self._lock_attendance_rows"), undo_source.index('row.status != "PRESENT"'))
         self.assertLess(undo_source.index('row.status != "PRESENT"'), undo_source.index("Attendance.objects.bulk_update"))
-        for method in (AttendanceViewSet.update, AttendanceViewSet.partial_update):
-            self.assertIn("_secession_status_conflict", inspect.getsource(method))
+        self.assertIn("_secession_status_conflict", inspect.getsource(AttendanceViewSet.update))

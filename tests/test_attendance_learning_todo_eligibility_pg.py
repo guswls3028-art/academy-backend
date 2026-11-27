@@ -17,7 +17,7 @@ from apps.domains.attendance.models import Attendance
 from apps.domains.attendance.views import AttendanceViewSet
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
-from apps.domains.homework.models import HomeworkAssignment
+from apps.domains.homework.models import HomeworkAssignment, HomeworkEnrollment
 from apps.domains.homework.views.homework_assignment_view import (
     HomeworkAssignmentManageView,
 )
@@ -285,6 +285,83 @@ class LearningTodoEligibilityPostgresTests(TransactionTestCase):
             ),
             expected_ids,
         )
+
+    def test_exam_roster_get_and_put_exclude_withdrawn_session_and_preserve_shared_assignment(self):
+        withdrawn = self._enrollment(tenant=self.tenant, lecture=self.lecture, session=self.session, suffix="WITHDRAWN")
+        Attendance.objects.create(tenant=self.tenant, session=self.session, enrollment=withdrawn, status="SECESSION")
+        second = Session.objects.create(lecture=self.lecture, order=2, title="2주차")
+        SessionEnrollment.objects.create(tenant=self.tenant, session=second, enrollment=withdrawn)
+        Attendance.objects.create(tenant=self.tenant, session=second, enrollment=withdrawn, status="ONLINE")
+
+        unique = Exam.objects.create(tenant=self.tenant, title="1주차 시험")
+        shared = Exam.objects.create(tenant=self.tenant, title="공유 시험")
+        unique.sessions.add(self.session)
+        shared.sessions.add(self.session, second)
+
+        def url(exam, session):
+            return f"/api/v1/exams/{exam.pk}/enrollments/?session_id={session.pk}"
+
+        def selected(exam, session):
+            response = self.client.get(url(exam, session), **self.headers)
+            self.assertEqual(response.status_code, 200, response.data)
+            return {row["enrollment_id"]: row["is_selected"] for row in response.data["items"]}
+
+        def replace(exam, session, ids):
+            return self.client.put(url(exam, session), {"enrollment_ids": ids}, format="json", **self.headers)
+
+        self.assertEqual(replace(shared, second, [withdrawn.pk]).status_code, 200)
+        assignment = ExamEnrollment.objects.get(exam=shared, enrollment=withdrawn)
+        present = self.enrollments["PRESENT"].pk
+        online = self.enrollments["ONLINE"].pk
+        absent = self.enrollments["ABSENT"].pk
+        for exam in (unique, shared):
+            with self.subTest(exam=exam.title):
+                self.assertEqual(selected(exam, self.session), {present: False, online: False, absent: False})
+                assigned_before = list(ExamEnrollment.objects.order_by("pk").values_list("pk", "exam_id", "enrollment_id"))
+                refused = replace(exam, self.session, [present, withdrawn.pk])
+                self.assertEqual(refused.status_code, 400, refused.data)
+                self.assertEqual(refused.data["invalid_enrollment_ids"], [withdrawn.pk])
+                self.assertEqual(
+                    list(ExamEnrollment.objects.order_by("pk").values_list("pk", "exam_id", "enrollment_id")),
+                    assigned_before,
+                )
+                self.assertEqual(replace(exam, self.session, [present, absent]).status_code, 200)
+                self.assertEqual(selected(exam, self.session), {present: True, online: False, absent: True})
+
+        cleared = replace(shared, self.session, [])
+        self.assertEqual(cleared.status_code, 200, cleared.data)
+        self.assertEqual(cleared.data["selected_count"], 0)
+        self.assertEqual(selected(shared, self.session), {present: False, online: False, absent: False})
+        self.assertFalse(ExamEnrollment.objects.filter(exam=unique, enrollment=withdrawn).exists())
+        self.assertEqual(selected(shared, second), {withdrawn.pk: True})
+        self.assertEqual(ExamEnrollment.objects.get(exam=shared, enrollment=withdrawn).pk, assignment.pk)
+
+    def test_homework_rosters_filter_withdrawn_and_absent_without_erasing_past_rows(self):
+        withdrawn = self.enrollments["PRESENT"]
+        self.attendances["PRESENT"].status = "SECESSION"
+        self.attendances["PRESENT"].save(update_fields=["status"])
+        homework = Homework.objects.create(tenant=self.tenant, session=self.session, title="퇴원 전 과제")
+        online = self.enrollments["ONLINE"].pk
+        absent = self.enrollments["ABSENT"].pk
+        for model, query, scope in (
+            (HomeworkEnrollment, f"enrollments/?session_id={self.session.pk}", {}),
+            (HomeworkAssignment, f"assignments/?homework_id={homework.pk}", {"homework": homework}),
+        ):
+            with self.subTest(endpoint=query):
+                past = model.objects.create(tenant=self.tenant, session=self.session, enrollment=withdrawn, **scope)
+                url = f"/api/v1/homework/{query}"
+                rows = self.client.get(url, **self.headers)
+                self.assertEqual(rows.status_code, 200, rows.data)
+                self.assertEqual([r["enrollment_id"] for r in rows.data["items"]], [online])
+                for refused_id in (withdrawn.pk, absent):
+                    refused = self.client.put(url, {"enrollment_ids": [online, refused_id]}, format="json", **self.headers)
+                    self.assertEqual(refused.status_code, 400, refused.data)
+                    self.assertEqual(refused.data["invalid_enrollment_ids"], [refused_id])
+                    self.assertEqual(list(model.objects.values_list("pk", flat=True)), [past.pk])
+                saved = self.client.put(url, {"enrollment_ids": [online]}, format="json", **self.headers)
+                self.assertEqual(saved.status_code, 200, saved.data)
+                self.assertTrue(model.objects.filter(pk=past.pk, enrollment=withdrawn).exists())
+                self.assertTrue(model.objects.filter(session=self.session, enrollment_id=online, **scope).exists())
 
     def test_absent_to_online_restores_existing_todos_once_and_projection_reloads(self):
         absent = self.enrollments["ABSENT"]

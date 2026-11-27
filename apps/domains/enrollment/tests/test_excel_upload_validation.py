@@ -33,6 +33,18 @@ def _valid_xlsx_upload() -> SimpleUploadedFile:
 
 
 class EnrollmentExcelUploadValidationTests(TestCase):
+    def test_invalid_explicit_session_cannot_fall_back_to_first_session(self):
+        for invalid in ("abc", "0", "-1", str(2**63)):
+            with self.subTest(invalid=invalid):
+                request = self.factory.post("/api/v1/enrollments/lecture_enroll_from_excel/", {
+                    "file": _valid_xlsx_upload(), "lecture_id": self.lecture.pk, "session_id": invalid,
+                }, format="multipart")
+                request.tenant = self.tenant
+                force_authenticate(request, user=self.admin)
+                response = EnrollmentViewSet.as_view({"post": "lecture_enroll_from_excel"})(request)
+                self.assertEqual(response.status_code, 400, response.data)
+                self.assertIn("session_id", response.data)
+
     def setUp(self):
         self.factory = APIRequestFactory()
         self.tenant = Tenant.objects.create(

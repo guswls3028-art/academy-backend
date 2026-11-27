@@ -101,6 +101,7 @@ COPY --chown=appuser:appuser libs ./libs
 COPY --chown=appuser:appuser manage.py ./
 
 RUN python -c "from academy.application.use_cases.tools.worker_dispatcher import handle_tools_job; from academy.application.services.excel_parsing_service import ExcelParsingService; print(handle_tools_job.__name__, ExcelParsingService.__name__)"
+RUN DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker python -c "import django; django.setup(); from apps.domains.attendance.roster_membership import write_session_roster_membership; from apps.domains.fees.models import StudentFee; print(write_session_roster_membership.__name__, StudentFee._meta.label)"
 RUN python -c "from academy.adapters.ai.detection.segment_dispatcher import segment_questions_multipage; print(segment_questions_multipage.__name__)"
 RUN python -c "import apps.worker.tools_worker.sqs_main; from academy.framework.workers.ai_sqs_worker import run_ai_sqs_worker; print('tools entrypoint import OK')"
 
