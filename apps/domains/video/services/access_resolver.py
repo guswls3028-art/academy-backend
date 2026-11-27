@@ -94,7 +94,10 @@ def resolve_access_mode(
         return AccessMode.BLOCKED
 
     session = video.session
-    attendance = video_repo.attendance_filter_session_enrollment(session, enrollment).first()
+    if video.visibility == Video.Visibility.PUBLIC and session and enrollment.lecture_id != session.lecture_id:
+        attendance = video_repo.public_video_attendance(session, enrollment)
+    else:
+        attendance = video_repo.attendance_filter_session_enrollment(session, enrollment).first()
     attendance_status = attendance.status if attendance else None
 
     progress = None
@@ -161,6 +164,19 @@ def resolve_access_modes_for_videos_prefetched(
     }
 
 
+def public_playback_record(video, enrollment) -> bool:
+    """A PUBLIC video may use the student's own tenant-library row for history."""
+    if video.visibility != Video.Visibility.PUBLIC or not enrollment:
+        return False
+    lecture = enrollment.lecture
+    source = getattr(video.session, "lecture", None)
+    return bool(
+        video.tenant_id == enrollment.tenant_id == lecture.tenant_id == enrollment.student.tenant_id
+        and (source is None or source.tenant_id == video.tenant_id)
+        and (lecture.is_system or (source and lecture.pk == source.pk))
+    )
+
+
 def get_effective_access_mode(
     *,
     video: Video,
@@ -170,10 +186,10 @@ def get_effective_access_mode(
     """
     Effective access mode considering admin overrides.
     """
-    if (
-        video.visibility != Video.Visibility.PUBLIC
-        and not video_repo.session_enrollment_exists(video.session, enrollment)
-    ):
+    public = video.visibility == Video.Visibility.PUBLIC
+    if public and not public_playback_record(video, enrollment):
+        return AccessMode.BLOCKED
+    if not public and not video_repo.session_enrollment_exists(video.session, enrollment):
         return AccessMode.BLOCKED
 
     perm = video_repo.video_access_get(video, enrollment)
@@ -184,7 +200,7 @@ def get_effective_access_mode(
     ):
         return AccessMode.BLOCKED
 
-    if getattr(enrollment, "status", None) != "ACTIVE":
+    if not public and getattr(enrollment, "status", None) != "ACTIVE":
         from apps.domains.video.services.inactive_entitlements import (
             get_active_inactive_video_entitlement,
         )

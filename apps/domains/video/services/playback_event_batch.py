@@ -3,7 +3,7 @@ import hashlib
 import json
 
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.utils import timezone
 
 from academy.adapters.db.django import repositories_video as video_repo
@@ -38,13 +38,13 @@ def _exact_sessions(*, tenant_id, student_id, payload):
         video__session__lecture__tenant_id=tenant_id,
         enrollment__tenant_id=tenant_id, enrollment__student_id=student_id,
         enrollment__student__tenant_id=tenant_id,
-        enrollment__lecture_id=F("video__session__lecture_id"),
-    )
+    ).filter(Q(enrollment__lecture_id=F("video__session__lecture_id")) |
+             Q(video__visibility=Video.Visibility.PUBLIC, enrollment__lecture__is_system=True, enrollment__lecture__tenant_id=tenant_id))
 
 
 def _lock_write_scope(reference, tenant_id, student_id, payload):
     """Acquire upper-scope locks before the playback row, as renewal/lecture close do."""
-    if reference.enrollment.status == "INACTIVE":
+    if reference.enrollment.status == "INACTIVE" and reference.video.visibility != Video.Visibility.PUBLIC:
         from .inactive_entitlements import InactiveVideoEntitlementError, lock_and_revalidate_inactive_video_write_access
 
         try:
@@ -69,6 +69,7 @@ def _policy(video, enrollment, payload):
     access_mode = get_effective_access_mode(video=video, enrollment=enrollment)
     if (
         not lecture_allows_student_learning(video.session.lecture)
+        or (payload.get("public_video") and video.visibility != Video.Visibility.PUBLIC)
         or video.policy_version != payload.get("pv")
         or payload.get("access_mode") != AccessMode.PROCTORED_CLASS.value
         or (

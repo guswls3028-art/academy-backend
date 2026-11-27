@@ -69,7 +69,7 @@ def _serialize_exam(exam, *, submission_status_map=None):
         "submission_pending": sub_info.get("submission_pending", False),
         "learning_todo_eligible": bool(
             getattr(exam, "learning_todo_eligible", False)
-            or not getattr(exam, "has_absent_linked_attendance", False)
+            or not getattr(exam, "has_excluded_linked_attendance", False)
         ),
         "attempt_count": max(sub_info.get("attempt_count", 0), recorded_attempt_count),
         "student_results_published": bool(

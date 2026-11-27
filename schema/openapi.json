@@ -6038,6 +6038,10 @@
           "enrollment_id": {
             "type": "integer"
           },
+          "enrollment_status": {
+            "readOnly": true,
+            "type": "string"
+          },
           "id": {
             "readOnly": true,
             "type": "integer"
@@ -6120,6 +6124,7 @@
         },
         "required": [
           "enrollment_id",
+          "enrollment_status",
           "id",
           "lecture_color",
           "lecture_memo",
@@ -6160,6 +6165,14 @@
             "format": "time",
             "nullable": true,
             "type": "string"
+          },
+          "restore_scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SecessionScopeEnum"
+              }
+            ],
+            "writeOnly": true
           },
           "secession_scope": {
             "allOf": [
@@ -11047,6 +11060,14 @@
             "format": "time",
             "nullable": true,
             "type": "string"
+          },
+          "restore_scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SecessionScopeEnum"
+              }
+            ],
+            "writeOnly": true
           },
           "secession_scope": {
             "allOf": [
