@@ -218,6 +218,73 @@ class AttendanceSecessionTerminalGuardTests(TestCase):
         self.assertEqual(self.attendance.status, "SECESSION")
         self.assertEqual(self.attendance.memo, "퇴원 상담 완료")
 
+    def test_full_put_obeys_withdrawal_confirmation_scope_and_restore_retry(self):
+        from apps.domains.exams.models import Exam, ExamEnrollment
+        from apps.domains.fees.models import FeeTemplate, StudentFee
+        from apps.domains.homework.models import HomeworkAssignment
+        from apps.domains.homework_results.models import Homework
+
+        session = self.attendance.session
+        exam = Exam.objects.create(tenant=self.tenant, title="Exam", exam_type="regular", is_active=True)
+        exam.sessions.add(session)
+        homework = Homework.objects.create(tenant=self.tenant, session=session, title="Worksheet")
+        template = FeeTemplate.objects.create(tenant=self.tenant, lecture=self.enrollment.lecture, name="Tuition",
+                                              fee_type="tuition", billing_cycle="monthly", amount=100_000, auto_assign=True)
+        self.assertEqual(self._patch({"status": "PRESENT", "restore_scope": "lecture"}).status_code, 200)
+        fee = StudentFee.objects.get(enrollment=self.enrollment, fee_template=template)
+        exams = ExamEnrollment.objects.filter(enrollment=self.enrollment, exam=exam)
+        assignments = HomeworkAssignment.objects.filter(enrollment=self.enrollment, homework=homework)
+        other = Session.objects.create(lecture=self.enrollment.lecture, order=2, title="2회차")
+        sibling = Attendance.objects.create(tenant=self.tenant, session=other, enrollment=self.enrollment, status="ONLINE")
+        member = SessionEnrollment.objects.filter(tenant=self.tenant, enrollment=self.enrollment,
+                                                  session_id=self.attendance.session_id)
+
+        def put(status, **fields):
+            request = self.factory.put("/attendance/", {
+                "session": self.attendance.session_id, "enrollment_id": self.enrollment.pk,
+                "status": status, **fields,
+            }, format="json")
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            return AttendanceViewSet.as_view({"put": "update"})(request, pk=self.attendance.pk)
+
+        for fields in ({}, {"confirm_secession": True, "secession_scope": "unknown"},
+                       {"confirm_secession": True, "secession_scope": "lecture", "session": other.pk}):
+            self.assertEqual(put("SECESSION", memo="저장 금지", **fields).status_code, 400)
+            self.attendance.refresh_from_db()
+            self.assertEqual((self.attendance.status, self.attendance.memo), ("PRESENT", ""))
+            self.assertTrue(member.exists())
+            self.assertTrue(exams.exists() and assignments.exists())
+            fee.refresh_from_db()
+            self.assertTrue(fee.is_active)
+        for _ in range(2):
+            self.assertEqual(put("SECESSION", confirm_secession=True, secession_scope="session",
+                                 memo="퇴원 메모").status_code, 200)
+            self.assertFalse(member.exists())
+            self.assertFalse(exams.exists() or assignments.exists())
+        self.assertEqual(put("SECESSION", memo="보관 메모").status_code, 200)
+        self.assertEqual(put("ONLINE").status_code, 409)
+        self.assertEqual(put("ONLINE", restore_scope="lecture").status_code, 409)
+        for _ in range(2):
+            self.assertEqual(put("ONLINE", restore_scope="session").status_code, 200)
+            self.assertEqual(member.count(), 1)
+            self.assertEqual((exams.count(), assignments.count()), (1, 1))
+        self.attendance.refresh_from_db()
+        self.assertEqual((self.attendance.status, self.attendance.memo), ("ONLINE", "보관 메모"))
+        self.assertEqual(put("LATE").status_code, 200)
+        self.attendance.refresh_from_db()
+        self.assertEqual(self.attendance.status, "LATE")
+        for _ in range(2):
+            self.assertEqual(put("SECESSION", confirm_secession=True, secession_scope="lecture").status_code, 200)
+        fee.refresh_from_db()
+        self.assertFalse(fee.is_active)
+        self.assertEqual(put("ONLINE", restore_scope="lecture").status_code, 200)
+        fee.refresh_from_db()
+        self.assertTrue(fee.is_active)
+        self.enrollment.refresh_from_db()
+        sibling.refresh_from_db()
+        self.assertEqual((self.enrollment.status, sibling.status), ("ACTIVE", "SECESSION"))
+
     def test_confirmed_lecture_restore_saves_one_status_and_can_be_retried(self):
         other_session = Session.objects.create(lecture=self.enrollment.lecture, order=2, title="다른 차시")
         other = Attendance.objects.create(tenant=self.tenant, session=other_session, enrollment=self.enrollment, status="SECESSION")

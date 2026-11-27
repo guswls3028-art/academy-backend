@@ -1417,7 +1417,7 @@ class TestAttendanceNotificationHook(TestCase):
         """PRESENT/ABSENT 저장은 수동 preview→confirm 흐름을 우회하지 않는다."""
         from apps.domains.attendance import views as att_views
         import inspect
-        source = inspect.getsource(att_views.AttendanceViewSet.partial_update)
+        source = inspect.getsource(att_views.AttendanceViewSet.update)
         self.assertNotIn("_send_attendance_notification", source)
         self.assertNotIn("send_event_notification", source)
         self.assertNotIn("check_in_complete", source)
