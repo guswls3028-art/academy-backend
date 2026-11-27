@@ -15,6 +15,7 @@ from datetime import timedelta
 from django.db.models import Count, Q
 from django.utils import timezone
 
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -22,6 +23,7 @@ from rest_framework.permissions import IsAuthenticated
 from academy.adapters.db.django import repositories_enrollment as enrollment_repo
 from academy.adapters.db.django import repositories_exams as exams_repo
 from academy.adapters.db.django import repositories_submissions as submissions_repo
+from apps.api.common.submission_inbox_schema import STAFF_SUBMISSION_ERRORS, ResultsLandingStatsSerializer
 from apps.core.permissions import TenantResolvedAndStaff
 
 
@@ -93,6 +95,14 @@ class AdminResultsLandingStatsView(APIView):
 
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(
+        description="현재 학원 교직원의 성적 집계와 최근 대기·완료 시험 제출을 각각 최대 5건 반환합니다.",
+        parameters=[OpenApiParameter(
+            "session_choices", str, enum=["0", "1"], required=False, default="0",
+            description="1이면 확인된 시험의 차시 후보·출처와 원래 성적 강의를 포함합니다. 생략하면 기존 요약을 반환합니다.",
+        )],
+        responses={200: ResultsLandingStatsSerializer, **STAFF_SUBMISSION_ERRORS},
+    )
     def get(self, request):
         tenant = getattr(request, "tenant", None)
         if not tenant:
