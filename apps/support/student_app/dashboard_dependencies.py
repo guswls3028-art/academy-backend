@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.db.models import Exists, F, OuterRef, Q
+from django.db.models import Exists, OuterRef, Q
 
 from apps.support.student_app.learning_todo_policy import ongoing_lecture_filter
 
@@ -33,18 +33,12 @@ def notice_posts_for_dashboard(*, tenant: Any, student: Any | None):
 def today_lecture_sessions_for_dashboard(*, tenant: Any, student: Any, today):
     from apps.domains.lectures.models import Session as LectureSession
     from apps.support.lectures.schedule_queries import student_schedule_annotations
+    from apps.support.student_app.session_dependencies import active_student_session_ids_query
 
     return (
         LectureSession.objects.filter(
-            lecture__is_active=True,
             lecture__is_system=False,
-            session_enrollments__tenant=tenant,
-            session_enrollments__enrollment__student=student,
-            session_enrollments__enrollment__tenant=tenant,
-            session_enrollments__enrollment__status="ACTIVE",
-            session_enrollments__enrollment__lecture_id=F("lecture_id"),
-            session_enrollments__enrollment__student__deleted_at__isnull=True,
-            lecture__tenant=tenant,
+            pk__in=active_student_session_ids_query(student=student, tenant=tenant),
         )
         .annotate(**student_schedule_annotations(tenant=tenant, student=student))
         .filter(effective_date=today)
@@ -55,7 +49,6 @@ def today_lecture_sessions_for_dashboard(*, tenant: Any, student: Any, today):
             ),
         )
         .select_related("lecture")
-        .distinct()
         .order_by("order", "id")
     )
 

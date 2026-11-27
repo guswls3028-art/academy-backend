@@ -1,6 +1,7 @@
-from datetime import date, time
+from datetime import date, time, timedelta
 from unittest.mock import patch
 
+from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APITestCase
 
@@ -9,8 +10,9 @@ from apps.domains.attendance.models import Attendance
 from apps.domains.attendance.services import ensure_session_roster_membership
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.lectures.models import Lecture, Section, Session
+from apps.domains.parents.models import Parent
 from apps.domains.students.models import Student
-from apps.domains.video.models import Video, VideoProgress
+from apps.domains.video.models import AccessMode, InactiveVideoEntitlement, Video, VideoAccess, VideoProgress
 
 
 class SessionWithdrawalVideoAccessTests(APITestCase):
@@ -103,6 +105,137 @@ class SessionWithdrawalVideoAccessTests(APITestCase):
         self.assertEqual(self.enrollment.status, "INACTIVE")
         for index in range(8):
             self.assertEqual(self.access(index).status_code, 403)
+
+    def learner_requests(self):
+        parent_user = User.objects.create_user(username="qa-withdrawal-parent", tenant=self.tenant)
+        TenantMembership.ensure_active(tenant=self.tenant, user=parent_user, role="parent")
+        self.student.parent = Parent.objects.create(
+            tenant=self.tenant, user=parent_user, name="QA parent", phone=self.student.parent_phone,
+        )
+        self.student.save(update_fields=["parent"])
+        return [(self.user, self.headers), (parent_user, {**self.headers, "HTTP_X_STUDENT_ID": str(self.student.pk)})]
+
+    def restore_third_session(self):
+        self.assertEqual(self.withdraw("lecture").status_code, 200)
+        target = self.attendances[2]
+        response = self.client.patch(
+            f"/api/v1/lectures/attendance/{target.pk}/",
+            {"status": "ONLINE", "restore_scope": "lecture"}, format="json", **self.headers,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.enrollment.refresh_from_db()
+        self.assertEqual(self.enrollment.status, "ACTIVE")
+        self.assertEqual(SessionEnrollment.objects.filter(enrollment=self.enrollment).count(), 8)
+        attendance = Attendance.objects.filter(enrollment=self.enrollment).order_by("session__order")
+        self.assertEqual(list(attendance.values_list("status", flat=True)),
+                         ["SECESSION", "SECESSION", "ONLINE"] + ["SECESSION"] * 5)
+
+    @patch("apps.domains.video.services.playback_session.is_redis_available", return_value=False)
+    @patch("apps.domains.video.services.playback_session.init_session_redis")
+    def test_lecture_restore_limits_student_and_parent_video_catalog_and_tokens_to_restored_session(self, _init, _redis):
+        roles = self.learner_requests()
+        old_tokens = {}
+        first, second, restored = self.videos[:3]
+        # This playback setting must not independently grant access to a withdrawn session.
+        VideoAccess.objects.create(video=first, enrollment=self.enrollment, access_mode=AccessMode.FREE_REVIEW, is_override=True)
+
+        def bootstrap(video, headers):
+            return self.client.post(f"/api/v1/student/video/videos/{video.pk}/playback/",
+                                    {}, format="json", **headers)
+
+        def refresh(token, headers):
+            return self.client.post("/api/v1/media/playback/refresh/", {"token": token},
+                                    format="json", **headers)
+
+        for user, headers in roles:
+            self.client.force_authenticate(user)
+            response = bootstrap(first, headers)
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["policy"]["access_mode"], "FREE_REVIEW")
+            old_tokens[user.pk] = response.data["playback_token"]
+            self.assertEqual(refresh(old_tokens[user.pk], headers).status_code, 200)
+
+        self.restore_third_session()
+        for user, headers in roles:
+            self.client.force_authenticate(user)
+            with self.subTest(user=user.username, surface="catalog"):
+                home = self.client.get("/api/v1/student/video/me/", **headers)
+                self.assertEqual(home.status_code, 200)
+                course, = home.data["lectures"]
+                self.assertEqual(course["id"], self.enrollment.lecture_id)
+                self.assertEqual((course["video_count"], [row["id"] for row in course["sessions"]]),
+                                 (1, [restored.session_id]))
+                stats = self.client.get("/api/v1/student/video/me/stats/", **headers)
+                self.assertEqual(stats.status_code, 200)
+                self.assertEqual(stats.data["total_videos"], 1)
+            for video in (first, second, restored):
+                expected = 200 if video == restored else 403
+                with self.subTest(user=user.username, session=video.session.order):
+                    playlist = self.client.get(f"/api/v1/student/video/sessions/{video.session_id}/videos/", **headers)
+                    self.assertEqual(playlist.status_code, expected, playlist.data)
+                    check = self.client.get(f"/api/v1/student/video/videos/{video.pk}/playback/",
+                                            {"access_check": "true"}, **headers)
+                    self.assertEqual(check.status_code, expected, check.data)
+                    opened = bootstrap(video, headers)
+                    self.assertEqual(opened.status_code, expected, opened.data)
+                    if video == restored:
+                        self.assertEqual([row["id"] for row in playlist.data["items"]], [video.pk])
+                        self.assertEqual(opened.data["policy"]["access_mode"], "PROCTORED_CLASS")
+                        self.assertEqual(refresh(opened.data["playback_token"], headers).status_code, 200)
+            with self.subTest(user=user.username, surface="previous token"):
+                self.assertEqual(refresh(old_tokens[user.pk], headers).status_code, 403)
+
+    def test_lecture_restore_limits_schedules_and_details_but_keeps_withdrawn_attendance_history(self):
+        roles = self.learner_requests()
+        Session.objects.filter(lecture=self.enrollment.lecture).update(date=timezone.localdate())
+        self.restore_third_session()
+        first, second, restored = [row.session_id for row in self.attendances[:3]]
+        staff = self.client.get("/api/v1/lectures/attendance/", {"session": first}, **self.headers)
+        self.assertEqual(staff.status_code, 200, staff.data)
+        self.assertEqual([(row["id"], row["status"]) for row in staff.data["results"]],
+                         [(self.attendances[0].pk, "SECESSION")])
+        for user, headers in roles:
+            self.client.force_authenticate(user)
+            for path, key in (("sessions/me/", None), ("sessions/me/?scope=home", "items"), ("dashboard/", "today_sessions")):
+                with self.subTest(user=user.username, path=path):
+                    response = self.client.get("/api/v1/student/" + path, **headers)
+                    self.assertEqual(response.status_code, 200)
+                    items = response.data if key is None else response.data[key]
+                    self.assertEqual([row["id"] for row in items], [restored])
+            for session_id in (first, second, restored):
+                with self.subTest(user=user.username, session=session_id):
+                    detail = self.client.get(f"/api/v1/student/sessions/{session_id}/", **headers)
+                    self.assertEqual(detail.status_code, 200 if session_id == restored else 404, detail.data)
+            with self.subTest(user=user.username, surface="attendance history"):
+                summary = self.client.get("/api/v1/student/attendance/summary/", **headers)
+                self.assertEqual(summary.status_code, 200)
+                history = {row["session_id"]: (row["status"], row["can_view_session"]) for row in summary.data["recent"]}
+                self.assertEqual([history[sid] for sid in (first, second, restored)],
+                                 [("SECESSION", False), ("SECESSION", False), ("ONLINE", True)])
+
+    def test_withdrawn_sessions_preserve_exact_inactive_video_grant_and_public_video(self):
+        self.assertEqual(self.withdraw("lecture").status_code, 200)
+        granted, public = self.videos[:2]
+        public.visibility = Video.Visibility.PUBLIC
+        public.save(update_fields=["visibility"])
+        sibling = Video.objects.create(tenant=self.tenant, session=granted.session, title="Private sibling",
+                                       status=Video.Status.READY, order=2)
+        grant = self.client.post("/api/v1/media/inactive-video-entitlements/", {
+            "student_id": self.student.id, "enrollment_id": self.enrollment.id, "video_id": granted.id,
+            "access_mode": AccessMode.FREE_REVIEW, "source": InactiveVideoEntitlement.Source.STAFF_AUTHORIZATION,
+            "source_reference": "qa:retained-membership", "reason": "Exact withdrawn video",
+            "expires_at": (timezone.now() + timedelta(days=1)).isoformat(),
+        }, format="json", **self.headers)
+        self.assertEqual(grant.status_code, 201, grant.data)
+        self.client.force_authenticate(self.user)
+        playlist = self.client.get(f"/api/v1/student/video/sessions/{granted.session_id}/videos/", **self.headers)
+        self.assertEqual(playlist.status_code, 200, playlist.data)
+        self.assertEqual([row["id"] for row in playlist.data["items"]], [granted.pk])
+        for video, expected in ((granted, 200), (sibling, 403), (public, 200)):
+            with self.subTest(video=video.title):
+                access = self.client.get(f"/api/v1/student/video/videos/{video.pk}/playback/",
+                                         {"access_check": "true"}, **self.headers)
+                self.assertEqual(access.status_code, expected, access.data)
 
     def test_explicit_session_reregistration_restores_editable_attendance_and_preserves_history(self):
         # Exercise the registration endpoint used by the attendance roster UI.

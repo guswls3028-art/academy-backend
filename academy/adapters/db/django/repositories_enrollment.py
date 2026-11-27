@@ -52,6 +52,33 @@ def get_session_enrollment_enrollment_ids_by_lecture(lecture):
     )
 
 
+def session_memberships_for_access(*, tenant_id, include_withdrawn=False):
+    """Scope roster rows to their real tenant and lecture; staff history stays intact."""
+    from django.db.models import Exists, F, OuterRef
+    from apps.domains.attendance.models import Attendance
+    from apps.domains.enrollment.models import SessionEnrollment
+
+    memberships = SessionEnrollment.objects.filter(
+        tenant_id=tenant_id,
+        enrollment__tenant_id=tenant_id,
+        enrollment__student__tenant_id=tenant_id,
+        enrollment__student__deleted_at__isnull=True,
+        session__lecture__tenant_id=tenant_id,
+        session__lecture_id=F("enrollment__lecture_id"),
+    )
+    if include_withdrawn:
+        return memberships
+    withdrawn = Attendance.objects.filter(
+        tenant_id=tenant_id,
+        enrollment_id=OuterRef("enrollment_id"),
+        session_id=OuterRef("session_id"),
+        status="SECESSION",
+    )
+    # Reactivating the lecture cannot restore withdrawn lessons. Inactive video
+    # grants have their own per-video authorization and require the retained row.
+    return memberships.exclude(Exists(withdrawn), enrollment__status="ACTIVE")
+
+
 def get_attendances_for_lecture_by_lecture(lecture, enrollments):
     from apps.domains.attendance.models import Attendance
     return Attendance.objects.filter(

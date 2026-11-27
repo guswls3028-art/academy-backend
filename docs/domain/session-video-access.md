@@ -1,8 +1,16 @@
 # 차시별 영상 권한
 
 일반 강의 영상은 해당 tenant의 활성 학생·ACTIVE 강의 수강등록과 **정확한
-SessionEnrollment**가 모두 있어야 시청할 수 있다. N차시 등록은 앞뒤 차시에
-권한을 주지 않는다. 출결·진도·영상별 재생 설정은 차시 등록을 대신하지 않는다.
+SessionEnrollment**가 모두 있어야 시청할 수 있다. 같은 학원·수강·차시의 출결이
+`SECESSION`이면 보관된 명단 행이 있어도 해당 차시의 일반 영상 권한은 회수된다.
+출결 행이 없거나 다른 출결 상태인 학생은 기존 명단 기준을 따른다.
+출결·진도·영상별 재생 설정만으로 일반 수강 권한을 부여할 수 없다.
+
+강의 전체 퇴원 후 3차시만 온라인으로 복구하면 학생과 해당 자녀를 선택한
+학부모는 3차시 영상을 이용할 수 있다. 퇴원을 유지한 1·2차시는 영상 목록과
+개수·시간·진도 집계에서 제외되고 상세·재생과 기존 토큰 갱신도 거절된다.
+다른 차시도 복구하려면 교직원이 그 차시를 명시적으로 재등록해야 한다.
+교직원의 출결 기록과 수강료·수납은 이 조회에서 변경되지 않는다.
 
 학생 및 학부모의 선택 자녀는 영상 홈에서 등록된 차시만 보고, 영상 수·시간·진도
 집계도 그 차시를 기준으로 받는다. 직접 URL을 입력하더라도 차시 목록, 재생 시작,
@@ -20,8 +28,9 @@ INACTIVE로 바꾸면 일반 수강 권한은 전체 회수된다. 출결·성�
 차시 누락을 그 예외로 자동 보완하지 않는다.
 
 판정 소유자는 `academy/application/use_cases/student_video_access_context.py`,
-차시 관계 조회는 `repositories_video.video_session_memberships` 및
-`session_enrollment_exists`, 토큰/발급 시 재검사는 `get_effective_access_mode`다.
+차시 명단과 퇴원 출결 대조는 `repositories_enrollment.session_memberships_for_access`가
+담당한다. 영상 목록·단건은 `repositories_video.video_session_memberships`와
+`session_enrollment_exists`를 사용하고, 토큰 발급·갱신은 `get_effective_access_mode`로 재검사한다.
 학생 영상 홈·통계는 동일 관계 조회로 범위를 제한한다.
 
 DB migration이나 API 응답 형식 변경은 없다. 구 frontend도 서버에서 같은 차시
@@ -44,6 +53,8 @@ ACTIVE 수강의 재생 갱신과 새 감독 이벤트 저장은 강의 → 차�
 검증: `apps/domains/video/tests/test_session_video_entitlement.py`는 8차시 중
 3차시만 등록, 홈/통계 범위, 정상 재생 후 차시 해제와 기존 토큰 재검사, 다른
 차시 유지, 강의 INACTIVE, 공개 영상, 다른 tenant 관계를 실제 DB/API로 검증한다.
+`tests/test_session_withdrawal_video_access.py`는 강의 전체 퇴원 뒤 한 차시만
+복구했을 때 학생과 선택 자녀의 목록·집계·재생·갱신 및 출결 이력을 확인한다.
 `tests/test_video_access_security.py`, `tests/test_direct_video_entitlement.py`와
 inactive entitlement 회귀를 함께 실행한다. 운영 모양의 로그인·브라우저/CDN 검증은
 격리 개발 tenant에서 수행하고 tenant/user residue zero를 확인한다.

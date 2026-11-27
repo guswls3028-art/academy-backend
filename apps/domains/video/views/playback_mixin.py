@@ -37,7 +37,9 @@ class VideoPlaybackMixin:
         if video.status != video.Status.READY:
             return False, "video_not_ready"
 
-        if not video_repo.session_enrollment_exists(video.session, enrollment):
+        if not video_repo.session_enrollment_exists(
+            video.session, enrollment, public_video=video.visibility == Video.Visibility.PUBLIC,
+        ):
             return False, "no_session_access"
 
         # Use SSOT access resolver

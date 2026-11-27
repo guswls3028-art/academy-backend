@@ -205,14 +205,13 @@ def student_can_access_session(request, session) -> bool:
     if getattr(lecture, "is_system", False):
         return any(getattr(s, "tenant_id", None) == tenant_id for s in students)
 
-    return active_enrollments_for_students(
+    enrollments = active_enrollments_for_students(
         tenant=tenant,
         students=students,
-    ).filter(
-        lecture=lecture,
-        session_enrollments__session=session,
-        session_enrollments__tenant=tenant,
-    ).exists()
+    ).filter(lecture=lecture)
+    return video_repo.video_session_memberships(
+        tenant_id=tenant_id, enrollment_ids=enrollments.values("pk"),
+    ).filter(session=session).exists()
 
 
 def _video_tenant_id(video) -> int | None:
