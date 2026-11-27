@@ -1,4 +1,6 @@
 """Published ONLINE auto-grades must not stay pending solely due to legacy DRAFT."""
+import json
+from pathlib import Path
 from unittest.mock import patch
 
 from django.apps import apps
@@ -7,6 +9,7 @@ from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import resolve
+from jsonschema import Draft4Validator
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -74,13 +77,56 @@ class OnlineAssessmentTotalsTests(TestCase):
             session=self.session, total_score=self.result.total_score, pass_score=50,
             attempt_id=self.result.attempt_id, tenant=self.tenant)
 
-    def _score_rows(self):
-        request = self.factory.get("/")
+    def _score_response(self, **query):
+        url = f"/api/v1/results/admin/sessions/{self.session.pk}/scores/"
+        request = self.factory.get(url, query)
         request.tenant = self.tenant
         force_authenticate(request, user=self.staff)
-        response = SessionScoresView.as_view()(request, session_id=self.session.pk)
+        match = resolve(url)
+        response = match.func(request, **match.kwargs)
         self.assertEqual(response.status_code, 200, response.data)
-        return response.data["rows"]
+        return response.data
+
+    def _score_rows(self):
+        return self._score_response()["rows"]
+
+    def test_session_scores_openapi_matches_real_rosters_and_confirmed_scores(self):
+        # OpenAPI 3.0 uses nullable for scalar types, unlike JSON Schema Draft 4.
+        def nullable_types(node):
+            if node.get("nullable") and "type" in node:
+                node["type"] = [node["type"], "null"]
+            return node
+
+        path = Path(__file__).resolve().parents[4] / "schema" / "openapi.json"
+        document = json.loads(path.read_text(encoding="utf-8"), object_hook=nullable_types)
+        operation = document["paths"]["/api/v1/results/admin/sessions/{session_id}/scores/"]["get"]
+        response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+        validator = Draft4Validator({**response_schema, "components": document["components"]})
+
+        passing_exam = self.exam.pk
+        self._submit_online()
+        self._add_objective_exam("Confirmed zero")
+        zero_exam = self.exam.pk
+        self._submit_online(answers=["2", "1", "1", "1", "1"], expected_score=0)
+        self._add_objective_exam("Not taken")
+        apps.get_model("homework_results", "Homework").objects.create(
+            tenant=self.tenant, session=self.session, title="Practice")
+        schedule = apps.get_model("lectures", "SessionSchedule").objects.create(
+            session=self.session, date="2026-01-05", label="Unoccupied")
+
+        populated = self._score_response()
+        empty = self._score_response(schedule=schedule.pk)
+        self.assertEqual(empty, {"meta": populated["meta"], "rows": []})
+        self.assertEqual(len(populated["meta"]["homeworks"]), 1)
+        validator.validate(empty)
+        validator.validate(populated)
+        exams = populated["rows"][0]["exams"]
+        self.assertEqual({exam["exam_id"]: exam["ranking_score"] for exam in exams},
+                         {passing_exam: 60, zero_exam: 0, self.exam.pk: None})
+        del exams[0]["ranking_score"]
+        self.assertFalse(validator.is_valid(populated))
+        exams[0]["ranking_score"] = "0"
+        self.assertFalse(validator.is_valid(populated))
 
     def _score_row(self):
         return next(row for row in self._score_rows() if row["enrollment_id"] == self.enrollment.pk)

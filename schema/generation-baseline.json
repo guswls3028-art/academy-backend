@@ -1,8 +1,8 @@
 {
-  "components": 574,
-  "errors": 1343,
-  "paths": 653,
-  "unique_errors": 269,
+  "components": 682,
+  "errors": 1327,
+  "paths": 683,
+  "unique_errors": 265,
   "unique_warnings": 134,
   "warnings": 299
 }

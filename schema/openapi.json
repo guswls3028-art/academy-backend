@@ -705,6 +705,52 @@
         ],
         "type": "object"
       },
+      "AttemptSummary": {
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "attempt_index": {
+            "type": "integer"
+          },
+          "max_score": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "meta_status": {
+            "nullable": true,
+            "type": "string"
+          },
+          "pass_score": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "passed": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "score": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "attempt_index",
+          "passed",
+          "score",
+          "source"
+        ],
+        "type": "object"
+      },
       "Attendance": {
         "properties": {
           "amount": {
@@ -3783,6 +3829,58 @@
         ],
         "type": "string"
       },
+      "ExamScoreBlock": {
+        "properties": {
+          "attempt_count": {
+            "default": 0,
+            "type": "integer"
+          },
+          "attempts": {
+            "items": {
+              "$ref": "#/components/schemas/AttemptSummary"
+            },
+            "type": "array"
+          },
+          "block": {
+            "$ref": "#/components/schemas/ScoreBlock"
+          },
+          "clinic_link_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "exam_id": {
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "pass_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "ranking_score": {
+            "description": "Confirmed first-attempt score before session total selection. Zero is a score; null means unconfirmed.",
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "block",
+          "exam_id",
+          "pass_score",
+          "ranking_score",
+          "title"
+        ],
+        "type": "object"
+      },
       "ExamScoreSummary": {
         "properties": {
           "average": {
@@ -5065,6 +5163,33 @@
           "session",
           "updated_at",
           "updated_by_user_id"
+        ],
+        "type": "object"
+      },
+      "HomeworkScoreBlock": {
+        "properties": {
+          "attempt_count": {
+            "default": 0,
+            "type": "integer"
+          },
+          "block": {
+            "$ref": "#/components/schemas/ScoreBlock"
+          },
+          "clinic_link_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "homework_id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "block",
+          "homework_id",
+          "title"
         ],
         "type": "object"
       },
@@ -13710,6 +13835,14 @@
         ],
         "type": "object"
       },
+      "ProgressStatusEnum": {
+        "description": "* `completed` - completed\n* `in_progress` - in_progress",
+        "enum": [
+          "completed",
+          "in_progress"
+        ],
+        "type": "string"
+      },
       "PublicBoardPostDetail": {
         "description": "detail — content 포함.",
         "properties": {
@@ -16986,6 +17119,138 @@
         ],
         "type": "object"
       },
+      "ScoreBlock": {
+        "properties": {
+          "achievement": {
+            "nullable": true,
+            "type": "string"
+          },
+          "clinic_required": {
+            "type": "boolean"
+          },
+          "clinic_retake": {
+            "additionalProperties": {},
+            "nullable": true,
+            "type": "object"
+          },
+          "correction_completed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "correction_note": {
+            "default": "",
+            "type": "string"
+          },
+          "correction_status": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CorrectionStatusEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "correction_updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "final_pass": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "grading_pending_reason": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GradingPendingReasonEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "grading_status": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GradingStatusEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "is_locked": {
+            "type": "boolean"
+          },
+          "is_provisional": {
+            "default": false,
+            "type": "boolean"
+          },
+          "lock_reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "max_score": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "meta": {
+            "additionalProperties": {},
+            "nullable": true,
+            "type": "object"
+          },
+          "objective_score": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "passed": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "remediated": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "score": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "subjective_score": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "teacher_accepted": {
+            "type": "boolean"
+          },
+          "teacher_resolved": {
+            "default": false,
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "clinic_required",
+          "is_locked",
+          "lock_reason",
+          "max_score",
+          "passed",
+          "score"
+        ],
+        "type": "object"
+      },
       "ScoreTotalConfigResponse": {
         "properties": {
           "exam_ids": {
@@ -17902,6 +18167,36 @@
         ],
         "type": "string"
       },
+      "SessionAssessmentTotal": {
+        "properties": {
+          "complete": {
+            "type": "boolean"
+          },
+          "max_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "score": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "scored_count": {
+            "type": "integer"
+          },
+          "selected_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "complete",
+          "max_score",
+          "score",
+          "scored_count",
+          "selected_count"
+        ],
+        "type": "object"
+      },
       "SessionAttendanceStatus": {
         "description": "* `UNSET` - 미입력\n* `PRESENT` - 출석\n* `LATE` - 지각\n* `ONLINE` - 온라인\n* `SUPPLEMENT` - 보강\n* `EARLY_LEAVE` - 조퇴\n* `ABSENT` - 결석\n* `RUNAWAY` - 출튀\n* `MATERIAL` - 자료\n* `INACTIVE` - 부재\n* `SECESSION` - 탈퇴",
         "enum": [
@@ -18032,6 +18327,128 @@
         "required": [
           "enrollment",
           "session"
+        ],
+        "type": "object"
+      },
+      "SessionExamMeta": {
+        "properties": {
+          "choice_count": {
+            "type": "integer"
+          },
+          "display_order": {
+            "type": "integer"
+          },
+          "essay_count": {
+            "type": "integer"
+          },
+          "exam_id": {
+            "type": "integer"
+          },
+          "grading_mode": {
+            "type": "string"
+          },
+          "manual_grading_method": {
+            "type": "string"
+          },
+          "max_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "objective_max_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "pass_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionExamQuestionMeta"
+            },
+            "type": "array"
+          },
+          "score_shape_source": {
+            "type": "string"
+          },
+          "subjective_max_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "choice_count",
+          "display_order",
+          "essay_count",
+          "exam_id",
+          "grading_mode",
+          "manual_grading_method",
+          "max_score",
+          "objective_max_score",
+          "pass_score",
+          "questions",
+          "score_shape_source",
+          "subjective_max_score",
+          "title"
+        ],
+        "type": "object"
+      },
+      "SessionExamQuestionMeta": {
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "max_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "number": {
+            "type": "integer"
+          },
+          "question_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_score",
+          "number",
+          "question_id"
+        ],
+        "type": "object"
+      },
+      "SessionHomeworkMeta": {
+        "properties": {
+          "display_order": {
+            "type": "integer"
+          },
+          "grading_mode": {
+            "type": "string"
+          },
+          "homework_id": {
+            "type": "integer"
+          },
+          "max_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "unit": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "display_order",
+          "grading_mode",
+          "homework_id",
+          "max_score",
+          "title",
+          "unit"
         ],
         "type": "object"
       },
@@ -18241,6 +18658,180 @@
         "required": [
           "schedules",
           "version"
+        ],
+        "type": "object"
+      },
+      "SessionScoreRow": {
+        "properties": {
+          "assessment_progress_completed": {
+            "type": "boolean"
+          },
+          "assessment_todo_eligible": {
+            "default": true,
+            "type": "boolean"
+          },
+          "attendance_status": {
+            "nullable": true,
+            "type": "string"
+          },
+          "clinic_required": {
+            "default": false,
+            "type": "boolean"
+          },
+          "correction_pending_count": {
+            "default": 0,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "exam_not_submitted_count": {
+            "default": 0,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "exam_total": {
+            "$ref": "#/components/schemas/SessionAssessmentTotal"
+          },
+          "exams": {
+            "items": {
+              "$ref": "#/components/schemas/ExamScoreBlock"
+            },
+            "type": "array"
+          },
+          "homework_total": {
+            "$ref": "#/components/schemas/SessionAssessmentTotal"
+          },
+          "homeworks": {
+            "items": {
+              "$ref": "#/components/schemas/HomeworkScoreBlock"
+            },
+            "type": "array"
+          },
+          "lecture_chip_label": {
+            "nullable": true,
+            "type": "string"
+          },
+          "lecture_color": {
+            "nullable": true,
+            "type": "string"
+          },
+          "lecture_title": {
+            "nullable": true,
+            "type": "string"
+          },
+          "name_highlight_clinic_target": {
+            "default": false,
+            "type": "boolean"
+          },
+          "name_highlight_followup_required": {
+            "default": false,
+            "type": "boolean"
+          },
+          "profile_photo_url": {
+            "nullable": true,
+            "type": "string"
+          },
+          "progress_completed": {
+            "default": false,
+            "type": "boolean"
+          },
+          "progress_status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProgressStatusEnum"
+              }
+            ],
+            "default": "in_progress"
+          },
+          "student_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "student_name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "video_completed": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "video_progress_rate": {
+            "maximum": 100,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "assessment_progress_completed",
+          "enrollment_id",
+          "exams",
+          "homeworks",
+          "student_id",
+          "student_name",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "SessionScoresMeta": {
+        "properties": {
+          "exams": {
+            "items": {
+              "$ref": "#/components/schemas/SessionExamMeta"
+            },
+            "type": "array"
+          },
+          "homeworks": {
+            "items": {
+              "$ref": "#/components/schemas/SessionHomeworkMeta"
+            },
+            "type": "array"
+          },
+          "lecture_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "lecture_title": {
+            "type": "string"
+          },
+          "session_title": {
+            "type": "string"
+          },
+          "total_config": {
+            "$ref": "#/components/schemas/ScoreTotalConfigResponse"
+          }
+        },
+        "required": [
+          "exams",
+          "homeworks",
+          "lecture_id",
+          "lecture_title",
+          "session_title",
+          "total_config"
+        ],
+        "type": "object"
+      },
+      "SessionScoresResponse": {
+        "properties": {
+          "meta": {
+            "$ref": "#/components/schemas/SessionScoresMeta"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/SessionScoreRow"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "meta",
+          "rows"
         ],
         "type": "object"
       },
@@ -50937,6 +51528,14 @@
         "operationId": "results_admin_sessions_scores_retrieve",
         "parameters": [
           {
+            "description": "Omit for all enrollments, use 0 for unassigned, or supply a schedule ID from this session.",
+            "in": "query",
+            "name": "schedule",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
             "in": "path",
             "name": "session_id",
             "required": true,
@@ -50947,7 +51546,14 @@
         ],
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionScoresResponse"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

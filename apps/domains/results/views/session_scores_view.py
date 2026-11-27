@@ -37,6 +37,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -69,6 +70,7 @@ from apps.support.progress.session_calculator_dependencies import (
 from apps.domains.results.serializers.session_scores import (
     AssessmentCorrectionUpdateSerializer,
     SessionScoreRowSerializer,
+    SessionScoresResponseSerializer,
 )
 from apps.support.results.exam_policy_dependencies import (
     exam_pass_score_overrides,
@@ -248,6 +250,13 @@ def _build_exam_attempt_summary(
 class SessionScoresView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(
+        parameters=[OpenApiParameter(
+            "schedule", type=int, location=OpenApiParameter.QUERY,
+            description="Omit for all enrollments, use 0 for unassigned, or supply a schedule ID from this session.",
+        )],
+        responses=SessionScoresResponseSerializer,
+    )
     def get(self, request, session_id: int):
         tenant = getattr(request, "tenant", None)
         if not tenant:

@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from .assessment_feedback import ScoreTotalConfigResponseSerializer
+
 
 class ScoreBlockSerializer(serializers.Serializer):
     score = serializers.FloatField(allow_null=True)
@@ -100,7 +102,10 @@ class ExamScoreBlockSerializer(serializers.Serializer):
     exam_id = serializers.IntegerField()
     title = serializers.CharField(allow_blank=True)
     pass_score = serializers.FloatField()
-    ranking_score = serializers.FloatField(allow_null=True)
+    ranking_score = serializers.FloatField(
+        allow_null=True,
+        help_text="Confirmed first-attempt score before session total selection. Zero is a score; null means unconfirmed.",
+    )
 
     block = ScoreBlockSerializer()
 
@@ -129,9 +134,17 @@ class HomeworkScoreBlockSerializer(serializers.Serializer):
     clinic_link_id = serializers.IntegerField(allow_null=True, default=None)
 
 
+class SessionAssessmentTotalSerializer(serializers.Serializer):
+    score = serializers.FloatField(allow_null=True)
+    max_score = serializers.FloatField()
+    selected_count = serializers.IntegerField()
+    scored_count = serializers.IntegerField()
+    complete = serializers.BooleanField()
+
+
 class SessionScoreRowSerializer(serializers.Serializer):
-    exam_total = serializers.DictField(required=False)
-    homework_total = serializers.DictField(required=False)
+    exam_total = SessionAssessmentTotalSerializer(required=False)
+    homework_total = SessionAssessmentTotalSerializer(required=False)
     enrollment_id = serializers.IntegerField()
     student_id = serializers.IntegerField(allow_null=True)
     student_name = serializers.CharField(allow_blank=True)
@@ -172,6 +185,52 @@ class SessionScoreRowSerializer(serializers.Serializer):
     lecture_title = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
     lecture_color = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
     lecture_chip_label = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
+
+
+class SessionExamQuestionMetaSerializer(serializers.Serializer):
+    question_id = serializers.IntegerField()
+    number = serializers.IntegerField()
+    max_score = serializers.FloatField()
+    kind = serializers.CharField(required=False)
+
+
+class SessionExamMetaSerializer(serializers.Serializer):
+    exam_id = serializers.IntegerField()
+    title = serializers.CharField(allow_blank=True)
+    pass_score = serializers.FloatField()
+    max_score = serializers.FloatField()
+    grading_mode = serializers.CharField()
+    manual_grading_method = serializers.CharField()
+    choice_count = serializers.IntegerField()
+    essay_count = serializers.IntegerField()
+    objective_max_score = serializers.FloatField()
+    subjective_max_score = serializers.FloatField()
+    score_shape_source = serializers.CharField()
+    display_order = serializers.IntegerField()
+    questions = SessionExamQuestionMetaSerializer(many=True)
+
+
+class SessionHomeworkMetaSerializer(serializers.Serializer):
+    homework_id = serializers.IntegerField()
+    title = serializers.CharField(allow_blank=True)
+    unit = serializers.CharField(allow_null=True)
+    grading_mode = serializers.CharField()
+    max_score = serializers.FloatField()
+    display_order = serializers.IntegerField()
+
+
+class SessionScoresMetaSerializer(serializers.Serializer):
+    session_title = serializers.CharField(allow_blank=True)
+    lecture_title = serializers.CharField(allow_blank=True)
+    lecture_id = serializers.IntegerField(allow_null=True)
+    exams = SessionExamMetaSerializer(many=True)
+    homeworks = SessionHomeworkMetaSerializer(many=True)
+    total_config = ScoreTotalConfigResponseSerializer()
+
+
+class SessionScoresResponseSerializer(serializers.Serializer):
+    meta = SessionScoresMetaSerializer()
+    rows = SessionScoreRowSerializer(many=True)
 
 
 class AssessmentCorrectionUpdateSerializer(serializers.Serializer):
