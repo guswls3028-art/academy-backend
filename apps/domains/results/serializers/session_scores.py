@@ -100,6 +100,7 @@ class ExamScoreBlockSerializer(serializers.Serializer):
     exam_id = serializers.IntegerField()
     title = serializers.CharField(allow_blank=True)
     pass_score = serializers.FloatField()
+    ranking_score = serializers.FloatField(allow_null=True)
 
     block = ScoreBlockSerializer()
 

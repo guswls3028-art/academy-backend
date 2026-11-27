@@ -44,7 +44,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.models import Result, ExamAttempt
-from apps.domains.results.services.assessment_totals import row_totals, total_config, order_assessment_rows
+from apps.domains.results.services.assessment_totals import confirmed_score, row_totals, total_config, order_assessment_rows
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import (
     latest_results_for_targets_per_enrollment,
@@ -987,6 +987,7 @@ class SessionScoresView(APIView):
                         "exam_id": exid,
                         "title": exam_title_map.get(exid, ""),
                         "pass_score": exam_pass_score_map.get(exid, 0.0),
+                        "ranking_score": confirmed_score(block),
                         "block": block,
                         "items": items_payload,
                         "attempt_count": max(

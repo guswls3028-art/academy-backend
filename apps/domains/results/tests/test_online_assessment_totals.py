@@ -190,6 +190,7 @@ class OnlineAssessmentTotalsTests(TestCase):
         for _ in range(2):
             self.assertFalse(self._achievement()["is_provisional"])
             row = self._score_row()
+            self.assertEqual(row["exams"][0]["ranking_score"], 60)
             self.assertEqual(row["exam_total"], {"score": 60.0, "max_score": 100.0,
                 "selected_count": 1, "scored_count": 1, "complete": True})
         self.assertEqual(ExamResult.objects.filter(pk=self.legacy.pk).values().get(), before_legacy)
@@ -216,7 +217,9 @@ class OnlineAssessmentTotalsTests(TestCase):
         self.answer_key.save(update_fields=["answers"])
         self._submit_online()
         self.assertTrue(self._achievement()["is_provisional"])
-        total = self._score_row()["exam_total"]
+        row = self._score_row()
+        self.assertIsNone(row["exams"][0]["ranking_score"])
+        total = row["exam_total"]
         self.assertFalse(total["complete"])
         self.assertIsNone(total["score"])
         self.exam.student_results_published = True
@@ -282,10 +285,17 @@ class OnlineAssessmentTotalsTests(TestCase):
     def test_fully_graded_zero_is_complete_not_missing(self):
         self._submit_online(answers=["2", "1", "1", "1", "1"], expected_score=0)
         self.assertFalse(self._achievement()["is_provisional"])
-        total = self._score_row()["exam_total"]
+        row = self._score_row()
+        self.assertEqual(row["exams"][0]["ranking_score"], 0)
+        total = row["exam_total"]
         self.assertTrue(total["complete"])
         self.assertEqual(total["score"], 0)
         self.assertEqual(total["scored_count"], 1)
+        self.session.score_totals = {"exam_ids": []}
+        self.session.save(update_fields=["score_totals"])
+        excluded = self._score_row()
+        self.assertEqual(excluded["exam_total"]["selected_count"], 0)
+        self.assertEqual(excluded["exams"][0]["ranking_score"], 0)
         self.exam.student_results_published = True
         self.exam.save(update_fields=["student_results_published"])
         payload = self._published_grades()
