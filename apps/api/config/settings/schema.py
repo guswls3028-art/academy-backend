@@ -20,6 +20,8 @@ SPECTACULAR_SETTINGS = {
     "COMPONENT_SPLIT_REQUEST": True,
     "DISABLE_ERRORS_AND_WARNINGS": True,
     "ENUM_NAME_OVERRIDES": {
+        "ClinicAvailabilityResponseBookingModeEnum": ["fixed_slot", "time_range"],
+        "IntervalMinutesEnum": [(30, 30), (60, 60)],
         "WrongNoteDocumentStatus": "apps.domains.results.models.WrongNotePDF.Status",
         "StaffBoardCategory": "apps.domains.staffs.models.StaffBoardPost.Category",
         "SurveyKind": "apps.domains.surveys.models.Survey.Kind",

@@ -3,6 +3,12 @@
 ## 학생 예약 마감과 담당자 참조
 
 대표·관리자는 `GET/PATCH /clinic/settings/`에서 학원 공통 마감 규칙을 저장한다.
+같은 학원의 활성 교직원은 설정을 조회하고 패스카드 색상·매일 자동 색상·자동 승인 여부를
+변경할 수 있다. 예약 방식·간격·최대 체류 시간과 아래 마감 정책은 대표·관리자만 변경한다.
+PATCH에 생략한 설정은 유지한다. GET과 PATCH 성공 응답은 모두 현재 설정 전체와
+호출자별 `capabilities`를 반환한다. `saved_colors`, `multi_slot_booking_default`,
+`capabilities`는 이 경로에서 읽기 전용이다. 권한이 없으면 403, 값이 잘못되면
+400이며 함께 보낸 변경도 저장되지 않는다.
 `booking_cutoff_mode`가 `none`이면 기존 자동 승인 설정을 따른다.
 `previous_day`는 실제 예약 시작일 전날의 `booking_cutoff_time`(한국 시각),
 `before_start`는 실제 시작보다 `booking_cutoff_minutes`분 앞선 시각에 닫는다.

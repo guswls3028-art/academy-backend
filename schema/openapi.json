@@ -1078,6 +1078,15 @@
           ""
         ]
       },
+      "BookingCutoffModeEnum": {
+        "description": "* `none` - none\n* `previous_day` - previous_day\n* `before_start` - before_start",
+        "enum": [
+          "none",
+          "previous_day",
+          "before_start"
+        ],
+        "type": "string"
+      },
       "CategoryEccEnum": {
         "description": "* `free` - 자유\n* `tip` - 공부 팁\n* `story` - 수강 이야기\n* `question` - 질문\n* `other` - 기타",
         "enum": [
@@ -1192,6 +1201,21 @@
           "end_time",
           "start_date",
           "start_time"
+        ],
+        "type": "object"
+      },
+      "ClinicCapability": {
+        "properties": {
+          "read": {
+            "type": "boolean"
+          },
+          "write": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "read",
+          "write"
         ],
         "type": "object"
       },
@@ -2557,6 +2581,100 @@
           "location",
           "max_participants",
           "start_time"
+        ],
+        "type": "object"
+      },
+      "ClinicSettings": {
+        "description": "Complete response shared by GET and successful PATCH.",
+        "properties": {
+          "allow_late_requests": {
+            "type": "boolean"
+          },
+          "auto_approve_booking": {
+            "type": "boolean"
+          },
+          "booking_cutoff_minutes": {
+            "maximum": 525600,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "booking_cutoff_mode": {
+            "$ref": "#/components/schemas/BookingCutoffModeEnum"
+          },
+          "booking_cutoff_time": {
+            "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$",
+            "type": "string"
+          },
+          "booking_interval_minutes": {
+            "$ref": "#/components/schemas/IntervalMinutesEnum"
+          },
+          "booking_max_stay_minutes": {
+            "description": "A positive multiple of the effective booking interval.",
+            "minimum": 30,
+            "type": "integer"
+          },
+          "booking_mode": {
+            "$ref": "#/components/schemas/ClinicAvailabilityResponseBookingModeEnum"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/ClinicSettingsCapabilities"
+          },
+          "colors": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          },
+          "multi_slot_booking_default": {
+            "type": "boolean"
+          },
+          "saved_colors": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          },
+          "use_daily_random": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "allow_late_requests",
+          "auto_approve_booking",
+          "booking_cutoff_minutes",
+          "booking_cutoff_mode",
+          "booking_cutoff_time",
+          "booking_interval_minutes",
+          "booking_max_stay_minutes",
+          "booking_mode",
+          "capabilities",
+          "colors",
+          "multi_slot_booking_default",
+          "saved_colors",
+          "use_daily_random"
+        ],
+        "type": "object"
+      },
+      "ClinicSettingsCapabilities": {
+        "properties": {
+          "booking_policy": {
+            "$ref": "#/components/schemas/ClinicCapability"
+          },
+          "student_contacts": {
+            "$ref": "#/components/schemas/ClinicCapability"
+          },
+          "student_operations": {
+            "$ref": "#/components/schemas/ClinicCapability"
+          }
+        },
+        "required": [
+          "booking_policy",
+          "student_contacts",
+          "student_operations"
         ],
         "type": "object"
       },
@@ -10486,6 +10604,57 @@
           "title": {
             "maxLength": 255,
             "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedClinicSettingsUpdateRequest": {
+        "description": "Writable settings. PATCH accepts any subset and preserves omitted values.",
+        "properties": {
+          "allow_late_requests": {
+            "type": "boolean"
+          },
+          "auto_approve_booking": {
+            "type": "boolean"
+          },
+          "booking_cutoff_minutes": {
+            "maximum": 525600,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "booking_cutoff_mode": {
+            "$ref": "#/components/schemas/BookingCutoffModeEnum"
+          },
+          "booking_cutoff_time": {
+            "minLength": 1,
+            "pattern": "^(?:[01]?[0-9]|2[0-3]):[0-5]?[0-9](?::0{1,2})?$",
+            "type": "string"
+          },
+          "booking_interval_minutes": {
+            "$ref": "#/components/schemas/IntervalMinutesEnum"
+          },
+          "booking_max_stay_minutes": {
+            "description": "A positive multiple of the effective booking interval.",
+            "minimum": 30,
+            "type": "integer"
+          },
+          "booking_mode": {
+            "$ref": "#/components/schemas/ClinicAvailabilityResponseBookingModeEnum"
+          },
+          "colors": {
+            "description": "Passcard colors. A null value leaves the saved colors unchanged.",
+            "items": {
+              "minLength": 1,
+              "pattern": "^#[0-9A-Fa-f]{6}$",
+              "type": "string"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "nullable": true,
+            "type": "array"
+          },
+          "use_daily_random": {
+            "type": "boolean"
           }
         },
         "type": "object"
@@ -27164,11 +27333,72 @@
     },
     "/api/v1/clinic/settings/": {
       "get": {
-        "description": "GET/PATCH /clinic/settings/\n클리닉 설정 (패스카드 배경 색상 등)",
+        "description": "Read the selected tenant's clinic settings and the caller's capabilities.",
         "operationId": "clinic_settings_retrieve",
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicSettings"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing tenant."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Requires active staff access in the selected tenant. Only its owner or admin may change booking policy and cutoff fields."
           }
         },
         "security": [
@@ -27184,11 +27414,96 @@
         ]
       },
       "patch": {
-        "description": "GET/PATCH /clinic/settings/\n클리닉 설정 (패스카드 배경 색상 등)",
+        "description": "Update only supplied settings and return the full current settings. Staff can update colors, use_daily_random and auto_approve_booking. The booking mode, interval, maximum stay and four cutoff fields require owner or admin access. Cutoff times accept HH:MM or HH:MM:00 in Korean local time and are returned as HH:MM.",
         "operationId": "clinic_settings_partial_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedClinicSettingsUpdateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedClinicSettingsUpdateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedClinicSettingsUpdateRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicSettings"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    ]
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing tenant or invalid settings. A detail message or field-specific errors describe the rejection. No supplied setting is saved."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Requires active staff access in the selected tenant. Only its owner or admin may change booking policy and cutoff fields."
           }
         },
         "security": [

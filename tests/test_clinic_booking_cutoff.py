@@ -1,10 +1,12 @@
 import datetime
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.test import override_settings
 from django.utils import timezone
+from jsonschema import Draft7Validator
 from rest_framework.test import APITestCase
 
 from apps.core.models import TenantMembership
@@ -48,6 +50,62 @@ class ClinicBookingCutoffTest(APITestCase, ClinicAPITestMixin):
         template = MessageTemplate.objects.create(tenant=self.tenant, category="clinic", name="예약", body=body)
         AutoSendConfig.objects.create(tenant=self.tenant, trigger="clinic_reservation_created",
                                       template=template, enabled=True, message_mode="alimtalk", delay_mode="immediate")
+
+    def test_settings_openapi_matches_partial_updates_and_role_rejections(self):
+        url = "/api/v1/clinic/settings/"
+        spec = json.loads((Path(__file__).resolve().parents[1] / "schema/openapi.json").read_text("utf-8"))
+        operations = spec["paths"][url]
+
+        def validate(body_schema, data):
+            Draft7Validator({"components": spec["components"], **body_schema}).validate(data)
+
+        def response(method, reply):
+            body = operations[method]["responses"][str(reply.status_code)]["content"]["application/json"]["schema"]
+            validate(body, reply.json())
+            return reply.json()
+
+        request = operations["patch"]["requestBody"]["content"]["application/json"]["schema"]
+        writable = spec["components"]["schemas"][request["$ref"].split("/")[-1]]
+        self.assertFalse(writable.get("required"))
+        self.assertFalse({"saved_colors", "multi_slot_booking_default", "capabilities"} & writable["properties"].keys())
+        self.client.force_authenticate(self.admin)
+        initial = response("get", self.client.get(url, **self.headers))
+        cutoff = {"booking_cutoff_mode": "previous_day", "booking_cutoff_time": "19:30",
+                  "booking_cutoff_minutes": 90, "allow_late_requests": True}
+        legacy = {"use_daily_random": False, "colors": ["#123456", "#234567", "#345678"]}
+
+        def patch_and_reload(update):
+            validate(request, update)
+            saved = self.client.patch(url, update, format="json", **self.headers)
+            self.assertEqual(saved.status_code, 200, saved.data)
+            payload = response("patch", saved)
+            self.assertEqual({k: payload[k] for k in update}, update)
+            self.assertEqual(payload["saved_colors"], legacy["colors"])
+            self.assertEqual(payload, response("get", self.client.get(url, **self.headers)))
+            return payload
+
+        saved_legacy = patch_and_reload(legacy)
+        self.assertEqual({k: saved_legacy[k] for k in cutoff}, {k: initial[k] for k in cutoff})
+        payload = patch_and_reload(cutoff)
+        self.assertEqual(set(payload), set(writable["properties"]) | {"capabilities", "saved_colors", "multi_slot_booking_default"})
+        self.assertTrue(payload["capabilities"]["booking_policy"]["write"])
+        invalid = self.client.patch(url, {"allow_late_requests": False, "booking_cutoff_time": "19:30:01"},
+                                    format="json", **self.headers)
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn("booking_cutoff_time", response("patch", invalid))
+        teacher = self.make_user("clinic_settings_reader")
+        TenantMembership.ensure_active(tenant=self.tenant, user=teacher, role="teacher")
+        self.client.force_authenticate(teacher)
+        teacher_settings = response("get", self.client.get(url, **self.headers))
+        self.assertEqual(teacher_settings["capabilities"]["booking_policy"], {"read": True, "write": False})
+        allowed = self.client.patch(url, {"use_daily_random": False}, format="json", **self.headers)
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(teacher_settings, response("patch", allowed))
+        denied = self.client.patch(url, {"allow_late_requests": False}, format="json", **self.headers)
+        self.assertEqual(denied.status_code, 403)
+        self.assertIn("detail", response("patch", denied))
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(payload, response("get", self.client.get(url, **self.headers)))
 
     def test_late_range_request_persists_then_approval_has_separate_outbox(self):
         self._settings(booking_cutoff_mode="previous_day", booking_cutoff_time="21:00",
