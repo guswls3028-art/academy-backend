@@ -7,6 +7,52 @@ from apps.support.enrollment.serializer_dependencies import (
 )
 
 
+class EnrollmentNoticeQuerySerializer(serializers.Serializer):
+    lecture = serializers.IntegerField(min_value=1)
+    request_id = serializers.UUIDField(required=False)
+
+
+ENROLLMENT_NOTICE_MODES = ("auto", "send", "skip")
+
+
+class RegisterWithNoticesSerializer(EnrollmentNoticeQuerySerializer):
+    request_id = serializers.UUIDField()
+    students = serializers.ListField(child=serializers.IntegerField(min_value=1), max_length=200, allow_empty=False)
+    student_notice = serializers.ChoiceField(choices=ENROLLMENT_NOTICE_MODES)
+    parent_notice = serializers.ChoiceField(choices=ENROLLMENT_NOTICE_MODES)
+
+
+class EnrollmentNoticeDeliverySerializer(serializers.Serializer):
+    status = serializers.CharField()
+    log_id = serializers.IntegerField(allow_null=True)
+
+
+class EnrollmentNoticeVerifySerializer(EnrollmentNoticeQuerySerializer):
+    request_id = serializers.UUIDField()
+    log_id = serializers.IntegerField(min_value=1)
+
+
+class EnrollmentNoticeProviderSerializer(serializers.Serializer):
+    provider_delivery_status = serializers.CharField()
+    provider_status_code = serializers.CharField(allow_blank=True)
+    provider_delivery_checked_at = serializers.DateTimeField()
+    provider_delivery_updated_at = serializers.DateTimeField(allow_null=True)
+    provider_delivery_failure_reason = serializers.CharField(allow_blank=True)
+
+
+class EnrollmentNoticeStudentResultSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    student = EnrollmentNoticeDeliverySerializer()
+    parent = EnrollmentNoticeDeliverySerializer()
+
+
+class EnrollmentNoticeResultSerializer(serializers.Serializer):
+    request_id = serializers.UUIDField()
+    lecture = serializers.IntegerField()
+    students = EnrollmentNoticeStudentResultSerializer(many=True)
+
+
 class StudentShortSerializer(serializers.Serializer):
     """강의/수강 맥락에서 노출하는 학생 최소 정보. Student 모델 스펙과 정합성 유지."""
 

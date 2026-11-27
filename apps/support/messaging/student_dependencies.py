@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from apps.shared.utils.student_contact import contact_phone, student_contact_phone
+from apps.support.enrollment.notice_contacts import ENROLLMENT_NOTICE_PREFIX, assert_enrollment_notice_delivery
 
 
 def students_for_tenant(tenant, *, deleted: str = "active"):
@@ -13,6 +14,13 @@ def students_for_tenant(tenant, *, deleted: str = "active"):
 
 def assert_current_delivery_contact(data, *, business_tenant_id: int) -> None:
     """Check the signed roster destination without retargeting a queued delivery."""
+    reference = str(data.get("domain_object_id") or "")
+    if reference.startswith(ENROLLMENT_NOTICE_PREFIX):
+        assert_enrollment_notice_delivery(
+            data, business_tenant_id=business_tenant_id, recipient_id=reference[len(ENROLLMENT_NOTICE_PREFIX):],
+        )
+        return
+
     role = data.get("target_type")
     if role not in ("student", "parent"):
         return

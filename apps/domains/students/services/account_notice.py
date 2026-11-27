@@ -130,6 +130,15 @@ def initial_account_notice_state(student: Student) -> dict:
     }
 
 
+PENDING_NOTICE_CLEARED = {
+    "pending_account_notice_student_password_ciphertext": "",
+    "pending_account_notice_parent_password_ciphertext": "",
+    "pending_account_notice_since": None,
+    "pending_account_notice_origin_type": "",
+    "pending_account_notice_origin_id": "",
+}
+
+
 def dispatch_pending_account_notice(*, student_id: int) -> dict:
     """Create the durable account-notice outbox after enrollment confirmation."""
     from apps.support.students.account_notice_dependencies import send_welcome_messages
@@ -201,20 +210,8 @@ def dispatch_pending_account_notice(*, student_id: int) -> dict:
                 "expected": expected,
             }
 
-        student.pending_account_notice_student_password_ciphertext = ""
-        student.pending_account_notice_parent_password_ciphertext = ""
-        student.pending_account_notice_since = None
-        student.pending_account_notice_origin_type = ""
-        student.pending_account_notice_origin_id = ""
-        student.save(
-            update_fields=[
-                "pending_account_notice_student_password_ciphertext",
-                "pending_account_notice_parent_password_ciphertext",
-                "pending_account_notice_since",
-                "pending_account_notice_origin_type",
-                "pending_account_notice_origin_id",
-                "updated_at",
-            ]
+        Student.objects.filter(pk=student.pk, tenant_id=student.tenant_id).update(
+            **PENDING_NOTICE_CLEARED, updated_at=timezone.now(),
         )
         return {"status": "enqueued", "enqueued": result["enqueued"]}
 

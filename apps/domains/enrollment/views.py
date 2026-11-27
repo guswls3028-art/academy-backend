@@ -11,7 +11,7 @@ from rest_framework.filters import SearchFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.exceptions import ValidationError, NotFound
+from rest_framework.exceptions import ValidationError, NotFound, PermissionDenied
 from rest_framework.parsers import MultiPartParser
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 
@@ -26,6 +26,11 @@ from .serializers import (
     EnrollmentExcelUploadAcceptedSerializer,
     EnrollmentExcelUploadRequestSerializer,
     EnrollmentSerializer,
+    EnrollmentNoticeQuerySerializer,
+    EnrollmentNoticeVerifySerializer,
+    EnrollmentNoticeProviderSerializer,
+    EnrollmentNoticeResultSerializer,
+    RegisterWithNoticesSerializer,
     LectureMemoResultSerializer,
     LectureMemoSerializer,
     SessionEnrollmentSerializer,
@@ -115,6 +120,38 @@ class EnrollmentViewSet(ModelViewSet):
             EnrollmentSerializer(created, many=True).data,
             status=status.HTTP_201_CREATED,
         )
+
+    @extend_schema(request=RegisterWithNoticesSerializer, responses={201: EnrollmentNoticeResultSerializer})
+    @action(detail=False, methods=["post"], url_path="register-with-notices")
+    def register_with_notices(self, request):
+        from apps.support.enrollment.registration_notices import (
+            can_select_notice_modes, register_with_notices, registration_result,
+        )
+        payload = RegisterWithNoticesSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        choices = payload.validated_data
+        if (choices["student_notice"], choices["parent_notice"]) != ("auto", "auto") and not can_select_notice_modes(request):
+            raise PermissionDenied("알림톡 발송 대상을 선택할 권한이 없습니다.")
+        batch = register_with_notices(tenant=request.tenant, actor_id=request.user.pk, **choices)
+        return Response(registration_result(batch), status=status.HTTP_201_CREATED)
+
+    @extend_schema(parameters=[EnrollmentNoticeQuerySerializer], responses={200: EnrollmentNoticeResultSerializer, 204: None})
+    @action(detail=False, methods=["get"], url_path="registration-notices", pagination_class=None, filter_backends=[])
+    def registration_notices(self, request):
+        from apps.support.enrollment.registration_notices import find_registration, registration_result
+        query = EnrollmentNoticeQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        batch = find_registration(tenant=request.tenant, actor_id=request.user.pk, **query.validated_data)
+        return Response(registration_result(batch)) if batch else Response(status=status.HTTP_204_NO_CONTENT)
+
+    @extend_schema(request=EnrollmentNoticeVerifySerializer, responses={200: EnrollmentNoticeProviderSerializer})
+    @action(detail=False, methods=["post"], url_path="verify-registration-notice")
+    def verify_registration_notice(self, request):
+        from apps.support.enrollment.registration_notices import verify_registration_notice
+        payload = EnrollmentNoticeVerifySerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        result = verify_registration_notice(tenant=request.tenant, actor_id=request.user.pk, **payload.validated_data)
+        return Response(result)
 
     @transaction.atomic
     def perform_update(self, serializer):

@@ -22,6 +22,8 @@ from libs.queue import get_queue_client, QueueUnavailableError
 from libs.redis.idempotency import acquire_job_lock, release_job_lock, RedisLockUnavailableError
 
 from apps.worker.messaging_worker.config import load_config
+from apps.worker.messaging_worker.qa_ack import acknowledge_sent, enrollment_ack_scope
+from apps.worker.messaging_worker.solapi_receipts import receipt_reference, send_solapi_message
 
 # 트리거명 → 사용자 친화적 라벨 (발송 내역 표시용)
 _TRIGGER_LABELS: dict[str, str] = {
@@ -240,6 +242,14 @@ def _assert_grade_homework_delivery_active(data: dict, *, business_tenant_id: in
         business_tenant_id=business_tenant_id, business_key=business_key, reference=reference, trigger=trigger,
     ):
         raise ValueError("grade_homework_review_changed")
+
+
+def _record_failed_ack(job_key: str) -> None:
+    from apps.core.services.ops_audit import record_audit
+
+    record_audit(None, action="messaging.queue_ack_failed", result="failed",
+                 summary="메시징 큐 처리 후 삭제 실패",
+                 payload={"job": hashlib.sha256(job_key.encode("utf-8")).hexdigest()})
 
 
 def _resolve_worker_business_key(data: dict, message_id: str | None) -> str:
@@ -493,6 +503,30 @@ def _build_variables_dict(replacements: Optional[list]) -> Optional[dict]:
     return variables if variables else None
 
 
+def _solapi_exception_result(e: Exception, *, provider_called: bool) -> dict:
+    rejected_reason = _classify_definitely_rejected_provider_exception(e)
+    description = str(e)
+    reason = rejected_reason or next((code for code in _NON_RETRYABLE_SEND_FAILURES if code in description), "")
+    if not reason and any(token in description.lower() for token in ("forbidden", "허용되지 않은 ip", "unauthorized ip", "unauthorized)")):
+        reason = "forbidden"
+    reason = reason or ("provider_result_unconfirmed" if provider_called else "provider_request_failed")
+    logger.warning("Alimtalk submission failed reason=%s", reason)
+    return {
+        "status": "error",
+        "reason": reason,
+        "provider_called": provider_called,
+        **(
+            {
+                "provider_outcome": "rejected",
+                "definitely_not_accepted": True,
+                "provider_retryable": False,
+            }
+            if rejected_reason
+            else {}
+        ),
+    }
+
+
 def send_one_alimtalk_own_solapi(
     to: str, sender: str, pf_id: str, template_id: str,
     replacements: Optional[list] = None,
@@ -530,43 +564,9 @@ def send_one_alimtalk_own_solapi(
                 "provider_called": False,
             }
         provider_called = True
-        response = client.send(message)
-        group_id = getattr(getattr(response, "group_info", None), "group_id", None)
-        count = getattr(getattr(response, "group_info", None), "count", None)
-        if count is not None and getattr(count, "registered_success", 0) == 0:
-            return {
-                "status": "error",
-                "reason": "alimtalk_failed_or_rejected",
-                "group_id": group_id,
-                "provider_called": True,
-                "provider_outcome": "rejected",
-                "definitely_not_accepted": True,
-                "provider_retryable": False,
-            }
-        logger.info("send_alimtalk_own ok to=%s**** group_id=%s", to[:4], group_id)
-        return {
-            "status": "ok",
-            "group_id": group_id,
-            "provider_called": True,
-            "provider_outcome": "accepted",
-        }
+        return send_solapi_message(client, message, to)
     except Exception as e:
-        logger.warning("alimtalk_own failed to=%s****: %s", to[:4], e)
-        rejected_reason = _classify_definitely_rejected_provider_exception(e)
-        return {
-            "status": "error",
-            "reason": rejected_reason or str(e)[:500],
-            "provider_called": provider_called,
-            **(
-                {
-                    "provider_outcome": "rejected",
-                    "definitely_not_accepted": True,
-                    "provider_retryable": False,
-                }
-                if rejected_reason
-                else {}
-            ),
-        }
+        return _solapi_exception_result(e, provider_called=provider_called)
 
 
 def send_one_alimtalk(
@@ -578,6 +578,7 @@ def send_one_alimtalk(
     replacements: Optional[list] = None,
     text: str = "",
     before_provider_call: Optional[Callable[[], bool]] = None,
+    observe_mock=None,
 ) -> dict:
     """
     Solapi 알림톡 1건 발송.
@@ -639,46 +640,12 @@ def send_one_alimtalk(
                 "definitely_not_accepted": True,
                 "provider_retryable": False,
             }
+        if observe_mock is not None:
+            client = observe_mock(client)
         provider_called = True
-        response = client.send(message)
-        group_id = getattr(getattr(response, "group_info", None), "group_id", None)
-        count = getattr(getattr(response, "group_info", None), "count", None)
-        if count is not None and getattr(count, "registered_success", 0) == 0:
-            reason = "alimtalk_failed_or_rejected"
-            logger.warning("alimtalk no success to=%s****", to[:4])
-            return {
-                "status": "error",
-                "reason": reason,
-                "group_id": group_id,
-                "provider_called": True,
-                "provider_outcome": "rejected",
-                "definitely_not_accepted": True,
-                "provider_retryable": False,
-            }
-        logger.info("send_alimtalk ok to=%s**** group_id=%s", to[:4], group_id)
-        return {
-            "status": "ok",
-            "group_id": group_id,
-            "provider_called": True,
-            "provider_outcome": "accepted",
-        }
+        return send_solapi_message(client, message, to)
     except Exception as e:
-        logger.warning("alimtalk failed to=%s****: %s", to[:4], e)
-        rejected_reason = _classify_definitely_rejected_provider_exception(e)
-        return {
-            "status": "error",
-            "reason": rejected_reason or str(e)[:500],
-            "provider_called": provider_called,
-            **(
-                {
-                    "provider_outcome": "rejected",
-                    "definitely_not_accepted": True,
-                    "provider_retryable": False,
-                }
-                if rejected_reason
-                else {}
-            ),
-        }
+        return _solapi_exception_result(e, provider_called=provider_called)
 
 
 def main() -> int:
@@ -761,18 +728,21 @@ def main() -> int:
                     continue
 
                 global _current_receipt_handle
-                _msg_deleted = False
+                # None means no DeleteMessage attempt was made for this receipt.
+                _acknowledged = None
+                _release_for_retry = False
+                qa_scope = None
+                ack_job_key = f"sqs:{raw['MessageId']}" if raw.get("MessageId") else None
                 try:
                     if isinstance(body, str):
                         try:
                             data = json.loads(body)
                         except json.JSONDecodeError:
                             logger.error("Invalid JSON in message body")
-                            queue_client.delete_message(
+                            _acknowledged = queue_client.delete_message(
                                 queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                 receipt_handle=receipt_handle,
                             )
-                            _msg_deleted = True
                             continue
                     else:
                         data = body
@@ -785,11 +755,10 @@ def main() -> int:
                             payload_shape["payload_type"],
                             payload_shape["keys"],
                         )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         continue
 
                     tenant_id = data.get("tenant_id")
@@ -799,11 +768,10 @@ def main() -> int:
                             "deleting message_id=%s",
                             message_id,
                         )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         continue
 
                     try:
@@ -814,11 +782,10 @@ def main() -> int:
                             tenant_id,
                             message_id,
                         )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         continue
 
                     # 로컬 기능 테스트용 tenant(9999): 발송·차감 없이 스킵, 메시지 삭제 후 진행
@@ -827,11 +794,10 @@ def main() -> int:
                             "Message skipped: tenant_id=%s is test tenant (messaging disabled)",
                             raw_tenant_id_int,
                         )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         continue
 
                     raw_tenant_id = raw_tenant_id_int
@@ -862,11 +828,10 @@ def main() -> int:
                                 )
                             except Exception as exc:
                                 logger.warning("tenant binding failure log creation failed: %s", exc)
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         continue
                     if not data.get("tenant_binding_signature"):
                         logger.warning(
@@ -885,11 +850,10 @@ def main() -> int:
                             message_id,
                             exc,
                         )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         continue
                     business_tenant_id = source_tenant_id_msg or tenant_id
                     if source_tenant_id_msg == cfg.TEST_TENANT_ID:
@@ -897,11 +861,10 @@ def main() -> int:
                             "Message skipped: source_tenant_id=%s is test tenant (messaging disabled)",
                             source_tenant_id_msg,
                         )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         continue
                     try:
                         from apps.domains.messaging.policy import is_messaging_disabled
@@ -925,11 +888,10 @@ def main() -> int:
                                     ),
                                 )
                                 continue
-                            queue_client.delete_message(
+                            _acknowledged = queue_client.delete_message(
                                 queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                 receipt_handle=receipt_handle,
                             )
-                            _msg_deleted = True
                             continue
                     except Exception as exc:
                         logger.warning(
@@ -955,11 +917,10 @@ def main() -> int:
                             from apps.domains.messaging.services import is_reservation_cancelled
                             if is_reservation_cancelled(int(reservation_id), tenant_id=business_tenant_id):
                                 logger.info("reservation_id=%s cancelled, skip send", reservation_id)
-                                queue_client.delete_message(
+                                _acknowledged = queue_client.delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                     receipt_handle=receipt_handle,
                                 )
-                                _msg_deleted = True
                                 _current_receipt_handle = None
                                 continue
                         except Exception as e:
@@ -1032,11 +993,10 @@ def main() -> int:
                                     "recipient policy block log creation failed: %s",
                                     exc,
                                 )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         _current_receipt_handle = None
                         continue
                     # 공용 채널 계약: 큐 payload의 발신번호는 신뢰하지 않는다.
@@ -1104,11 +1064,10 @@ def main() -> int:
                                 )
                             except Exception as e:
                                 logger.warning("create_notification_log failed: %s", e)
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         _current_receipt_handle = None
                         continue
                     source_domain_msg = (data.get("source_domain") or "").strip()[:50]
@@ -1195,11 +1154,10 @@ def main() -> int:
                                     "Failed to record blocked tenant channel route"
                                 )
                                 continue
-                            queue_client.delete_message(
+                            _acknowledged = queue_client.delete_message(
                                 queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                 receipt_handle=receipt_handle,
                             )
-                            _msg_deleted = True
                             _current_receipt_handle = None
                             continue
                         except Exception:
@@ -1226,6 +1184,8 @@ def main() -> int:
 
                     # Business-level atomic claim (Layer 2: DB dedup via unique constraint)
                     business_key = _resolve_worker_business_key(data, message_id)
+                    ack_job_key = f"{tenant_id}:{business_key}"
+                    qa_scope = enrollment_ack_scope(cfg, raw, data, tenant_id, source_tenant_id_msg)
                     claim_log_id = None
                     if business_key and tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
                         try:
@@ -1255,11 +1215,10 @@ def main() -> int:
                                     "Business dedup: key=%s already claimed, skipping (tenant=%s)",
                                     business_key[:16], tenant_id,
                                 )
-                                queue_client.delete_message(
-                                    queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
-                                    receipt_handle=receipt_handle,
+                                _acknowledged, _release_for_retry = acknowledge_sent(
+                                    queue_client, cfg.MESSAGING_SQS_QUEUE_NAME, receipt_handle, qa_scope,
+                                    log_id=None, deduplicated=True,
                                 )
-                                _msg_deleted = True
                                 _current_receipt_handle = None
                                 continue
                         except Exception as e:
@@ -1282,11 +1241,10 @@ def main() -> int:
                                         "DB dedup: message_id=%s already sent successfully, skipping",
                                         message_id,
                                     )
-                                    queue_client.delete_message(
+                                    _acknowledged = queue_client.delete_message(
                                         queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                         receipt_handle=receipt_handle,
                                     )
-                                    _msg_deleted = True
                                     _current_receipt_handle = None
                                     continue
                             except Exception as e:
@@ -1329,11 +1287,10 @@ def main() -> int:
                                 target_id=target_id_msg,
                                 target_name=target_name,
                             )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         _current_receipt_handle = None
                         continue
 
@@ -1416,17 +1373,16 @@ def main() -> int:
                                 target_id=target_id_msg,
                                 target_name=target_name,
                             )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         _current_receipt_handle = None
                         continue
                     except Exception as e:
                         logger.exception("deduct_credits failed: %s", e)
                         _current_receipt_handle = None
-                        _msg_deleted = True  # 발송 전 실패 → 중복 위험 없음, 잠금 해제하여 재시도 허용
+                        _release_for_retry = True  # 발송 전 실패 → 중복 위험 없음, 잠금 해제하여 재시도 허용
                         consecutive_errors += 1
                         continue
 
@@ -1448,6 +1404,8 @@ def main() -> int:
                             cfg, to=to_, sender=sender_, pf_id=pf_id_,
                             template_id=template_id_, replacements=replacements_, text=text_,
                             before_provider_call=before_provider_call,
+                            **({"observe_mock": lambda client: qa_scope.observe_mock(client, claim_log_id)}
+                               if qa_scope is not None else {}),
                         )
 
                     provider_send_started = False
@@ -1529,12 +1487,7 @@ def main() -> int:
                                 from academy.adapters.db.django.repositories_messaging import (
                                     create_notification_log, finalize_notification,
                                 )
-                                provider_message_id = str(
-                                    result.get("group_id")
-                                    or result.get("messagekey")
-                                    or result.get("refkey")
-                                    or ""
-                                )[:128]
+                                provider_message_id, provider_reference_kind = receipt_reference(result)
                                 charged_amount = (
                                     Decimal(str(base_price)) if deducted else Decimal("0")
                                 )
@@ -1547,6 +1500,7 @@ def main() -> int:
                                             template_summary=_get_template_summary(event_type_msg, template_id, message_mode),
                                             message_body=text[:2000],
                                             provider_message_id=provider_message_id,
+                                            provider_reference_kind=provider_reference_kind,
                                             notification_type=event_type_msg,
                                         )
                                     else:
@@ -1560,6 +1514,7 @@ def main() -> int:
                                             message_mode=message_mode,
                                             sqs_message_id=message_id,
                                             provider_message_id=provider_message_id,
+                                            provider_reference_kind=provider_reference_kind,
                                             notification_type=event_type_msg,
                                             source_tenant_id=source_tenant_id_msg,
                                             target_type=target_type_msg,
@@ -1580,12 +1535,12 @@ def main() -> int:
                                         ) + (raw_reason or "")[:400]
                                     else:
                                         failure_reason = raw_reason
+                                    failure_status = {
+                                        "terminal": "failed",
+                                        "retry": "retryable_failed",
+                                        "ambiguous": "ambiguous",
+                                    }[failure_disposition]
                                     if claim_log_id is not None:
-                                        failure_status = {
-                                            "terminal": "failed",
-                                            "retry": "retryable_failed",
-                                            "ambiguous": "ambiguous",
-                                        }[failure_disposition]
                                         finalize_notification(
                                             claim_log_id,
                                             success=False,
@@ -1597,6 +1552,7 @@ def main() -> int:
                                             failure_reason=failure_reason[:500],
                                             message_body=text[:2000],
                                             provider_message_id=provider_message_id,
+                                            provider_reference_kind=provider_reference_kind,
                                             notification_type=event_type_msg,
                                             failure_status=failure_status,
                                             provider_definitely_not_accepted=bool(
@@ -1607,13 +1563,15 @@ def main() -> int:
                                         create_notification_log(
                                             tenant_id=int(tenant_id),
                                             success=False,
-                                            amount_deducted=Decimal("0"),
+                                            failure_status=failure_status,
+                                            amount_deducted=charged_amount if failure_disposition == "ambiguous" else Decimal("0"),
                                             recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
                                             failure_reason=failure_reason[:500],
                                             message_body=text[:2000],
                                             message_mode=message_mode,
                                             sqs_message_id=message_id,
                                             provider_message_id=provider_message_id,
+                                            provider_reference_kind=provider_reference_kind,
                                             notification_type=event_type_msg,
                                             source_tenant_id=source_tenant_id_msg,
                                             target_type=target_type_msg,
@@ -1633,11 +1591,10 @@ def main() -> int:
                             consecutive_errors += 1
                         elif send_succeeded:
                             _record_progress(job_id, "done", 100, step_index=4, step_percent=100, tenant_id=tenant_id_str)
-                            queue_client.delete_message(
-                                queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
-                                receipt_handle=receipt_handle,
+                            _acknowledged, _release_for_retry = acknowledge_sent(
+                                queue_client, cfg.MESSAGING_SQS_QUEUE_NAME, receipt_handle, qa_scope,
+                                log_id=claim_log_id, deduplicated=False,
                             )
-                            _msg_deleted = True
                             consecutive_errors = 0
                         else:
                             if failure_disposition == "terminal":
@@ -1645,11 +1602,10 @@ def main() -> int:
                                     "send permanently failed (non-retryable), deleting message: reason=%s to=%s tenant=%s",
                                     raw_reason, to[:4] if to else "?", tenant_id,
                                 )
-                                queue_client.delete_message(
+                                _acknowledged = queue_client.delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                     receipt_handle=receipt_handle,
                                 )
-                                _msg_deleted = True
                                 consecutive_errors = 0
                             elif failure_disposition == "ambiguous":
                                 logger.error(
@@ -1659,11 +1615,10 @@ def main() -> int:
                                     tenant_id,
                                     claim_log_id,
                                 )
-                                queue_client.delete_message(
+                                _acknowledged = queue_client.delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                     receipt_handle=receipt_handle,
                                 )
-                                _msg_deleted = True
                                 consecutive_errors = 0
                             else:
                                 logger.warning(
@@ -1689,15 +1644,12 @@ def main() -> int:
                         logger.info("Graceful shutdown: exiting")
                         break
                 finally:
-                    # 중복 발송 방지: 성공(메시지 삭제)·파싱 오류·검증 실패 등
-                    # delete_message가 호출된 경우에만 잠금 해제.
-                    # 발송 실패 시 잠금 유지 → SQS VisibilityTimeout(900s)
-                    # 내 재전달 시 acquire_job_lock이 차단하여 중복 발송 방지.
-                    # 잠금 TTL(1800s) > VisibilityTimeout(900s) 이므로 안전.
-                    if _msg_deleted:
-                        # 메시지가 이미 삭제됨(성공·파싱오류) → 잠금 해제
+                    if _acknowledged is False and qa_scope is None and ack_job_key:
+                        _record_failed_ack(ack_job_key)
+                    # Keep the duplicate guard through a failed DeleteMessage. A safe,
+                    # deliberate retry can release it without claiming a queue ACK.
+                    if _acknowledged or _release_for_retry:
                         release_job_lock(job_id)
-                    # else: 발송 실패 → 잠금 유지 (TTL 만료까지 중복 차단)
 
             except KeyboardInterrupt:
                 break

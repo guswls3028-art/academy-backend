@@ -3250,6 +3250,129 @@
         ],
         "type": "object"
       },
+      "EnrollmentNoticeDelivery": {
+        "properties": {
+          "log_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "log_id",
+          "status"
+        ],
+        "type": "object"
+      },
+      "EnrollmentNoticeMode": {
+        "description": "* `auto` - auto\n* `send` - send\n* `skip` - skip",
+        "enum": [
+          "auto",
+          "send",
+          "skip"
+        ],
+        "type": "string"
+      },
+      "EnrollmentNoticeProvider": {
+        "properties": {
+          "provider_delivery_checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "provider_delivery_failure_reason": {
+            "type": "string"
+          },
+          "provider_delivery_status": {
+            "type": "string"
+          },
+          "provider_delivery_updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "provider_status_code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_delivery_checked_at",
+          "provider_delivery_failure_reason",
+          "provider_delivery_status",
+          "provider_delivery_updated_at",
+          "provider_status_code"
+        ],
+        "type": "object"
+      },
+      "EnrollmentNoticeResult": {
+        "properties": {
+          "lecture": {
+            "type": "integer"
+          },
+          "request_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "students": {
+            "items": {
+              "$ref": "#/components/schemas/EnrollmentNoticeStudentResult"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "lecture",
+          "request_id",
+          "students"
+        ],
+        "type": "object"
+      },
+      "EnrollmentNoticeStudentResult": {
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent": {
+            "$ref": "#/components/schemas/EnrollmentNoticeDelivery"
+          },
+          "student": {
+            "$ref": "#/components/schemas/EnrollmentNoticeDelivery"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "parent",
+          "student"
+        ],
+        "type": "object"
+      },
+      "EnrollmentNoticeVerifyRequest": {
+        "properties": {
+          "lecture": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "log_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "request_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lecture",
+          "log_id",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "EnrollmentRequest": {
         "properties": {
           "lecture": {
@@ -15705,6 +15828,40 @@
           "amount",
           "invoice_id",
           "payment_method"
+        ],
+        "type": "object"
+      },
+      "RegisterWithNoticesRequest": {
+        "properties": {
+          "lecture": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "parent_notice": {
+            "$ref": "#/components/schemas/EnrollmentNoticeMode"
+          },
+          "request_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "student_notice": {
+            "$ref": "#/components/schemas/EnrollmentNoticeMode"
+          },
+          "students": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 200,
+            "type": "array"
+          }
+        },
+        "required": [
+          "lecture",
+          "parent_notice",
+          "request_id",
+          "student_notice",
+          "students"
         ],
         "type": "object"
       },
@@ -33636,6 +33793,104 @@
         ]
       }
     },
+    "/api/v1/enrollments/register-with-notices/": {
+      "post": {
+        "operationId": "enrollments_register_with_notices_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterWithNoticesRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterWithNoticesRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterWithNoticesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentNoticeResult"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "enrollments"
+        ]
+      }
+    },
+    "/api/v1/enrollments/registration-notices/": {
+      "get": {
+        "operationId": "enrollments_registration_notices_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "lecture",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "request_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentNoticeResult"
+                }
+              }
+            },
+            "description": ""
+          },
+          "204": {
+            "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "enrollments"
+        ]
+      }
+    },
     "/api/v1/enrollments/session-enrollments/": {
       "get": {
         "operationId": "enrollments_session_enrollments_list",
@@ -33931,6 +34186,54 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SessionEnrollment"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "enrollments"
+        ]
+      }
+    },
+    "/api/v1/enrollments/verify-registration-notice/": {
+      "post": {
+        "operationId": "enrollments_verify_registration_notice_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollmentNoticeVerifyRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollmentNoticeVerifyRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollmentNoticeVerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentNoticeProvider"
                 }
               }
             },

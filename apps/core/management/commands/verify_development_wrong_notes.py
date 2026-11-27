@@ -116,6 +116,10 @@ class Command(BaseCommand):
         parser.add_argument("--release", required=True)
         parser.add_argument("--production-database", required=True)
         parser.add_argument("--cleanup-only", action="store_true")
+        modes = parser.add_mutually_exclusive_group()
+        modes.add_argument("--enrollment-notices", action="store_true")
+        modes.add_argument("--enrollment-tick", type=int, metavar="SEALED_PLAN_ID")
+        parser.add_argument("--enrollment-recipient", choices=("student", "parent"))
 
     def handle(self, *args, **options):
         # Reserve a host-local recovery capability, never emitted through SSM or copied to a runner.
@@ -124,7 +128,24 @@ class Command(BaseCommand):
         import fcntl
         from apps.core.services.wrong_note_development_scenario import UncertainWrite, run
 
-        directory = Path(gettempdir()) / f"academy-wrong-note-{hashlib.sha256(release.encode()).hexdigest()[:24]}"
+        notices = options["enrollment_notices"]
+        role = options["enrollment_recipient"] or "student"
+        if options["enrollment_recipient"] and (not notices or options["cleanup_only"]):
+            raise CommandError("Recipient selection requires a new enrollment scenario.")
+        cleanup_scope = cleanup
+        if notices or options["enrollment_tick"] is not None:
+            from apps.core.services import enrollment_notice_development_scenario as notice
+            notice.check_mock()
+            if options["enrollment_tick"] is not None:
+                if options["cleanup_only"]:
+                    raise CommandError("Cannot combine a scheduled tick with cleanup.")
+                notice.run_scheduler(options["enrollment_tick"], release, options["production_database"])
+                return
+            cleanup_scope = notice.cleanup
+        scenario = "enrollment-notice" if notices else "wrong-note"
+        status_prefix = "ENROLLMENT_NOTICE" if notices else "WRONG_NOTE"
+
+        directory = Path(gettempdir()) / f"academy-{scenario}-{hashlib.sha256(release.encode()).hexdigest()[:24]}"
         directory.mkdir(mode=0o700, exist_ok=True)
         dstat = directory.lstat()
         if not stat.S_ISDIR(dstat.st_mode) or dstat.st_uid != os.geteuid() or stat.S_IMODE(dstat.st_mode) != 0o700:
@@ -135,9 +156,12 @@ class Command(BaseCommand):
             state = directory / "owned-scope.json"
             if options["cleanup_only"]:
                 saved = json.loads(state.read_text())
-                residue = cleanup(saved["code"], saved["capability"])
+                residue = cleanup_scope(saved["code"], saved["capability"])
                 state.unlink()
-                self.stdout.write(json.dumps({"status": "WRONG_NOTE_CLEANUP_PASS", "remaining": residue}))
+                receipt = {"status": f"{status_prefix}_CLEANUP_PASS", "remaining": residue}
+                if notices:
+                    receipt["selected_role"] = saved.get("selected_role", "student")
+                self.stdout.write(json.dumps(receipt))
                 return
             if state.exists():
                 raise CommandError("An owned scope awaits cleanup on this release. Recover it before another run.")
@@ -148,28 +172,41 @@ class Command(BaseCommand):
             password = secrets.token_urlsafe(32)
             with state.open("x", encoding="utf-8") as stream:
                 os.fchmod(stream.fileno(), 0o600)
-                json.dump({"code": code, "capability": capability}, stream)
+                owned_scope = {"code": code, "capability": capability}
+                if notices:
+                    owned_scope["selected_role"] = role
+                json.dump(owned_scope, stream)
                 stream.flush()
                 os.fsync(stream.fileno())
             try:
-                tenant = setup(code, capability, password)
+                if notices:
+                    with transaction.atomic():
+                        tenant = setup(code, capability, password)
+                        notice.mark_scope(tenant, release, role)
+                        notice.prepare_families(tenant, password)
+                else:
+                    tenant = setup(code, capability, password)
             except Exception:
                 # Setup writes its tenant and seal in a single transaction. If the commit is ambiguous keep the capability.
                 if not OpsAuditLog.objects.filter(action="development.wrong-note.setup", payload__tenant_code=code).exists():
                     state.unlink()
                 raise
-            self.stdout.write(f"WRONG_NOTE_QA_STARTED tenant={code} id={tenant.pk}")
+            self.stdout.write(f"{status_prefix}_QA_STARTED tenant={code} id={tenant.pk}")
             try:
-                result = run(tenant, password)
+                if notices:
+                    result = notice.run(tenant, password, selected_role=role, release=release,
+                                        production_database=options["production_database"])
+                else:
+                    result = run(tenant, password)
             except UncertainWrite:
                 # Unacknowledged writes can commit after a timeout. Retain exact recovery ownership.
                 raise
             except Exception:
-                cleanup(code, capability)
+                cleanup_scope(code, capability)
                 state.unlink()
                 raise
-            residue = cleanup(code, capability)
+            residue = cleanup_scope(code, capability)
             state.unlink()
-            self.stdout.write(json.dumps({"status": "WRONG_NOTE_REAL_USE_PASS", **result, "remaining": residue}))
+            self.stdout.write(json.dumps({"status": f"{status_prefix}_REAL_USE_PASS", **result, "remaining": residue}))
         finally:
             os.close(fd)

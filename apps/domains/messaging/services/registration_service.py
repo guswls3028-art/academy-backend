@@ -19,6 +19,8 @@ def _dispatch_registration_durably(
     business_tenant_id: int,
     trigger: str,
     first_enrollment_since=None,
+    admitted_outboxes=None,
+    domain_object_id=None,
     **payload,
 ) -> bool:
     from apps.domains.messaging.models import ScheduledNotification
@@ -39,16 +41,22 @@ def _dispatch_registration_durably(
                 created_at__gte=first_enrollment_since,
             ).order_by("created_at").first()
             if existing is not None:
+                if admitted_outboxes is not None:
+                    admitted_outboxes.append(existing)
                 return existing.status in {
                     ScheduledNotification.Status.SENT,
                     ScheduledNotification.Status.PENDING,
                     ScheduledNotification.Status.DISPATCHING,
                 }
+        if domain_object_id:
+            payload["domain_object_id"] = domain_object_id
         notification = dispatch_notification_now(
             tenant_id=business_tenant_id,
             trigger=trigger,
             payload=payload,
         )
+        if admitted_outboxes is not None:
+            admitted_outboxes.append(notification)
     except MessagingHourlyQuotaExceeded:
         logger.warning(
             "registration notification quota exceeded: tenant=%s trigger=%s",
@@ -108,6 +116,9 @@ def send_welcome_messages(
     origin_type: str = "student_account",
     origin_id: str = "",
     first_enrollment_since=None,
+    recipient_roles=("student", "parent"),
+    admitted_outboxes=None,
+    domain_object_id: str | None = None,
 ):
     """
     가입 안내 알림톡 일괄 발송 (학생 + 학부모).
@@ -187,7 +198,8 @@ def send_welcome_messages(
         )
 
         # 학생용 — registration_approved_student 템플릿
-        if phone and len(phone) >= 10 and tmpl_student and sid_student and not same_recipient:
+        if ("student" in recipient_roles and phone and len(phone) >= 10 and tmpl_student and sid_student
+                and (not same_recipient or "parent" not in recipient_roles)):
             replacements = {
                 "학생이름": name,
                 "학생아이디": ps_number,
@@ -204,6 +216,8 @@ def send_welcome_messages(
                     business_tenant_id=tenant_id,
                     trigger="registration_approved_student",
                     first_enrollment_since=first_enrollment_since,
+                    admitted_outboxes=admitted_outboxes,
+                    domain_object_id=domain_object_id,
                     tenant_id=owner_id,
                     to=phone,
                     text=text,
@@ -227,8 +241,8 @@ def send_welcome_messages(
                 sent += 1
 
         # 학부모용 — registration_approved_parent 템플릿
-        if parent_phone and len(parent_phone) >= 10 and tmpl_parent and sid_parent:
-            pwd = parent_password_by_phone.get(parent_phone)
+        if "parent" in recipient_roles and parent_phone and len(parent_phone) >= 10 and tmpl_parent and sid_parent:
+            pwd = parent_password_by_phone.get(parent_phone) or parent_password_by_phone.get(student.parent_phone)
             if not pwd:
                 logger.error(
                     "send_welcome_messages SKIP parent: phone=%s no password in mapping, refusing to send with empty/default password",
@@ -253,6 +267,8 @@ def send_welcome_messages(
                     business_tenant_id=tenant_id,
                     trigger="registration_approved_parent",
                     first_enrollment_since=first_enrollment_since,
+                    admitted_outboxes=admitted_outboxes,
+                    domain_object_id=domain_object_id,
                     tenant_id=owner_id,
                     to=parent_phone,
                     text=text,

@@ -4,7 +4,19 @@
 
 코드 SSOT: `apps/domains/messaging/policy.py` → `TRIGGER_POLICY` dict
 
-### SYSTEM_AUTO — 시스템 필수 안내 (항상 자동, 사용자가 끌 수 없음)
+### SYSTEM_AUTO — 시스템 계정 안내 (기본 자동)
+
+신규 학생의 첫 수강은 기본적으로 학생·학부모 안내를 각각 예약한다. 교직원이 강의 등록 시
+해당 역할의 안내를 명시적으로 선택하면 그 등록에만 선택을 적용한다. 학원 전체 자동 설정과
+계정 변경·복구 이벤트에는 영향을 주지 않는다. 새 수강 안내는 큐 접수 후에도 워커가
+등록 당시 계정·연락처와 현재 수강 상태를 확인한 뒤 공급사를 호출한다. 격리 개발 환경의
+모의 공급사 로그에는 생성한 접수 ID와 건수만 남긴다. 자세한 수신자 결정과 실제 결과 조회는
+[학생 도메인](../domain/student-core.md#수강-등록과-계정-안내)을 따른다.
+
+워커는 Solapi의 접수 건수와 전건 거절 예외를 구분해 기록한다. 전건 거절이면 차감을 되돌리고,
+일부 접수·응답 유실은 미확정으로 보존해 중복 발송을 막는다. 공급사가 반환한 단건 메시지 ID는
+메시지로, 그룹 ID는 그룹으로 조회한다. 기존 이력은 당시의 그룹 조회 방식을 사용한다.
+
 | Trigger | 설명 | 수신자 | 발송 순간 |
 |---------|------|--------|----------|
 | registration_approved_student | 가입/계정 로그인 정보 안내(학생) | 학생(학생 번호 없으면 학부모) | 신규 학생의 첫 일반 강의 ACTIVE 수강 확정, 학생 아이디 변경, 학생 전화번호 최초 등록 시 |
@@ -211,6 +223,14 @@ DB 실패·검증 거절·transaction rollback은 receipt/outbox와 커밋 후 �
 호출 0와 `ambiguous` 보존을 포함한다. 프런트엔드 동선은
 [메시징 운영 흐름](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/MESSAGING-OPERATIONS.md)을 따른다.
 
+## 수강 등록 안내의 큐 처리 확인
+
+일반 워커에서 큐 삭제가 실패하면 운영 감사 로그에 업무 키의 지문을 남긴다. 업무 키가 확정되기 전에 거부한 메시지는 SQS가 부여한 메시지 ID로 지문을 만든다. 5분 주기 발송 상태 점검은 최근 30분 동안 서로 다른 작업 두 건 이상에서 삭제가 실패하면 기존 운영 보고에 건수와 시간 범위를 표시한다. 같은 작업의 재시도는 한 건으로 센다. 이 경보를 설정된 운영 수신처에 전달하지 못하면 점검 작업에 실패를 기록한다. 운영자는 발송 결과와 별도로 DLQ 적체와 재시도 결과를 조회할 수 있다.
+
+메시징 워커는 SQS 삭제가 성공하면 해당 메시지의 중복 방지 잠금을 해제한다. 삭제 실패 때에는 잠금 만료 후 같은 메시지를 다시 처리하며 이미 저장된 발송은 업무 키로 확인한다. 발송 전 차감 오류처럼 안전하게 재시도할 수 있는 경우에는 삭제와 별개로 잠금을 해제한다.
+
+격리 개발 검증은 학생만 선택한 등록과 학부모만 선택한 등록을 다른 합성 학원에서 각각 실행한다. 두 역할 모두 유효한 계정과 연락처를 가진다. 선택한 역할의 결과는 해당 계정과 연락처 지문에 결속하고, 제외한 역할은 건너뜀으로 저장하며 발송 작업을 만들지 않는다. 전용 mock 워커는 지정된 한 가족의 결과를 저장한 뒤 같은 SQS 메시지를 다시 수신한다. 업무 키와 기존 발송 로그가 일치하면 공급사 호출을 반복하지 않고 큐 삭제를 확인한다. 감사 기록에는 mock 접수와 성공한 삭제를 원 학원·공용 발송 학원·역할별 수신자·로그 ID에 연결한다. 연락처, 본문, 로그인 정보는 보관하지 않는다.
+
 ## 업무별 미리보기와 확인 재시도
 
 출결·범용 수동 알림의 `preview → confirm`은 같은 tenant와 화면 종류의 토큰만
@@ -255,8 +275,8 @@ DB 실패·검증 거절·transaction rollback은 receipt/outbox와 커밋 후 �
 7. **멱등성 키** — business_idempotency_key (trigger + student_id + 날짜)
 8. **일반 강의 출결 수동 발송 경계** — 출결 상태 PATCH·일괄 출석·차시 명단 생성은 자동 outbox를 만들지 않는다. 입실·결석 안내는 `NotificationPreviewToken`을 사용하는 출결 알림 preview→confirm 경로만 허용한다.
 9. **계정 알림 event metadata** — `registration_approved_*`, `password_*` 발송은 큐 payload에 원 trigger를 `event_type`으로 싣는다. `NotificationLog.message_body` 보안 마스킹과 운영 추적은 이 값에 의존한다.
-   신규 학생 계정 생성 시 초기 안내값은 암호화해 대기시키고, 첫 ACTIVE 수강 확정 후 계정 안내 outbox가 모두 확보되면 즉시 제거한다. 학생/학부모 계정 안내, 아이디 변경, 비밀번호 변경, 학생 전화번호 최초 등록은 SYSTEM_AUTO이며 발송 opt-out 입력은 제공하지 않는다.
-   `registration_approved_student|parent`의 첫 수강 계정 안내는 legacy `AutoSendConfig.enabled` 값으로 끌 수 없다. 공용 owner의 exact APPROVED 템플릿이 없을 때만 fail-closed하며, 학생과 학부모의 유효 수신번호가 다르면 각 계정 안내 outbox를 모두 확보해야 한다.
+   신규 계정의 초기 안내값은 암호화해 보관한다. 수신자별 선택을 받는 수강 등록은 첫 수강 결정과 역할별 발송 작업을 함께 저장하고 초기 대기를 해제한다. 기존 자동 등록 경로는 필요한 outbox를 모두 확보한 뒤 초기 대기를 해제한다. 아이디 변경, 비밀번호 변경, 학생 전화번호 최초 등록은 기존 SYSTEM_AUTO 규칙을 따른다.
+   첫 수강 계정 안내는 legacy `AutoSendConfig.enabled`의 영향을 받지 않는다. 선택된 역할별로 공용 owner의 정확한 APPROVED 템플릿이 있어야 발송한다.
 10. **DB dispatch/outbox** — 수동·시스템·영상·매치업·커뮤니티의 즉시 발송과 `AutoSendConfig.delay_mode` 예약 발송은 모두 `ScheduledNotification`을 먼저 저장한다. product producer의 `enqueue_alimtalk()` 직접 호출은 금지한다. `dispatch_key`에서 안정 occurrence key를 만들고 `pending → dispatching → sent(SQS 접수)`로 전이한다.
 11. **SQS enqueue 복구** — transient enqueue 실패는 30초 지수 백오프, 최대 8회 재시도한다. `dispatching` 5분 stale claim도 같은 dispatch key로 회수한다. 입력 오류와 일반 알림의 업무 tenant 전체 발송 중지는 SQS 호출·재시도 없이 즉시 terminal `failed`로 전이해 payload를 제거하며, transient 재시도 소진도 terminal `failed`다. 첫 수강 계정 안내 2종은 운영 중지 중 15분 간격 `pending`으로 보류해 일회용 비밀번호를 잃지 않는다.
 12. **provider 호출 경계** — 워커는 공급사 호출 전에 `NotificationLog.status=sending`을 영속화한다. `sending` 이후 crash/중복 SQS는 공급사를 다시 호출하지 않는다. 같은 SQS 메시지 재전달은 `sending→ambiguous`로 원자 승격하며 차감액을 유지한다. timeout처럼 접수 여부가 불명확한 결과와 함께 operations의 `action_required`로 운영 확인한다.
