@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from django.db.models import Exists, OuterRef, Q
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from drf_spectacular.utils import OpenApiParameter, PolymorphicProxySerializer, extend_schema
 from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -20,6 +20,13 @@ from apps.support.submissions.dependencies import (
     exam_submission_list_allowed,
     score_map_for_exam_submission_list,
 )
+
+
+from apps.api.common.submission_inbox_schema import (
+    STAFF_SUBMISSION_ERRORS,
+    SUBMISSION_QUERY_ERROR,
+)
+from .submission_list_schema import StaffExamReviewIssuesSerializer, StaffExamSubmissionSerializer
 
 
 def _extract_name_from_enrollment(enrollment) -> str:
@@ -40,9 +47,42 @@ def _extract_name_from_enrollment(enrollment) -> str:
 class ExamSubmissionsListView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
-    @extend_schema(parameters=[OpenApiParameter(
-        name="focus_id", type=int, required=False, description="요청한 시험의 특정 제출 한 건만 조회합니다.",
-    )])
+    @extend_schema(
+        description=(
+            "현재 학원의 인증된 교직원이 시험 제출 이력을 조회합니다. 기본 응답은 최신 제출부터 최대 200건의 배열입니다. "
+            "조회 범위에 없는 시험은 빈 결과를 반환합니다. 차시를 지정하면 해당 시험에 연결된 차시여야 합니다."
+        ),
+        parameters=[
+            OpenApiParameter(
+                "focus_id", {"type": "integer", "format": "int64", "minimum": 1, "maximum": 2**63 - 1},
+                description="한 번만 지정합니다. 개수 제한을 적용하기 전에 해당 시험의 제출 한 건으로 좁힙니다.",
+            ),
+            OpenApiParameter(
+                "session_id", {"type": "integer", "format": "int64", "minimum": 1, "maximum": 2**63 - 1},
+                description="시험에 연결된 차시 하나를 지정합니다. 다른 차시에서 접수한 OMR 스캔은 제외합니다.",
+            ),
+            OpenApiParameter("review_issues", str, description="1이면 검토가 필요한 제출을 페이지당 최대 50건씩 반환합니다."),
+            OpenApiParameter(
+                "enrollment_ids", str, description="검토 목록에서만 사용합니다. 양의 수강 ID 1~1000개를 쉼표로 구분합니다.",
+            ),
+            OpenApiParameter(
+                "include_unbound", str, description="검토 목록에서 수강 ID를 지정해도 미지정 제출을 포함합니다. 0이면 제외합니다.",
+            ),
+            OpenApiParameter(
+                "cursor", {"type": "integer", "minimum": 1}, description="검토 목록에서 이 ID보다 작은 제출만 반환합니다.",
+            ),
+        ],
+        responses={
+            200: PolymorphicProxySerializer(
+                component_name="StaffExamSubmissionListOrIssues",
+                serializers=[StaffExamSubmissionSerializer(many=True), StaffExamReviewIssuesSerializer],
+                resource_type_field_name=None,
+                many=False,
+            ),
+            400: SUBMISSION_QUERY_ERROR,
+            **STAFF_SUBMISSION_ERRORS,
+        },
+    )
     def get(self, request, exam_id: int):
         issues_only = request.query_params.get("review_issues") == "1"
         tenant = getattr(request, "tenant", None)

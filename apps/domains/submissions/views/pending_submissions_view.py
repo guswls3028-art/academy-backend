@@ -10,7 +10,7 @@ from django.core.paginator import Paginator
 from django.db.models import Count, Q
 from django.utils import timezone
 
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import PolymorphicProxySerializer, extend_schema
 from rest_framework import serializers
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -21,6 +21,12 @@ from academy.adapters.db.django import repositories_exams as exams_repo
 from academy.adapters.db.django import repositories_submissions as submissions_repo
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.api.common.query_params import parse_query_int
+from apps.api.common.submission_inbox_schema import (
+    STAFF_SUBMISSION_ERRORS,
+    SUBMISSION_QUERY_ERROR,
+    PendingExamSubmissionPageSerializer,
+    PendingExamSubmissionSerializer,
+)
 from apps.infrastructure.storage.r2 import generate_presigned_get_url
 from apps.support.submissions.grading_contract_dependencies import omr_grading_configuration_missing
 
@@ -86,7 +92,23 @@ class PendingSubmissionsView(APIView):
 
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
-    @extend_schema(parameters=[PendingInboxQuerySerializer])
+    @extend_schema(
+        description=(
+            "현재 학원의 교직원용 시험 제출함입니다. page 또는 page_size를 지정하면 건수와 요약을 포함한 "
+            "페이지를 반환하고, 둘 다 생략하면 최근순 최대 200건의 배열을 반환합니다. "
+            "session_choices=1은 기록된 출처·원래 성적 강의·조회 가능한 차시 후보 및 해당하는 경우 과거 제출 표시를 포함합니다."
+        ),
+        parameters=[PendingInboxQuerySerializer],
+        responses={
+            200: PolymorphicProxySerializer(
+                component_name="PendingExamSubmissionListOrPage",
+                serializers=[PendingExamSubmissionSerializer(many=True), PendingExamSubmissionPageSerializer],
+                resource_type_field_name=None, many=False,
+            ),
+            400: SUBMISSION_QUERY_ERROR,
+            **STAFF_SUBMISSION_ERRORS,
+        },
+    )
     def get(self, request):
         tenant = getattr(request, "tenant", None)
         if not tenant:
