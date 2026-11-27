@@ -230,13 +230,14 @@ def lecture_enroll_from_excel_rows(
             if not enroll_repo.active_student_exists(sid, tenant):
                 # Do not report a matched row as enrolled if the final guard fails.
                 raise EnrollmentImportError("등록 중 학생 상태가 변경되었습니다. 명부를 새로고침한 뒤 다시 시도해 주세요.")
-            obj, created = enroll_repo.enrollment_get_or_create_ret(
+            obj, created = enroll_repo.enrollment_get_or_create(
                 tenant=tenant,
                 lecture=lecture,
                 student_id=sid,
                 defaults={"status": "ACTIVE"},
             )
             if not created and obj.status != "ACTIVE":
+                enroll_repo.preserve_prior_lecture_withdrawal(tenant=tenant, enrollment=obj)
                 obj.status = "ACTIVE"
                 obj.save(update_fields=["status"])
             enrollments_created.append(obj)

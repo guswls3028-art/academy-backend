@@ -106,6 +106,175 @@ class SessionWithdrawalVideoAccessTests(APITestCase):
         for index in range(8):
             self.assertEqual(self.access(index).status_code, 403)
 
+    def lecture_attendances(self):
+        return Attendance.objects.filter(tenant=self.tenant, enrollment=self.enrollment).order_by("session_id")
+
+    def lecture_memberships(self):
+        return SessionEnrollment.objects.filter(tenant=self.tenant, enrollment=self.enrollment).order_by("session_id")
+
+    def prepare_inactive_roster(self):
+        self.enrollment.status = "INACTIVE"
+        self.enrollment.save(update_fields=["status"])
+        self.lecture_attendances().filter(pk__in=[row.pk for row in self.attendances[:2]]).delete()
+        self.lecture_attendances().update(status="SECESSION")
+
+    def reenroll_in_lecture(self):
+        self.client.force_authenticate(self.staff)
+        result = self.client.post(
+            "/api/v1/enrollments/bulk_create/",
+            {"lecture": self.enrollment.lecture_id, "students": [self.student.pk]}, format="json", **self.headers,
+        )
+        self.assertEqual(result.status_code, 201, result.data)
+        self.assertEqual([(row["id"], row["status"]) for row in result.data], [(self.enrollment.pk, "ACTIVE")])
+
+    def test_whole_lecture_withdrawal_records_missing_attendance_only_for_its_roster(self):
+        self.lecture_attendances().filter(pk__in=[row.pk for row in self.attendances[:2]]).delete()
+        roster = list(self.lecture_memberships().values_list("session_id", "pk"))
+        # Regular active roster membership predates mandatory attendance creation.
+        self.assertEqual(self.access(0).status_code, 200)
+        self.assertFalse(self.lecture_attendances().filter(session_id=self.videos[0].session_id).exists())
+        unassigned = Session.objects.create(lecture=self.enrollment.lecture, title="Unassigned", order=9)
+        other_tenant = Tenant.objects.create(code="qa-roster-control", name="QA control")
+        foreign = Attendance.objects.create(
+            tenant=other_tenant, enrollment=self.enrollment, session_id=self.videos[0].session_id,
+            status="PRESENT", memo="Keep foreign record",
+        )
+        foreign_membership = SessionEnrollment.objects.create(
+            tenant=other_tenant, enrollment=self.enrollment, session=unassigned,
+        )
+
+        self.assertEqual(self.withdraw("lecture").status_code, 200)
+        recorded = list(self.lecture_attendances().values_list("session_id", "pk", "status"))
+        self.assertEqual([(sid, status) for sid, _, status in recorded], [(sid, "SECESSION") for sid, _ in roster])
+        self.assertEqual([pk for _, pk, _ in recorded[2:]], [row.pk for row in self.attendances[2:]])
+        self.assertEqual(self.withdraw("lecture").status_code, 200)
+        self.assertEqual(list(self.lecture_attendances().values_list("session_id", "pk", "status")), recorded)
+        self.assertEqual(list(self.lecture_memberships().values_list("session_id", "pk")), roster)
+        foreign.refresh_from_db()
+        self.assertEqual((foreign.status, foreign.memo), ("PRESENT", "Keep foreign record"))
+        self.assertTrue(SessionEnrollment.objects.filter(pk=foreign_membership.pk, tenant=other_tenant).exists())
+        self.assertFalse(Attendance.objects.filter(session=unassigned).exists())
+        self.enrollment.refresh_from_db()
+        self.assertEqual(self.enrollment.status, "INACTIVE")
+
+    def test_historical_whole_lecture_restore_opens_only_selected_session_even_when_its_membership_is_missing(self):
+        self.prepare_inactive_roster()
+        target = self.attendances[2]
+        target.memo = "Keep selected history"
+        target.save(update_fields=["memo"])
+        self.lecture_memberships().filter(session_id=target.session_id).delete()
+        retained = list(self.lecture_memberships().values_list("session_id", "pk"))
+        self.client.force_authenticate(self.staff)
+        for _ in range(2):
+            result = self.client.patch(
+                f"/api/v1/lectures/attendance/{target.pk}/", {"status": "ONLINE", "restore_scope": "lecture"},
+                format="json", **self.headers,
+            )
+            self.assertEqual(result.status_code, 200, result.data)
+            self.assertEqual((result.data["id"], result.data["status"], result.data["memo"]),
+                             (target.pk, "ONLINE", "Keep selected history"))
+        self.enrollment.refresh_from_db()
+        self.assertEqual(self.enrollment.status, "ACTIVE")
+        memberships = self.lecture_memberships()
+        self.assertEqual(memberships.filter(session_id=target.session_id).count(), 1)
+        self.assertEqual(list(memberships.exclude(session_id=target.session_id).values_list("session_id", "pk")), retained)
+        self.assertEqual(list(self.lecture_attendances().values_list("status", flat=True)),
+                         ["SECESSION", "SECESSION", "ONLINE"] + ["SECESSION"] * 5)
+        self.assertEqual([self.access(i).status_code for i in (0, 1, 2)], [403, 403, 200])
+
+    def test_cancelled_or_failed_lecture_restore_leaves_missing_history_untouched(self):
+        self.prepare_inactive_roster()
+        target = self.attendances[2]
+        initial = list(self.lecture_attendances().values_list("pk", "status"))
+        self.client.force_authenticate(self.staff)
+        path = f"/api/v1/lectures/attendance/{target.pk}/"
+        response = self.client.patch(path, {"status": "ONLINE", "restore_scope": "session"},
+                                     format="json", **self.headers)
+        self.assertEqual(response.status_code, 409)
+        with patch("apps.domains.attendance.views.reconcile_learning_todo_targets",
+                   side_effect=ValidationError("test rollback")):
+            response = self.client.patch(path, {"status": "ONLINE", "restore_scope": "lecture"},
+                                         format="json", **self.headers)
+        self.assertEqual(response.status_code, 400)
+        self.enrollment.refresh_from_db()
+        self.assertEqual(self.enrollment.status, "INACTIVE")
+        self.assertEqual(list(self.lecture_attendances().values_list("pk", "status")), initial)
+
+    def test_ordinary_reenrollment_preserves_whole_lecture_withdrawal_without_selecting_a_session(self):
+        self.prepare_inactive_roster()
+        roster = list(self.lecture_memberships().values_list("session_id", "pk"))
+        self.reenroll_in_lecture()
+        recorded = list(self.lecture_attendances().values_list("session_id", "pk", "status"))
+        self.assertEqual([(sid, status) for sid, _, status in recorded], [(sid, "SECESSION") for sid, _ in roster])
+        self.reenroll_in_lecture()
+        self.assertEqual(list(self.lecture_attendances().values_list("session_id", "pk", "status")), recorded)
+        self.assertEqual(list(self.lecture_memberships().values_list("session_id", "pk")), roster)
+        self.assertEqual([self.access(i).status_code for i in (0, 1, 2)], [403, 403, 403])
+
+    def test_ordinary_reenrollment_preserves_unrecorded_roster_when_only_one_session_was_withdrawn(self):
+        self.prepare_inactive_roster()
+        self.lecture_attendances().exclude(pk=self.attendances[2].pk).update(status="PRESENT")
+        history = list(self.lecture_attendances().values_list("session_id", "pk", "status"))
+        roster = list(self.lecture_memberships().values_list("session_id", "pk"))
+        self.reenroll_in_lecture()
+        self.assertEqual(list(self.lecture_attendances().values_list("session_id", "pk", "status")), history)
+        self.assertEqual(list(self.lecture_memberships().values_list("session_id", "pk")), roster)
+        self.assertEqual([self.access(i).status_code for i in (0, 1, 2)], [200, 200, 403])
+
+    def test_course_status_edit_keeps_full_withdrawal_across_pending_then_active(self):
+        self.prepare_inactive_roster()
+        self.client.force_authenticate(self.staff)
+        for state in ("PENDING", "ACTIVE"):
+            response = self.client.patch(f"/api/v1/enrollments/{self.enrollment.pk}/", {"status": state},
+                                         format="json", **self.headers)
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["status"], state)
+            self.assertEqual(list(self.lecture_attendances().values_list("status", flat=True)), ["SECESSION"] * 8)
+        self.assertEqual(self.access(0).status_code, 403)
+
+    def test_pause_with_only_removed_session_history_does_not_imply_whole_withdrawal(self):
+        self.prepare_inactive_roster()
+        self.lecture_memberships().filter(session_id__in=[row.session_id for row in self.attendances[2:]]).delete()
+        initial = list(self.lecture_attendances().values_list("pk", "status"))
+        self.reenroll_in_lecture()
+        self.assertEqual(list(self.lecture_attendances().values_list("pk", "status")), initial)
+        self.assertEqual([self.access(i).status_code for i in (0, 2)], [200, 403])
+
+    def test_excel_reactivation_repairs_old_withdrawal_outside_the_selected_session(self):
+        from apps.domains.enrollment.services import lecture_enroll_from_excel_rows
+
+        self.prepare_inactive_roster()
+        lecture_enroll_from_excel_rows(
+            tenant_id=self.tenant.pk, lecture_id=self.enrollment.lecture_id,
+            students_data=[{"name": self.student.name, "ps_number": self.student.ps_number}],
+            session_id=self.attendances[2].session_id,
+        )
+        self.enrollment.refresh_from_db()
+        self.assertEqual(self.enrollment.status, "ACTIVE")
+        older = self.lecture_attendances().filter(session_id__in=[r.session_id for r in self.attendances[:2]])
+        self.assertEqual(list(older.values_list("status", flat=True)), ["SECESSION", "SECESSION"])
+        self.assertEqual([self.access(i).status_code for i in (0, 1)], [403, 403])
+
+    def test_enrollment_with_no_attendance_history_remains_a_regular_roster(self):
+        self.prepare_inactive_roster()
+        self.lecture_attendances().delete()
+        self.reenroll_in_lecture()
+        self.assertFalse(self.lecture_attendances().exists())
+        self.assertEqual(self.access(0).status_code, 200)
+
+    def test_restoring_a_deleted_student_preserves_the_saved_course_state_and_attendance(self):
+        from apps.domains.enrollment.services.lifecycle import restore_enrollments_after_student_restore
+
+        self.prepare_inactive_roster()
+        self.enrollment.status_before_student_deletion = "ACTIVE"
+        self.enrollment.save(update_fields=["status_before_student_deletion"])
+        before = list(self.lecture_attendances().values_list("pk", "status"))
+        restore_enrollments_after_student_restore(tenant=self.tenant, student=self.student)
+        self.enrollment.refresh_from_db()
+        self.assertEqual(self.enrollment.status, "ACTIVE")
+        self.assertEqual(list(self.lecture_attendances().values_list("pk", "status")), before)
+        self.assertEqual(self.access(0).status_code, 200)
+
     def learner_requests(self):
         parent_user = User.objects.create_user(username="qa-withdrawal-parent", tenant=self.tenant)
         TenantMembership.ensure_active(tenant=self.tenant, user=parent_user, role="parent")

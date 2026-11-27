@@ -127,6 +127,11 @@ class EnrollmentViewSet(ModelViewSet):
             raise ValidationError(
                 {"status": "삭제된 학생의 수강 상태는 활성 또는 대기로 변경할 수 없습니다."}
             )
+        serializer.instance = get_object_or_404(
+            self.get_queryset().select_for_update(of=("self",)), pk=serializer.instance.pk,
+        )
+        if serializer.validated_data.get("status") in {"ACTIVE", "PENDING"}:
+            enroll_repo.preserve_prior_lecture_withdrawal(tenant=self.request.tenant, enrollment=serializer.instance)
         enrollment = serializer.save()
         sync_enrollment_status_side_effects(enrollment)
 

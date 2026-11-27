@@ -340,6 +340,7 @@ class AttendanceViewSet(ModelViewSet):
             if enrollment.status != expected:
                 raise AttendanceMutationConflict()
             if scope == "lecture":
+                enroll_repo.mark_unrecorded_memberships_withdrawn(tenant=request.tenant, enrollment=enrollment)
                 enrollment.status = "ACTIVE"
                 enrollment.save(update_fields=["status"])
             restored = ensure_session_roster_membership(
@@ -384,6 +385,7 @@ class AttendanceViewSet(ModelViewSet):
                 )
                 return Response(AttendanceSerializer(instance).data)
 
+            enroll_repo.mark_unrecorded_memberships_withdrawn(tenant=tenant, enrollment=enrollment)
             if instance.status == "SECESSION" and enrollment.status == "INACTIVE":
                 return Response(AttendanceSerializer(instance).data)
 
