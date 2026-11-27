@@ -71,14 +71,14 @@ def register_with_notices(*, tenant, actor_id, lecture, students, request_id, st
     if len(roster) != len(ids):
         raise ValidationError({"students": "현재 학원의 활성 학생만 선택할 수 있습니다."})
     already_active = set(Enrollment.objects.filter(
-        tenant=tenant, student_id__in=ids, status="ACTIVE",
+        tenant=tenant, lecture__tenant=tenant, lecture__is_system=False, student_id__in=ids, status="ACTIVE",
     ).values_list("student_id", flat=True))
     bulk_create_enrollments(tenant=tenant, lecture_id=lecture, student_ids=ids, schedule_account_notice=False)
     recipients = []
     consumed = []
     now = timezone.now()
     for student in roster:
-        first = student.pk not in already_active and bool(
+        first = not lecture_obj.is_system and student.pk not in already_active and bool(
             student.pending_account_notice_since or student.pending_account_notice_student_password_ciphertext
             or student.pending_account_notice_parent_password_ciphertext
         )

@@ -17,6 +17,7 @@ from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, Notif
 from apps.domains.messaging.sqs_queue import MessagingSQSQueue
 from apps.domains.messaging.test_support import admit_registration_notification_fixture
 from apps.domains.students.test_support import create_student_account_fixture
+from apps.domains.video.models import Video
 from apps.support.enrollment.notice_dispatch import process_registration_notices
 from apps.support.messaging.student_dependencies import assert_current_delivery_contact
 
@@ -72,6 +73,43 @@ class RegistrationNoticesTests(APITestCase):
         self.assertEqual((first["student"]["status"], first["parent"]["status"]), ("shared_recipient", "queued"))
         second = self.post(request_id=str(uuid4()), student_notice="send", parent_notice="skip")
         self.assertEqual(second.data["students"][0]["student"]["status"], "queued")
+
+    def test_public_video_history_preserves_both_first_course_notices(self):
+        video = Video.objects.create(tenant=self.tenant, title="QA public video", duration=100,
+                                     visibility=Video.Visibility.PUBLIC, status=Video.Status.READY)
+        self.client.force_authenticate(self.student.user)
+        progress = self.client.post(f"/api/v1/student/video/videos/{video.pk}/progress/", {"last_position":10},
+                                    format="json", **self.headers)
+        self.assertEqual(progress.status_code, 200, progress.data)
+        history = Enrollment.objects.get(pk=progress.data["enrollment_id"], tenant=self.tenant, student=self.student)
+        self.assertTrue(history.lecture.is_system)
+        self.assertEqual(history.status, "ACTIVE")
+        self.assertFalse(ScheduledNotification.objects.filter(tenant=self.tenant).exists())
+
+        self.client.force_authenticate(self.actor)
+        hidden = self.post(lecture=history.lecture_id, request_id=str(uuid4()))
+        self.assertEqual(hidden.status_code, 201, hidden.data)
+        for role in ("student", "parent"):
+            self.assertEqual(hidden.data["students"][0][role]["status"], "not_first")
+        self.student.refresh_from_db()
+        self.assertIsNotNone(self.student.pending_account_notice_since)
+
+        first = self.post()
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(self.post().data, first.data)
+        repeat = self.post(request_id=str(uuid4()))
+        self.assertEqual(repeat.status_code, 201, repeat.data)
+        for role in ("student", "parent"):
+            self.assertEqual(first.data["students"][0][role]["status"], "queued")
+            self.assertEqual(repeat.data["students"][0][role]["status"], "not_first")
+        self.student.refresh_from_db()
+        self.assertIsNone(self.student.pending_account_notice_since)
+        with patch("apps.support.enrollment.notice_dispatch.send_welcome_messages", side_effect=self.emit_fixture):
+            process_registration_notices(limit=10)
+            self.assertEqual(process_registration_notices(limit=10), 0)
+        self.assertEqual(set(ScheduledNotification.objects.filter(tenant=self.tenant).values_list("business_idempotency_key", flat=True)),
+                         {row.business_key for row in EnrollmentNoticeRecipient.objects.filter(status="admitted")})
+        self.assertEqual(ScheduledNotification.objects.filter(tenant=self.tenant).count(), 2)
 
     def test_invalid_or_identifier_contact_admits_only_the_other_role(self):
         parent = self.student.parent
