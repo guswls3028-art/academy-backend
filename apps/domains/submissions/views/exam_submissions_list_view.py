@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from django.db.models import Exists, OuterRef, Q
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -39,6 +40,9 @@ def _extract_name_from_enrollment(enrollment) -> str:
 class ExamSubmissionsListView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(parameters=[OpenApiParameter(
+        name="focus_id", type=int, required=False, description="요청한 시험의 특정 제출 한 건만 조회합니다.",
+    )])
     def get(self, request, exam_id: int):
         issues_only = request.query_params.get("review_issues") == "1"
         tenant = getattr(request, "tenant", None)
@@ -65,6 +69,11 @@ class ExamSubmissionsListView(APIView):
             target_type=Submission.TargetType.EXAM,
             target_id=int(exam_id),
         )
+        focus_id = parse_query_int(request.query_params, "focus_id", min_value=1, max_value=2**63 - 1)
+        if "focus_id" in request.query_params:
+            if focus_id is None or len(request.query_params.getlist("focus_id")) != 1:
+                return Response({"detail": "focus_id must be a positive ID"}, status=400)
+            base = base.filter(id=focus_id)
         if session_id is not None:
             base = base.exclude(
                 Exists(omr_admissions_in_other_sessions(
@@ -94,11 +103,6 @@ class ExamSubmissionsListView(APIView):
                 if request.query_params.get("include_unbound", "1") != "0":
                     selected |= Q(enrollment_id__isnull=True)
                 base = base.filter(selected)
-            focus_id = request.query_params.get("focus_id")
-            if focus_id is not None:
-                if not focus_id.isdecimal() or int(focus_id) <= 0:
-                    return Response({"detail": "focus_id must be a positive ID"}, status=400)
-                base = base.filter(id=int(focus_id))
             total = base.count()
             raw_cursor = request.query_params.get("cursor")
             if raw_cursor is not None:
@@ -123,11 +127,9 @@ class ExamSubmissionsListView(APIView):
             enrollment_ids=enrollment_ids,
         )
 
-        submission_ids = [int(s.id) for s in qs]
-        # Result는 submission FK가 없고 attempt(ExamAttempt) 경유. submission 당 최신 Result 1건만
-        # 필요해서 attempt.submission_id 기준 첫 등장만 채택.
         score_map: Dict[int, float] = score_map_for_exam_submission_list(
-            submission_ids=submission_ids,
+            tenant=tenant, exam_id=int(exam_id), focus_id=focus_id if not issues_only else None,
+            submission_enrollments={s.id: s.enrollment_id for s in qs if s.enrollment_id in enrollment_map},
         )
 
         items: list[Dict[str, Any]] = []

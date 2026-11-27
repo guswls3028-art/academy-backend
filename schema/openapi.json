@@ -59674,6 +59674,14 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "description": "요청한 시험의 특정 제출 한 건만 조회합니다.",
+            "in": "query",
+            "name": "focus_id",
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {

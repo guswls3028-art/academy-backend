@@ -987,6 +987,12 @@ class TestC2AdminInboxesGuard(_SecurityFixtureMixin, TestCase):
         recent = self._call(lambda: view, "get", path, user=self.teacher, exam_id=self.exam.id)
         self.assertEqual(len(recent.data), 200)
         self.assertNotIn(old.id, [row["id"] for row in recent.data])
+        history = self._call(lambda: view, "get", path + f"?focus_id={old.id}",
+                             user=self.teacher, exam_id=self.exam.id)
+        self.assertEqual([r["id"] for r in history.data], [old.id])
+        other_history = self._call(lambda: view, "get", path + f"?focus_id={foreign.id}",
+                                   user=self.teacher, exam_id=self.exam.id)
+        self.assertEqual(other_history.data, [])
         issues = self._call(lambda: view, "get", path + "?review_issues=1&enrollment_ids=" + str(self.enrollment.id), user=self.teacher, exam_id=self.exam.id)
         self.assertEqual(issues.status_code, 200, issues.data)
         self.assertEqual(issues.data["total"], 1)

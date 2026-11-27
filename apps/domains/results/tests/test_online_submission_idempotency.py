@@ -173,6 +173,24 @@ class OnlineSubmissionIdempotencyTests(TestCase):
         self.assertEqual(old_replay.data["status"], "superseded")
         self.assertEqual(self.attempts().get(is_representative=True).submission_id, second.data["submission_id"])
 
+    def test_staff_submission_history_keeps_first_score_after_a_retake(self):
+        self.exam.allow_retake, self.exam.max_attempts = True, 2
+        self.exam.save(update_fields=["allow_retake", "max_attempts"])
+        wrong = [{"exam_question_id": q.pk, "answer": "9"} for q in self.questions]
+        first = self.submit(uuid.uuid4(), answers=wrong)
+        second = self.submit(uuid.uuid4())
+        self.assertEqual((first.status_code, second.status_code), (201, 201))
+        path = f"/api/v1/submissions/submissions/exams/{self.exam.pk}/"
+        for response, score in ((first, 0), (second, 100)):
+            sid = response.data["submission_id"]
+            request = self.factory.get(path, {"focus_id": sid})
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.staff)
+            result = resolve(path).func(request, exam_id=self.exam.pk)
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual([(r["id"], r["enrollment_id"], r["score"]) for r in result.data],
+                             [(sid, self.enrollment.pk, score)])
+
     def test_same_key_cannot_overwrite_answers(self):
         key = uuid.uuid4()
         first = self.submit(key)

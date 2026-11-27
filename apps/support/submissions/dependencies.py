@@ -569,7 +569,7 @@ def enrollment_map_for_submission_list(*, tenant, enrollment_ids: set[int]) -> d
         enrollment.id: enrollment
         for enrollment in (
             Enrollment.objects.select_related("student", "lecture")
-            .filter(id__in=enrollment_ids, tenant=tenant)
+            .filter(id__in=enrollment_ids, tenant=tenant, student__tenant=tenant, lecture__tenant=tenant)
         )
     }
 
@@ -591,34 +591,34 @@ def exam_submission_list_allowed(*, tenant, exam_id: int) -> bool:
     ).exists()
 
 
-def score_map_for_exam_submission_list(*, submission_ids: list[int]) -> dict[int, float]:
-    if not submission_ids:
+def score_map_for_exam_submission_list(
+    *, tenant, exam_id: int, submission_enrollments: dict[int, int], focus_id: int | None = None,
+) -> dict[int, float]:
+    if not submission_enrollments:
         return {}
 
+    from django.db.models import F
     from apps.domains.results.models import ExamAttempt, Result
+    from apps.domains.results.utils.initial_exam_score import stored_attempt_total
 
-    attempt_ids = list(
-        ExamAttempt.objects.filter(submission_id__in=submission_ids)
-        .values_list("id", flat=True)
-    )
-    if not attempt_ids:
-        return {}
-
-    score_map: dict[int, float] = {}
-    results_qs = (
-        Result.objects.filter(attempt_id__in=attempt_ids)
-        .select_related("attempt")
-        .only("id", "attempt_id", "attempt__submission_id", "total_score")
-        .order_by("-id")
-    )
-    for result in results_qs:
-        attempt = result.attempt
-        if not attempt or not attempt.submission_id:
-            continue
-        submission_id = int(attempt.submission_id)
-        if submission_id not in score_map and result.total_score is not None:
-            score_map[submission_id] = float(result.total_score)
-    return score_map
+    rows = Result.objects.filter(
+        target_type="exam", target_id=exam_id, enrollment__tenant=tenant,
+        attempt__exam_id=exam_id, attempt__exam__tenant=tenant, attempt__enrollment_id=F("enrollment_id"),
+        attempt__submission_id__in=submission_enrollments,
+    ).values_list("attempt__submission_id", "enrollment_id", "total_score")
+    scores = {sid: float(score) for sid, eid, score in rows
+              if submission_enrollments.get(sid) == eid and score is not None}
+    if focus_id in submission_enrollments and focus_id not in scores:
+        # A retake may now own the representative Result. Read only the requested sitting's saved score.
+        attempt = ExamAttempt.objects.regular().with_initial_grade().filter(
+            exam_id=exam_id, exam__tenant=tenant, enrollment__tenant=tenant,
+            enrollment_id=submission_enrollments[focus_id], submission_id=focus_id, status="done",
+        ).first()
+        if attempt and isinstance(attempt.meta, dict) and attempt.meta.get("status") != "NOT_SUBMITTED":
+            stored = stored_attempt_total(attempt.meta, initial=attempt.is_initial_grade)
+            if stored is not None:
+                scores[focus_id] = stored
+    return scores
 
 
 def enrollment_belongs_to_tenant(*, enrollment_id, tenant) -> bool:
