@@ -3,7 +3,8 @@
 An actual ``Attendance.status == ABSENT`` means the learner has neither an
 onsite nor video/material obligation for that session. ``ONLINE`` is the
 video-requested learning state and remains actionable for both assessments.
-Missing attendance rows retain the legacy active-roster behavior.
+A retained roster with SECESSION has no new learning obligations after a
+different session is restored. Missing attendance still follows the active roster.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import Any
 from django.db.models import F
 
 
-INELIGIBLE_LEARNING_TODO_STATUSES = frozenset({"ABSENT"})
+INELIGIBLE_LEARNING_TODO_STATUSES = frozenset({"ABSENT", "SECESSION"})
 
 
 def attendance_status_is_learning_todo_eligible(status: str | None) -> bool:
@@ -49,60 +50,33 @@ def eligible_learning_todo_enrollment_ids(
     tenant: Any,
     session: Any,
 ) -> set[int]:
-    """Return the active exact-session roster minus actual ABSENT rows."""
-    from apps.domains.attendance.models import Attendance
-    from apps.domains.enrollment.models import SessionEnrollment
-
-    roster_ids = set(
-        SessionEnrollment.objects.filter(
-            tenant=tenant,
-            session=session,
-            enrollment__tenant=tenant,
-            enrollment__lecture=session.lecture,
-            enrollment__status="ACTIVE",
-            enrollment__student__deleted_at__isnull=True,
-        ).values_list("enrollment_id", flat=True)
+    """Use the same eligible roster as the assignment picker in one query."""
+    return set(
+        eligible_session_enrollments(tenant=tenant, session_id=session.pk)
+        .order_by().values_list("enrollment_id", flat=True)
     )
-    if not roster_ids:
-        return set()
-    absent_ids = set(
-        Attendance.objects.filter(
-            tenant=tenant,
-            session=session,
-            enrollment_id__in=roster_ids,
-            status__in=INELIGIBLE_LEARNING_TODO_STATUSES,
-        ).values_list("enrollment_id", flat=True)
-    )
-    return {int(enrollment_id) for enrollment_id in roster_ids - absent_ids}
 
 
 def eligible_session_enrollments(*, tenant: Any, session_id: int):
     """Return editable roster rows under the same learning-todo rule."""
     from apps.domains.attendance.models import Attendance
     from apps.domains.enrollment.models import SessionEnrollment
-    from apps.domains.lectures.models import Session
-
-    session = Session.objects.filter(
-        id=int(session_id),
-        lecture__tenant=tenant,
-    ).first()
-    if session is None:
-        return SessionEnrollment.objects.none()
-    absent_ids = Attendance.objects.filter(
+    excluded_ids = Attendance.objects.filter(
         tenant=tenant,
-        session=session,
+        session_id=session_id,
         status__in=INELIGIBLE_LEARNING_TODO_STATUSES,
     ).values_list("enrollment_id", flat=True)
     return (
         SessionEnrollment.objects.filter(
             tenant=tenant,
-            session=session,
+            session_id=session_id,
+            session__lecture__tenant=tenant,
             enrollment__tenant=tenant,
-            enrollment__lecture=session.lecture,
+            enrollment__lecture_id=F("session__lecture_id"),
             enrollment__status="ACTIVE",
             enrollment__student__deleted_at__isnull=True,
         )
-        .exclude(enrollment_id__in=absent_ids)
+        .exclude(enrollment_id__in=excluded_ids)
         .select_related("enrollment", "enrollment__student", "enrollment__lecture")
         .order_by("enrollment_id")
     )
@@ -138,18 +112,18 @@ def learning_todo_eligible_pairs(
     }
     if not valid_pairs:
         return set()
-    return valid_pairs - actual_absent_learning_todo_pairs(
+    return valid_pairs - ineligible_learning_todo_pairs(
         tenant=tenant,
         enrollment_session_pairs=valid_pairs,
     )
 
 
-def actual_absent_learning_todo_pairs(
+def ineligible_learning_todo_pairs(
     *,
     tenant: Any,
     enrollment_session_pairs: Iterable[tuple[int, int]],
 ) -> set[tuple[int, int]]:
-    """Find actual ABSENT rows for pairs whose active roster scope is already checked."""
+    """Find absent or withdrawn pairs within the requested enrollment and session bounds."""
     from apps.domains.attendance.models import Attendance
 
     pairs = {

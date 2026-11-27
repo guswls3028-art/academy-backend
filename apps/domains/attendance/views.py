@@ -294,8 +294,12 @@ class AttendanceViewSet(ModelViewSet):
                 SessionEnrollment.objects.filter(
                     tenant=tenant,
                     enrollment=enrollment,
+                    session__lecture_id=enrollment.lecture_id,
                     session__exams__id__in=exam_ids,
                 )
+                .exclude(session_id__in=Attendance.objects.filter(
+                    tenant=tenant, enrollment=enrollment, status="SECESSION",
+                ).values("session_id"))
                 .values_list("session__exams__id", flat=True)
                 .distinct()
             )
