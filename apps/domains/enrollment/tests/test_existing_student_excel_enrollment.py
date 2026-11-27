@@ -34,49 +34,7 @@ class _WorkbookStorage:
         workbook.save(local_path)
 
 
-class ExistingStudentExcelEnrollmentTests(TestCase):
-    @patch("apps.domains.enrollment.services.schedule_pending_account_notice")
-    def test_implicit_first_session_stays_withdrawn_and_explicit_third_restores_once(self, _notice):
-        from apps.domains.attendance.models import Attendance
-        from apps.domains.enrollment.models import SessionEnrollment
-        from apps.domains.lectures.models import Session
-
-        enrollment = Enrollment.objects.create(tenant=self.tenant, lecture=self.lecture, student=self.student, status="INACTIVE")
-        sessions = [Session.objects.create(lecture=self.lecture, order=i, title=f"QA {i}") for i in (1, 2, 3)]
-        rows = [Attendance.objects.create(tenant=self.tenant, enrollment=enrollment, session=s,
-                                          status="SECESSION", memo="교사 기록") for s in sessions]
-        def import_workbook(job_id, **selection):
-            job = job_create(job_id=job_id, job_type="excel_parsing", status="RUNNING",
-                             tenant_id=str(self.tenant.pk), payload={})
-            worker = ExcelParsingService(_WorkbookStorage([
-                ["학생번호", "이름", "학부모전화번호"],
-                [self.student.ps_number, self.student.name, self.student.parent_phone],
-            ]))
-            result = worker.run(job.job_id, {
-                "tenant_id": self.tenant.pk, "lecture_id": self.lecture.pk,
-                "file_key": "excel/synthetic-reenroll.xlsx", **selection,
-            })
-            job.refresh_from_db()
-            self.assertEqual(job.status, "DONE")
-            return result
-
-        implicit = import_workbook("preserve-withdrawal")
-        self.assertEqual(implicit["enrolled_count"], 1)
-        self.assertEqual(implicit["withdrawn_session_preserved_count"], 1)
-        self.assertEqual(implicit["session_enrolled_count"], 0)
-        self.assertEqual(implicit["enrolled_rows"][0]["session_registration"], "withdrawal_preserved")
-        members = SessionEnrollment.objects.filter(tenant=self.tenant, enrollment=enrollment)
-        self.assertFalse(members.exists())
-        for attempt in range(2):
-            explicit = import_workbook(f"restore-third-{attempt}", session_id=sessions[2].pk)
-            self.assertEqual(explicit["session_enrolled_count"], 1)
-            self.assertEqual(explicit["withdrawn_session_preserved_count"], 0)
-        self.assertEqual(list(members.values_list("session_id", flat=True)), [sessions[2].pk])
-        for i, row in enumerate(rows):
-            row.refresh_from_db()
-            self.assertEqual(row.status, "UNSET" if i == 2 else "SECESSION")
-            self.assertEqual(row.memo, "교사 기록")
-
+class ExistingStudentExcelFixture:
     def setUp(self):
         self.tenant = Tenant.objects.create(
             name="기존 학생 수강 엑셀 학원",
@@ -126,6 +84,8 @@ class ExistingStudentExcelEnrollmentTests(TestCase):
             expires_at=timezone.now() + timedelta(minutes=10),
         )
 
+
+class ExistingStudentExcelEnrollmentTests(ExistingStudentExcelFixture, TestCase):
     @patch("apps.domains.enrollment.services.schedule_pending_account_notice")
     def test_existing_only_import_preserves_credentials_and_skips_unknown_student(
         self,

@@ -126,8 +126,9 @@ PostgreSQL 잠금 경합을 검증한다. `test_bulk_present_undo.py`는 잠금 
 | 퇴원 기록과 공유 시험이 함께 있음 | 학생과 선택 자녀 학부모의 시험 링크는 응시할 수 있는 차시를 우선한다. 마지막 참여 차시를 퇴원하면 공유 시험의 배정도 해제한다. |
 | 퇴원 전에 점수·응시·제출이 있었음 | 정상 이력 조회 정책과 원래 점수는 유지한다. 이력을 읽는 것으로 새 응시 권한이 생기지 않는다. |
 
-검증은 `apps/domains/attendance/tests/test_secession_terminal_guard.py`의 실제 퇴원·복구 요청과
-학생·자녀 선택 학부모 목록, `tests/test_attendance_learning_todo_eligibility_pg.py`의
+검증은 `apps/domains/attendance/tests/test_secession_terminal_guard.py`의 퇴원·복구 상태 검사,
+`tests/test_attendance_withdrawal_integrations.py`의 PUT·엑셀 등록과 학생·선택 자녀의 목록,
+`tests/test_attendance_learning_todo_eligibility_pg.py`의
 배정 API·공유 시험·과거 성적·동시 요청 검사로 수행한다.
 
 출결 `PATCH/PUT`, 전체 현장·되돌리기, 출결 생성 후에는 현재 상태로 미수행 TODO를
