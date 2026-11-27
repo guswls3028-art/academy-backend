@@ -330,7 +330,10 @@ class AttendanceViewSet(ModelViewSet):
             enrollment = instance.enrollment
             # A retry after a lost response may read back the same committed result.
             if instance.status != "SECESSION":
-                if instance.status == new_status and enrollment.status == "ACTIVE":
+                if (instance.status == new_status and enrollment.status == "ACTIVE"
+                        and SessionEnrollment.objects.filter(
+                            tenant=request.tenant, enrollment_id=enrollment.id, session_id=instance.session_id,
+                        ).exists()):
                     return Response(self.get_serializer(instance).data)
                 raise AttendanceMutationConflict()
             expected = {"session": "ACTIVE", "lecture": "INACTIVE"}[scope]

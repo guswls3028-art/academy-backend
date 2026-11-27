@@ -110,6 +110,8 @@ class AttendanceSecessionTerminalGuardTests(TestCase):
         self.assertEqual(other.status, "SECESSION")
         self.assertEqual(SessionEnrollment.objects.filter(enrollment=self.enrollment, session=self.attendance.session).count(), 1)
         self.assertEqual(self._patch({"status": "ABSENT", "restore_scope": "lecture"}).status_code, 409)
+        SessionEnrollment.objects.filter(enrollment=self.enrollment, session=self.attendance.session).delete()
+        self.assertEqual(self._patch(payload).status_code, 409)
 
     def test_session_restore_requires_the_reviewed_scope(self):
         self.assertEqual(self._patch({"status": "LATE", "restore_scope": "session"}).status_code, 409)
