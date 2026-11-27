@@ -1494,6 +1494,60 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
             target_type="exam", target_id=self.exam.id, enrollment=self.attendance_roster_enrollment,
         ).total_score, 20)
 
+    def test_first_score_or_omr_never_assigns_withdrawn_only_students(self):
+        from apps.support.omr.candidate_matching import ensure_exam_enrollment_candidate
+
+        # One withdrawn student still has a roster row. Another has only attendance history.
+        retained = self.unassigned_enrollment
+        SessionEnrollment.objects.create(tenant=self.tenant, session=self.session, enrollment=retained)
+        for enrollment in (retained, self.attendance_roster_enrollment, self.assigned_enrollment):
+            Attendance.objects.create(tenant=self.tenant, session=self.session, enrollment=enrollment, status="SECESSION")
+        # This student also attends a different, still valid session of the same exam.
+        other = Session.objects.create(lecture=self.lecture, order=2, title="Restored session")
+        self.exam.sessions.add(other)
+        Attendance.objects.create(tenant=self.tenant, session=other, enrollment=self.assigned_enrollment, status="ONLINE")
+        targets = ExamEnrollment.objects.filter(exam=self.exam)
+        for action in ("score", "omr"):
+            with self.subTest(action=action):
+                targets.delete()
+                if action == "score":
+                    saved = self._patch(AdminExamTotalScoreView, {"score": 83}, enrollment=self.session_roster_enrollment)
+                    self.assertEqual(saved.status_code, 200, saved.data)
+                    self.assertEqual(Result.objects.get(
+                        target_type="exam", target_id=self.exam.pk, enrollment=self.session_roster_enrollment,
+                    ).total_score, 83)
+                else:
+                    self.assertTrue(ensure_exam_enrollment_candidate(
+                        tenant=self.tenant, exam_id=self.exam.pk, enrollment_id=self.session_roster_enrollment.pk,
+                    ))
+                self.assertSetEqual(set(targets.values_list("enrollment_id", flat=True)),
+                                    {self.session_roster_enrollment.pk, self.assigned_enrollment.pk})
+        self.assertEqual(Attendance.objects.filter(tenant=self.tenant, session=self.session, status="SECESSION").count(), 3)
+
+    def test_first_omr_respects_previously_set_roster_and_saved_score(self):
+        from apps.support.omr.candidate_matching import ensure_exam_enrollment_candidate
+
+        score = self._patch(AdminExamTotalScoreView, {"score": 75}, enrollment=self.assigned_enrollment)
+        self.assertEqual(score.status_code, 200, score.data)
+        target = ExamEnrollment.objects.get(exam=self.exam, enrollment=self.assigned_enrollment)
+        result = Result.objects.get(target_type="exam", target_id=self.exam.id, enrollment=self.assigned_enrollment)
+        Attendance.objects.create(tenant=self.tenant, session=self.session, enrollment=self.assigned_enrollment,
+                                  status="SECESSION")
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.session_roster_enrollment)
+        self.assertTrue(ensure_exam_enrollment_candidate(
+            tenant=self.tenant, exam_id=self.exam.pk, enrollment_id=self.session_roster_enrollment.pk,
+        ))
+        self.assertTrue(ExamEnrollment.objects.filter(pk=target.pk).exists())
+        result.refresh_from_db()
+        self.assertEqual(result.total_score, 75)
+        self.assertEqual(ExamEnrollment.objects.filter(exam=self.exam).count(), 2)
+        request = self.factory.get("/results/admin/exams/detail/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        detail = AdminExamResultDetailView.as_view()(request, exam_id=self.exam.pk, enrollment_id=target.enrollment_id)
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertEqual(detail.data["total_score"], 75)
+
     def test_attendance_from_another_lecture_is_not_a_score_roster_assignment(self):
         other_lecture = Lecture.objects.create(
             tenant=self.tenant,
