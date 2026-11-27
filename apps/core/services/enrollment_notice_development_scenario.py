@@ -57,19 +57,51 @@ def setup_seal(code):
                                    result="success", payload__tenant_code=code)
 
 
-def mark_scope(tenant, release):
+def mark_scope(tenant, release, selected_role="student"):
     seal = setup_seal(tenant.code)
     OpsAuditLog.objects.create(action=PREFIX + "scope", actor_username=ACTOR, target_tenant=tenant,
-                               payload={"setup_id": seal.pk, "source_id": tenant.pk, "release": release},
+                               payload={"setup_id": seal.pk, "source_id": tenant.pk, "release": release,
+                                        "selected_role": selected_role},
                                result="success")
+
+
+def prepare_families(tenant, password):
+    """Give both choices a usable account, including the role excluded in each rehearsal."""
+    from apps.domains.parents.services import ensure_parent_account_for_student
+
+    seal = setup_seal(tenant.code)
+    require(seal.target_tenant_id == tenant.pk and OpsAuditLog.objects.filter(
+        action=PREFIX + "scope", actor_username=ACTOR, result="success", target_tenant=tenant,
+        payload__setup_id=seal.pk, payload__source_id=tenant.pk,
+    ).exists(), "Family setup requires the owned enrollment fixture.")
+    students = list(Student.objects.select_for_update().filter(tenant=tenant, deleted_at__isnull=True).order_by("ps_number"))
+    require([(s.ps_number, s.phone, s.parent_phone, s.uses_identifier) for s in students] == [
+        (f"QA-{i:04d}", f"01098{i:06d}", f"01099{i:06d}", False) for i in (1, 2)], "Unexpected synthetic family.")
+    for student in students:
+        parent = ensure_parent_account_for_student(
+            tenant=tenant, parent_phone=student.parent_phone, student_name=student.name, initial_password=password,
+        ).parent
+        require(parent.tenant_id == tenant.pk and parent.phone == student.parent_phone
+                and parent.user_id and parent.user.tenant_id == tenant.pk and parent.user.is_active
+                and parent.user_id != student.user_id and student.parent_id in (None, parent.pk), "Parent binding changed.")
+        if student.parent_id is None:
+            student.parent = parent
+            student.save(update_fields=["parent"])
+
+
+def role_choices(role):
+    require(role in ("student", "parent"), "Invalid enrollment QA role.")
+    return {"student_notice": "send" if role == "student" else "skip",
+            "parent_notice": "send" if role == "parent" else "skip"}
 
 
 def batch_for(plan):
     p = plan.payload
     batch = Registration.objects.filter(tenant_id=p["tenant_id"], actor_id=p["actor_id"], request_id=p["request_id"],
                                         lecture_id=p["lecture_id"]).get()
-    require(sorted(batch.student_ids) == sorted(p["student_ids"]) and batch.student_notice == "send"
-            and batch.parent_notice == "skip", "Registration differs from its sealed choices.")
+    choices = role_choices(p.get("selected_role", "student"))
+    require(sorted(batch.student_ids) == sorted(p["student_ids"]) and
+            all(getattr(batch, key) == value for key, value in choices.items()), "Registration differs from its sealed choices.")
     return batch
 
 
@@ -85,7 +117,12 @@ def run_scheduler(plan_id, release, production_database):
     plan = OpsAuditLog.objects.get(pk=plan_id, action=PLAN, actor_username=ACTOR, result="success")
     p = plan.payload
     seal = setup_seal(plan.target_tenant.code)
+    scope = OpsAuditLog.objects.get(action=PREFIX + "scope", actor_username=ACTOR, result="success",
+                                    target_tenant_id=plan.target_tenant_id, payload__setup_id=seal.pk,
+                                    payload__release=release, payload__source_id=plan.target_tenant_id)
+    selected = p.get("selected_role", "student")
     require(p["release"] == release and p["schema"] == SCHEMA and p["setup_id"] == seal.pk
+            and selected == scope.payload.get("selected_role", "student")
             and seal.target_tenant_id == plan.target_tenant_id == p["tenant_id"] != owner_id()
             and p["request_id"] == plan.summary and len(set(p["student_ids"])) == 2, "Invalid scheduler scope.")
     for _ in range(75):
@@ -98,7 +135,7 @@ def run_scheduler(plan_id, release, production_database):
         boxes = list(batch.recipients.exclude(outbox_id=None).values_list("outbox_id", flat=True))
         if boxes:
             bound = list(ScheduledNotification.objects.filter(
-                pk__in=boxes, tenant_id=plan.target_tenant_id, trigger="registration_approved_student",
+                pk__in=boxes, tenant_id=plan.target_tenant_id, trigger=f"registration_approved_{selected}",
             ).values_list("pk", flat=True))
             require(set(bound) == set(boxes), "Foreign scheduled notification.")
             process_due_notifications(notification_ids=bound, batch_size=2)
@@ -108,7 +145,7 @@ def run_scheduler(plan_id, release, production_database):
     raise CommandError("Development scheduled admissions did not complete.")
 
 
-def run(tenant, password, *, release, production_database):
+def run(tenant, password, *, release, production_database, selected_role):
     from apps.core.services.wrong_note_development_scenario import api
     check_mock()
     require(tenant.pk != owner_id(), "Expected a separate source tenant.")
@@ -119,6 +156,8 @@ def run(tenant, password, *, release, production_database):
     require([(number, phone, identifier) for _, number, phone, identifier in students] == [
         (f"QA-{i:04d}", f"01098{i:06d}", False) for i in (1, 2)], "Expected the two synthetic contacts.")
     ids = [row[0] for row in students]
+    choices = role_choices(selected_role)
+    excluded = "parent" if selected_role == "student" else "student"
     with requests.Session() as http:
         http.trust_env = False
         http.headers["X-Tenant-Code"] = tenant.code
@@ -133,13 +172,14 @@ def run(tenant, password, *, release, production_database):
         plan = OpsAuditLog.objects.create(
             action=PLAN, actor_username=ACTOR, target_tenant=tenant, summary=request_id, result="success",
             payload=dict(schema=SCHEMA, setup_id=seal.pk, tenant_id=tenant.pk, release=release, request_id=request_id,
-                         actor_id=actor, lecture_id=lecture, student_ids=ids, redelivery_student_id=ids[0]),
+                         actor_id=actor, lecture_id=lecture, student_ids=ids, redelivery_student_id=ids[0],
+                         selected_role=selected_role),
         )
         args = [sys.executable, str(Path(__file__).resolve().parents[3] / "manage.py"), "verify_development_wrong_notes",
                 "--release", release, "--production-database", production_database, "--enrollment-tick", str(plan.pk)]
         child = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
-            body = dict(lecture=lecture, students=ids, request_id=request_id, student_notice="send", parent_notice="skip")
+            body = dict(lecture=lecture, students=ids, request_id=request_id, **choices)
             for _ in range(2):
                 result = api(http, "POST", "enrollments/register-with-notices/", 201, json=body)
                 require(result["request_id"] == request_id, "Registration replay returned a different receipt.")
@@ -152,21 +192,22 @@ def run(tenant, password, *, release, production_database):
                 rows = result["students"]
                 require(result["request_id"] == request_id and result["lecture"] == lecture
                         and {r["id"] for r in rows} == set(ids)
-                        and all(r["parent"] == {"status": "skipped", "log_id": None} for r in rows),
+                        and all(r[excluded] == {"status": "skipped", "log_id": None} for r in rows),
                         "Saved recipient choices or registration identity changed.")
-                if child.poll() == 0 and all(r["student"]["status"] == "accepted" for r in rows):
+                if child.poll() == 0 and all(r[selected_role]["status"] == "accepted" for r in rows):
                     evidence = worker_evidence(plan, batch)
                     if evidence is not None:
                         redis, locks, _ = cache_state(evidence)
                         if redis.exists(*locks):
                             time.sleep(2)
                             continue
-                        require(set(evidence["logs"]) == {r["student"]["log_id"] for r in rows},
+                        require(set(evidence["logs"]) == {r[selected_role]["log_id"] for r in rows},
                                 "Product and worker receipts differ.")
                         checked = api(http, "POST", "enrollments/verify-registration-notice/", json={
                             "lecture": lecture, "request_id": request_id, "log_id": evidence["logs"][0]})
                         require(checked["provider_delivery_status"] == "unavailable", "Unexpected mock carrier status.")
-                        return {"scheduled_students": 2, "acknowledged": 2, "redelivered": 1,
+                        return {"scheduled_students": 2, "selected_role": selected_role,
+                                "excluded_role": excluded, "skipped": len(rows), "acknowledged": 2, "redelivered": 1,
                                 "mock_calls": 2, "request_id": request_id, "registration_id": batch.pk,
                                 "setup_id": seal.pk, "source_tenant_id": tenant.pk,
                                 "owner_tenant_id": evidence["owner_id"], "deliveries": evidence["deliveries"]}
@@ -187,6 +228,9 @@ def worker_evidence(plan, batch):
     tenant = batch.tenant_id
     owner = owner_id()
     p = plan.payload
+    selected = p.get("selected_role", "student")
+    choices = role_choices(selected)
+    require(all(getattr(batch, key) == value for key, value in choices.items()), "Unsealed role choices.")
     people = list(batch.recipients.order_by("student_id", "role"))
     require({(r.student_id, r.role) for r in people} == {(s, role) for s in p["student_ids"]
             for role in ("student", "parent")} and len(people) == 4, "Unexpected recipient set.")
@@ -194,20 +238,20 @@ def worker_evidence(plan, batch):
                 "recipients": [r.pk for r in people],
                 "owner_id": owner, "registration_id": batch.pk}
     for r in people:
-        if r.role == "parent":
-            require(r.status == "skipped" and not r.outbox_id and not r.business_key, "Skipped parent has work.")
+        if r.role != selected:
+            require(r.status == "skipped" and not r.outbox_id and not r.business_key, "Excluded role has work.")
             continue
         if r.status != "admitted":
             return None
         outbox = ScheduledNotification.objects.get(pk=r.outbox_id, tenant_id=tenant,
-            business_idempotency_key=r.business_key, trigger="registration_approved_student")
+            business_idempotency_key=r.business_key, trigger=f"registration_approved_{selected}")
         require(outbox.payload.get("domain_object_id") == f"enrollment-notice:{r.pk}"
                 and outbox.payload.get("tenant_id") == owner and outbox.payload.get("source_tenant_id") == tenant
-                and outbox.payload.get("target_id") == f"student:{r.student_id}", "Outbox ownership mismatch.")
+                and outbox.payload.get("target_id") == f"{selected}:{r.student_id}", "Outbox ownership mismatch.")
         if outbox.status != "sent":
             return None
         log = NotificationLog.objects.filter(tenant_id=owner, source_tenant_id=tenant,
-            message_mode="alimtalk", target_type="account", target_id=f"student:{r.student_id}",
+            message_mode="alimtalk", target_type="account", target_id=f"{selected}:{r.student_id}",
             business_idempotency_key=r.business_key, recipient_fingerprint=r.recipient_fingerprint).first()
         if not log or not log.success or log.status != "sent":
             return None
@@ -280,7 +324,7 @@ def prune_completed(plan, batch):
     require(not redis.exists(*locks), "Worker still owns a message lock.")
     exact = NotificationLog.objects.select_for_update().filter(
         pk__in=inv["logs"], tenant_id=inv["owner_id"], source_tenant_id=tid, status="sent", success=True,
-        business_idempotency_key__in=batch.recipients.filter(role="student").values("business_key"))
+        business_idempotency_key__in=batch.recipients.filter(role=plan.payload.get("selected_role", "student")).values("business_key"))
     require(sorted(exact.values_list("pk", flat=True)) == sorted(inv["logs"]), "Owner rows changed.")
     exact.delete()
     redis.delete(*progress)
@@ -315,6 +359,8 @@ def cleanup(code, capability):
                                                result="success", actor_username=ACTOR)
             if plans.exists() and Registration.objects.filter(tenant_id=tid).exists():
                 plan = plans.get()
+                require(plan.payload.get("selected_role", "student") == mark.payload.get("selected_role", "student"),
+                        "Cleanup role differs from the owned scope.")
                 batch = batch_for(plan)
                 require(Registration.objects.filter(tenant_id=tid).count() == 1, "Unexpected registration batch.")
                 inv = prune_completed(plan, batch)
@@ -330,7 +376,8 @@ def cleanup(code, capability):
                            plan_id=unused.pk if unused else 0, registration_id=0)
                 if unused:
                     unused.delete()
-            inv.update(setup_id=seal.pk, source_id=tid, scope_id=mark.pk, release=mark.payload["release"])
+            inv.update(setup_id=seal.pk, source_id=tid, scope_id=mark.pk, release=mark.payload["release"],
+                       selected_role=mark.payload.get("selected_role", "student"))
             inv.pop("deliveries", None)  # Only row IDs and cache keys are needed for recovery.
             mark.delete()
             OpsAuditLog.objects.create(action=PREFIX + "cleanup", actor_username=ACTOR, payload=inv, result="success")

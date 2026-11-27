@@ -6,9 +6,21 @@ param(
     [Parameter(Mandatory)][string]$ManifestPath,
     [Parameter(Mandatory)][string]$LockOwner,
     [switch]$CleanupOnly,
-    [switch]$EnrollmentNotices
+    [switch]$EnrollmentNotices,
+    [ValidateSet("student", "parent")][string]$EnrollmentRecipient
 )
 $ErrorActionPreference = "Stop"
+if ($EnrollmentRecipient -and (-not $EnrollmentNotices -or $CleanupOnly)) {
+    throw "Select a recipient only for a new enrollment notification scenario."
+}
+if ($EnrollmentRecipient) { $EnrollmentRecipient = $EnrollmentRecipient.ToLowerInvariant() }
+if ($EnrollmentNotices -and -not $CleanupOnly -and -not $EnrollmentRecipient) {
+    # Each invocation rechecks the release lock, owns its fixture and reports its own terminal command.
+    foreach ($role in @("student", "parent")) {
+        & $PSCommandPath @PSBoundParameters -EnrollmentRecipient $role
+    }
+    return
+}
 $script:PlanMode = $false
 . (Join-Path $PSScriptRoot "core/env.ps1")
 . (Join-Path $PSScriptRoot "core/ssot.ps1")
@@ -94,6 +106,7 @@ foreach ($image in $images) {
 }
 $option = if ($CleanupOnly) { "--cleanup-only" } else { "" }
 if ($EnrollmentNotices) { $option = "--enrollment-notices $option" }
+if ($EnrollmentRecipient) { $option = "$option --enrollment-recipient $EnrollmentRecipient" }
 $command = $command.Replace("__RELEASE__", $ReleaseId).Replace("__PROD__", $ProductionDatabase).Replace("__OPTION__", $option).Replace("`r", "")
 $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($command))
 $paramsRef = Convert-JsonArgToFileRef (@{
@@ -133,8 +146,15 @@ if ($EnrollmentNotices) {
     foreach ($field in @("registration_batches","notice_recipients","notice_outboxes","owner_notice_logs","worker_evidence","messaging_redis")) {
         if ($null -eq $receipt.remaining.$field -or $receipt.remaining.$field -ne 0) { throw "Enrollment residue: $field." }
     }
-    if (-not $CleanupOnly -and ($receipt.scheduled_students -ne 2 -or $receipt.acknowledged -ne 2 -or
-        $receipt.redelivered -ne 1 -or $receipt.mock_calls -ne 2)) { throw "Incomplete enrollment worker receipt." }
+    if (-not $CleanupOnly) {
+        $excluded = if ($EnrollmentRecipient -eq "student") { "parent" } else { "student" }
+        if ($receipt.selected_role -cne $EnrollmentRecipient -or $receipt.excluded_role -cne $excluded -or
+            $receipt.skipped -ne 2 -or $receipt.scheduled_students -ne 2 -or $receipt.acknowledged -ne 2 -or
+            $receipt.redelivered -ne 1 -or $receipt.mock_calls -ne 2 -or @($receipt.deliveries).Count -ne 2 -or
+            @($receipt.deliveries | Where-Object { $_.role -cne $EnrollmentRecipient }).Count -ne 0) {
+            throw "Incomplete enrollment worker receipt for $EnrollmentRecipient."
+        }
+    }
 } elseif (-not $CleanupOnly -and ($receipt.exam_questions -ne 25 -or $receipt.homework_questions -ne 5 -or
     $receipt.approved_answers -ne 30 -or $receipt.pdf_members -ne 2 -or
     @($receipt.acknowledged_segmentation_jobs | Sort-Object -Unique).Count -ne 2 -or

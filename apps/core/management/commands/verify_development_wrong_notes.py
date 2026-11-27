@@ -119,6 +119,7 @@ class Command(BaseCommand):
         modes = parser.add_mutually_exclusive_group()
         modes.add_argument("--enrollment-notices", action="store_true")
         modes.add_argument("--enrollment-tick", type=int, metavar="SEALED_PLAN_ID")
+        parser.add_argument("--enrollment-recipient", choices=("student", "parent"))
 
     def handle(self, *args, **options):
         # Reserve a host-local recovery capability, never emitted through SSM or copied to a runner.
@@ -128,6 +129,9 @@ class Command(BaseCommand):
         from apps.core.services.wrong_note_development_scenario import UncertainWrite, run
 
         notices = options["enrollment_notices"]
+        role = options["enrollment_recipient"] or "student"
+        if options["enrollment_recipient"] and (not notices or options["cleanup_only"]):
+            raise CommandError("Recipient selection requires a new enrollment scenario.")
         cleanup_scope = cleanup
         if notices or options["enrollment_tick"] is not None:
             from apps.core.services import enrollment_notice_development_scenario as notice
@@ -154,7 +158,10 @@ class Command(BaseCommand):
                 saved = json.loads(state.read_text())
                 residue = cleanup_scope(saved["code"], saved["capability"])
                 state.unlink()
-                self.stdout.write(json.dumps({"status": f"{status_prefix}_CLEANUP_PASS", "remaining": residue}))
+                receipt = {"status": f"{status_prefix}_CLEANUP_PASS", "remaining": residue}
+                if notices:
+                    receipt["selected_role"] = saved.get("selected_role", "student")
+                self.stdout.write(json.dumps(receipt))
                 return
             if state.exists():
                 raise CommandError("An owned scope awaits cleanup on this release. Recover it before another run.")
@@ -165,14 +172,18 @@ class Command(BaseCommand):
             password = secrets.token_urlsafe(32)
             with state.open("x", encoding="utf-8") as stream:
                 os.fchmod(stream.fileno(), 0o600)
-                json.dump({"code": code, "capability": capability}, stream)
+                owned_scope = {"code": code, "capability": capability}
+                if notices:
+                    owned_scope["selected_role"] = role
+                json.dump(owned_scope, stream)
                 stream.flush()
                 os.fsync(stream.fileno())
             try:
                 if notices:
                     with transaction.atomic():
                         tenant = setup(code, capability, password)
-                        notice.mark_scope(tenant, release)
+                        notice.mark_scope(tenant, release, role)
+                        notice.prepare_families(tenant, password)
                 else:
                     tenant = setup(code, capability, password)
             except Exception:
@@ -183,7 +194,8 @@ class Command(BaseCommand):
             self.stdout.write(f"{status_prefix}_QA_STARTED tenant={code} id={tenant.pk}")
             try:
                 if notices:
-                    result = notice.run(tenant, password, release=release, production_database=options["production_database"])
+                    result = notice.run(tenant, password, selected_role=role, release=release,
+                                        production_database=options["production_database"])
                 else:
                     result = run(tenant, password)
             except UncertainWrite:

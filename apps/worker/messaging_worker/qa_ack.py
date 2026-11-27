@@ -44,22 +44,23 @@ def enrollment_ack_scope(cfg, raw, data, owner_id, source_id):
     if os.environ.get("ACADEMY_RUNTIME_ENV") != "development":
         return None
     marker = re.fullmatch(r"enrollment-notice:([1-9][0-9]{0,17})", str(data.get("domain_object_id", "")))
+    event_type = data.get("event_type")
     if (not marker or owner_id != cfg.OWNER_TENANT_ID or not source_id
             or source_id == owner_id or data.get("target_type") != "account"
-            or data.get("event_type") != "registration_approved_student"):
+            or event_type not in ("registration_approved_student", "registration_approved_parent")):
         return None
+    role = event_type.removeprefix("registration_approved_")
 
     from apps.core.models import OpsAuditLog
     from apps.core.services.development_qa_ownership import WRONG_NOTE_SETUP_SCHEMA
     from apps.domains.enrollment.models import EnrollmentNoticeRecipient
 
     recipient = EnrollmentNoticeRecipient.objects.select_related("registration").filter(
-        pk=int(marker[1]), role="student", registration__tenant_id=source_id,
+        pk=int(marker[1]), role=role, registration__tenant_id=source_id,
         registration__lecture__tenant_id=source_id, status="admitted", outbox_id__isnull=False,
         business_key=data.get("business_idempotency_key") or "",
-        registration__student_notice="send", registration__parent_notice="skip",
     ).first()
-    if not recipient or data.get("target_id") != f"student:{recipient.student_id}" or not recipient.business_key:
+    if not recipient or data.get("target_id") != f"{role}:{recipient.student_id}" or not recipient.business_key:
         return None
     batch = recipient.registration
     request_id = str(batch.request_id)
@@ -77,6 +78,9 @@ def enrollment_ack_scope(cfg, raw, data, owner_id, source_id):
         raise ValueError("Enrollment notice QA plan has no registration actor")
     if actor_id != batch.actor_id:
         return None
+    notices = ("send", "skip") if role == "student" else ("skip", "send")
+    if fields.get("selected_role", "student") != role or (batch.student_notice, batch.parent_notice) != notices:
+        raise ValueError("Enrollment notice QA role does not match the sealed registration")
     release = _development_release(cfg.MESSAGING_SQS_QUEUE_NAME)
     if not release:
         raise ValueError("Enrollment notice QA requires the dedicated development mock worker")
@@ -125,13 +129,13 @@ class _Scope:
         rows = NotificationLog.objects.filter(
             tenant_id=p["owner_tenant_id"], tenant__code="academy-development-owner", tenant__is_active=True,
             source_tenant_id=p["source_tenant_id"], target_type="account",
-            target_id=f"student:{p['student_id']}", message_mode="alimtalk",
+            target_id=f"{p['role']}:{p['student_id']}", message_mode="alimtalk",
             business_idempotency_key=p["business_key"], sqs_message_id=p["message_id"],
         )
         if log_id is not None:
             rows = rows.filter(pk=log_id)
         if committed:
-            rows = rows.filter(status="sent", success=True, notification_type="registration_approved_student",
+            rows = rows.filter(status="sent", success=True, notification_type=f"registration_approved_{p['role']}",
                                provider_reference_kind="group")
         else:
             rows = rows.filter(pk=log_id, status="sending")

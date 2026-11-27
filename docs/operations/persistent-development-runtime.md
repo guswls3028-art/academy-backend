@@ -594,9 +594,11 @@ OpenAI source/게시 권한은 [공급자 전환 계약](openai-provider.md)이 
 ./scripts/v1/run-wrong-note-development-smoke.ps1 -EnrollmentNotices -ManifestPath $manifestPath -ReleaseId $releaseId -ProductionDatabase $productionDatabase -LockOwner $lockOwner
 ```
 
-이 모드는 별도 일회용 학원과 복구 파일을 만든다. 실행 전후 API·Messaging 이미지와 호스트의 verified release를 대조한다. 강사가 합성 학생 두 명을 등록하면서 학생 발송과 학부모 미발송을 선택하고 같은 요청을 반복한다. 개발 API 이미지의 수명이 제한된 별도 프로세스가 해당 등록만 주기적으로 처리한다. 운영의 분당 EventBridge 경로는 `infra/terraform/messaging_schedule.tf`에서 관리한다.
+기본 명령은 학생만 발송하는 경우와 학부모만 발송하는 경우를 차례로 실행한다. 각 실행은 새 일회용 학원에 학생 두 명과 각 학생의 학부모 계정을 연결하고, 시작과 종료 시 API·Messaging 이미지와 호스트의 verified release를 확인한다. 강사는 같은 등록 요청을 두 번 제출한다. 개발 API 이미지의 별도 프로세스가 해당 등록만 주기적으로 처리한다. 운영의 분당 EventBridge 경로는 `infra/terraform/messaging_schedule.tf`에서 관리한다.
 
-검증은 전용 개발 큐와 mock 공급사를 사용한다. 한 학생의 첫 처리에서는 공급사 결과 저장 후 해당 메시지만 다시 보이게 한다. 같은 SQS 메시지를 두 번째로 수신한 워커는 기존 결과를 읽고 큐 삭제에 성공해야 한다. 역할별 UI가 쓰는 결과 API의 로그 ID, 실제 mock 호출 두 건, 성공한 ACK 두 건, 선택한 학생 한 명의 재수신이 일치해야 통과한다. mock 접수 결과와 실제 카카오 단말 전달은 별개다.
+담당자는 동일 후보의 `selected_role=student`와 `selected_role=parent` 성공 결과를 각각 확인한다. 한 역할의 검사가 중단되면 남아 있는 소유 범위를 먼저 정리하고, 같은 후보에서 `-EnrollmentRecipient student` 또는 `-EnrollmentRecipient parent`로 해당 역할을 다시 검증할 수 있다.
+
+각 실행에서 선택한 역할의 수신자 두 명만 mock으로 발송한다. 결과 API의 로그 ID 두 개가 실제 mock 호출·큐 삭제 영수증과 일치해야 하며, 제외한 두 명은 발송 예약과 로그가 모두 없어야 한다. 첫 번째 가족의 메시지는 공급사 결과 저장 후 한 번 재수신시켜 같은 업무 키와 SQS 메시지 ID로 기존 결과를 재사용하는지 확인한다. 양쪽 실행의 결과에 선택·제외한 역할과 개별 정리 결과를 기록한다. 단말 도착 여부는 이 검사에서 확인할 수 없다.
 
 정리는 setup 소유권, 발신 owner 및 원래 학원, 수신자·등록·업무 키, 메시지·로그 PK를 확인한다. 소유한 임시 로그·진행 캐시와 합성 학원을 정리하고 트랜잭션 커밋 후 다시 조회한다. 다른 학원의 발송 기록과 개발 공용 owner는 보존한다. 작업이 진행 중이거나 소유권이 다르면 복구 파일을 유지한다. 같은 호스트와 release에서 작업 상태를 확인한 뒤 위 명령에 `-CleanupOnly`를 추가해 소유 범위만 다시 정리한다. 검사 결과에는 전화번호, 메시지 본문, 인증정보가 들어가지 않는다.
 
