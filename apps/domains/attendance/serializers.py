@@ -20,6 +20,8 @@ class AttendanceSerializer(serializers.ModelSerializer):
     lecture_memo = serializers.CharField(source="enrollment.lecture_memo", read_only=True)
     lecture_memo_updated_at = serializers.DateTimeField(source="enrollment.updated_at", read_only=True)
     confirm_secession = serializers.BooleanField(required=False, write_only=True)
+    enrollment_status = serializers.CharField(source="enrollment.status", read_only=True)
+    restore_scope = serializers.ChoiceField(choices=("session", "lecture"), required=False, write_only=True)
     secession_scope = serializers.ChoiceField(
         choices=("session", "lecture"), required=False, write_only=True,
         help_text="session: 이 차시만 퇴원. lecture 또는 생략: 기존 강의 전체 퇴원.",
@@ -92,6 +94,8 @@ class AttendanceSerializer(serializers.ModelSerializer):
             "profile_photo_url",
             "name_highlight_clinic_target",
             "confirm_secession",
+            "enrollment_status",
+            "restore_scope",
             "secession_scope",
         ]
         read_only_fields = ["qr_checked_in_at"]
@@ -102,6 +106,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         # Withdrawal controls are consumed by the view's atomic workflow.
         validated_data.pop("confirm_secession", None)
+        validated_data.pop("restore_scope", None)
         validated_data.pop("secession_scope", None)
         return super().update(instance, validated_data)
 

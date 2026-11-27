@@ -16,6 +16,7 @@ Enrollment = apps.get_model("enrollment", "Enrollment")
 Lecture = apps.get_model("lectures", "Lecture")
 Session = apps.get_model("lectures", "Session")
 Student = apps.get_model("students", "Student")
+SessionEnrollment = apps.get_model("enrollment", "SessionEnrollment")
 
 
 class AttendanceSecessionTerminalGuardTests(TestCase):
@@ -91,6 +92,45 @@ class AttendanceSecessionTerminalGuardTests(TestCase):
         self.attendance.refresh_from_db()
         self.assertEqual(self.attendance.status, "SECESSION")
         self.assertEqual(self.attendance.memo, "퇴원 상담 완료")
+
+    def test_confirmed_lecture_restore_saves_one_status_and_can_be_retried(self):
+        other_session = Session.objects.create(lecture=self.enrollment.lecture, order=2, title="다른 차시")
+        other = Attendance.objects.create(tenant=self.tenant, session=other_session, enrollment=self.enrollment, status="SECESSION")
+        self.attendance.memo = "상담 기록"
+        self.attendance.save(update_fields=["memo"])
+        payload = {"status": "PRESENT", "restore_scope": "lecture"}
+        for _ in range(2):
+            response = self._patch(payload)
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["enrollment_status"], "ACTIVE")
+            self.assertEqual(response.data["id"], self.attendance.id)
+        self.attendance.refresh_from_db()
+        other.refresh_from_db()
+        self.assertEqual((self.attendance.status, self.attendance.memo), ("PRESENT", "상담 기록"))
+        self.assertEqual(other.status, "SECESSION")
+        self.assertEqual(SessionEnrollment.objects.filter(enrollment=self.enrollment, session=self.attendance.session).count(), 1)
+        self.assertEqual(self._patch({"status": "ABSENT", "restore_scope": "lecture"}).status_code, 409)
+        SessionEnrollment.objects.filter(enrollment=self.enrollment, session=self.attendance.session).delete()
+        self.assertEqual(self._patch(payload).status_code, 409)
+
+    def test_session_restore_requires_the_reviewed_scope(self):
+        self.assertEqual(self._patch({"status": "LATE", "restore_scope": "session"}).status_code, 409)
+        self.enrollment.status = "ACTIVE"
+        self.enrollment.save(update_fields=["status"])
+        self.assertEqual(self._patch({"status": "LATE", "restore_scope": "lecture"}).status_code, 409)
+        response = self._patch({"status": "LATE", "restore_scope": "session"})
+        self.assertEqual(response.status_code, 200, response.data)
+        self.attendance.refresh_from_db()
+        self.assertEqual(self.attendance.status, "LATE")
+
+    def test_invalid_request_and_late_failure_preserve_withdrawal(self):
+        self.assertEqual(self._patch({"status": "UNKNOWN", "restore_scope": "lecture"}).status_code, 400)
+        with patch("apps.domains.attendance.views.reconcile_learning_todo_targets", side_effect=ValidationError("failed")):
+            self.assertEqual(self._patch({"status": "ONLINE", "restore_scope": "lecture"}).status_code, 400)
+        self.enrollment.refresh_from_db()
+        self.attendance.refresh_from_db()
+        self.assertEqual((self.enrollment.status, self.attendance.status), ("INACTIVE", "SECESSION"))
+        self.assertFalse(SessionEnrollment.objects.filter(enrollment=self.enrollment).exists())
 
     def test_bulk_roster_cannot_reactivate_inactive_enrollment_or_assign_fees(self):
         with patch(
