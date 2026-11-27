@@ -821,6 +821,10 @@
             "readOnly": true,
             "type": "integer"
           },
+          "automatic_receipt": {
+            "readOnly": true,
+            "type": "boolean"
+          },
           "business_profile_snapshot": {
             "description": "세금계산서 요청 시 사업자 정보 스냅샷",
             "readOnly": true
@@ -870,6 +874,18 @@
             "format": "date",
             "readOnly": true,
             "type": "string"
+          },
+          "receipt_error": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "receipt_kind": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "receipt_provider_state": {
+            "readOnly": true,
+            "type": "integer"
           },
           "rejection_reason": {
             "readOnly": true,
@@ -935,6 +951,7 @@
         },
         "required": [
           "amount",
+          "automatic_receipt",
           "business_profile_snapshot",
           "deposited_at",
           "depositor_name",
@@ -946,6 +963,9 @@
           "memo",
           "period_end",
           "period_start",
+          "receipt_error",
+          "receipt_kind",
+          "receipt_provider_state",
           "rejection_reason",
           "reviewed_at",
           "reviewed_by_name",
@@ -970,6 +990,54 @@
           "REJECTED"
         ],
         "type": "string"
+      },
+      "BankTransferNoticeSubmitRequest": {
+        "properties": {
+          "deposited_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "depositor_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "invoice_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "receipt_kind": {
+            "$ref": "#/components/schemas/ReceiptKindEnum"
+          },
+          "recipient_email": {
+            "format": "email",
+            "minLength": 1,
+            "type": "string",
+            "writeOnly": true
+          },
+          "recipient_identifier": {
+            "maxLength": 16,
+            "minLength": 1,
+            "type": "string",
+            "writeOnly": true
+          },
+          "recipient_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string",
+            "writeOnly": true
+          },
+          "tax_invoice_requested": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deposited_at",
+          "depositor_name",
+          "invoice_id"
+        ],
+        "type": "object"
       },
       "BatchDownload": {
         "properties": {
@@ -11801,6 +11869,16 @@
         },
         "type": "object"
       },
+      "PatchedStaffBoardReplyRequest": {
+        "properties": {
+          "body": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "PatchedStaffExpenseRecordRequest": {
         "properties": {
           "amount": {
@@ -15266,6 +15344,16 @@
         ],
         "type": "object"
       },
+      "ReceiptKindEnum": {
+        "description": "* `NONE` - NONE\n* `BUSINESS_TAX` - BUSINESS_TAX\n* `PERSONAL_TAX` - PERSONAL_TAX\n* `CASH` - CASH",
+        "enum": [
+          "NONE",
+          "BUSINESS_TAX",
+          "PERSONAL_TAX",
+          "CASH"
+        ],
+        "type": "string"
+      },
       "RecordPaymentPaymentMethodEnum": {
         "description": "* `CARD` - CARD\n* `BANK_TRANSFER` - BANK_TRANSFER\n* `CASH` - CASH\n* `OTHER` - OTHER",
         "enum": [
@@ -18458,6 +18546,10 @@
             "maxLength": 20000,
             "type": "string"
           },
+          "can_delete": {
+            "readOnly": true,
+            "type": "boolean"
+          },
           "can_edit": {
             "readOnly": true,
             "type": "boolean"
@@ -18499,6 +18591,7 @@
           "attachment_name",
           "author_name",
           "body",
+          "can_delete",
           "can_edit",
           "can_remove_attachment",
           "category",
@@ -18535,6 +18628,10 @@
             "maxLength": 20000,
             "type": "string"
           },
+          "can_delete": {
+            "readOnly": true,
+            "type": "boolean"
+          },
           "can_edit": {
             "readOnly": true,
             "type": "boolean"
@@ -18569,6 +18666,7 @@
           "attachment_name",
           "author_name",
           "body",
+          "can_delete",
           "can_edit",
           "can_remove_attachment",
           "category",
@@ -18617,6 +18715,14 @@
             "maxLength": 5000,
             "type": "string"
           },
+          "can_delete": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "can_edit": {
+            "readOnly": true,
+            "type": "boolean"
+          },
           "created_at": {
             "format": "date-time",
             "readOnly": true,
@@ -18630,6 +18736,8 @@
         "required": [
           "author_name",
           "body",
+          "can_delete",
+          "can_edit",
           "created_at",
           "id"
         ],
@@ -18657,6 +18765,10 @@
           "author_name": {
             "readOnly": true,
             "type": "string"
+          },
+          "can_delete": {
+            "readOnly": true,
+            "type": "boolean"
           },
           "can_edit": {
             "readOnly": true,
@@ -18691,6 +18803,7 @@
         "required": [
           "attachment_name",
           "author_name",
+          "can_delete",
           "can_edit",
           "can_remove_attachment",
           "category",
@@ -25057,7 +25170,14 @@
         ],
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankTransferNotice"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -25381,9 +25501,36 @@
       "post": {
         "description": "POST /api/v1/billing/bank-transfer/notices/",
         "operationId": "billing_bank_transfer_notices_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BankTransferNoticeSubmitRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/BankTransferNoticeSubmitRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/BankTransferNoticeSubmitRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "200": {
-            "description": "No response body"
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankTransferNotice"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -52595,6 +52742,36 @@
       }
     },
     "/api/v1/staffs/board/posts/{id}/": {
+      "delete": {
+        "operationId": "staffs_board_posts_destroy",
+        "parameters": [
+          {
+            "description": "staff board post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      },
       "get": {
         "operationId": "staffs_board_posts_retrieve",
         "parameters": [
@@ -52854,6 +53031,110 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StaffBoardError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      }
+    },
+    "/api/v1/staffs/board/posts/{id}/replies/{reply_id}/": {
+      "delete": {
+        "operationId": "staffs_board_posts_replies_destroy",
+        "parameters": [
+          {
+            "description": "staff board post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "reply_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      },
+      "patch": {
+        "operationId": "staffs_board_posts_replies_partial_update",
+        "parameters": [
+          {
+            "description": "staff board post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "reply_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedStaffBoardReplyRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedStaffBoardReplyRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedStaffBoardReplyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffBoardReply"
                 }
               }
             },

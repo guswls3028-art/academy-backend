@@ -50,3 +50,6 @@ fonttools==4.63.0
 
 # Solapi (support.messaging views)
 solapi>=5.0.0
+
+# Korean subscription payment receipts.
+popbill==1.64.2

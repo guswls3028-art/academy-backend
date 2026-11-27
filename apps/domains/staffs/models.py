@@ -581,6 +581,7 @@ class StaffBoardPost(models.Model):
     body = models.TextField(max_length=20000)
     attachment_name = models.CharField(max_length=255, blank=True)
     attachment_key = models.CharField(max_length=255, blank=True, db_index=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -590,6 +591,7 @@ class StaffBoardPost(models.Model):
 
 class StaffBoardReply(models.Model):
     post = models.ForeignKey(StaffBoardPost, related_name="replies", on_delete=models.CASCADE)
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
     author_name = models.CharField(max_length=100)
     body = models.TextField(max_length=5000)
     created_at = models.DateTimeField(auto_now_add=True)

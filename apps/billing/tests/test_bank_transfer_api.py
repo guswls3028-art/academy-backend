@@ -1,6 +1,10 @@
 """계좌이체 입금 신고와 세금계산서 대기열 API 통합 테스트."""
 
+import os
 from datetime import date, timedelta
+from unittest.mock import patch
+
+from cryptography.fernet import Fernet
 
 from django.contrib.auth import get_user_model
 from django.test import override_settings
@@ -12,6 +16,7 @@ from apps.billing.models import (
     BusinessProfile,
     Invoice,
     PaymentTransaction,
+    PopbillReceipt,
     TaxInvoiceIssue,
 )
 from apps.core.models import Tenant, TenantMembership
@@ -154,7 +159,7 @@ class BankTransferApiTests(APITestCase):
             {
                 "business_name": "테스트학원",
                 "representative_name": "홍길동",
-                "business_registration_number": "608-35-75724",
+                "business_registration_number": "000-00-00107",
                 "address": "서울시 송파구",
                 "business_type": "교육서비스업",
                 "business_item": "학원",
@@ -226,7 +231,7 @@ class BankTransferApiTests(APITestCase):
 
         self.assertEqual(
             response.data["business_registration_number"],
-            "6083575724",
+            "0000000107",
         )
         profile = BusinessProfile.objects.get(tenant=self.tenant)
         self.assertEqual(profile.manager_email, "owner@example.com")
@@ -417,6 +422,169 @@ class BankTransferApiTests(APITestCase):
         issue.refresh_from_db()
         self.assertEqual(issue.status, "ISSUED")
         self.assertEqual(issue.issue_number, "202607271234567890123456")
+
+    def _enable_popbill(self):
+        config = override_settings(
+            BILLING_POPBILL_MODE="test", BILLING_POPBILL_CORP_NUM="1234567890",
+            BILLING_POPBILL_LINK_ID="fixture", BILLING_POPBILL_SECRET_KEY="fixture",
+            BILLING_POPBILL_CORP_NAME="QA", BILLING_POPBILL_CEO_NAME="QA",
+            BILLING_POPBILL_RECIPIENT_KEYS=Fernet.generate_key().decode(),
+        )
+        config.enable()
+        self.addCleanup(config.disable)
+
+    def test_preprod_never_issues_with_the_production_settings_module(self):
+        from apps.billing.services.popbill_receipts import enabled
+
+        self._enable_popbill()
+        with (
+            override_settings(SETTINGS_MODULE="apps.api.config.settings.prod", BILLING_POPBILL_MODE="live"),
+            patch.dict(os.environ, {"ACADEMY_RUNTIME_ENV": "preprod"}),
+        ):
+            self.assertFalse(enabled())
+
+    def _popbill_notice(self, kind, **fields):
+        self.client.force_authenticate(self.owner)
+        return self.client.post("/api/v1/billing/bank-transfer/notices/", {
+            "invoice_id": self.invoice.pk, "depositor_name": "QA", "deposited_at": timezone.now().isoformat(),
+            "receipt_kind": kind, **fields,
+        }, format="json", **self.headers)
+
+    def _confirm_receipt(self, notice_id):
+        self.client.force_authenticate(self.superuser)
+        with self.captureOnCommitCallbacks(execute=True):
+            return self.client.post(f"/api/v1/billing/admin/bank-transfer/notices/{notice_id}/confirm/",
+                                    format="json", **self.headers)
+
+    def test_reconciliation_reserves_the_batch_for_eligible_payments(self):
+        from apps.billing.services.popbill_receipts import reconcile_due
+
+        self._enable_popbill()
+        now = timezone.now()
+        earlier = now - timedelta(days=1)
+
+        def queue(index, *, issuer="1234567890", mode="test", paid=True, confirmed=True, due=earlier):
+            day = date(2024, 1, 1) + timedelta(days=index)
+            invoice = Invoice.objects.create(
+                tenant=self.tenant, invoice_number=f"INV-QUEUE-{index}", plan="all",
+                billing_mode="INVOICE_REQUEST", supply_amount=100, tax_amount=10, total_amount=110,
+                period_start=day, period_end=day, due_date=day, paid_at=now if paid else None,
+                status="PAID" if paid else "SCHEDULED",
+            )
+            BankTransferNotice.objects.create(
+                invoice=invoice, depositor_name="QA", deposited_at=now, submitted_at=now, amount=110,
+                status="CONFIRMED" if confirmed else "SUBMITTED", reviewed_at=now if confirmed else None,
+            )
+            issue = TaxInvoiceIssue.objects.create(tenant=self.tenant, invoice=invoice, status="READY")
+            PopbillReceipt.objects.create(
+                issue=issue, kind="BUSINESS_TAX", document_key=f"queue{index}", issuer=issuer,
+                environment=mode, next_attempt_at=due,
+            )
+            return issue.pk
+
+        for index in range(100):
+            queue(index, issuer="9876543210")
+            queue(100 + index, mode="live")
+        queue(200, paid=False)
+        queue(201, confirmed=False)
+        eligible = queue(202, due=now)
+        queue(203, due=now + timedelta(days=1))
+
+        with patch("apps.billing.services.popbill_receipts.dispatch") as dispatch:
+            reconcile_due()
+        self.assertEqual(dispatch.call_count, 1)
+        dispatch.assert_called_once_with(eligible)
+
+    def test_cash_receipt_retry_recovers_without_repeating_payment(self):
+        from apps.billing.services.popbill_receipts import _document
+        self._enable_popbill()
+        self._activate()
+        phone = "01000000000"
+        notice = self._popbill_notice("CASH", recipient_identifier=phone)
+        self.assertEqual(notice.status_code, 201, notice.data)
+        record = PopbillReceipt.objects.get()
+        self.assertNotIn(phone, record.recipient_ciphertext)
+        self.assertNotIn(phone, str(notice.data))
+        keys = []
+
+        def gateway(row):
+            keys.append(row.document_key)
+            self.assertEqual(_document(row)["identityNum"], phone)
+            if len(keys) == 1:
+                raise TimeoutError
+            return {"state": 304, "number": "TB0000001"}
+
+        with patch("apps.billing.services.popbill_receipts._exchange", side_effect=gateway):
+            for _ in range(3):
+                response = self._confirm_receipt(notice.data["id"])
+                self.assertEqual(response.status_code, 200)
+        self.assertEqual(keys, [record.document_key, record.document_key])
+        self.assertEqual(PaymentTransaction.objects.filter(invoice=self.invoice).count(), 1)
+        record.refresh_from_db()
+        self.assertEqual(record.cash_approval_number, "TB0000001")
+        self.assertEqual(record.recipient_ciphertext, "")
+        self.assertIsNone(record.next_attempt_at)
+        self.client.force_authenticate(self.owner)
+        readback = self.client.get("/api/v1/billing/bank-transfer/", **self.headers)
+        self.assertEqual(readback.data["invoices"][0]["bank_transfer_notice"]["receipt_kind"], "CASH")
+        self.assertEqual(readback.data["invoices"][0]["bank_transfer_notice"]["tax_invoice_issue_number"], "TB0000001")
+        self.assertNotIn(phone, str(readback.data))
+
+    def test_personal_tax_invoice_uses_encrypted_recipient_and_provider_result(self):
+        from apps.billing.services.popbill_receipts import _document
+        self._enable_popbill()
+        self._activate()
+        number = "0001013000000"
+        notice = self._popbill_notice("PERSONAL_TAX", recipient_identifier=number,
+                                      recipient_name="QA", recipient_email="fixture@example.com")
+        self.assertEqual(notice.status_code, 201, notice.data)
+        self.assertNotIn(number, str(notice.data))
+        def gateway(row):
+            doc = _document(row)
+            self.assertEqual((doc["invoiceeType"], doc["invoiceeCorpNum"]), ("개인", number))
+            self.assertEqual((doc["purposeType"], doc["totalAmount"]), ("영수", str(self.invoice.total_amount)))
+            return {"state": 300, "number": "2026111910000000ab000001"}
+
+        with patch("apps.billing.services.popbill_receipts._exchange", side_effect=gateway) as service:
+            self._confirm_receipt(notice.data["id"])
+            self.assertEqual(service.call_count, 1)
+        record = PopbillReceipt.objects.get()
+        self.assertEqual(record.issue.status, "ISSUED")
+        self.assertEqual(record.recipient_ciphertext, "")
+        self.assertIsNotNone(record.next_attempt_at)
+
+    def test_first_remote_read_can_be_an_nts_rejection(self):
+        self._enable_popbill()
+        self._activate()
+        notice = self._popbill_notice("CASH", recipient_identifier="01000000000")
+        self.assertEqual(notice.status_code, 201)
+        with patch("apps.billing.services.popbill_receipts._exchange", return_value={"state": 305}):
+            self._confirm_receipt(notice.data["id"])
+        record = PopbillReceipt.objects.get()
+        self.assertEqual((record.issue.status, record.recipient_ciphertext), ("FAILED", ""))
+        self.assertEqual(record.issue.invoice.status, "PAID")
+
+    def test_only_first_confirmation_promotes_an_older_business_request(self):
+        from apps.billing.services.popbill_receipts import _document
+        self._activate()
+        self._save_business_profile()
+        notice = self._submit_notice()
+        self._enable_popbill()
+        def gateway(row):
+            document = _document(row)
+            self.assertEqual(document["invoiceeCorpNum"], "0000000107")
+            self.assertEqual(document["invoicerCorpNum"], "1234567890")
+            return {"state": 304, "number": "2026111910000000ab000002"}
+
+        with patch("apps.billing.services.popbill_receipts._exchange", side_effect=gateway):
+            self._confirm_receipt(notice.data["id"])
+        self.assertEqual(PopbillReceipt.objects.get().issue.status, "ISSUED")
+
+    def test_unconfigured_provider_rejects_personal_data(self):
+        self._activate()
+        notice = self._popbill_notice("CASH", recipient_identifier="01000000000")
+        self.assertEqual(notice.status_code, 503)
+        self.assertFalse(BankTransferNotice.objects.exists())
 
     def test_notice_cannot_cross_tenant_boundary(self):
         self._activate()

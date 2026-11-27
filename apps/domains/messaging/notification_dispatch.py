@@ -17,6 +17,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.domains.messaging.policy import SCHOOL_REPORT_REQUEST_TRIGGER
+from apps.shared.utils.student_contact import student_contact_phone
 
 logger = logging.getLogger(__name__)
 
@@ -141,10 +142,7 @@ def build_attendance_preview(
         name = (student.name or "").strip()
         name_2 = name[-2:] if len(name) >= 2 else name  # 성(첫 글자) 제외 = 이름만
 
-        if send_to == "parent":
-            phone = (student.parent_phone or "").replace("-", "").strip()
-        else:
-            phone = (student.phone or "").replace("-", "").strip()
+        phone = student_contact_phone(student, send_to)
 
         excluded = False
         exclude_reason = ""

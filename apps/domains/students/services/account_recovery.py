@@ -19,6 +19,7 @@ from django.db.models import Q
 from apps.core.models.user import user_display_username
 from apps.core.services.password import generate_temp_password
 from apps.domains.students.models import Student
+from apps.shared.utils.student_contact import contact_phone, student_contact_phone
 from apps.support.students.account_recovery_dependencies import (
     account_recovery_delivery_disabled,
     find_parent_recovery_account,
@@ -58,7 +59,7 @@ class RecoveryAccount:
 
 def normalize_recovery_phone(value: object) -> str:
     digits = "".join(ch for ch in str(value or "") if ch.isdigit())
-    return digits if len(digits) == 11 and digits.startswith("010") else ""
+    return contact_phone(digits) if len(digits) == 11 and digits.startswith("010") else ""
 
 
 def validate_recovery_payload(*, mode: str, target: str, name: str, phone: str) -> tuple[str, str, str, str]:
@@ -89,7 +90,7 @@ def _find_unique_student(*, tenant, name: str, phone: str, parent_only: bool) ->
     if parent_only:
         qs = qs.filter(parent_phone=phone)
     else:
-        qs = qs.filter(Q(phone=phone) | Q(parent_phone=phone))
+        qs = qs.filter(Q(phone=phone, uses_identifier=False) | Q(parent_phone=phone))
 
     matches = list(qs.select_related("user").order_by("id")[:2])
     if len(matches) != 1:
@@ -306,14 +307,14 @@ def resolve_staff_password_reset_account(
         if student_ps_number:
             student = qs.filter(ps_number=student_ps_number).first()
         else:
-            matches = list(qs.filter(Q(phone=student_phone) | Q(parent_phone=student_phone)).order_by("id")[:2])
+            matches = list(qs.filter(Q(phone=student_phone, uses_identifier=False) | Q(parent_phone=student_phone)).order_by("id")[:2])
             if len(matches) > 1:
                 raise AccountRecoveryValidationError("동명이인 또는 공유번호가 있어 학생 아이디로 다시 시도해 주세요.")
             student = matches[0] if matches else None
         if not student or not getattr(student, "user_id", None):
             raise AccountRecoveryValidationError("해당 학생 정보를 찾을 수 없습니다.")
 
-        send_to = normalize_recovery_phone(student.phone) or normalize_recovery_phone(student.parent_phone)
+        send_to = normalize_recovery_phone(student_contact_phone(student, "student")) or normalize_recovery_phone(student.parent_phone)
         if not send_to:
             raise AccountRecoveryValidationError("등록된 휴대번호가 없어 발송할 수 없습니다. 학원에 문의해 주세요.")
         return RecoveryAccount(
@@ -349,7 +350,7 @@ def resolve_staff_account_for_student(*, student: Student, target: str) -> Recov
     if target == "student":
         if not getattr(student, "user_id", None):
             raise AccountRecoveryValidationError("학생 로그인 계정이 없어 안내할 수 없습니다.")
-        send_to = normalize_recovery_phone(student.phone) or normalize_recovery_phone(student.parent_phone)
+        send_to = normalize_recovery_phone(student_contact_phone(student, "student")) or normalize_recovery_phone(student.parent_phone)
         if not send_to:
             raise AccountRecoveryValidationError("등록된 휴대번호가 없어 발송할 수 없습니다.")
         return RecoveryAccount(

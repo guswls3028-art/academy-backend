@@ -17,6 +17,9 @@ cryptography==50.0.0
 boto3==1.43.67
 botocore==1.43.67
 
+# Popbill SDK authentication dependency
+linkhub==1.6.0
+
 # Database
 psycopg2-binary==2.9.12
 
