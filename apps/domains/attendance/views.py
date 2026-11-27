@@ -11,7 +11,7 @@ from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.exceptions import APIException, NotFound
+from rest_framework.exceptions import APIException, NotFound, ValidationError
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from apps.core.parsing import parse_bool
@@ -24,6 +24,7 @@ from .serializers import (
 )
 from .filters import AttendanceFilter
 from .services import create_attendance_roster
+from .services.roster import ensure_session_roster_membership
 from .services.arrival_overview import build_arrival_overview
 from apps.support.lectures.schedule_queries import schedule_enrollment_ids
 
@@ -320,6 +321,32 @@ class AttendanceViewSet(ModelViewSet):
     def partial_update(self, request, *args, **kwargs):
         instance = self.get_object()
         new_status = request.data.get("status")
+
+        if "restore_scope" in request.data:
+            scope = request.data["restore_scope"]
+            if (scope not in ("session", "lecture") or new_status not in ATTENDANCE_STATUS_ORDER
+                    or new_status == "SECESSION" or set(request.data) != {"status", "restore_scope"}):
+                raise ValidationError({"detail": "복구 범위와 변경할 출결 상태를 확인해 주세요."})
+            enrollment = instance.enrollment
+            # A retry after a lost response may read back the same committed result.
+            if instance.status != "SECESSION":
+                if instance.status == new_status and enrollment.status == "ACTIVE":
+                    return Response(self.get_serializer(instance).data)
+                raise AttendanceMutationConflict()
+            expected = {"session": "ACTIVE", "lecture": "INACTIVE"}[scope]
+            if enrollment.status != expected:
+                raise AttendanceMutationConflict()
+            if scope == "lecture":
+                enrollment.status = "ACTIVE"
+                enrollment.save(update_fields=["status"])
+            restored = ensure_session_roster_membership(
+                tenant=request.tenant, session=instance.session, enrollment=enrollment,
+                allow_session_reregistration=True,
+            ).attendance
+            restored.status = new_status
+            restored.save(update_fields=["status"])
+            reconcile_learning_todo_targets(restored)
+            return Response(self.get_serializer(restored).data)
 
         conflict = _secession_status_conflict(instance, new_status)
         if conflict is not None:
