@@ -176,7 +176,9 @@ class EnrollmentViewSet(ModelViewSet):
             try:
                 session_id = int(session_id_raw)
             except (TypeError, ValueError):
-                session_id = None
+                raise ValidationError({"session_id": "차시 번호를 확인해 주세요."})
+            if not 1 <= session_id <= 2**63 - 1:
+                raise ValidationError({"session_id": "차시 번호를 확인해 주세요."})
         if not upload_file or not lecture_id:
             return Response(
                 {"detail": "file(엑셀), lecture_id는 필수입니다."},

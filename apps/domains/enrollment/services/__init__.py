@@ -70,7 +70,7 @@ def lecture_enroll_from_excel_rows(
     엑셀 파싱된 행을 기존 학생 명부와 매칭해 강의 수강 등록 + 차시 등록·출결.
     학생번호가 있으면 exact 우선 매칭하고, 없으면 exact 이름과 정규화한
     학부모 전화번호 조합으로만 매칭한다.
-    session_id가 있으면 해당 차시에만 등록, 없으면 1차시 생성/사용 후 등록.
+    차시를 지정하면 해당 차시만 등록한다. 생략하면 1차시를 사용하되 기존 퇴원은 유지한다.
     API(lecture_enroll_from_excel)와 워커(EXCEL_PARSING)에서 공통 호출.
 
     initial_password/password_mode/source_job_id는 배포 전 큐 payload 호환을 위해
@@ -245,7 +245,7 @@ def lecture_enroll_from_excel_rows(
             if created:
                 logger.debug("[lecture_enroll_excel] enrollment created lecture_id=%s student_id=%s", lecture_id, sid)
 
-        if session_id:
+        if session_id is not None:
             target_session = enroll_repo.get_session_by_id_lecture(session_id, lecture)
             if not target_session:
                 raise EnrollmentImportError("해당 차시가 이 강의의 차시가 아닙니다.")
@@ -264,7 +264,25 @@ def lecture_enroll_from_excel_rows(
                     target_session.id,
                 )
 
+        withdrawn_ids = set(
+            enroll_repo.get_attendances_for_lecture(tenant, lecture, enrollments_created)
+            .filter(session=target_session, status="SECESSION")
+            .values_list("enrollment_id", flat=True)
+        )
+        preserved_students = set()
         for enrollment in enrollments_created:
+            if enrollment.pk in withdrawn_ids:
+                if session_id is None:
+                    preserved_students.add(enrollment.student_id)
+                    continue
+                from apps.support.enrollment.lifecycle_dependencies import ensure_session_roster_membership
+                from apps.support.attendance.learning_todo_eligibility import reconcile_learning_todo_targets
+
+                restored = ensure_session_roster_membership(
+                    tenant=tenant, enrollment=enrollment, session=target_session, allow_session_reregistration=True,
+                )
+                reconcile_learning_todo_targets(restored.attendance)
+                continue
             enroll_repo.session_enrollment_get_or_create_tenant(
                 tenant=tenant,
                 session=target_session,
@@ -277,8 +295,13 @@ def lecture_enroll_from_excel_rows(
                 defaults={"status": "UNSET"},
             )
 
+        for row in enrolled_rows:
+            if row["student_id"] in preserved_students:
+                row["session_registration"] = "withdrawal_preserved"
         result = {
             "enrolled_count": len(enrollments_created),
+            "session_enrolled_count": len(enrollments_created) - len(preserved_students),
+            "withdrawn_session_preserved_count": len(preserved_students),
             "created_students_count": 0,
             "not_found_students_count": not_found_students_count,
             "ambiguous_students_count": ambiguous_students_count,
