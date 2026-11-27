@@ -57,14 +57,16 @@ def eligible_learning_todo_enrollment_ids(
     )
 
 
-def eligible_session_enrollments(*, tenant: Any, session_id: int):
-    """Return editable roster rows under the same learning-todo rule."""
+def eligible_session_enrollments(
+    *, tenant: Any, session_id: int, excluded_statuses: Iterable[str] = INELIGIBLE_LEARNING_TODO_STATUSES,
+):
+    """Return active session rows with the caller's attendance exclusions."""
     from apps.domains.attendance.models import Attendance
     from apps.domains.enrollment.models import SessionEnrollment
     excluded_ids = Attendance.objects.filter(
         tenant=tenant,
         session_id=session_id,
-        status__in=INELIGIBLE_LEARNING_TODO_STATUSES,
+        status__in=excluded_statuses,
     ).values_list("enrollment_id", flat=True)
     return (
         SessionEnrollment.objects.filter(
