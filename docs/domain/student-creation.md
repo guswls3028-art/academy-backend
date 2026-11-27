@@ -37,6 +37,8 @@
 
 강의 엑셀에서 차시를 생략하면 일반 등록은 첫 차시를 사용하고, 첫 차시 출결이 퇴원이면 강의만 등록한다. 교직원이 차시를 지정하면 해당 차시의 기존 퇴원 출결을 미입력으로 복구한다. 다른 차시의 출결과 교사 메모는 보존한다. 잘못된 차시 번호는 업로드 접수 전에 거절한다. 처리 결과의 `enrolled_count`는 강의 등록 수, `session_enrolled_count`는 차시에 등록된 수, `withdrawn_session_preserved_count`는 기존 차시 퇴원을 유지한 수다. 마지막 경우에는 해당 행의 `session_registration`이 `withdrawal_preserved`다. [차시 퇴원과 복구 정책](attendance.md)
 
+Tools 워커는 엑셀로 지정한 차시를 복구할 때 출결 API와 같은 트랜잭션에서 학생·수강·출결을 잠그고 기존 자동 수납 항목을 재활성화한다. 학원·강의가 일치해야 하며, 차시 복구나 학습 대상 반영이 실패하면 그 파일의 출결·수납 변경도 함께 취소된다. 처리 결과를 확인한 뒤 같은 파일로 재시도할 수 있다. 워커 설정의 파일 처리·재시도·원복 검증은 `tests/test_tools_excel_roster.py`에 있다.
+
 초기 비밀번호 설정의 정본은 [계정 초기 비밀번호 SSOT](../ssot/account-initial-password-policy.md)다.
 Excel의 최종 확인창에서도 학생·학부모 방식을 각각 명시 선택한다. `fixed`(원문 4자 이상 직접 입력),
 `phone_last4`(각자의 유효 본인 번호), `random`(6자리 숫자)을 전달하며 미설정·누락 전화번호를 임의

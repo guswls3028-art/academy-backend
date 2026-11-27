@@ -74,6 +74,10 @@ INSTALLED_APPS = [
     "apps.shared",
 ]
 
+if os.environ.get("WORKER_TYPE", "").upper() == "TOOLS":
+    # Explicit Excel session restoration reactivates the existing enrollment fee.
+    INSTALLED_APPS.append("apps.domains.fees")
+
 # ==================================================
 # MIDDLEWARE — 최소 (Security만)
 # ==================================================

@@ -137,7 +137,7 @@ class AttendanceSecessionTerminalGuardTests(AttendanceSecessionFixture, TestCase
 
     def test_bulk_roster_cannot_reactivate_inactive_enrollment_or_assign_fees(self):
         with patch(
-            "apps.domains.attendance.services.roster.auto_assign_roster_fees"
+            "apps.domains.attendance.roster_membership.auto_assign_roster_fees"
         ) as assign_fees:
             with self.assertRaises(ValidationError):
                 create_attendance_roster(

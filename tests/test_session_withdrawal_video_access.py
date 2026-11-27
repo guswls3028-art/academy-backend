@@ -543,7 +543,7 @@ class SessionWithdrawalVideoAccessTests(APITestCase):
             response = self.client.get(url, {"session": target.session_id}, **self.headers)
             self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(self.access(2).status_code, 403)
-        with patch("apps.domains.attendance.services.roster.auto_assign_roster_fees") as assign_fees:
+        with patch("apps.domains.attendance.roster_membership.auto_assign_roster_fees") as assign_fees:
             with self.assertRaisesMessage(ValidationError, "명시적으로 재등록"):
                 ensure_session_roster_membership(
                     tenant=self.tenant, enrollment=self.enrollment, session=target.session,
