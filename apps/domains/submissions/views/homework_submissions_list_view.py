@@ -10,6 +10,13 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
 
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, PolymorphicProxySerializer, extend_schema
+
+from apps.api.common.submission_inbox_schema import (
+    STAFF_SUBMISSION_ERRORS,
+    SUBMISSION_QUERY_ERROR,
+    SubmissionDetailErrorSerializer,
+)
 from apps.api.common.query_params import parse_query_int
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.submissions.models import Submission, SubmissionMedia
@@ -25,6 +32,9 @@ from apps.support.submissions.dependencies import (
     homework_submission_target_exists,
     staff_homework_file_targets,
 )
+
+
+from .submission_list_schema import StaffHomeworkSubmissionSerializer, StaffHomeworkSubmissionsPageSerializer
 
 
 def _student_name_from_enrollment(enrollment) -> str:
@@ -71,6 +81,31 @@ def _get_photo_url(student) -> Optional[str]:
 class HomeworkSubmissionsListView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(
+        description=(
+            "현재 학원의 인증된 교직원이 과제 제출물을 조회합니다. 기본 응답은 최신 제출부터 최대 200건의 배열입니다. "
+            "page 또는 page_size를 지정하면 페이지 객체를 반환합니다. 조회 범위에 없는 과제에는 제출 행이 없습니다."
+        ),
+        parameters=[
+            OpenApiParameter(
+                "enrollment_id", {"type": "integer", "minimum": 1},
+                description="과제 강의에서 이 수강의 제출만 조회합니다. 다른 제출로 대체된 행은 제외합니다.",
+            ),
+            OpenApiParameter("page", {"type": "integer", "minimum": 1, "maximum": 1000000, "default": 1}),
+            OpenApiParameter("page_size", {"type": "integer", "minimum": 1, "maximum": 200, "default": 200}),
+        ],
+        responses={
+            200: PolymorphicProxySerializer(
+                component_name="StaffHomeworkSubmissionListOrPage",
+                serializers=[StaffHomeworkSubmissionSerializer(many=True), StaffHomeworkSubmissionsPageSerializer],
+                resource_type_field_name=None,
+                many=False,
+            ),
+            400: SUBMISSION_QUERY_ERROR,
+            404: OpenApiResponse(SubmissionDetailErrorSerializer, description="요청한 페이지가 없습니다."),
+            **STAFF_SUBMISSION_ERRORS,
+        },
+    )
     def get(self, request, homework_id: int):
         tenant = getattr(request, "tenant", None)
         if not tenant:
@@ -89,7 +124,15 @@ class HomeworkSubmissionsListView(APIView):
         if not homework_submission_target_exists(homework_id=int(homework_id), tenant=tenant):
             qs = qs.none()
 
-        session_id = staff_homework_file_targets(tenant=tenant).filter(pk=homework_id).values_list("session_id", flat=True).first()
+        target = staff_homework_file_targets(tenant=tenant).filter(pk=homework_id).values(
+            "session_id", "session__title", "session__lecture_id", "session__lecture__title",
+        ).first() or {}
+        if "enrollment_id" in request.query_params:
+            enrollment_id = parse_query_int(request.query_params, "enrollment_id", min_value=1)
+            qs = qs.filter(
+                enrollment_id=enrollment_id, enrollment__tenant=tenant, enrollment__student__tenant=tenant,
+                enrollment__lecture_id=target.get("session__lecture_id"), enrollment__student__deleted_at__isnull=True,
+            ).exclude(status=Submission.Status.SUPERSEDED) if target else qs.none()
 
         paginator = None
         if "page" in request.query_params or "page_size" in request.query_params:
@@ -184,7 +227,9 @@ class HomeworkSubmissionsListView(APIView):
                 {
                     "id": int(s.id),
                     "enrollment_id": int(enrollment_id) if enrollment_id else 0,
-                    "session_id": session_id,
+                    "session_id": target.get("session_id"),
+                    "session_title": target.get("session__title", ""),
+                    "homework_lecture_title": target.get("session__lecture__title", ""),
                     "student_id": student_id,
                     "student_name": student_name,
                     "student_phone": student_phone_v or None,

@@ -31,6 +31,15 @@ def _safe_score(value) -> float | None:
     return parsed
 
 
+def stored_attempt_total(meta, *, initial: bool) -> float | None:
+    """Score recorded on this attempt after another sitting becomes representative."""
+    if not isinstance(meta, dict):
+        return None
+    snapshot = meta.get("initial_snapshot") if initial else None
+    source = snapshot if isinstance(snapshot, dict) and snapshot else meta
+    return _safe_score(source.get("total_score"))
+
+
 def _safe_datetime(value, *, fallback: datetime | None = None) -> datetime | None:
     if isinstance(value, datetime):
         return value
@@ -93,11 +102,7 @@ def load_initial_exam_scores(
             total_score=(
                 _safe_score(current_result.total_score)
                 if result_is_same_attempt
-                else (
-                    _safe_score(snapshot.get("total_score"))
-                    if snapshot
-                    else _safe_score(meta.get("total_score"))
-                )
+                else stored_attempt_total(meta, initial=True)
             ),
             max_score=(
                 _safe_score(current_result.max_score)

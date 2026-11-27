@@ -52,6 +52,66 @@ def get_session_enrollment_enrollment_ids_by_lecture(lecture):
     )
 
 
+def session_memberships_for_access(*, tenant_id, include_withdrawn=False):
+    """Scope roster rows to their real tenant and lecture; staff history stays intact."""
+    from django.db.models import Exists, F, OuterRef
+    from apps.domains.attendance.models import Attendance
+    from apps.domains.enrollment.models import SessionEnrollment
+
+    memberships = SessionEnrollment.objects.filter(
+        tenant_id=tenant_id,
+        enrollment__tenant_id=tenant_id,
+        enrollment__student__tenant_id=tenant_id,
+        enrollment__student__deleted_at__isnull=True,
+        session__lecture__tenant_id=tenant_id,
+        session__lecture_id=F("enrollment__lecture_id"),
+    )
+    if include_withdrawn:
+        return memberships
+    withdrawn = Attendance.objects.filter(
+        tenant_id=tenant_id,
+        enrollment_id=OuterRef("enrollment_id"),
+        session_id=OuterRef("session_id"),
+        status="SECESSION",
+    )
+    # Reactivating the lecture cannot restore withdrawn lessons. Inactive video
+    # grants have their own per-video authorization and require the retained row.
+    return memberships.exclude(Exists(withdrawn), enrollment__status="ACTIVE")
+
+
+def mark_unrecorded_memberships_withdrawn(*, tenant, enrollment):
+    """Record missing withdrawal markers while the caller holds the enrollment lock."""
+    from apps.domains.attendance.models import Attendance
+
+    recorded_sessions = Attendance.objects.filter(
+        tenant=tenant, enrollment=enrollment,
+    ).values("session_id")
+    missing = session_memberships_for_access(
+        tenant_id=tenant.pk, include_withdrawn=True,
+    ).filter(enrollment=enrollment).exclude(session_id__in=recorded_sessions)
+    Attendance.objects.bulk_create([
+        Attendance(tenant=tenant, enrollment=enrollment, session_id=session_id, status="SECESSION")
+        for session_id in missing.values_list("session_id", flat=True)
+    ], ignore_conflicts=True)
+
+
+def preserve_prior_lecture_withdrawal(*, tenant, enrollment):
+    """For a locked inactive course, distinguish retained full-withdrawal history from a pause."""
+    from apps.domains.attendance.models import Attendance
+
+    if enrollment.status != "INACTIVE" or enrollment.status_before_student_deletion is not None:
+        return
+    history = Attendance.objects.filter(
+        tenant=tenant, enrollment=enrollment, session__lecture_id=enrollment.lecture_id,
+        session__lecture__tenant=tenant,
+    )
+    if history.exclude(status="SECESSION").exists():
+        return
+    retained = session_memberships_for_access(tenant_id=tenant.pk, include_withdrawn=True)
+    if retained.filter(enrollment=enrollment, session_id__in=history.values("session_id")).exists():
+        mark_unrecorded_memberships_withdrawn(tenant=tenant, enrollment=enrollment)
+
+
 def get_attendances_for_lecture_by_lecture(lecture, enrollments):
     from apps.domains.attendance.models import Attendance
     return Attendance.objects.filter(
@@ -93,7 +153,7 @@ def lock_active_student_ids_for_tenant(student_ids, tenant) -> tuple[int, ...]:
 
 def enrollment_get_or_create(tenant, lecture, student_id, defaults):
     from apps.domains.enrollment.models import Enrollment
-    return Enrollment.objects.get_or_create(
+    return Enrollment.objects.select_for_update().get_or_create(
         tenant=tenant,
         lecture=lecture,
         student_id=student_id,
@@ -383,7 +443,7 @@ def enrollment_student_map_by_ids(enrollment_ids, tenant=None):
         return {}
     queryset = Enrollment.objects.select_related("student").filter(id__in=enrollment_ids)
     if tenant is not None:
-        queryset = queryset.filter(tenant=tenant)
+        queryset = queryset.filter(tenant=tenant, student__tenant=tenant, lecture__tenant=tenant)
     return {
         enrollment.id: enrollment
         for enrollment in queryset.order_by("id")

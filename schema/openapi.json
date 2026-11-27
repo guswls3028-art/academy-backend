@@ -821,6 +821,10 @@
             "readOnly": true,
             "type": "integer"
           },
+          "automatic_receipt": {
+            "readOnly": true,
+            "type": "boolean"
+          },
           "business_profile_snapshot": {
             "description": "세금계산서 요청 시 사업자 정보 스냅샷",
             "readOnly": true
@@ -870,6 +874,18 @@
             "format": "date",
             "readOnly": true,
             "type": "string"
+          },
+          "receipt_error": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "receipt_kind": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "receipt_provider_state": {
+            "readOnly": true,
+            "type": "integer"
           },
           "rejection_reason": {
             "readOnly": true,
@@ -935,6 +951,7 @@
         },
         "required": [
           "amount",
+          "automatic_receipt",
           "business_profile_snapshot",
           "deposited_at",
           "depositor_name",
@@ -946,6 +963,9 @@
           "memo",
           "period_end",
           "period_start",
+          "receipt_error",
+          "receipt_kind",
+          "receipt_provider_state",
           "rejection_reason",
           "reviewed_at",
           "reviewed_by_name",
@@ -970,6 +990,54 @@
           "REJECTED"
         ],
         "type": "string"
+      },
+      "BankTransferNoticeSubmitRequest": {
+        "properties": {
+          "deposited_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "depositor_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "invoice_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "receipt_kind": {
+            "$ref": "#/components/schemas/ReceiptKindEnum"
+          },
+          "recipient_email": {
+            "format": "email",
+            "minLength": 1,
+            "type": "string",
+            "writeOnly": true
+          },
+          "recipient_identifier": {
+            "maxLength": 16,
+            "minLength": 1,
+            "type": "string",
+            "writeOnly": true
+          },
+          "recipient_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string",
+            "writeOnly": true
+          },
+          "tax_invoice_requested": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deposited_at",
+          "depositor_name",
+          "invoice_id"
+        ],
+        "type": "object"
       },
       "BatchDownload": {
         "properties": {
@@ -3981,6 +4049,84 @@
         ],
         "type": "object"
       },
+      "ExamSubmissionSummary": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "enrollment_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "lecture_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "lecture_title": {
+            "type": "string"
+          },
+          "score_lecture_id": {
+            "description": "저장된 성적의 원래 수강 강의입니다.",
+            "nullable": true,
+            "type": "integer"
+          },
+          "session_choices": {
+            "items": {
+              "$ref": "#/components/schemas/SubmissionSessionChoice"
+            },
+            "type": "array"
+          },
+          "session_history_only": {
+            "description": "현재 차시에서 처리할 수 없어 과거 제출로 조회할 때만 true입니다.",
+            "type": "boolean"
+          },
+          "session_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "session_origin_recorded": {
+            "description": "제출에 진입 차시가 기록됐는지 여부입니다.",
+            "type": "boolean"
+          },
+          "session_title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "student_name": {
+            "type": "string"
+          },
+          "target_id": {
+            "type": "integer"
+          },
+          "target_title": {
+            "type": "string"
+          },
+          "target_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "created_at",
+          "enrollment_id",
+          "id",
+          "lecture_id",
+          "lecture_title",
+          "session_id",
+          "status",
+          "student_name",
+          "target_id",
+          "target_title",
+          "target_type"
+        ],
+        "type": "object"
+      },
       "ExamTypeEnum": {
         "description": "* `template` - Template\n* `regular` - Regular",
         "enum": [
@@ -5031,6 +5177,72 @@
         ],
         "type": "object"
       },
+      "HomeworkReviewQueuePage": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "page": {
+            "type": "integer"
+          },
+          "pages": {
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/HomeworkReviewQueueRow"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "page",
+          "pages",
+          "results"
+        ],
+        "type": "object"
+      },
+      "HomeworkReviewQueueRow": {
+        "properties": {
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "file_count": {
+            "type": "integer"
+          },
+          "homework_id": {
+            "type": "integer"
+          },
+          "homework_title": {
+            "type": "string"
+          },
+          "lecture_title": {
+            "type": "string"
+          },
+          "session_title": {
+            "type": "string"
+          },
+          "student_name": {
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "file_count",
+          "homework_id",
+          "homework_title",
+          "lecture_title",
+          "session_title",
+          "student_name",
+          "submitted_at"
+        ],
+        "type": "object"
+      },
       "HomeworkScore": {
         "properties": {
           "clinic_required": {
@@ -6027,6 +6239,10 @@
           "enrollment_id": {
             "type": "integer"
           },
+          "enrollment_status": {
+            "readOnly": true,
+            "type": "string"
+          },
           "id": {
             "readOnly": true,
             "type": "integer"
@@ -6109,6 +6325,7 @@
         },
         "required": [
           "enrollment_id",
+          "enrollment_status",
           "id",
           "lecture_color",
           "lecture_memo",
@@ -6149,6 +6366,14 @@
             "format": "time",
             "nullable": true,
             "type": "string"
+          },
+          "restore_scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SecessionScopeEnum"
+              }
+            ],
+            "writeOnly": true
           },
           "secession_scope": {
             "allOf": [
@@ -11037,6 +11262,14 @@
             "nullable": true,
             "type": "string"
           },
+          "restore_scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SecessionScopeEnum"
+              }
+            ],
+            "writeOnly": true
+          },
           "secession_scope": {
             "allOf": [
               {
@@ -12694,6 +12927,208 @@
           "work_amount",
           "work_hours",
           "year"
+        ],
+        "type": "object"
+      },
+      "PendingExamSubmission": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "discard_reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "enrollment_id": {
+            "description": "연결된 수강이 없으면 0입니다.",
+            "type": "integer"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "file_size": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "file_type": {
+            "type": "string"
+          },
+          "has_file": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "is_discarded": {
+            "type": "boolean"
+          },
+          "lecture_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "lecture_title": {
+            "type": "string"
+          },
+          "omr_readiness": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SubmissionOmrReadiness"
+              }
+            ],
+            "nullable": true
+          },
+          "profile_photo_url": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "recovery": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SubmissionExamRecovery"
+              }
+            ],
+            "nullable": true
+          },
+          "score_lecture_id": {
+            "description": "저장된 성적의 원래 수강 강의입니다.",
+            "nullable": true,
+            "type": "integer"
+          },
+          "session_choices": {
+            "items": {
+              "$ref": "#/components/schemas/SubmissionSessionChoice"
+            },
+            "type": "array"
+          },
+          "session_history_only": {
+            "description": "현재 차시에서 처리할 수 없어 과거 제출로 조회할 때만 true입니다.",
+            "type": "boolean"
+          },
+          "session_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "session_origin_recorded": {
+            "description": "제출에 진입 차시가 기록됐는지 여부입니다.",
+            "type": "boolean"
+          },
+          "session_title": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "student_name": {
+            "type": "string"
+          },
+          "target_id": {
+            "type": "integer"
+          },
+          "target_resolved": {
+            "type": "boolean"
+          },
+          "target_resolved_reason": {
+            "description": "대상을 찾으면 null, 그 밖에는 target_missing 또는 session_missing입니다.",
+            "nullable": true,
+            "type": "string"
+          },
+          "target_title": {
+            "type": "string"
+          },
+          "target_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "created_at",
+          "discard_reason",
+          "enrollment_id",
+          "file_name",
+          "file_size",
+          "file_type",
+          "has_file",
+          "id",
+          "is_discarded",
+          "lecture_id",
+          "lecture_title",
+          "omr_readiness",
+          "profile_photo_url",
+          "recovery",
+          "session_id",
+          "source",
+          "status",
+          "student_name",
+          "target_id",
+          "target_resolved",
+          "target_resolved_reason",
+          "target_title",
+          "target_type"
+        ],
+        "type": "object"
+      },
+      "PendingExamSubmissionListOrPage": {
+        "oneOf": [
+          {
+            "items": {
+              "$ref": "#/components/schemas/PendingExamSubmission"
+            },
+            "type": "array"
+          },
+          {
+            "$ref": "#/components/schemas/PendingExamSubmissionPage"
+          }
+        ]
+      },
+      "PendingExamSubmissionPage": {
+        "properties": {
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "has_next": {
+            "type": "boolean"
+          },
+          "has_previous": {
+            "type": "boolean"
+          },
+          "page": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "page_size": {
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "pages": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/PendingExamSubmission"
+            },
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/SubmissionFailureCounts"
+          }
+        },
+        "required": [
+          "count",
+          "has_next",
+          "has_previous",
+          "page",
+          "page_size",
+          "pages",
+          "results",
+          "summary"
         ],
         "type": "object"
       },
@@ -15333,6 +15768,16 @@
         ],
         "type": "object"
       },
+      "ReceiptKindEnum": {
+        "description": "* `NONE` - NONE\n* `BUSINESS_TAX` - BUSINESS_TAX\n* `PERSONAL_TAX` - PERSONAL_TAX\n* `CASH` - CASH",
+        "enum": [
+          "NONE",
+          "BUSINESS_TAX",
+          "PERSONAL_TAX",
+          "CASH"
+        ],
+        "type": "string"
+      },
       "RecordPaymentPaymentMethodEnum": {
         "description": "* `CARD` - CARD\n* `BANK_TRANSFER` - BANK_TRANSFER\n* `CASH` - CASH\n* `OTHER` - OTHER",
         "enum": [
@@ -16078,6 +16523,52 @@
           "FAILED"
         ],
         "type": "string"
+      },
+      "ResultsLandingStats": {
+        "properties": {
+          "active_exams": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "active_lectures": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "done_last_7d": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "failed_last_24h": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pending_submissions": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pending_top": {
+            "items": {
+              "$ref": "#/components/schemas/ExamSubmissionSummary"
+            },
+            "type": "array"
+          },
+          "recent_done_top": {
+            "items": {
+              "$ref": "#/components/schemas/ExamSubmissionSummary"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "active_exams",
+          "active_lectures",
+          "done_last_7d",
+          "failed_last_24h",
+          "pending_submissions",
+          "pending_top",
+          "recent_done_top"
+        ],
+        "type": "object"
       },
       "ReviewReport": {
         "properties": {
@@ -18925,6 +19416,131 @@
         ],
         "type": "object"
       },
+      "StaffExamReviewIssues": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StaffExamSubmission"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "total": {
+            "description": "커서를 적용하기 전 조건에 맞는 전체 검토 건수입니다.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "type": "object"
+      },
+      "StaffExamSubmission": {
+        "properties": {
+          "aligned": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "alignment_method": {
+            "nullable": true,
+            "type": "string"
+          },
+          "answer_stats": {
+            "additionalProperties": {},
+            "nullable": true,
+            "type": "object"
+          },
+          "archived": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "enrollment_id": {
+            "description": "제출에 지정된 수강이 없으면 0입니다.",
+            "type": "integer"
+          },
+          "file_key": {
+            "type": "string"
+          },
+          "has_file": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "identifier_status": {
+            "nullable": true,
+            "type": "string"
+          },
+          "manual_review_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "manual_review_required": {
+            "type": "boolean"
+          },
+          "score": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "sheet_version": {
+            "nullable": true,
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceB3bEnum"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SubmissionStatusEnum"
+          },
+          "student_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "aligned",
+          "alignment_method",
+          "answer_stats",
+          "archived",
+          "created_at",
+          "enrollment_id",
+          "file_key",
+          "has_file",
+          "id",
+          "identifier_status",
+          "manual_review_reasons",
+          "manual_review_required",
+          "score",
+          "sheet_version",
+          "source",
+          "status",
+          "student_name"
+        ],
+        "type": "object"
+      },
+      "StaffExamSubmissionListOrIssues": {
+        "oneOf": [
+          {
+            "items": {
+              "$ref": "#/components/schemas/StaffExamSubmission"
+            },
+            "type": "array"
+          },
+          {
+            "$ref": "#/components/schemas/StaffExamReviewIssues"
+          }
+        ]
+      },
       "StaffExpenseRecord": {
         "properties": {
           "amount": {
@@ -19042,6 +19658,282 @@
           "REJECTED"
         ],
         "type": "string"
+      },
+      "StaffHomeworkSubmission": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "enrollment_id": {
+            "description": "제출에 지정된 수강이 없으면 0입니다.",
+            "type": "integer"
+          },
+          "file_size": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "file_type": {
+            "nullable": true,
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/StaffHomeworkSubmissionFile"
+            },
+            "type": "array"
+          },
+          "homework_lecture_title": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "lecture_chip_label": {
+            "nullable": true,
+            "type": "string"
+          },
+          "lecture_color": {
+            "nullable": true,
+            "type": "string"
+          },
+          "lecture_title": {
+            "type": "string"
+          },
+          "media_set_fingerprint": {
+            "nullable": true,
+            "type": "string"
+          },
+          "name_highlight_clinic_target": {
+            "type": "boolean"
+          },
+          "parent_phone": {
+            "nullable": true,
+            "type": "string"
+          },
+          "profile_photo_url": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "session_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "session_title": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceB3bEnum"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SubmissionStatusEnum"
+          },
+          "student_id": {
+            "description": "연결된 학생이 없으면 0입니다.",
+            "type": "integer"
+          },
+          "student_name": {
+            "type": "string"
+          },
+          "student_phone": {
+            "nullable": true,
+            "type": "string"
+          },
+          "teacher_accepted": {
+            "type": "boolean"
+          },
+          "teacher_accepted_updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "teacher_review_note": {
+            "type": "string"
+          },
+          "teacher_review_source": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TeacherReviewSourceEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "teacher_review_updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "teacher_reviewed": {
+            "type": "boolean"
+          },
+          "teacher_reviewed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "created_at",
+          "enrollment_id",
+          "file_size",
+          "file_type",
+          "files",
+          "homework_lecture_title",
+          "id",
+          "media_set_fingerprint",
+          "name_highlight_clinic_target",
+          "parent_phone",
+          "profile_photo_url",
+          "session_id",
+          "session_title",
+          "source",
+          "status",
+          "student_id",
+          "student_name",
+          "student_phone",
+          "teacher_accepted",
+          "teacher_accepted_updated_at",
+          "teacher_review_note",
+          "teacher_review_source",
+          "teacher_review_updated_at",
+          "teacher_reviewed",
+          "teacher_reviewed_at"
+        ],
+        "type": "object"
+      },
+      "StaffHomeworkSubmissionFile": {
+        "properties": {
+          "client_file_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "error_message": {
+            "type": "string"
+          },
+          "failed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "file_size": {
+            "type": "integer"
+          },
+          "id": {
+            "description": "파일 UUID 또는 기존 단일 파일의 legacy-<제출 ID>입니다.",
+            "type": "string"
+          },
+          "legacy": {
+            "type": "boolean"
+          },
+          "media_kind": {
+            "$ref": "#/components/schemas/MediaKindEnum"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "original_filename": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer"
+          },
+          "removed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StudentHomeworkFileStatusEnum"
+          },
+          "upload_batch_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "upload_started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "uploaded_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_file_id",
+          "created_at",
+          "error_message",
+          "failed_at",
+          "file_size",
+          "id",
+          "legacy",
+          "media_kind",
+          "mime_type",
+          "original_filename",
+          "position",
+          "removed_at",
+          "status",
+          "upload_batch_id",
+          "upload_started_at",
+          "uploaded_at"
+        ],
+        "type": "object"
+      },
+      "StaffHomeworkSubmissionListOrPage": {
+        "oneOf": [
+          {
+            "items": {
+              "$ref": "#/components/schemas/StaffHomeworkSubmission"
+            },
+            "type": "array"
+          },
+          {
+            "$ref": "#/components/schemas/StaffHomeworkSubmissionsPage"
+          }
+        ]
+      },
+      "StaffHomeworkSubmissionsPage": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "next": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "previous": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/StaffHomeworkSubmission"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "next",
+          "previous",
+          "results"
+        ],
+        "type": "object"
       },
       "StaffList": {
         "properties": {
@@ -21229,6 +22121,48 @@
         ],
         "type": "object"
       },
+      "StudentExamSubmitReceipt": {
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "submission_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "submission_id"
+        ],
+        "type": "object"
+      },
+      "StudentExamSubmitRequestRequest": {
+        "properties": {
+          "answers": {
+            "description": "문항 ID별 답안 객체 또는 문항·답안 목록"
+          },
+          "client_request_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "entry_session_id": {
+            "description": "학생이 시험을 연 차시. 일반 시험 목록에서는 생략",
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "expected_attempt_count": {
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "answers"
+        ],
+        "type": "object"
+      },
       "StudentFee": {
         "properties": {
           "adjusted_amount": {
@@ -23065,6 +23999,73 @@
         ],
         "type": "object"
       },
+      "SubmissionDetailError": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "type": "object"
+      },
+      "SubmissionExamRecovery": {
+        "properties": {
+          "action": {
+            "description": "시험 설정 보완이 필요할 때 configure_exam입니다.",
+            "type": "string"
+          },
+          "exam_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action",
+          "exam_id"
+        ],
+        "type": "object"
+      },
+      "SubmissionFailureCounts": {
+        "properties": {
+          "discarded": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "failed": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "real_failed": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "discarded",
+          "failed",
+          "real_failed"
+        ],
+        "type": "object"
+      },
+      "SubmissionOmrReadiness": {
+        "properties": {
+          "can_grade": {
+            "type": "boolean"
+          },
+          "missing": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "can_grade",
+          "missing"
+        ],
+        "type": "object"
+      },
       "SubmissionRequest": {
         "properties": {
           "enrollment_id": {
@@ -23112,6 +24113,29 @@
           "target_id",
           "target_type",
           "tenant"
+        ],
+        "type": "object"
+      },
+      "SubmissionSessionChoice": {
+        "properties": {
+          "lecture_id": {
+            "type": "integer"
+          },
+          "lecture_title": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "integer"
+          },
+          "session_title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "lecture_id",
+          "lecture_title",
+          "session_id",
+          "session_title"
         ],
         "type": "object"
       },
@@ -23882,6 +24906,14 @@
           "name"
         ],
         "type": "object"
+      },
+      "TeacherReviewSourceEnum": {
+        "description": "* `score` - score\n* `manual` - manual",
+        "enum": [
+          "score",
+          "manual"
+        ],
+        "type": "string"
       },
       "TemplateBundle": {
         "properties": {
@@ -25183,7 +26215,14 @@
         ],
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankTransferNotice"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -25507,9 +26546,36 @@
       "post": {
         "description": "POST /api/v1/billing/bank-transfer/notices/",
         "operationId": "billing_bank_transfer_notices_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BankTransferNoticeSubmitRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/BankTransferNoticeSubmitRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/BankTransferNoticeSubmitRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "200": {
-            "description": "No response body"
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankTransferNotice"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -50581,11 +51647,53 @@
     },
     "/api/v1/results/admin/landing-stats/": {
       "get": {
-        "description": "GET /results/admin/landing-stats/\n\nResponse:\n{\n  \"active_lectures\": int,\n  \"active_exams\": int,\n  \"pending_submissions\": int,\n  \"done_last_7d\": int,\n  \"failed_last_24h\": int,\n  \"pending_top\": [SubmissionSummary, ...],   # 최신 5건\n  \"recent_done_top\": [SubmissionSummary, ...]\n}",
+        "description": "현재 학원 교직원의 성적 집계와 최근 대기·완료 시험 제출을 각각 최대 5건 반환합니다.",
         "operationId": "results_admin_landing_stats_retrieve",
+        "parameters": [
+          {
+            "description": "1이면 확인된 시험의 차시 후보·출처와 원래 성적 강의를 포함합니다. 생략하면 기존 요약을 반환합니다.",
+            "in": "query",
+            "name": "session_choices",
+            "schema": {
+              "default": "0",
+              "enum": [
+                "0",
+                "1"
+              ],
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultsLandingStats"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionDetailError"
+                }
+              }
+            },
+            "description": "인증이 필요하거나 인증 정보가 유효하지 않습니다."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionDetailError"
+                }
+              }
+            },
+            "description": "현재 학원에서 교직원 권한이 필요합니다."
           }
         },
         "security": [
@@ -55822,9 +56930,36 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentExamSubmitRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentExamSubmitRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentExamSubmitRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "200": {
-            "description": "No response body"
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentExamSubmitReceipt"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -59700,8 +60835,26 @@
     },
     "/api/v1/submissions/submissions/exams/{exam_id}/": {
       "get": {
+        "description": "현재 학원의 인증된 교직원이 시험 제출 이력을 조회합니다. 기본 응답은 최신 제출부터 최대 200건의 배열입니다. 조회 범위에 없는 시험은 빈 결과를 반환합니다. 차시를 지정하면 해당 시험에 연결된 차시여야 합니다.",
         "operationId": "submissions_submissions_exams_retrieve",
         "parameters": [
+          {
+            "description": "검토 목록에서 이 ID보다 작은 제출만 반환합니다.",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "검토 목록에서만 사용합니다. 양의 수강 ID 1~1000개를 쉼표로 구분합니다.",
+            "in": "query",
+            "name": "enrollment_ids",
+            "schema": {
+              "type": "string"
+            }
+          },
           {
             "in": "path",
             "name": "exam_id",
@@ -59709,11 +60862,99 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "description": "한 번만 지정합니다. 개수 제한을 적용하기 전에 해당 시험의 제출 한 건으로 좁힙니다.",
+            "in": "query",
+            "name": "focus_id",
+            "schema": {
+              "format": "int64",
+              "maximum": 9223372036854775807,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "검토 목록에서 수강 ID를 지정해도 미지정 제출을 포함합니다. 0이면 제외합니다.",
+            "in": "query",
+            "name": "include_unbound",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "1이면 검토가 필요한 제출을 페이지당 최대 50건씩 반환합니다.",
+            "in": "query",
+            "name": "review_issues",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "시험에 연결된 차시 하나를 지정합니다. 다른 차시에서 접수한 OMR 스캔은 제외합니다.",
+            "in": "query",
+            "name": "session_id",
+            "schema": {
+              "format": "int64",
+              "maximum": 9223372036854775807,
+              "minimum": 1,
+              "type": "integer"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffExamSubmissionListOrIssues"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    ]
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "잘못된 쿼리 필드 또는 detail에 오류 내용을 반환합니다."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionDetailError"
+                }
+              }
+            },
+            "description": "인증이 필요하거나 인증 정보가 유효하지 않습니다."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionDetailError"
+                }
+              }
+            },
+            "description": "현재 학원에서 교직원 권한이 필요합니다."
           }
         },
         "security": [
@@ -60059,14 +61300,20 @@
         ]
       }
     },
-    "/api/v1/submissions/submissions/homework/{homework_id}/": {
+    "/api/v1/submissions/submissions/homework/review-queue/": {
       "get": {
-        "operationId": "submissions_submissions_homework_retrieve",
+        "operationId": "submissions_submissions_homework_review_queue_retrieve",
         "parameters": [
           {
-            "in": "path",
-            "name": "homework_id",
-            "required": true,
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
             "schema": {
               "type": "integer"
             }
@@ -60074,7 +61321,135 @@
         ],
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeworkReviewQueuePage"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "submissions"
+        ]
+      }
+    },
+    "/api/v1/submissions/submissions/homework/{homework_id}/": {
+      "get": {
+        "description": "현재 학원의 인증된 교직원이 과제 제출물을 조회합니다. 기본 응답은 최신 제출부터 최대 200건의 배열입니다. page 또는 page_size를 지정하면 페이지 객체를 반환합니다. 조회 범위에 없는 과제에는 제출 행이 없습니다.",
+        "operationId": "submissions_submissions_homework_retrieve",
+        "parameters": [
+          {
+            "description": "과제 강의에서 이 수강의 제출만 조회합니다. 다른 제출로 대체된 행은 제외합니다.",
+            "in": "query",
+            "name": "enrollment_id",
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "homework_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "default": 1,
+              "maximum": 1000000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "schema": {
+              "default": 200,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffHomeworkSubmissionListOrPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    ]
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "잘못된 쿼리 필드 또는 detail에 오류 내용을 반환합니다."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionDetailError"
+                }
+              }
+            },
+            "description": "인증이 필요하거나 인증 정보가 유효하지 않습니다."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionDetailError"
+                }
+              }
+            },
+            "description": "현재 학원에서 교직원 권한이 필요합니다."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionDetailError"
+                }
+              }
+            },
+            "description": "요청한 페이지가 없습니다."
           }
         },
         "security": [
@@ -60348,7 +61723,7 @@
     },
     "/api/v1/submissions/submissions/pending/": {
       "get": {
-        "description": "GET /api/v1/submissions/submissions/pending/\n\nAdmin submissions inbox — lists pending/recent submissions with resolved\ncontext (student name, target title, lecture/session info).\n\nQuery params:\n  ?filter=pending  — only actively-processing submissions\n  ?filter=all      — pending + terminal (done/failed) from last 24h\n  (default)        — same as 'all'",
+        "description": "현재 학원의 교직원용 시험 제출함입니다. page 또는 page_size를 지정하면 건수와 요약을 포함한 페이지를 반환하고, 둘 다 생략하면 최근순 최대 200건의 배열을 반환합니다. session_choices=1은 기록된 출처·원래 성적 강의·조회 가능한 차시 후보 및 해당하는 경우 과거 제출 표시를 포함합니다.",
         "operationId": "submissions_submissions_pending_retrieve",
         "parameters": [
           {
@@ -60401,11 +61776,75 @@
               "minimum": 1,
               "type": "integer"
             }
+          },
+          {
+            "description": "* `0` - 0\n* `1` - 1",
+            "in": "query",
+            "name": "session_choices",
+            "schema": {
+              "default": "0",
+              "enum": [
+                "0",
+                "1"
+              ],
+              "minLength": 1,
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingExamSubmissionListOrPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    ]
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "잘못된 쿼리 필드 또는 detail에 오류 내용을 반환합니다."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionDetailError"
+                }
+              }
+            },
+            "description": "인증이 필요하거나 인증 정보가 유효하지 않습니다."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionDetailError"
+                }
+              }
+            },
+            "description": "현재 학원에서 교직원 권한이 필요합니다."
           }
         },
         "security": [

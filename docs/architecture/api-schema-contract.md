@@ -2,7 +2,7 @@
 
 **Status:** Active
 **Owners:** Backend API and frontend API consumers
-**Last reviewed:** 2026-11-05
+**Last reviewed:** 2026-11-28
 
 ## Purpose and ownership
 
@@ -35,9 +35,9 @@ not inherit test, development, worker, or production settings. Check mode fails 
 - the number of documented paths or schemas falls below the reviewed baseline;
 - the schema is not valid OpenAPI 3.
 
-The current reviewed baseline covers 653 paths and 574 schema components.
-Legacy APIView and serializer inference gaps are recorded as 1,343 generator
-errors (269 unique) and 299 warnings (134 unique). They are an explicit
+The current reviewed baseline covers 687 paths and 699 schema components.
+Legacy APIView and serializer inference gaps are recorded as 1,311 generator
+errors (261 unique) and 299 warnings (134 unique). They are an explicit
 no-regression ceiling, not a claim of complete endpoint typing. When an
 endpoint is touched, add its serializer/schema metadata and lower the baseline
 after regenerating; never raise the baseline merely to make CI pass.
@@ -69,6 +69,27 @@ a flat-list response.
 This contract is required by the teacher/admin exam, homework, result, and
 selection APIs. Silently ignoring `page_size` can hide records beyond the
 first 20 and is treated as a transport regression.
+
+## Staff submission review responses
+
+The staff submission inbox and results dashboard publish these GET responses under
+`/api/v1/`. Each requires an authenticated staff role in the resolved tenant.
+
+| Endpoint | Default response | Selected response |
+| --- | --- | --- |
+| `submissions/submissions/pending/` | Up to 200 exam submission rows | `page` or `page_size` returns a page with counts and a failure summary. |
+| `results/admin/landing-stats/` | Counts and up to five rows each in `pending_top` and `recent_done_top` | `session_choices=1` adds session evidence for resolved exam targets. |
+| `submissions/submissions/exams/{exam_id}/` | Up to 200 exam submission rows, including each submission's saved score when available | `focus_id` selects that submission in this exam. `review_issues=1` returns `items`, `total`, and `next_cursor`. |
+| `submissions/submissions/homework/{homework_id}/` | Up to 200 homework submission rows with file and review details | `enrollment_id` selects current submissions for the matching enrollment. `page` or `page_size` returns `count`, `next`, `previous`, and `results`. |
+
+Both the pending inbox and dashboard preserve the older response when session
+choices are omitted. With the option enabled, a recorded entry session, eligible
+session choices, the original grading lecture, and read-only history have separate
+fields. An empty accessible collection remains a successful response. Invalid
+selection or pagination inputs are documented on the relevant operation, including
+the homework list's out-of-range page response. The projections and their
+authorization are covered by the [exam grading](../domain/exam-grading.md) and
+[homework grading](../domain/homework-grading.md) contracts.
 
 ## Scalar query parsing contract
 

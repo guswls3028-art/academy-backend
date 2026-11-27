@@ -31,6 +31,7 @@ SPECTACULAR_SETTINGS = {
         "PublicVideoStatus": ["draft", "published", "unpublished"],
         "AccountPasswordModeEnum": "apps.core.services.initial_password_policy.MODES",
         "SessionAttendanceStatus": "apps.domains.attendance.serializers.attendance_status_choices",
+        "SecessionScopeEnum": [("session", "session"), ("lecture", "lecture")],
         "EventTypeEnum": "apps.domains.video.models.VideoPlaybackEvent.EventType",
         "TypeEnum": [("exam", "exam"), ("homework", "homework")],
         "ExamGradingMode": "apps.domains.exams.models.Exam.GradingMode",

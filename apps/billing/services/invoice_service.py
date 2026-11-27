@@ -11,7 +11,7 @@ InvoiceService — 인보이스 생성/상태 전이의 유일한 진입점.
 규칙:
   - (tenant, period_start, period_end) unique constraint로 이중 청구 방지.
   - provider_order_id는 자동 생성 (UUID 기반, PG 전송용).
-  - invoice_number는 사람이 보는 표시용 (INV-YYYYMM-{tenant_code}-NNN).
+  - invoice_number는 사람이 보는 표시용이며 저장 길이를 넘는 번호는 테넌트 ID와 기간 시작일로 구성한다.
   - 모든 상태 전이는 select_for_update()로 보호.
 """
 
@@ -25,6 +25,7 @@ from dateutil.relativedelta import relativedelta
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
+from django.utils.http import int_to_base36
 
 from apps.billing.models import Invoice, PaymentTransaction
 
@@ -74,22 +75,20 @@ def _lock_program_then_invoice(invoice_id: int):
     return program, invoice
 
 
-def _generate_invoice_number(tenant_code: str, period_start: date) -> str:
-    """
-    표시용 인보이스 번호 생성. INV-YYYYMM-{tenant_code}-NNN.
-    동시 호출 시 count 충돌 방지: UUID suffix 추가 후 DB unique에 의존.
-    """
-    ym = period_start.strftime("%Y%m")
-    count = Invoice.objects.filter(
-        invoice_number__startswith=f"INV-{ym}-{tenant_code}-"
-    ).count()
-    seq = count + 1
-    candidate = f"INV-{ym}-{tenant_code}-{seq:03d}"
-    # 이미 존재하면 seq 증가 (race condition 방어)
-    while Invoice.objects.filter(invoice_number=candidate).exists():
+def _generate_invoice_number(tenant, period_start: date) -> str:
+    """Use the existing display number when it fits the invoice column."""
+    prefix = f"INV-{period_start:%Y%m}-{tenant.code}-"
+    limit = Invoice._meta.get_field("invoice_number").max_length
+    seq = Invoice.objects.filter(invoice_number__startswith=prefix).count() + 1
+    while True:
+        candidate = f"{prefix}{seq:03d}"
+        if len(candidate) > limit:
+            # Generated monthly invoices have a fixed end date for each start date.
+            # This namespace cannot overlap old INV- numbers and fits a 64-bit tenant ID.
+            return f"INV{period_start:%Y%m%d}-{int_to_base36(tenant.pk)}"
+        if not Invoice.objects.filter(invoice_number=candidate).exists():
+            return candidate
         seq += 1
-        candidate = f"INV-{ym}-{tenant_code}-{seq:03d}"
-    return candidate
 
 
 def resolve_monthly_amounts(program: "Program") -> dict[str, int]:
@@ -154,12 +153,11 @@ def create_for_next_period(program: "Program") -> Invoice | None:
     else:
         due_date = period_start + timedelta(days=15)  # 세금계산서는 15일 유예
 
-    tenant_code = program.tenant.code if hasattr(program, "tenant") else "unknown"
 
     try:
         invoice = Invoice.objects.create(
             tenant_id=program.tenant_id,
-            invoice_number=_generate_invoice_number(tenant_code, period_start),
+            invoice_number=_generate_invoice_number(program.tenant, period_start),
             plan=program.billing_plan,
             billing_mode=program.billing_mode,
             supply_amount=amounts["supply_amount"],

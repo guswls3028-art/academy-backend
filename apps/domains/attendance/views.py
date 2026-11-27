@@ -11,7 +11,7 @@ from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.exceptions import APIException, NotFound
+from rest_framework.exceptions import APIException, NotFound, ValidationError
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from apps.core.parsing import parse_bool
@@ -24,6 +24,7 @@ from .serializers import (
 )
 from .filters import AttendanceFilter
 from .services import create_attendance_roster
+from .services.roster import ensure_session_roster_membership
 from .services.arrival_overview import build_arrival_overview
 from apps.support.lectures.schedule_queries import schedule_enrollment_ids
 
@@ -252,14 +253,37 @@ class AttendanceViewSet(ModelViewSet):
     @transaction.atomic
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
-        conflict = _secession_status_conflict(instance, request.data.get("status"))
-        if conflict is not None:
-            return conflict
-        response = super().update(request, *args, **kwargs)
-        if "status" in request.data:
+        partial = kwargs.get("partial", False)
+        new_status = request.data.get("status")
+        restore = "restore_scope" in request.data
+        withdraw = new_status == "SECESSION" and (
+            partial or instance.status != "SECESSION"
+            or "secession_scope" in request.data or "confirm_secession" in request.data
+        )
+        if not restore:
+            conflict = _secession_status_conflict(instance, new_status)
+            if conflict is not None:
+                return conflict
+
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        if restore or withdraw:
+            if restore:
+                changed = self._restore_attendance(request, instance, new_status, partial=partial)
+            else:
+                changed = self._withdraw_attendance(request, instance)
+            if partial:
+                return Response(self.get_serializer(changed).data)
+            # A full representation may also contain a memo or arrival plan.
+            # Apply it only after the confirmed transition on the same locked row.
+            serializer.instance = changed
+        self.perform_update(serializer)
+        instance = serializer.instance
+        if restore or withdraw:
             instance.refresh_from_db()
+        elif "status" in request.data:
             reconcile_learning_todo_targets(instance)
-        return response
+        return Response(self.get_serializer(instance).data)
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
@@ -293,8 +317,12 @@ class AttendanceViewSet(ModelViewSet):
                 SessionEnrollment.objects.filter(
                     tenant=tenant,
                     enrollment=enrollment,
+                    session__lecture_id=enrollment.lecture_id,
                     session__exams__id__in=exam_ids,
                 )
+                .exclude(session_id__in=Attendance.objects.filter(
+                    tenant=tenant, enrollment=enrollment, status="SECESSION",
+                ).values("session_id"))
                 .values_list("session__exams__id", flat=True)
                 .distinct()
             )
@@ -316,84 +344,94 @@ class AttendanceViewSet(ModelViewSet):
     # =========================================================
     # 0️⃣ 퇴원 처리 (SECESSION → 수강등록 비활성화 + 시험/과제 대상 제외)
     # =========================================================
-    @transaction.atomic
-    def partial_update(self, request, *args, **kwargs):
-        instance = self.get_object()
-        new_status = request.data.get("status")
+    def _restore_attendance(self, request, instance, new_status, *, partial):
+        scope = request.data["restore_scope"]
+        if (scope not in ("session", "lecture") or new_status not in ATTENDANCE_STATUS_ORDER
+                or new_status == "SECESSION" or "secession_scope" in request.data
+                or "confirm_secession" in request.data
+                or (partial and set(request.data) != {"status", "restore_scope"})):
+            raise ValidationError({"detail": "복구 범위와 변경할 출결 상태를 확인해 주세요."})
+        enrollment = instance.enrollment
+        # A retry after a lost response may read back the same committed result.
+        if instance.status != "SECESSION":
+            if (instance.status == new_status and enrollment.status == "ACTIVE"
+                    and SessionEnrollment.objects.filter(
+                        tenant=request.tenant, enrollment_id=enrollment.id, session_id=instance.session_id,
+                    ).exists()):
+                return instance
+            raise AttendanceMutationConflict()
+        expected = {"session": "ACTIVE", "lecture": "INACTIVE"}[scope]
+        if enrollment.status != expected:
+            raise AttendanceMutationConflict()
+        if scope == "lecture":
+            enroll_repo.mark_unrecorded_memberships_withdrawn(tenant=request.tenant, enrollment=enrollment)
+            enrollment.status = "ACTIVE"
+            enrollment.save(update_fields=["status"])
+        restored = ensure_session_roster_membership(
+            tenant=request.tenant, session=instance.session, enrollment=enrollment,
+            allow_session_reregistration=True,
+        ).attendance
+        restored.status = new_status
+        restored.save(update_fields=["status"])
+        reconcile_learning_todo_targets(restored)
+        return restored
 
-        conflict = _secession_status_conflict(instance, new_status)
-        if conflict is not None:
-            return conflict
+    def _withdraw_attendance(self, request, instance):
+        # Omitted scope preserves the existing client contract during rollout.
+        scope = request.data.get("secession_scope", "lecture")
+        if not parse_bool(request.data.get("confirm_secession", False), field_name="confirm_secession"):
+            raise ValidationError({"detail": "퇴원 처리는 confirm_secession: true를 포함해야 합니다."})
+        tenant = getattr(request, "tenant", None)
+        enrollment = instance.enrollment
 
-        if new_status == "SECESSION":
-            # Omitted scope preserves the existing client contract during rollout.
-            scope = request.data.get("secession_scope", "lecture")
-            if scope not in ("session", "lecture"):
-                return Response(
-                    {"detail": "퇴원 범위는 session 또는 lecture여야 합니다."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if not parse_bool(request.data.get("confirm_secession", False), field_name="confirm_secession"):
-                return Response(
-                    {"detail": "퇴원 처리는 confirm_secession: true를 포함해야 합니다."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            tenant = getattr(request, "tenant", None)
-            enrollment = instance.enrollment
-
-            if scope == "session":
-                self._remove_session_targets(
-                    tenant=tenant, enrollment=enrollment, session=instance.session,
-                    exam_ids=list(get_exams_for_session(instance.session).values_list("id", flat=True)),
-                )
-                instance.status = "SECESSION"
-                instance.save(update_fields=["status"])
-                logger.info(
-                    "SESSION_SECESSION enrollment_id=%s session_id=%s tenant_id=%s",
-                    enrollment.id, instance.session_id, tenant.id,
-                )
-                return Response(AttendanceSerializer(instance).data)
-
-            if instance.status == "SECESSION" and enrollment.status == "INACTIVE":
-                return Response(AttendanceSerializer(instance).data)
-
-            # 수강등록 비활성화
-            Enrollment.objects.filter(
-                id=enrollment.id, tenant=tenant
-            ).update(status="INACTIVE")
-            deactivate_fees_for_enrollment(enrollment)
-
-            # 해당 수강등록의 모든 출결을 SECESSION으로 변경
-            Attendance.objects.filter(
-                tenant=tenant, enrollment=enrollment
-            ).update(status="SECESSION")
-
-            # 시험 응시 대상에서 제거 (enrollment__tenant 방어 필터)
-            ExamEnrollment.objects.filter(
-                enrollment=enrollment, enrollment__tenant=tenant,
-            ).delete()
-
-            # 과제 대상에서 제거
-            HomeworkAssignment.objects.filter(
-                tenant=tenant, enrollment=enrollment
-            ).delete()
-
-            logger.info(
-                "SECESSION enrollment_id=%s student_id=%s tenant_id=%s — "
-                "enrollment INACTIVE, exam/homework enrollments removed",
-                enrollment.id,
-                enrollment.student_id,
-                tenant.id,
+        if scope == "session":
+            self._remove_session_targets(
+                tenant=tenant, enrollment=enrollment, session=instance.session,
+                exam_ids=list(get_exams_for_session(instance.session).values_list("id", flat=True)),
             )
+            instance.status = "SECESSION"
+            instance.save(update_fields=["status"])
+            logger.info(
+                "SESSION_SECESSION enrollment_id=%s session_id=%s tenant_id=%s",
+                enrollment.id, instance.session_id, tenant.id,
+            )
+            return instance
 
-            instance.refresh_from_db()
-            return Response(AttendanceSerializer(instance).data)
+        enroll_repo.mark_unrecorded_memberships_withdrawn(tenant=tenant, enrollment=enrollment)
+        if instance.status == "SECESSION" and enrollment.status == "INACTIVE":
+            return instance
 
-        # 일반 강의 출결 저장은 알림 발송과 분리한다. 입실/결석 안내는
-        # 전용 preview → confirm 수동 발송 경로에서만 요청할 수 있다.
-        # DRF partial_update delegates to self.update, which reconciles the
-        # persisted status once inside its transaction.
-        return super().partial_update(request, *args, **kwargs)
+        # 수강등록 비활성화
+        Enrollment.objects.filter(
+            id=enrollment.id, tenant=tenant
+        ).update(status="INACTIVE")
+        deactivate_fees_for_enrollment(enrollment)
+
+        # 해당 수강등록의 모든 출결을 SECESSION으로 변경
+        Attendance.objects.filter(
+            tenant=tenant, enrollment=enrollment
+        ).update(status="SECESSION")
+
+        # 시험 응시 대상에서 제거 (enrollment__tenant 방어 필터)
+        ExamEnrollment.objects.filter(
+            enrollment=enrollment, enrollment__tenant=tenant,
+        ).delete()
+
+        # 과제 대상에서 제거
+        HomeworkAssignment.objects.filter(
+            tenant=tenant, enrollment=enrollment
+        ).delete()
+
+        logger.info(
+            "SECESSION enrollment_id=%s student_id=%s tenant_id=%s — "
+            "enrollment INACTIVE, exam/homework enrollments removed",
+            enrollment.id,
+            enrollment.student_id,
+            tenant.id,
+        )
+
+        instance.refresh_from_db()
+        return instance
 
     # =========================================================
     # 0-1️⃣ 전체 현장 출석 (세션 내 모든 출결을 PRESENT로 일괄 변경)

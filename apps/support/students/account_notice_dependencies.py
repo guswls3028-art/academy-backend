@@ -17,7 +17,8 @@ def active_student_enrollment_exists(*, tenant_id: int, student_id: int) -> bool
     from apps.domains.enrollment.models import Enrollment
 
     return Enrollment.objects.filter(
-        tenant_id=tenant_id, student_id=student_id, status="ACTIVE",
+        tenant_id=tenant_id, student_id=student_id, student__tenant_id=tenant_id,
+        lecture__tenant_id=tenant_id, lecture__is_system=False, status="ACTIVE",
     ).exists()
 
 

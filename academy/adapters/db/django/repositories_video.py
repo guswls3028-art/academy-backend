@@ -62,7 +62,7 @@ def lock_active_playback_renewal_scope(
     student_id: int,
     video_id: int,
 ):
-    """Lock one exact active-enrollment playback graph against updates and deletes."""
+    """Lock the current video and its eligible enrollment in canonical order."""
     from apps.domains.enrollment.models import Enrollment
     from apps.domains.lectures.models import Lecture, Session
     from apps.domains.video.models import Video
@@ -100,8 +100,9 @@ def lock_active_playback_renewal_scope(
             id=enrollment_id,
             tenant_id=tenant_id,
             student_id=student_id,
-            lecture=lecture,
-            status="ACTIVE",
+            student__tenant_id=tenant_id,
+            student__deleted_at__isnull=True,
+            lecture__tenant_id=tenant_id,
         )
         .first()
     )
@@ -116,6 +117,12 @@ def lock_active_playback_renewal_scope(
         )
         .first()
     )
+    if enrollment is not None and video is not None:
+        if video.visibility == Video.Visibility.PUBLIC:
+            if enrollment.lecture_id != lecture_id and not enrollment.lecture.is_system:
+                enrollment = None
+        elif enrollment.lecture_id != lecture_id or enrollment.status != "ACTIVE":
+            enrollment = None
     return lecture, session, enrollment, video
 
 
@@ -353,32 +360,50 @@ def session_get_by_id_with_lecture(session_id):
 
 
 def video_session_memberships(*, tenant_id, enrollment_ids):
-    """Exact tenant/lecture/session membership; attendance never grants access."""
-    from django.db.models import F
-    from apps.domains.enrollment.models import SessionEnrollment
+    from .repositories_enrollment import session_memberships_for_access
 
-    return SessionEnrollment.objects.filter(
-        tenant_id=tenant_id,
-        enrollment_id__in=enrollment_ids,
-        enrollment__tenant_id=tenant_id,
-        enrollment__student__tenant_id=tenant_id,
-        enrollment__student__deleted_at__isnull=True,
-        session__lecture__tenant_id=tenant_id,
-        session__lecture_id=F("enrollment__lecture_id"),
-    )
+    return session_memberships_for_access(tenant_id=tenant_id).filter(enrollment_id__in=enrollment_ids)
 
 
-def session_enrollment_exists(session, enrollment) -> bool:
+def session_enrollment_exists(session, enrollment, *, public_video=False) -> bool:
+    from .repositories_enrollment import session_memberships_for_access
+
     if session is None or enrollment is None:
         return False
-    return video_session_memberships(
-        tenant_id=enrollment.tenant_id, enrollment_ids=[enrollment.id],
-    ).filter(session=session).exists()
+    return session_memberships_for_access(
+        tenant_id=enrollment.tenant_id, include_withdrawn=public_video,
+    ).filter(session=session, enrollment=enrollment).exists()
+
+
+def public_video_record_candidates(video, *, tenant_id, student_id):
+    """Only the original lecture and this student's tenant library can own its history."""
+    from django.db.models import Exists, OuterRef, Q
+    from apps.domains.enrollment.models import Enrollment
+    from apps.domains.video.models import VideoProgress
+
+    source = getattr(video.session, "lecture_id", None)
+    return Enrollment.objects.filter(
+        Q(lecture_id=source) | Q(lecture__is_system=True),
+        tenant_id=tenant_id, lecture__tenant_id=tenant_id, student_id=student_id, student__tenant_id=tenant_id,
+    ).select_related("lecture", "student").annotate(
+        has_progress=Exists(VideoProgress.objects.filter(video=video, enrollment_id=OuterRef("pk"))),
+    ).order_by("-has_progress", "lecture__is_system", "pk")
 
 
 def video_access_get(video, enrollment):
-    from apps.domains.video.models import VideoAccess
-    return VideoAccess.objects.filter(video=video, enrollment=enrollment).first()
+    from django.db.models import Q
+    from apps.domains.video.models import AccessMode, Video, VideoAccess
+
+    rules = VideoAccess.objects.filter(video=video)
+    if video.visibility != Video.Visibility.PUBLIC:
+        return rules.filter(enrollment=enrollment).first()
+    rules = list(rules.filter(
+        Q(enrollment__lecture_id=getattr(video.session, "lecture_id", None)) | Q(enrollment__lecture__is_system=True),
+        enrollment__tenant_id=video.tenant_id, enrollment__lecture__tenant_id=video.tenant_id,
+        enrollment__student_id=enrollment.student_id, enrollment__student__tenant_id=video.tenant_id,
+    ).order_by("enrollment__lecture__is_system", "pk"))
+    return next((rule for rule in rules if rule.access_mode == AccessMode.BLOCKED or rule.rule == "blocked"),
+                rules[0] if rules else None)
 
 
 def video_access_filter(video, enrollment=None):
@@ -493,6 +518,15 @@ def attendance_filter_session(session):
 def attendance_filter_session_enrollment(session, enrollment):
     from apps.domains.attendance.models import Attendance
     return Attendance.objects.filter(session=session, enrollment=enrollment)
+
+
+def public_video_attendance(session, enrollment):
+    from apps.domains.attendance.models import Attendance
+
+    return Attendance.objects.filter(
+        tenant_id=enrollment.tenant_id, session=session, enrollment__student_id=enrollment.student_id,
+        enrollment__tenant_id=enrollment.tenant_id, enrollment__lecture_id=session.lecture_id,
+    ).first()
 
 
 def attendance_filter_session_status(session, status):

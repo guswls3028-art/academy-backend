@@ -34,7 +34,7 @@ class _WorkbookStorage:
         workbook.save(local_path)
 
 
-class ExistingStudentExcelEnrollmentTests(TestCase):
+class ExistingStudentExcelFixture:
     def setUp(self):
         self.tenant = Tenant.objects.create(
             name="기존 학생 수강 엑셀 학원",
@@ -84,6 +84,8 @@ class ExistingStudentExcelEnrollmentTests(TestCase):
             expires_at=timezone.now() + timedelta(minutes=10),
         )
 
+
+class ExistingStudentExcelEnrollmentTests(ExistingStudentExcelFixture, TestCase):
     @patch("apps.domains.enrollment.services.schedule_pending_account_notice")
     def test_existing_only_import_preserves_credentials_and_skips_unknown_student(
         self,

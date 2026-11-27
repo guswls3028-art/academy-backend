@@ -34,7 +34,7 @@ from academy.adapters.db.django.repositories_clinic_targets import (
 )
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
 from apps.support.attendance.learning_todo_eligibility import (
-    actual_absent_learning_todo_pairs,
+    ineligible_learning_todo_pairs,
     learning_todo_eligible_pairs,
 )
 
@@ -215,7 +215,7 @@ class ClinicTargetService:
             # actual absence hides that particular row from this listing.
             if current_target_enrollment_ids is not None:
                 current_target_enrollment_ids.update(int(link.enrollment_id) for link in current_links)
-            absent_pairs = actual_absent_learning_todo_pairs(
+            absent_pairs = ineligible_learning_todo_pairs(
                 tenant=tenant,
                 enrollment_session_pairs={
                     (int(link.enrollment_id), int(link.session_id)) for link in current_links
