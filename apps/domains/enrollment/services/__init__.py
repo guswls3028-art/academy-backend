@@ -11,8 +11,10 @@ from apps.shared.utils.excel_phone import normalize_excel_phone
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from apps.support.enrollment.import_dependencies import (
+    EnrollmentImportError,
     StudentImportIdentityAmbiguousError,
     active_student_for_import_identity,
+    restore_withdrawn_session_for_import,
 )
 from apps.support.enrollment.lifecycle_dependencies import (
     schedule_pending_account_notice,
@@ -21,10 +23,6 @@ from apps.support.enrollment.lifecycle_dependencies import (
 from ..models import Enrollment, SessionEnrollment
 
 logger = logging.getLogger(__name__)
-
-
-class EnrollmentImportError(ValueError):
-    """User-safe enrollment input/identity error, without infrastructure details."""
 
 
 def _mask_phone(phone: str) -> str:
@@ -275,11 +273,10 @@ def lecture_enroll_from_excel_rows(
                 if session_id is None:
                     preserved_students.add(enrollment.student_id)
                     continue
-                from apps.support.enrollment.lifecycle_dependencies import ensure_session_roster_membership
                 from apps.support.attendance.learning_todo_eligibility import reconcile_learning_todo_targets
 
-                restored = ensure_session_roster_membership(
-                    tenant=tenant, enrollment=enrollment, session=target_session, allow_session_reregistration=True,
+                restored = restore_withdrawn_session_for_import(
+                    tenant=tenant, enrollment=enrollment, session=target_session,
                 )
                 reconcile_learning_todo_targets(restored.attendance)
                 continue
