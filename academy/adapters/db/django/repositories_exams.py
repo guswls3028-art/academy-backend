@@ -80,11 +80,12 @@ def submission_exam_contexts(submissions, enrollment_map, *, tenant, supports_se
     """Resolve each staff inbox row from tenant-owned batch and roster evidence."""
     from collections import defaultdict
 
-    from django.db.models import Prefetch
+    from django.db.models import F, Prefetch
 
     from apps.domains.enrollment.models import SessionEnrollment
-    from apps.domains.exams.models import Exam
+    from apps.domains.exams.models import Exam, ExamEnrollment
     from apps.domains.lectures.models import Session
+    from apps.domains.submissions.models import Submission
     from apps.domains.submissions.models.omr_batch import OmrUploadBatchItem
 
     sessions = Session.objects.filter(lecture__tenant=tenant).select_related("lecture").order_by("id")
@@ -104,11 +105,41 @@ def submission_exam_contexts(submissions, enrollment_map, *, tenant, supports_se
         return {s.id: legacy[s.target_id] for s in submissions if s.target_id in legacy}
 
     session_ids = {session.id for exam in exams_by_id.values() for session in exam.inbox_sessions}
+    shared_exam_ids = {exam.id for exam in exams_by_id.values() if len({s.lecture_id for s in exam.inbox_sessions}) > 1}
+    online = [s for s in submissions if s.source == Submission.Source.ONLINE and s.target_id in shared_exam_ids
+              and s.enrollment_id in enrollment_map]
+    assignments = defaultdict(list)
+    enrollment_ids = set(enrollment_map)
+    if online:
+        # The online grading enrollment is the first eligible ExamEnrollment, not necessarily
+        # the course the student opened. Batch-load the student's other assigned courses.
+        for exam_id, student_id, eid, lecture_id, assigned_at in ExamEnrollment.objects.filter(
+            exam_id__in={s.target_id for s in online}, enrollment__tenant=tenant,
+            enrollment__student_id__in={enrollment_map[s.enrollment_id].student_id for s in online},
+            enrollment__status="ACTIVE", enrollment__lecture__tenant=tenant, enrollment__lecture__is_active=True,
+        ).values_list("exam_id", "enrollment__student_id", "enrollment_id", "enrollment__lecture_id", "created_at"):
+            enrollment_ids.add(eid)
+            assignments[exam_id, student_id].append((eid, lecture_id, assigned_at))
+
     roster = defaultdict(set)
     for enrollment_id, session_id in SessionEnrollment.objects.filter(
-        tenant=tenant, enrollment_id__in=enrollment_map, session_id__in=session_ids,
+        tenant=tenant, enrollment_id__in=enrollment_ids, session_id__in=session_ids,
+        enrollment__lecture_id=F("session__lecture_id"),
     ).values_list("enrollment_id", "session_id"):
         roster[enrollment_id].add(session_id)
+    attended = defaultdict(set)
+    absent = defaultdict(set)
+    if assignments:
+        from apps.domains.attendance.models import Attendance
+        from apps.support.attendance.learning_todo_eligibility import attendance_status_is_learning_todo_eligible
+
+        for eid, sid, status in Attendance.objects.filter(
+            tenant=tenant, enrollment_id__in=enrollment_ids, session_id__in=session_ids,
+            enrollment__lecture_id=F("session__lecture_id"),
+        ).values_list("enrollment_id", "session_id", "status"):
+            attended[eid].add(sid)
+            if not attendance_status_is_learning_todo_eligible(status):
+                absent[eid].add(sid)
 
     batches = {
         submission_id: (exam_id, session_id, lecture_id)
@@ -124,21 +155,37 @@ def submission_exam_contexts(submissions, enrollment_map, *, tenant, supports_se
             continue
         candidates = exam.inbox_sessions
         chosen = None
+        recorded = False
         batch = batches.get(submission.id)
         enrollment = enrollment_map.get(submission.enrollment_id)
+        entry_id = (submission.meta or {}).get("student_entry_session_id") if isinstance(submission.meta, dict) else None
         if batch:
             chosen = next((s for s in candidates if (exam.id, s.id, s.lecture_id) == batch), None)
-        elif enrollment and len(candidates) > 1:
+            recorded = chosen is not None
+        elif submission.source == Submission.Source.ONLINE and enrollment and type(entry_id) is int:
+            chosen = next((s for s in candidates if s.id == entry_id), None)
+            recorded = chosen is not None
+        if not recorded and enrollment and len(candidates) > 1:
             lecture_sessions = [s for s in candidates if s.lecture_id == enrollment.lecture_id]
             enrolled = [s for s in lecture_sessions if s.id in roster[enrollment.id]]
-            candidates = enrolled or lecture_sessions or candidates
+            navigation_ids = {s.id for s in (enrolled or lecture_sessions)}
+            if submission.source == Submission.Source.ONLINE:
+                for eid, lecture_id, assigned_at in assignments[exam.id, enrollment.student_id]:
+                    if eid == enrollment.id or assigned_at > submission.created_at:
+                        continue
+                    linked = {s.id for s in candidates if s.lecture_id == lecture_id}
+                    eligible = linked & (roster[eid] | attended[eid])
+                    navigation_ids.update((eligible or linked) - absent[eid])
+            candidates = [s for s in candidates if s.id in navigation_ids] or candidates
             if len(candidates) == 1:
                 chosen = candidates[0]
-        elif len(candidates) == 1:
+        elif not recorded and len(candidates) == 1:
             chosen = candidates[0]
 
         contexts[submission.id] = {
             "target_title": exam.title,
+            "session_origin_recorded": recorded,
+            "score_lecture_id": enrollment.lecture_id if enrollment else None,
             "session_choices": [_session_location(s) for s in candidates] if not chosen else [],
             **(_session_location(chosen) if chosen else {}),
         }

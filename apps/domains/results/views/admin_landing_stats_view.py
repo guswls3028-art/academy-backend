@@ -59,7 +59,8 @@ def _serialize_submissions(submissions, exam_map, enrollment_map):
                 "lecture_id": t.get("lecture_id"),
                 "lecture_title": t.get("lecture_title", ""),
                 "session_id": t.get("session_id"),
-                **({"session_choices": t["session_choices"]} if "session_choices" in t else {}),
+                **({key: t[key] for key in ("session_choices", "session_origin_recorded", "score_lecture_id")}
+                   if "session_choices" in t else {}),
                 "enrollment_id": int(s.enrollment_id) if s.enrollment_id else None,
                 "student_name": student_name,
                 "status": s.status,

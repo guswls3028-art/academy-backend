@@ -245,6 +245,8 @@ class PendingSubmissionsView(APIView):
                     **({
                         "session_title": target_info.get("session_title", ""),
                         "session_choices": target_info.get("session_choices", []),
+                        "session_origin_recorded": target_info.get("session_origin_recorded", False),
+                        "score_lecture_id": target_info.get("score_lecture_id"),
                     } if supports_session_choices else {}),
                     "target_resolved": target_resolved,
                     "target_resolved_reason": target_resolved_reason,

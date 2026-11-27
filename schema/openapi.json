@@ -21216,6 +21216,48 @@
         ],
         "type": "object"
       },
+      "StudentExamSubmitReceipt": {
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "submission_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "submission_id"
+        ],
+        "type": "object"
+      },
+      "StudentExamSubmitRequestRequest": {
+        "properties": {
+          "answers": {
+            "description": "문항 ID별 답안 객체 또는 문항·답안 목록"
+          },
+          "client_request_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "entry_session_id": {
+            "description": "학생이 시험을 연 차시. 일반 시험 목록에서는 생략",
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "expected_attempt_count": {
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "answers"
+        ],
+        "type": "object"
+      },
       "StudentFee": {
         "properties": {
           "adjusted_amount": {
@@ -55697,9 +55739,36 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentExamSubmitRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentExamSubmitRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentExamSubmitRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "200": {
-            "description": "No response body"
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentExamSubmitReceipt"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

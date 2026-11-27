@@ -20,7 +20,8 @@ class OnlineSubmissionIdempotencyTests(TestCase):
     def answers(self):
         return [{"exam_question_id": q.pk, "answer": str(q.number)} for q in self.questions]
 
-    def submit(self, request_id=None, *, answers=None, legacy=False, expected_attempt_count=None, omit_enrollment=False):
+    def submit(self, request_id=None, *, answers=None, legacy=False, expected_attempt_count=None,
+               omit_enrollment=False, **extra):
         answers = self.answers() if answers is None else answers
         data = {"answers": answers}
         url = f"/api/v1/student/exams/{self.exam.pk}/submit/"
@@ -34,6 +35,7 @@ class OnlineSubmissionIdempotencyTests(TestCase):
             data["client_request_id"] = str(request_id)
         if expected_attempt_count is not None:
             data["expected_attempt_count"] = expected_attempt_count
+        data.update(extra)
         request = self.factory.post(url, data, format="json")
         request.tenant = self.tenant
         force_authenticate(request, user=self.user)
@@ -44,6 +46,85 @@ class OnlineSubmissionIdempotencyTests(TestCase):
     def attempts(self):
         return apps.get_model("results", "ExamAttempt").objects.filter(
             exam_id=self.exam.pk, enrollment=self.enrollment)
+
+    def add_other_course(self, title="Shared"):
+        lecture = apps.get_model("lectures", "Lecture").objects.create(
+            tenant=self.tenant, title=title, name=title, subject="MATH")
+        session = type(self.session).objects.create(lecture=lecture, order=1, title="Second class")
+        self.exam.sessions.add(session)
+        enrollment = type(self.enrollment).objects.create(tenant=self.tenant, lecture=lecture, student=self.student)
+        apps.get_model("enrollment", "SessionEnrollment").objects.create(
+            tenant=self.tenant, session=session, enrollment=enrollment)
+        apps.get_model("exams", "ExamEnrollment").objects.create(exam=self.exam, enrollment=enrollment)
+        return session
+
+    def inbox(self, sid, *, choices=True):
+        path = "/api/v1/submissions/submissions/pending/"
+        request = self.factory.get(path, {"filter": "done", **({"session_choices": "1"} if choices else {})})
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.staff)
+        response = resolve(path).func(request)
+        self.assertEqual(response.status_code, 200)
+        return next(row for row in response.data if row["id"] == sid)
+
+    def test_verified_entry_and_grade_keep_independent_identity_across_retries_and_retakes(self):
+        other = self.add_other_course()
+        self.exam.allow_retake, self.exam.max_attempts = True, 2
+        self.exam.save(update_fields=["allow_retake", "max_attempts"])
+        key = uuid.uuid4()
+        first = self.submit(key, entry_session_id=other.pk, meta={"student_entry_session_id": self.session.pk})
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(self.submit(key, entry_session_id=other.pk).data, first.data)
+        self.assertEqual(self.submit(key).data, first.data)
+        self.assertEqual(self.submit(key, entry_session_id=self.session.pk).status_code, 409)
+        sid = first.data["submission_id"]
+        row = self.inbox(sid)
+        self.assertEqual((row["session_id"], row["lecture_id"], row["score_lecture_id"], row["enrollment_id"]),
+                         (other.id, other.lecture_id, self.enrollment.lecture_id, self.enrollment.pk))
+        self.assertIs(row["session_origin_recorded"], True)
+        self.assertEqual(self.inbox(sid, choices=False)["session_id"], self.session.pk)
+        self.assertEqual(self.attempts().count(), 1)
+        retake = self.submit(uuid.uuid4(), entry_session_id=self.session.pk)
+        self.assertEqual(retake.status_code, 201, retake.data)
+        self.assertEqual(self.inbox(retake.data["submission_id"])["session_id"], self.session.pk)
+        first_submission = apps.get_model("submissions", "Submission").objects.get(pk=sid)
+        self.assertEqual(first_submission.meta["student_entry_session_id"], other.pk)
+        self.assertEqual(self.attempts().count(), 2)
+        self.enrollment.status = "INACTIVE"
+        self.enrollment.save(update_fields=["status"])
+        self.assertEqual(self.submit(key, entry_session_id=other.pk).status_code, 409)
+        self.assertEqual(self.attempts().count(), 2)
+
+    def test_unrecorded_entry_shows_possible_courses_without_backfilling(self):
+        other = self.add_other_course()
+        key = uuid.uuid4()
+        first = self.submit(key, meta={"student_entry_session_id": other.pk})
+        self.assertEqual(first.status_code, 201, first.data)
+        sid = first.data["submission_id"]
+        row = self.inbox(sid)
+        self.assertIs(row["session_origin_recorded"], False)
+        self.assertIsNone(row["session_id"])
+        self.assertEqual([s["session_id"] for s in row["session_choices"]], [self.session.id, other.id])
+        self.assertEqual(row["score_lecture_id"], self.enrollment.lecture_id)
+        self.assertEqual(self.submit(key, entry_session_id=other.pk).status_code, 409)
+        self.add_other_course("Later enrollment")
+        self.assertEqual(self.inbox(sid), row)
+        legacy = self.inbox(sid, choices=False)
+        self.assertEqual(legacy["session_id"], self.session.id)
+        self.assertNotIn("session_origin_recorded", legacy)
+        self.assertNotIn("score_lecture_id", legacy)
+
+    def test_invalid_and_unauthorized_sessions_cannot_create_a_grade(self):
+        other = self.add_other_course()
+        Attendance = apps.get_model("attendance", "Attendance")
+        enrollment = type(self.enrollment).objects.get(student=self.student, lecture_id=other.lecture_id)
+        Attendance.objects.create(tenant=self.tenant, session=other, enrollment=enrollment, status="ABSENT")
+        for sid, status in [(True, 400), ("abc", 400), (2**63, 400), (other.id, 403), (other.id+100, 403)]:
+            with self.subTest(session_id=sid):
+                response = self.submit(uuid.uuid4(), entry_session_id=sid)
+                self.assertEqual(response.status_code, status, response.data)
+        self.assertFalse(apps.get_model("submissions", "Submission").objects.exists())
+        self.assertEqual(self.attempts().count(), 0)
 
     def test_response_loss_retry_returns_original_without_consuming_retake(self):
         self.exam.allow_retake = True

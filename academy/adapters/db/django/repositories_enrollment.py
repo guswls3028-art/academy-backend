@@ -383,7 +383,7 @@ def enrollment_student_map_by_ids(enrollment_ids, tenant=None):
         return {}
     queryset = Enrollment.objects.select_related("student").filter(id__in=enrollment_ids)
     if tenant is not None:
-        queryset = queryset.filter(tenant=tenant)
+        queryset = queryset.filter(tenant=tenant, student__tenant=tenant, lecture__tenant=tenant)
     return {
         enrollment.id: enrollment
         for enrollment in queryset.order_by("id")
