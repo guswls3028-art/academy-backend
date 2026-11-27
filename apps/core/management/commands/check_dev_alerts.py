@@ -238,7 +238,7 @@ def rule_audit_failed_24h(threshold: int = 5):
     since = timezone.now() - timedelta(hours=24)
     qs = (
         OpsAuditLog.objects.filter(created_at__gte=since, result="failed")
-        .exclude(action=CRON_AUDIT_ACTION)
+        .exclude(action__in=[CRON_AUDIT_ACTION, "messaging.queue_ack_failed"])
         .order_by("-created_at")
     )
     count = qs.count()
@@ -564,7 +564,8 @@ def rule_circuit_breaker_open():
 
 
 def rule_messaging_delivery_health(window_minutes: int = 30):
-    """Report balance risk and repeated pre-provider dependency failures."""
+    """Report balance risk, worker dependency failures and failed queue acknowledgements."""
+    from apps.core.models import OpsAuditLog
     from apps.domains.messaging.models import NotificationLog
     from apps.domains.messaging.services.solapi_client import get_solapi_client
 
@@ -606,6 +607,14 @@ def rule_messaging_delivery_health(window_minutes: int = 30):
         for row in import_failures
     )
 
+    failed_ack_jobs = OpsAuditLog.objects.filter(
+        action="messaging.queue_ack_failed", result="failed", created_at__gte=since,
+    ).aggregate(jobs=Count("payload__job", distinct=True))["jobs"]
+    if failed_ack_jobs >= 2:
+        # The existing Slack report displays the first few rows.
+        rows.insert(0, {"state": "messaging_queue_ack_failed", "count": failed_ack_jobs,
+                        "window_minutes": window_minutes})
+
     threshold = Decimal(
         str(getattr(settings, "MESSAGING_PROVIDER_LOW_BALANCE_ALERT_THRESHOLD", 10_000))
     )
@@ -636,6 +645,7 @@ def rule_messaging_delivery_health(window_minutes: int = 30):
         "title": f"📨 알림톡 발송 상태 확인 필요 — {len(rows)}건",
         "rows": rows,
         "total": sum(int(row.get("count", 1)) for row in rows),
+        "requires_delivery": failed_ack_jobs >= 2,
     }
 
 
@@ -1011,8 +1021,8 @@ class Command(BaseCommand):
 
         mandatory_delivery_rules = sorted(
             rule.key
-            for rule, _data in triggered
-            if rule.key in MANDATORY_DELIVERY_RULE_KEYS
+            for rule, data in triggered
+            if rule.key in MANDATORY_DELIVERY_RULE_KEYS or data.get("requires_delivery")
         )
         if dry_run:
             delivery_status = "dry_run"

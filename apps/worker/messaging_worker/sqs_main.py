@@ -244,6 +244,14 @@ def _assert_grade_homework_delivery_active(data: dict, *, business_tenant_id: in
         raise ValueError("grade_homework_review_changed")
 
 
+def _record_failed_ack(job_key: str) -> None:
+    from apps.core.services.ops_audit import record_audit
+
+    record_audit(None, action="messaging.queue_ack_failed", result="failed",
+                 summary="메시징 큐 처리 후 삭제 실패",
+                 payload={"job": hashlib.sha256(job_key.encode("utf-8")).hexdigest()})
+
+
 def _resolve_worker_business_key(data: dict, message_id: str | None) -> str:
     """Return the producer key or a deterministic guard for legacy payloads."""
     producer_key = str(data.get("business_idempotency_key") or "").strip()
@@ -720,8 +728,11 @@ def main() -> int:
                     continue
 
                 global _current_receipt_handle
-                _acknowledged = False
+                # None means no DeleteMessage attempt was made for this receipt.
+                _acknowledged = None
                 _release_for_retry = False
+                qa_scope = None
+                ack_job_key = f"sqs:{raw['MessageId']}" if raw.get("MessageId") else None
                 try:
                     if isinstance(body, str):
                         try:
@@ -1173,6 +1184,7 @@ def main() -> int:
 
                     # Business-level atomic claim (Layer 2: DB dedup via unique constraint)
                     business_key = _resolve_worker_business_key(data, message_id)
+                    ack_job_key = f"{tenant_id}:{business_key}"
                     qa_scope = enrollment_ack_scope(cfg, raw, data, tenant_id, source_tenant_id_msg)
                     claim_log_id = None
                     if business_key and tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
@@ -1632,6 +1644,8 @@ def main() -> int:
                         logger.info("Graceful shutdown: exiting")
                         break
                 finally:
+                    if _acknowledged is False and qa_scope is None and ack_job_key:
+                        _record_failed_ack(ack_job_key)
                     # Keep the duplicate guard through a failed DeleteMessage. A safe,
                     # deliberate retry can release it without claiming a queue ACK.
                     if _acknowledged or _release_for_retry:

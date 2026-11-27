@@ -3,21 +3,26 @@ import json
 import os
 import secrets
 import sys
+from datetime import timedelta
 from decimal import Decimal
 from hashlib import sha256
+from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import OperationalError, connection
 from django.test import TransactionTestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from academy.adapters.db.django.repositories_messaging import (
     claim_notification_slot, finalize_notification, mark_notification_sending,
 )
-from apps.core.management.commands import setup_ymath_realuse_scenario as scenario
+from apps.core.management.commands import check_dev_alerts, setup_ymath_realuse_scenario as scenario
 from apps.core.models import OpsAuditLog, Tenant, TenantMembership
 from apps.core.services import enrollment_notice_development_scenario as qa
 from apps.core.services.development_qa_ownership import WRONG_NOTE_SETUP_SCHEMA
@@ -153,6 +158,7 @@ class EnrollmentNoticeWorkerAckTests(TransactionTestCase):
         self.queue.delete_message.return_value = False
         self.assertEqual(self.ack(other, other_log), (False, False))
         self.assertFalse(OpsAuditLog.objects.filter(action__in=[qa_ack.ACK, qa_ack.REDELIVERY]).exists())
+        self.assertFalse(OpsAuditLog.objects.filter(action="messaging.queue_ack_failed").exists())
 
     def test_parent_replay_after_false_delete_accepts_only_the_committed_parent_log(self):
         self.queue = self.queue_adapter()
@@ -331,20 +337,66 @@ class EnrollmentNoticeWorkerAckTests(TransactionTestCase):
                 tenant_id=self.owner.pk, source_tenant_id=self.tenant.pk, to=student.phone, text="QA",
                 target_id=f"student:{student.pk}", target_type="account", event_type=trigger, template_id="QA"))
         body = adapter.sqs.send_message.call_args.kwargs["MessageBody"]
-        handles = ["first-receive", "lock-still-held", "after-lock-expiry"]
+        handles = ["first-receive", "lock-still-held", "after-lock-expiry", "final-receive"]
         messages = [{"MessageId": message_id, "ReceiptHandle": handle, "Body": body,
                      "Attributes": {"ApproximateReceiveCount": str(n)}} for n, handle in enumerate(handles, 1)]
-        adapter.sqs.delete_message.side_effect = [OSError("synthetic delete failure"), {}]
+        adapter.sqs.delete_message.side_effect = [OSError("synthetic delete failure")] * 2 + [{}]
         with patch.object(MockSolapiMessageService, "send", autospec=True, side_effect=MockSolapiMessageService.send) as send:
-            released = self.run_worker(adapter, messages, lock_outcomes=[True, False, True])
+            released = self.run_worker(adapter, messages, lock_outcomes=[True, False, True, True])
         send.assert_called_once()
-        self.assertEqual(released, [(handles[2], "messaging:" + message_id)])
+        self.assertEqual(released, [(handles[3], "messaging:" + message_id)])
         deletes = [op.kwargs["ReceiptHandle"] for op in adapter.sqs.delete_message.call_args_list]
-        self.assertEqual(deletes, [handles[0], handles[2]])
+        self.assertEqual(deletes, [handles[0], handles[2], handles[3]])
         log = NotificationLog.objects.get(tenant=self.owner, source_tenant=self.tenant, sqs_message_id=message_id)
         self.assertEqual((log.status, log.success, log.business_idempotency_key),
                          ("sent", True, json.loads(body)["business_idempotency_key"]))
         self.assertFalse(OpsAuditLog.objects.filter(actor_username=qa_ack.WORKER).exists())
+
+        audits = OpsAuditLog.objects.filter(action="messaging.queue_ack_failed")
+        job_key = f"{self.owner.pk}:{log.business_idempotency_key}"
+        self.assertEqual(list(audits.values_list("payload", flat=True)),
+                         [{"job": sha256(job_key.encode()).hexdigest()}] * 2)
+
+    @override_settings(DEV_ALERTS_WEBHOOK_URL="https://example.invalid/synthetic")
+    def test_distinct_failed_ack_jobs_reach_the_existing_alert_with_only_counts(self):
+        client = self.enterContext(patch("apps.domains.messaging.services.solapi_client.get_solapi_client"))
+        client.return_value.get_balance.return_value = SimpleNamespace(balance=Decimal("25000"))
+
+        adapter = self.queue_adapter()
+        adapter.sqs.delete_message.side_effect = OSError("synthetic")
+        # Malformed envelopes have no trusted business key. SQS keeps MessageId across receipts.
+        messages = [{"MessageId": "private-job-1", "ReceiptHandle": f"private-{i}", "Body": "{"} for i in range(5)]
+        self.assertEqual(self.run_worker(adapter, messages), [])
+        self.assertIsNone(check_dev_alerts.rule_messaging_delivery_health())
+        self.assertIsNone(check_dev_alerts.rule_audit_failed_24h())
+        self.assertEqual(self.run_worker(adapter, [{"MessageId": "private-job-2", "ReceiptHandle": "private-6",
+                                                    "Body": "{"}]), [])
+        row = {"state": "messaging_queue_ack_failed", "count": 2, "window_minutes": 30}
+        self.assertEqual(check_dev_alerts.rule_messaging_delivery_health()["rows"], [row])
+
+        with patch.object(check_dev_alerts, "_post_slack", return_value=True) as post:
+            call_command("check_dev_alerts", "--silent", "--rule", "messaging_delivery_health", stdout=StringIO())
+        post.assert_called_once()
+        report = json.dumps(post.call_args.args[1])
+        self.assertIn("messaging_queue_ack_failed", report)
+        self.assertIn("count=2", report)
+        self.assertNotIn("private", report)
+        audit = OpsAuditLog.objects.get(action=check_dev_alerts.CRON_AUDIT_ACTION)
+        self.assertEqual(audit.payload["delivery_status"], "delivered")
+
+        with override_settings(DEV_ALERTS_WEBHOOK_URL="", DEV_ALERTS_WEBHOOK_REQUIRED=False):
+            with self.assertRaisesMessage(CommandError, "messaging_delivery_health"):
+                call_command("check_dev_alerts", "--silent", "--rule", "messaging_delivery_health", stdout=StringIO())
+        self.assertEqual(OpsAuditLog.objects.filter(action=check_dev_alerts.CRON_AUDIT_ACTION).latest("pk").result,
+                         "failed")
+
+        OpsAuditLog.objects.filter(action="messaging.queue_ack_failed").update(
+            created_at=timezone.now() - timedelta(minutes=31))
+        self.assertIsNone(check_dev_alerts.rule_messaging_delivery_health())
+        with patch.object(OpsAuditLog.objects, "create", side_effect=OperationalError("unavailable")):
+            with self.assertLogs("apps.core.services.ops_audit", level="ERROR"):
+                self.assertEqual(self.run_worker(adapter, [{"MessageId": "private-job-3", "ReceiptHandle": "private-7",
+                                                            "Body": "{"}]), [])
 
     def test_student_only_signed_registration_through_consumer_mock_commit_and_dedup(self):
         self.verify_registration_flow("student", "parent")
