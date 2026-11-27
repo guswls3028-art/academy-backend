@@ -648,6 +648,11 @@ practice_inspection으로 제공한다. 기존 검사 기록은 배정 해제 �
 교직원 전용 `GET /results/admin/teacher-dashboard-counts/`의
 `homework_review_pending`은 전체 인원-과제 건수, `homework_review_by_homework`는
 과제 ID별 건수다. 제출 원본이나 학생 신원은 이 응답에 포함하지 않는다.
+교직원 전용 `GET /submissions/submissions/homework/review-queue/`는 같은 대기 판정을
+사용해 과제·수강 쌍별로 학생명, 강의, 차시, 과제명, 현재 파일 수와 최근 제출 시각을
+반환한다. 최근 제출순이며 동률은 과제·수강 ID로 정렬한다. 기본 30건, 최대 100건씩
+조회한다. 한 학생의 파일 교체나 교사 처리 뒤에는 대기 목록과 알림 건수를 다시 읽는다.
+목록 열람은 판정·성적·파일을 변경하지 않는다. 파일 접근과 판정은 기존 과제별 권한을 따른다.
 시험 제출함의 대기 건수는 별도로 집계한다. 이 홈페이지 알림은 메시지 발송 설정과
 독립적이다. 교직원 권한·학원 격리·빈 값은 `test_operational_dashboard_counts.py`,
 파일 상태와 확인·취소·재제출은 `test_homework_media_submission.py`에서 검증한다.

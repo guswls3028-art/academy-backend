@@ -8,6 +8,7 @@ from .views.exam_omr_submit_view import ExamOMRSubmitView
 # ✅ 추가
 from .views.exam_submissions_list_view import ExamSubmissionsListView
 from .views.homework_submissions_list_view import HomeworkSubmissionsListView
+from .views.homework_review_queue_view import HomeworkReviewQueueView
 from .views.student_homework_files_view import StudentHomeworkFilesView
 from .views.homework_file_acceptance_view import HomeworkFileAcceptanceView
 from .views.exam_omr_batch_upload_view import (
@@ -35,6 +36,7 @@ router = DefaultRouter()
 router.register("submissions", SubmissionViewSet, basename="submissions")
 
 urlpatterns = [
+    path("submissions/homework/review-queue/", HomeworkReviewQueueView.as_view(), name="homework-review-queue"),
     # ✅ 관리자 제출 인박스: GET /api/v1/submissions/submissions/pending/
     # ⚠️ router.urls 보다 먼저 선언해야 router의 detail view에 "pending"가 잡히지 않음
     path(

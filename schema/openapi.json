@@ -4976,6 +4976,72 @@
         ],
         "type": "object"
       },
+      "HomeworkReviewQueuePage": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "page": {
+            "type": "integer"
+          },
+          "pages": {
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/HomeworkReviewQueueRow"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "page",
+          "pages",
+          "results"
+        ],
+        "type": "object"
+      },
+      "HomeworkReviewQueueRow": {
+        "properties": {
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "file_count": {
+            "type": "integer"
+          },
+          "homework_id": {
+            "type": "integer"
+          },
+          "homework_title": {
+            "type": "string"
+          },
+          "lecture_title": {
+            "type": "string"
+          },
+          "session_title": {
+            "type": "string"
+          },
+          "student_name": {
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "file_count",
+          "homework_id",
+          "homework_title",
+          "lecture_title",
+          "session_title",
+          "student_name",
+          "submitted_at"
+        ],
+        "type": "object"
+      },
       "HomeworkScore": {
         "properties": {
           "clinic_required": {
@@ -21168,6 +21234,48 @@
         },
         "required": [
           "exam_id"
+        ],
+        "type": "object"
+      },
+      "StudentExamSubmitReceipt": {
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "submission_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "submission_id"
+        ],
+        "type": "object"
+      },
+      "StudentExamSubmitRequestRequest": {
+        "properties": {
+          "answers": {
+            "description": "문항 ID별 답안 객체 또는 문항·답안 목록"
+          },
+          "client_request_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "entry_session_id": {
+            "description": "학생이 시험을 연 차시. 일반 시험 목록에서는 생략",
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "expected_attempt_count": {
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "answers"
         ],
         "type": "object"
       },
@@ -55652,9 +55760,36 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentExamSubmitRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentExamSubmitRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentExamSubmitRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "200": {
-            "description": "No response body"
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentExamSubmitReceipt"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -59539,6 +59674,14 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "description": "요청한 시험의 특정 제출 한 건만 조회합니다.",
+            "in": "query",
+            "name": "focus_id",
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -59870,6 +60013,50 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OmrUploadBatchInitializeConflict"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "submissions"
+        ]
+      }
+    },
+    "/api/v1/submissions/submissions/homework/review-queue/": {
+      "get": {
+        "operationId": "submissions_submissions_homework_review_queue_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeworkReviewQueuePage"
                 }
               }
             },
@@ -60230,6 +60417,20 @@
               "maximum": 200,
               "minimum": 1,
               "type": "integer"
+            }
+          },
+          {
+            "description": "* `0` - 0\n* `1` - 1",
+            "in": "query",
+            "name": "session_choices",
+            "schema": {
+              "default": "0",
+              "enum": [
+                "0",
+                "1"
+              ],
+              "minLength": 1,
+              "type": "string"
             }
           }
         ],
