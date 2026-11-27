@@ -22,6 +22,7 @@ from libs.queue import get_queue_client, QueueUnavailableError
 from libs.redis.idempotency import acquire_job_lock, release_job_lock, RedisLockUnavailableError
 
 from apps.worker.messaging_worker.config import load_config
+from apps.worker.messaging_worker.qa_ack import acknowledge_sent, enrollment_ack_scope
 from apps.worker.messaging_worker.solapi_receipts import receipt_reference, send_solapi_message
 
 # 트리거명 → 사용자 친화적 라벨 (발송 내역 표시용)
@@ -569,6 +570,7 @@ def send_one_alimtalk(
     replacements: Optional[list] = None,
     text: str = "",
     before_provider_call: Optional[Callable[[], bool]] = None,
+    observe_mock=None,
 ) -> dict:
     """
     Solapi 알림톡 1건 발송.
@@ -630,6 +632,8 @@ def send_one_alimtalk(
                 "definitely_not_accepted": True,
                 "provider_retryable": False,
             }
+        if observe_mock is not None:
+            client = observe_mock(client)
         provider_called = True
         return send_solapi_message(client, message, to)
     except Exception as e:
@@ -716,18 +720,18 @@ def main() -> int:
                     continue
 
                 global _current_receipt_handle
-                _msg_deleted = False
+                _acknowledged = False
+                _release_for_retry = False
                 try:
                     if isinstance(body, str):
                         try:
                             data = json.loads(body)
                         except json.JSONDecodeError:
                             logger.error("Invalid JSON in message body")
-                            queue_client.delete_message(
+                            _acknowledged = queue_client.delete_message(
                                 queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                 receipt_handle=receipt_handle,
                             )
-                            _msg_deleted = True
                             continue
                     else:
                         data = body
@@ -740,11 +744,10 @@ def main() -> int:
                             payload_shape["payload_type"],
                             payload_shape["keys"],
                         )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         continue
 
                     tenant_id = data.get("tenant_id")
@@ -754,11 +757,10 @@ def main() -> int:
                             "deleting message_id=%s",
                             message_id,
                         )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         continue
 
                     try:
@@ -769,11 +771,10 @@ def main() -> int:
                             tenant_id,
                             message_id,
                         )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         continue
 
                     # 로컬 기능 테스트용 tenant(9999): 발송·차감 없이 스킵, 메시지 삭제 후 진행
@@ -782,11 +783,10 @@ def main() -> int:
                             "Message skipped: tenant_id=%s is test tenant (messaging disabled)",
                             raw_tenant_id_int,
                         )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         continue
 
                     raw_tenant_id = raw_tenant_id_int
@@ -817,11 +817,10 @@ def main() -> int:
                                 )
                             except Exception as exc:
                                 logger.warning("tenant binding failure log creation failed: %s", exc)
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         continue
                     if not data.get("tenant_binding_signature"):
                         logger.warning(
@@ -840,11 +839,10 @@ def main() -> int:
                             message_id,
                             exc,
                         )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         continue
                     business_tenant_id = source_tenant_id_msg or tenant_id
                     if source_tenant_id_msg == cfg.TEST_TENANT_ID:
@@ -852,11 +850,10 @@ def main() -> int:
                             "Message skipped: source_tenant_id=%s is test tenant (messaging disabled)",
                             source_tenant_id_msg,
                         )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         continue
                     try:
                         from apps.domains.messaging.policy import is_messaging_disabled
@@ -880,11 +877,10 @@ def main() -> int:
                                     ),
                                 )
                                 continue
-                            queue_client.delete_message(
+                            _acknowledged = queue_client.delete_message(
                                 queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                 receipt_handle=receipt_handle,
                             )
-                            _msg_deleted = True
                             continue
                     except Exception as exc:
                         logger.warning(
@@ -910,11 +906,10 @@ def main() -> int:
                             from apps.domains.messaging.services import is_reservation_cancelled
                             if is_reservation_cancelled(int(reservation_id), tenant_id=business_tenant_id):
                                 logger.info("reservation_id=%s cancelled, skip send", reservation_id)
-                                queue_client.delete_message(
+                                _acknowledged = queue_client.delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                     receipt_handle=receipt_handle,
                                 )
-                                _msg_deleted = True
                                 _current_receipt_handle = None
                                 continue
                         except Exception as e:
@@ -987,11 +982,10 @@ def main() -> int:
                                     "recipient policy block log creation failed: %s",
                                     exc,
                                 )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         _current_receipt_handle = None
                         continue
                     # 공용 채널 계약: 큐 payload의 발신번호는 신뢰하지 않는다.
@@ -1059,11 +1053,10 @@ def main() -> int:
                                 )
                             except Exception as e:
                                 logger.warning("create_notification_log failed: %s", e)
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         _current_receipt_handle = None
                         continue
                     source_domain_msg = (data.get("source_domain") or "").strip()[:50]
@@ -1150,11 +1143,10 @@ def main() -> int:
                                     "Failed to record blocked tenant channel route"
                                 )
                                 continue
-                            queue_client.delete_message(
+                            _acknowledged = queue_client.delete_message(
                                 queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                 receipt_handle=receipt_handle,
                             )
-                            _msg_deleted = True
                             _current_receipt_handle = None
                             continue
                         except Exception:
@@ -1181,6 +1173,7 @@ def main() -> int:
 
                     # Business-level atomic claim (Layer 2: DB dedup via unique constraint)
                     business_key = _resolve_worker_business_key(data, message_id)
+                    qa_scope = enrollment_ack_scope(cfg, raw, data, tenant_id, source_tenant_id_msg)
                     claim_log_id = None
                     if business_key and tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
                         try:
@@ -1210,11 +1203,10 @@ def main() -> int:
                                     "Business dedup: key=%s already claimed, skipping (tenant=%s)",
                                     business_key[:16], tenant_id,
                                 )
-                                queue_client.delete_message(
-                                    queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
-                                    receipt_handle=receipt_handle,
+                                _acknowledged, _release_for_retry = acknowledge_sent(
+                                    queue_client, cfg.MESSAGING_SQS_QUEUE_NAME, receipt_handle, qa_scope,
+                                    log_id=None, deduplicated=True,
                                 )
-                                _msg_deleted = True
                                 _current_receipt_handle = None
                                 continue
                         except Exception as e:
@@ -1237,11 +1229,10 @@ def main() -> int:
                                         "DB dedup: message_id=%s already sent successfully, skipping",
                                         message_id,
                                     )
-                                    queue_client.delete_message(
+                                    _acknowledged = queue_client.delete_message(
                                         queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                         receipt_handle=receipt_handle,
                                     )
-                                    _msg_deleted = True
                                     _current_receipt_handle = None
                                     continue
                             except Exception as e:
@@ -1284,11 +1275,10 @@ def main() -> int:
                                 target_id=target_id_msg,
                                 target_name=target_name,
                             )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         _current_receipt_handle = None
                         continue
 
@@ -1371,17 +1361,16 @@ def main() -> int:
                                 target_id=target_id_msg,
                                 target_name=target_name,
                             )
-                        queue_client.delete_message(
+                        _acknowledged = queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
-                        _msg_deleted = True
                         _current_receipt_handle = None
                         continue
                     except Exception as e:
                         logger.exception("deduct_credits failed: %s", e)
                         _current_receipt_handle = None
-                        _msg_deleted = True  # 발송 전 실패 → 중복 위험 없음, 잠금 해제하여 재시도 허용
+                        _release_for_retry = True  # 발송 전 실패 → 중복 위험 없음, 잠금 해제하여 재시도 허용
                         consecutive_errors += 1
                         continue
 
@@ -1403,6 +1392,8 @@ def main() -> int:
                             cfg, to=to_, sender=sender_, pf_id=pf_id_,
                             template_id=template_id_, replacements=replacements_, text=text_,
                             before_provider_call=before_provider_call,
+                            **({"observe_mock": lambda client: qa_scope.observe_mock(client, claim_log_id)}
+                               if qa_scope is not None else {}),
                         )
 
                     provider_send_started = False
@@ -1588,11 +1579,10 @@ def main() -> int:
                             consecutive_errors += 1
                         elif send_succeeded:
                             _record_progress(job_id, "done", 100, step_index=4, step_percent=100, tenant_id=tenant_id_str)
-                            queue_client.delete_message(
-                                queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
-                                receipt_handle=receipt_handle,
+                            _acknowledged, _release_for_retry = acknowledge_sent(
+                                queue_client, cfg.MESSAGING_SQS_QUEUE_NAME, receipt_handle, qa_scope,
+                                log_id=claim_log_id, deduplicated=False,
                             )
-                            _msg_deleted = True
                             consecutive_errors = 0
                         else:
                             if failure_disposition == "terminal":
@@ -1600,11 +1590,10 @@ def main() -> int:
                                     "send permanently failed (non-retryable), deleting message: reason=%s to=%s tenant=%s",
                                     raw_reason, to[:4] if to else "?", tenant_id,
                                 )
-                                queue_client.delete_message(
+                                _acknowledged = queue_client.delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                     receipt_handle=receipt_handle,
                                 )
-                                _msg_deleted = True
                                 consecutive_errors = 0
                             elif failure_disposition == "ambiguous":
                                 logger.error(
@@ -1614,11 +1603,10 @@ def main() -> int:
                                     tenant_id,
                                     claim_log_id,
                                 )
-                                queue_client.delete_message(
+                                _acknowledged = queue_client.delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                     receipt_handle=receipt_handle,
                                 )
-                                _msg_deleted = True
                                 consecutive_errors = 0
                             else:
                                 logger.warning(
@@ -1644,15 +1632,10 @@ def main() -> int:
                         logger.info("Graceful shutdown: exiting")
                         break
                 finally:
-                    # 중복 발송 방지: 성공(메시지 삭제)·파싱 오류·검증 실패 등
-                    # delete_message가 호출된 경우에만 잠금 해제.
-                    # 발송 실패 시 잠금 유지 → SQS VisibilityTimeout(900s)
-                    # 내 재전달 시 acquire_job_lock이 차단하여 중복 발송 방지.
-                    # 잠금 TTL(1800s) > VisibilityTimeout(900s) 이므로 안전.
-                    if _msg_deleted:
-                        # 메시지가 이미 삭제됨(성공·파싱오류) → 잠금 해제
+                    # Keep the duplicate guard through a failed DeleteMessage. A safe,
+                    # deliberate retry can release it without claiming a queue ACK.
+                    if _acknowledged or _release_for_retry:
                         release_job_lock(job_id)
-                    # else: 발송 실패 → 잠금 유지 (TTL 만료까지 중복 차단)
 
             except KeyboardInterrupt:
                 break

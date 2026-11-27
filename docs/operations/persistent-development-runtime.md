@@ -586,6 +586,20 @@ OpenAI source/게시 권한은 [공급자 전환 계약](openai-provider.md)이 
    이후 별도 임시 preprod EC2 게이트가 통과해야 한다.
 7. 그 뒤에만 운영 migration과 ASG/ALB 무중단 교체를 허용한다.
 
+### 수강 등록 알림톡의 개발 실사용 검증
+
+정규 배포 담당자는 이전 개발 호스트 종료 후 공유 lock을 보유한 상태에서 다음 고정 명령을 사용한다. 입력은 해당 실행의 후보 manifest, release ID, 운영 DB 이름 및 lock owner다.
+
+```powershell
+./scripts/v1/run-wrong-note-development-smoke.ps1 -EnrollmentNotices -ManifestPath $manifestPath -ReleaseId $releaseId -ProductionDatabase $productionDatabase -LockOwner $lockOwner
+```
+
+이 모드는 별도 일회용 학원과 복구 파일을 만든다. 실행 전후 API·Messaging 이미지와 호스트의 verified release를 대조한다. 강사가 합성 학생 두 명을 등록하면서 학생 발송과 학부모 미발송을 선택하고 같은 요청을 반복한다. 개발 API 이미지의 수명이 제한된 별도 프로세스가 해당 등록만 주기적으로 처리한다. 운영의 분당 EventBridge 경로는 `infra/terraform/messaging_schedule.tf`에서 관리한다.
+
+검증은 전용 개발 큐와 mock 공급사를 사용한다. 한 학생의 첫 처리에서는 공급사 결과 저장 후 해당 메시지만 다시 보이게 한다. 같은 SQS 메시지를 두 번째로 수신한 워커는 기존 결과를 읽고 큐 삭제에 성공해야 한다. 역할별 UI가 쓰는 결과 API의 로그 ID, 실제 mock 호출 두 건, 성공한 ACK 두 건, 선택한 학생 한 명의 재수신이 일치해야 통과한다. mock 접수 결과와 실제 카카오 단말 전달은 별개다.
+
+정리는 setup 소유권, 발신 owner 및 원래 학원, 수신자·등록·업무 키, 메시지·로그 PK를 확인한다. 소유한 임시 로그·진행 캐시와 합성 학원을 정리하고 트랜잭션 커밋 후 다시 조회한다. 다른 학원의 발송 기록과 개발 공용 owner는 보존한다. 작업이 진행 중이거나 소유권이 다르면 복구 파일을 유지한다. 같은 호스트와 release에서 작업 상태를 확인한 뒤 위 명령에 `-CleanupOnly`를 추가해 소유 범위만 다시 정리한다. 검사 결과에는 전화번호, 메시지 본문, 인증정보가 들어가지 않는다.
+
 ### 차시 범위 오답노트의 개발 실사용 검증
 
 `verify-api-development`의 학생별 PDF 검사는 마지막 성공 manifest부터 관련 파일이

@@ -165,6 +165,8 @@ class SQSQueueClient(QueueClient):
                 MaxNumberOfMessages=1,
                 WaitTimeSeconds=wait_time_seconds,
                 MessageAttributeNames=["All"],
+                **({"MessageSystemAttributeNames": ["ApproximateReceiveCount"]}
+                   if queue_name == "academy-v1-development-messaging-queue" else {}),
             )
             messages = response.get("Messages", [])
             if messages:

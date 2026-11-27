@@ -5,7 +5,8 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9_]{2,62}$')][string]$ProductionDatabase,
     [Parameter(Mandatory)][string]$ManifestPath,
     [Parameter(Mandatory)][string]$LockOwner,
-    [switch]$CleanupOnly
+    [switch]$CleanupOnly,
+    [switch]$EnrollmentNotices
 )
 $ErrorActionPreference = "Stop"
 $script:PlanMode = $false
@@ -46,15 +47,23 @@ function Get-SoleActiveDevelopment {
 Assert-SmokeLock
 $instanceId = Get-SoleActiveDevelopment
 $manifest = Get-Content -Raw -LiteralPath $ManifestPath | ConvertFrom-Json
+if ($EnrollmentNotices -and ($manifest.schemaVersion -ne 1 -or $manifest.status -cne "candidate" -or
+    $manifest.releaseImageTag -cne $ReleaseId -or $manifest.gitSha -cnotmatch '^[0-9a-f]{40}$' -or
+    -not $ReleaseId.StartsWith("sha-$($manifest.gitSha)-run-"))) {
+    throw "Enrollment QA requires the exact workflow candidate manifest."
+}
 $registry = "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com"
 $command = @'
 set -euo pipefail
 verify_runtime() {
-  for pair in "academy-api|__api__" "academy-ai-development|__ai__" "academy-tools-development|__tools__"; do
+  for pair in __CANDIDATE_CONTAINERS__; do
     container=${pair%%|*}
     image=${pair#*|}
     test "$(docker inspect -f '{{.State.Status}} {{.HostConfig.NetworkMode}} {{.Config.Image}}' "$container")" = "running host $image"
     docker exec "$container" python -c 'import os; assert os.environ["ACADEMY_DEVELOPMENT_RELEASE_ID"] == "__RELEASE__"; assert os.environ["ACADEMY_RUNTIME_ENV"] == "development"'
+    if [ "__NOTICE_MODE__" = "1" ]; then
+      docker exec "$container" python -c 'import os; e=os.environ; assert e["SOLAPI_MOCK"].lower()=="true" and e["SOLAPI_KAKAO_PF_ID"]=="development-mock-pfid" and not e.get("MESSAGING_DRY_RUN_TRIGGERS","").strip() and e["MESSAGING_SQS_QUEUE_NAME"]=="academy-v1-development-messaging-queue" and e["DB_NAME"]=="academy_api_development" and e["DB_USER"]=="academy_api_development_app"'
+    fi
   done
   python3 - <<'PY'
 import re, subprocess
@@ -69,13 +78,22 @@ verify_runtime
 docker exec academy-api python manage.py verify_development_wrong_notes --release '__RELEASE__' --production-database '__PROD__' __OPTION__
 verify_runtime
 '@
-foreach ($image in @(@("api", "academy-api"), @("ai", "academy-ai-worker-cpu"), @("tools", "academy-tools-worker"))) {
+$images = @(@("api", "academy-api"), @("ai", "academy-ai-worker-cpu"), @("tools", "academy-tools-worker"))
+$containers = '"academy-api|__api__" "academy-ai-development|__ai__" "academy-tools-development|__tools__"'
+if ($EnrollmentNotices) {
+    $images = @(@("api", "academy-api"), @("msg", "academy-messaging-worker"))
+    $containers = '"academy-api|__api__" "academy-messaging-development|__msg__"'
+}
+$command = $command.Replace("__CANDIDATE_CONTAINERS__", $containers)
+$command = $command.Replace("__NOTICE_MODE__", [string][int][bool]$EnrollmentNotices)
+foreach ($image in $images) {
     $repo = $image[1]
     $digest = [string]$manifest.images.$repo.digest
     if ($digest -cnotmatch '^sha256:[0-9a-f]{64}$') { throw "Missing candidate digest for $repo." }
     $command = $command.Replace("__$($image[0])__", "$registry/$repo@$digest")
 }
 $option = if ($CleanupOnly) { "--cleanup-only" } else { "" }
+if ($EnrollmentNotices) { $option = "--enrollment-notices $option" }
 $command = $command.Replace("__RELEASE__", $ReleaseId).Replace("__PROD__", $ProductionDatabase).Replace("__OPTION__", $option).Replace("`r", "")
 $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($command))
 $paramsRef = Convert-JsonArgToFileRef (@{
@@ -83,23 +101,27 @@ $paramsRef = Convert-JsonArgToFileRef (@{
     executionTimeout = @("1600")
 } | ConvertTo-Json -Compress)
 try {
+    $description = if ($EnrollmentNotices) { "Exact development enrollment notification scenario" } else { "Exact development AI and Tools wrong-note print scenario" }
     $sent = Invoke-AwsJson @("ssm","send-command","--instance-ids",$instanceId,"--document-name","AWS-RunShellScript",
         "--parameters",$paramsRef,"--timeout-seconds","1600","--region",$script:Region,"--output","json",
-        "--comment","Exact development AI and Tools wrong-note print scenario")
+        "--comment",$description)
 } finally {
     Remove-TempFiles @(($paramsRef -replace '^file://', ''))
 }
 $id = [string]$sent.Command.CommandId
 if (-not $id) { throw "No SSM command ID returned." }
-Write-Host "Wrong-note QA instance=$instanceId release=$ReleaseId command=$id"
+Write-Host "Development QA instance=$instanceId release=$ReleaseId command=$id"
 for ($i = 0; $i -lt 162; $i++) {
     Start-Sleep -Seconds 10
     $read = Invoke-AwsJson @("ssm","get-command-invocation","--command-id",$id,"--instance-id",$instanceId,
         "--region",$script:Region,"--output","json")
     if ($read.Status -notin @("Pending","InProgress","Delayed","Cancelling")) { break }
 }
-if ($read.Status -ne "Success") { throw "Wrong-note QA requires recovery: instance=$instanceId command=$id status=$($read.Status)." }
+if ($read.Status -ne "Success") { throw "Development QA requires recovery: instance=$instanceId command=$id status=$($read.Status)." }
 $expected = if ($CleanupOnly) { "WRONG_NOTE_CLEANUP_PASS" } else { "WRONG_NOTE_REAL_USE_PASS" }
+if ($EnrollmentNotices) {
+    $expected = if ($CleanupOnly) { "ENROLLMENT_NOTICE_CLEANUP_PASS" } else { "ENROLLMENT_NOTICE_REAL_USE_PASS" }
+}
 $lines = @(([string]$read.StandardOutputContent) -split '\r?\n' | Where-Object { $_ -match "^\{.*$expected.*\}$" })
 if ($lines.Count -ne 1) { throw "Missing exact development smoke receipt." }
 $receipt = $lines[0] | ConvertFrom-Json
@@ -107,10 +129,29 @@ if ($receipt.status -ne $expected -or $null -eq $receipt.remaining) { throw "Inv
 foreach ($field in @("tenants","users","r2_objects","ai_jobs","ai_results","ai_redis_keys")) {
     if ($null -eq $receipt.remaining.$field -or $receipt.remaining.$field -ne 0) { throw "Wrong-note residue: $field." }
 }
-if (-not $CleanupOnly -and ($receipt.exam_questions -ne 25 -or $receipt.homework_questions -ne 5 -or
+if ($EnrollmentNotices) {
+    foreach ($field in @("registration_batches","notice_recipients","notice_outboxes","owner_notice_logs","worker_evidence","messaging_redis")) {
+        if ($null -eq $receipt.remaining.$field -or $receipt.remaining.$field -ne 0) { throw "Enrollment residue: $field." }
+    }
+    if (-not $CleanupOnly -and ($receipt.scheduled_students -ne 2 -or $receipt.acknowledged -ne 2 -or
+        $receipt.redelivered -ne 1 -or $receipt.mock_calls -ne 2)) { throw "Incomplete enrollment worker receipt." }
+} elseif (-not $CleanupOnly -and ($receipt.exam_questions -ne 25 -or $receipt.homework_questions -ne 5 -or
     $receipt.approved_answers -ne 30 -or $receipt.pdf_members -ne 2 -or
     @($receipt.acknowledged_segmentation_jobs | Sort-Object -Unique).Count -ne 2 -or
     @($receipt.acknowledged_print_jobs | Sort-Object -Unique).Count -ne 2)) { throw "Incomplete document or queue readback." }
 Assert-SmokeLock
 if ((Get-SoleActiveDevelopment) -ne $instanceId) { throw "Development host changed during the scenario." }
-Write-Host $lines[0]
+if ($EnrollmentNotices) {
+    $receipt | Add-Member -NotePropertyMembers ([ordered]@{
+        release_id = $ReleaseId
+        api_digest = $manifest.images.'academy-api'.digest
+        messaging_digest = $manifest.images.'academy-messaging-worker'.digest
+        instance_id = $instanceId
+        command_id = $id
+        command_status = $read.Status
+        ssm_sessions_opened = 0
+    })
+    Write-Host ($receipt | ConvertTo-Json -Depth 6 -Compress)
+} else {
+    Write-Host $lines[0]
+}
