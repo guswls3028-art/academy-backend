@@ -114,6 +114,35 @@ class OnlineSubmissionIdempotencyTests(TestCase):
         self.assertNotIn("session_origin_recorded", legacy)
         self.assertNotIn("score_lecture_id", legacy)
 
+    def test_unrecorded_submission_offers_only_current_sessions_after_partial_reenrollment(self):
+        other = self.add_other_course()
+        first = self.submit(uuid.uuid4())
+        self.assertEqual(first.status_code, 201, first.data)
+        sid = first.data["submission_id"]
+        attendance = apps.get_model("attendance", "Attendance")
+        other_enrollment = type(self.enrollment).objects.get(student=self.student, lecture_id=other.lecture_id)
+        attendance.objects.create(tenant=self.tenant, session=other, enrollment=other_enrollment, status="SECESSION")
+        self.assertEqual(self.inbox(sid)["session_id"], self.session.id)
+
+        attendance.objects.create(tenant=self.tenant, session=self.session, enrollment=self.enrollment, status="SECESSION")
+        history = self.inbox(sid)
+        self.assertTrue(history["target_resolved"])
+        self.assertTrue(history["session_history_only"])
+        self.assertIsNone(history["session_id"])
+        self.assertEqual(history["session_choices"], [])
+        self.assertEqual(history["enrollment_id"], self.enrollment.pk)
+        self.assertEqual(self.inbox(sid, choices=False)["session_id"], self.session.pk)
+
+        returning = type(self.session).objects.create(lecture_id=self.session.lecture_id, order=2, title="Restored")
+        self.exam.sessions.add(returning)
+        apps.get_model("enrollment", "SessionEnrollment").objects.create(
+            tenant=self.tenant, session=returning, enrollment=self.enrollment)
+        row = self.inbox(sid)
+        self.assertEqual(row["session_id"], returning.id)
+        self.assertFalse(row["session_origin_recorded"])
+        self.assertNotIn("session_history_only", row)
+        self.assertEqual(row["score_lecture_id"], self.enrollment.lecture_id)
+
     def test_invalid_and_unauthorized_sessions_cannot_create_a_grade(self):
         other = self.add_other_course()
         Attendance = apps.get_model("attendance", "Attendance")

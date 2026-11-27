@@ -82,11 +82,13 @@ def submission_exam_contexts(submissions, enrollment_map, *, tenant, supports_se
 
     from django.db.models import F, Prefetch
 
+    from apps.domains.attendance.models import Attendance
     from apps.domains.enrollment.models import SessionEnrollment
     from apps.domains.exams.models import Exam, ExamEnrollment
     from apps.domains.lectures.models import Session
     from apps.domains.submissions.models import Submission
     from apps.domains.submissions.models.omr_batch import OmrUploadBatchItem
+    from apps.support.attendance.learning_todo_eligibility import attendance_status_is_learning_todo_eligible
 
     sessions = Session.objects.filter(lecture__tenant=tenant).select_related("lecture").order_by("id")
     exams = Exam.objects.filter(tenant=tenant, id__in={s.target_id for s in submissions})
@@ -129,17 +131,16 @@ def submission_exam_contexts(submissions, enrollment_map, *, tenant, supports_se
         roster[enrollment_id].add(session_id)
     attended = defaultdict(set)
     absent = defaultdict(set)
-    if assignments:
-        from apps.domains.attendance.models import Attendance
-        from apps.support.attendance.learning_todo_eligibility import attendance_status_is_learning_todo_eligible
-
-        for eid, sid, status in Attendance.objects.filter(
-            tenant=tenant, enrollment_id__in=enrollment_ids, session_id__in=session_ids,
-            enrollment__lecture_id=F("session__lecture_id"),
-        ).values_list("enrollment_id", "session_id", "status"):
-            attended[eid].add(sid)
-            if not attendance_status_is_learning_todo_eligible(status):
-                absent[eid].add(sid)
+    withdrawn = defaultdict(set)
+    for eid, sid, status in Attendance.objects.filter(
+        tenant=tenant, enrollment_id__in=enrollment_ids, session_id__in=session_ids,
+        enrollment__lecture_id=F("session__lecture_id"),
+    ).values_list("enrollment_id", "session_id", "status"):
+        attended[eid].add(sid)
+        if status == "SECESSION":
+            withdrawn[eid].add(sid)
+        if not attendance_status_is_learning_todo_eligible(status):
+            absent[eid].add(sid)
 
     batches = {
         submission_id: (exam_id, session_id, lecture_id)
@@ -165,18 +166,20 @@ def submission_exam_contexts(submissions, enrollment_map, *, tenant, supports_se
         elif submission.source == Submission.Source.ONLINE and enrollment and type(entry_id) is int:
             chosen = next((s for s in candidates if s.id == entry_id), None)
             recorded = chosen is not None
-        if not recorded and enrollment and len(candidates) > 1:
-            lecture_sessions = [s for s in candidates if s.lecture_id == enrollment.lecture_id]
+        if not recorded and enrollment:
+            lecture_sessions = [s for s in candidates if s.lecture_id == enrollment.lecture_id and s.lecture.is_active]
             enrolled = [s for s in lecture_sessions if s.id in roster[enrollment.id]]
-            navigation_ids = {s.id for s in (enrolled or lecture_sessions)}
+            navigation_ids = set()
+            if enrollment.status == "ACTIVE":
+                navigation_ids = {s.id for s in (enrolled or lecture_sessions)} - withdrawn[enrollment.id]
             if submission.source == Submission.Source.ONLINE:
                 for eid, lecture_id, assigned_at in assignments[exam.id, enrollment.student_id]:
                     if eid == enrollment.id or assigned_at > submission.created_at:
                         continue
                     linked = {s.id for s in candidates if s.lecture_id == lecture_id}
                     eligible = linked & (roster[eid] | attended[eid])
-                    navigation_ids.update((eligible or linked) - absent[eid])
-            candidates = [s for s in candidates if s.id in navigation_ids] or candidates
+                    navigation_ids.update((eligible or linked) - absent[eid] - withdrawn[eid])
+            candidates = [s for s in candidates if s.id in navigation_ids]
             if len(candidates) == 1:
                 chosen = candidates[0]
         elif not recorded and len(candidates) == 1:
@@ -184,6 +187,7 @@ def submission_exam_contexts(submissions, enrollment_map, *, tenant, supports_se
 
         contexts[submission.id] = {
             "target_title": exam.title,
+            **({"session_history_only": True} if exam.inbox_sessions and enrollment and not candidates else {}),
             "session_origin_recorded": recorded,
             "score_lecture_id": enrollment.lecture_id if enrollment else None,
             "session_choices": [_session_location(s) for s in candidates] if not chosen else [],

@@ -189,7 +189,8 @@ class PendingSubmissionsView(APIView):
             #   session_missing — Exam/Homework 는 있으나 sessions 매칭 실패
             #   (target_resolved=True 일 때는 None)
             target_session_id = target_info.get("session_id")
-            target_resolved = bool(target_info and (target_session_id or target_info.get("session_choices")))
+            history_only = target_info.get("session_history_only", False)
+            target_resolved = bool(target_session_id or target_info.get("session_choices") or history_only)
             if target_resolved:
                 target_resolved_reason = None
             elif not target_info:
@@ -247,6 +248,7 @@ class PendingSubmissionsView(APIView):
                         "session_choices": target_info.get("session_choices", []),
                         "session_origin_recorded": target_info.get("session_origin_recorded", False),
                         "score_lecture_id": target_info.get("score_lecture_id"),
+                        **({"session_history_only": True} if history_only else {}),
                     } if supports_session_choices else {}),
                     "target_resolved": target_resolved,
                     "target_resolved_reason": target_resolved_reason,
