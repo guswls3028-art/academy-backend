@@ -85,6 +85,22 @@ class AccountNoticeRecoveryTests(TestCase):
         self.assertFalse(self.student.pending_account_notice_student_password_ciphertext)
         self.assertEqual(self.request().data["initial_notice"]["status"], "not_pending")
 
+    def test_public_library_progress_preserves_the_notice_until_first_regular_enrollment(self):
+        library = create_lecture_fixture(tenant=self.tenant, title="공개 영상", name="공개", is_system=True)
+        create_enrollment_fixture(tenant=self.tenant, student=self.student, lecture=library, status="ACTIVE")
+        with patch("apps.support.students.account_notice_dependencies.send_welcome_messages", side_effect=self.produce) as send:
+            self.assertEqual(self.request().data["initial_notice"]["status"], "awaiting_enrollment")
+            self.assertEqual(self.request("post", data={"target": "initial"}).status_code, 409)
+            send.assert_not_called()
+            self.assertFalse(scheduled_notification_fixtures().exists())
+            self.enroll()
+            self.assertEqual(dispatch_pending_account_notice(student_id=self.student.id)["status"], "enqueued")
+            self.assertEqual(self.request("post", data={"target": "initial"}).status_code, 409)
+            send.assert_called_once()
+        self.assertEqual(set(scheduled_notification_fixtures().values_list("trigger", flat=True)), {
+            "registration_approved_student", "registration_approved_parent",
+        })
+
     def test_partial_pair_rolls_back_new_outbox_and_enqueue_callbacks(self):
         self.enroll()
         def partial(**kwargs):

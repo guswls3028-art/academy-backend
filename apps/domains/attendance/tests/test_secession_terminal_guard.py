@@ -19,7 +19,7 @@ Student = apps.get_model("students", "Student")
 SessionEnrollment = apps.get_model("enrollment", "SessionEnrollment")
 
 
-class AttendanceSecessionTerminalGuardTests(TestCase):
+class AttendanceSecessionFixture:
     def setUp(self):
         self.factory = APIRequestFactory()
         self.tenant = Tenant.objects.create(code="att-terminal", name="Attendance Terminal", is_active=True)
@@ -63,9 +63,10 @@ class AttendanceSecessionTerminalGuardTests(TestCase):
             status="SECESSION",
         )
 
-    def _patch(self, data):
+    def _patch(self, data, *, row=None):
+        row = row or self.attendance
         request = self.factory.patch(
-            f"/api/v1/lectures/attendance/{self.attendance.id}/",
+            f"/api/v1/lectures/attendance/{row.id}/",
             data,
             format="json",
         )
@@ -73,9 +74,11 @@ class AttendanceSecessionTerminalGuardTests(TestCase):
         force_authenticate(request, user=self.admin)
         return AttendanceViewSet.as_view({"patch": "partial_update"})(
             request,
-            pk=self.attendance.id,
+            pk=row.id,
         )
 
+
+class AttendanceSecessionTerminalGuardTests(AttendanceSecessionFixture, TestCase):
     def test_patch_cannot_revert_secession_to_attendance_status(self):
         response = self._patch({"status": "PRESENT"})
 

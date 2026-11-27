@@ -35,6 +35,8 @@
 
 학생 등록 Excel/import/JSON bulk row orchestration SSOT는 `import_students_from_rows()`, `resolve_student_import_row()`, `resolve_student_import_conflicts()`다. 이 서비스는 학생 등록 행의 중복/복원/생성 판단, school_level_mode 검증, 계정 그래프 호출, 첫 수강용 계정 안내 staging, delete-and-recreate conflict resolution을 소유한다. R2 업로드, AI job dispatch, HTTP 응답 모양은 여전히 view/worker compatibility boundary다. 강의/차시 Excel 수강등록은 이 생성 경계를 호출하지 않고 `lecture_enroll_from_excel_rows()`가 같은 테넌트의 활성 학생만 조회한다. 학생번호가 있으면 같은 tenant의 exact `ps_number`를 최우선 사용하며, 공란일 때만 exact 이름과 숫자로 정규화한 학부모 전화번호 조합을 사용한다. `김지우a/b/1/2` 같은 이름 suffix는 서로 다른 이름이고, 형제·쌍둥이가 학부모 전화번호만 공유하는 것은 중복이 아니다. 학생 전화번호는 이 매칭 조건이 아니다. 후보 행을 잠근 상태에서 정확히 한 명일 때만 등록하며 같은 fallback 식별자의 활성 학생이 복수이면 임의 선택하지 않는다. 학생-only Excel과 강의/차시 Excel 파일은 dispatch 직전에 tenant별 R2 Excel key로 업로드한다. Dispatch가 동기적으로 거절되거나 예외로 끝나면 각 view는 자신이 방금 업로드한 exact key를 즉시 삭제하고, cleanup 자체가 실패해도 원래 dispatch 실패를 성공으로 바꾸지 않는다. DB commit 뒤 SQS publish가 거절되어 최초 HTTP 응답이 이미 수락된 경우에도 gateway가 `source_domain=enrollment`, 일치하는 tenant/bucket, `excel/<tenant>/<32자 hex>.xlsx` 생성 규칙을 모두 만족하는 exact key만 삭제한다. 다른 Excel job이나 임의 key는 이 보상을 적용하지 않는다. 정상 publish가 수락된 파일의 후속 삭제는 worker lifecycle이 계속 소유한다.
 
+강의 엑셀에서 차시를 생략하면 일반 등록은 첫 차시를 사용하고, 첫 차시 출결이 퇴원이면 강의만 등록한다. 교직원이 차시를 지정하면 해당 차시의 기존 퇴원 출결을 미입력으로 복구한다. 다른 차시의 출결과 교사 메모는 보존한다. 잘못된 차시 번호는 업로드 접수 전에 거절한다. 처리 결과의 `enrolled_count`는 강의 등록 수, `session_enrolled_count`는 차시에 등록된 수, `withdrawn_session_preserved_count`는 기존 차시 퇴원을 유지한 수다. 마지막 경우에는 해당 행의 `session_registration`이 `withdrawal_preserved`다. [차시 퇴원과 복구 정책](attendance.md)
+
 초기 비밀번호 설정의 정본은 [계정 초기 비밀번호 SSOT](../ssot/account-initial-password-policy.md)다.
 Excel의 최종 확인창에서도 학생·학부모 방식을 각각 명시 선택한다. `fixed`(원문 4자 이상 직접 입력),
 `phone_last4`(각자의 유효 본인 번호), `random`(6자리 숫자)을 전달하며 미설정·누락 전화번호를 임의

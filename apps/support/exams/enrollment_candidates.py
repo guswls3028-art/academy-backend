@@ -5,26 +5,26 @@ from django.db.models import F
 
 
 def linked_exam_roster_ids(*, tenant, exam_id: int, include_attendance: bool = False) -> set[int]:
-    from apps.domains.enrollment.models import SessionEnrollment
+    from academy.adapters.db.django.repositories_enrollment import session_memberships_for_access
 
     if tenant is None:
         return set()
-    scope = {
-        "tenant": tenant,
+    exam_scope = {
         "session__exams__id": int(exam_id),
         "session__exams__tenant": tenant,
-        "session__lecture__tenant": tenant,
-        "enrollment__tenant": tenant,
-        "enrollment__student__tenant": tenant,
-        "enrollment__lecture_id": F("session__lecture_id"),
         "enrollment__status": "ACTIVE",
-        "enrollment__student__deleted_at__isnull": True,
     }
-    ids = set(SessionEnrollment.objects.filter(**scope).values_list("enrollment_id", flat=True))
+    memberships = session_memberships_for_access(tenant_id=tenant.pk).filter(**exam_scope)
+    ids = set(memberships.values_list("enrollment_id", flat=True))
     if include_attendance:
         from apps.domains.attendance.models import Attendance
 
-        ids.update(Attendance.objects.filter(**scope).values_list("enrollment_id", flat=True))
+        eligible_attendance = Attendance.objects.filter(
+            **exam_scope, tenant=tenant, session__lecture__tenant=tenant,
+            enrollment__tenant=tenant, enrollment__student__tenant=tenant,
+            enrollment__student__deleted_at__isnull=True, enrollment__lecture_id=F("session__lecture_id"),
+        ).exclude(status="SECESSION")
+        ids.update(eligible_attendance.values_list("enrollment_id", flat=True))
     return ids
 
 

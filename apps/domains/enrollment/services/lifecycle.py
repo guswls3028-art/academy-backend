@@ -266,6 +266,7 @@ def bulk_create_enrollments(*, tenant, lecture_id, student_ids) -> list[Enrollme
             defaults={"status": "ACTIVE"},
         )
         if not created_new and obj.status != "ACTIVE":
+            enroll_repo.preserve_prior_lecture_withdrawal(tenant=tenant, enrollment=obj)
             obj.status = "ACTIVE"
             obj.save(update_fields=["status"])
         created.append(obj)

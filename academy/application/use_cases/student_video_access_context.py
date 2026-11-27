@@ -143,49 +143,36 @@ def find_active_enrollment_for_video(request, video, explicit_enrollment_id: Opt
     )
 
 
-def ensure_public_lecture_enrollment(request, lecture):
+def _public_video_enrollment(request, video, explicit_enrollment_id, *, allow_write):
     from apps.domains.enrollment.models import Enrollment
+    from apps.domains.video.models import Video
+    from apps.support.video.view_dependencies import get_or_create_public_video_session
 
-    tenant = getattr(request, "tenant", None)
+    tenant = request.tenant
     student = get_request_student(request)
-    if not tenant or not student:
-        raise StudentVideoAccessError("학생 정보를 확인할 수 없습니다.")
-    if getattr(lecture, "tenant_id", None) != tenant.id or getattr(student, "tenant_id", None) != tenant.id:
+    source = getattr(video.session, "lecture", None)
+    if not student or student.tenant_id != tenant.pk or (source and source.tenant_id != tenant.pk):
         raise StudentVideoAccessError("공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다.")
 
-    enrollment, _ = Enrollment.objects.get_or_create(
-        tenant=tenant,
-        student=student,
-        lecture=lecture,
-        defaults={"status": "ACTIVE"},
-    )
-    if enrollment.status != "ACTIVE":
-        enrollment.status = "ACTIVE"
-        enrollment.save(update_fields=["status", "updated_at"])
-    return enrollment
+    candidates = list(video_repo.public_video_record_candidates(video, tenant_id=tenant.pk, student_id=student.pk))
+    record = candidates[0] if candidates else None
+    if explicit_enrollment_id and not any(row.pk == explicit_enrollment_id for row in candidates):
+        raise StudentVideoAccessError("해당 수강 정보에 접근할 수 없습니다.")
+    if not allow_write:
+        return record
 
-
-def ensure_public_video_enrollment(request, video):
-    session = getattr(video, "session", None)
-    lecture = getattr(session, "lecture", None) if session else None
-    if not lecture:
-        tenant = getattr(request, "tenant", None) or getattr(video, "tenant", None)
-        if not tenant:
-            raise StudentVideoAccessError("공개 영상의 강의 정보를 확인할 수 없습니다.")
-        from apps.domains.lectures.models import Lecture, Session
-        from apps.domains.video.models import Video
-
-        lecture = Lecture.get_or_create_system_lecture(tenant)
-        session, _ = Session.objects.get_or_create(
-            lecture=lecture,
-            order=1,
-            defaults={"title": "전체공개영상", "date": None},
-        )
-        if getattr(video, "session_id", None) is None:
-            Video.objects.filter(id=video.id, tenant=tenant, session__isnull=True).update(session=session)
+    if source is None or record is None:
+        library, session = get_or_create_public_video_session(tenant=tenant)
+        if source is None:
+            # Keep the pre-existing contract for public videos uploaded without a session.
+            Video.objects.filter(pk=video.pk, tenant=tenant, session__isnull=True).update(session=session)
             video.session = session
-            video.session_id = session.id
-    return ensure_public_lecture_enrollment(request, lecture)
+        if record is None:
+            record, _ = Enrollment.objects.get_or_create(tenant=tenant, student=student, lecture=library, defaults={"status": "ACTIVE"})
+    if record.lecture.is_system and record.status != "ACTIVE":
+        record.status = "ACTIVE"
+        record.save(update_fields=["status", "updated_at"])
+    return record
 
 
 def student_can_access_session(request, session) -> bool:
@@ -205,14 +192,13 @@ def student_can_access_session(request, session) -> bool:
     if getattr(lecture, "is_system", False):
         return any(getattr(s, "tenant_id", None) == tenant_id for s in students)
 
-    return active_enrollments_for_students(
+    enrollments = active_enrollments_for_students(
         tenant=tenant,
         students=students,
-    ).filter(
-        lecture=lecture,
-        session_enrollments__session=session,
-        session_enrollments__tenant=tenant,
-    ).exists()
+    ).filter(lecture=lecture)
+    return video_repo.video_session_memberships(
+        tenant_id=tenant_id, enrollment_ids=enrollments.values("pk"),
+    ).filter(session=session).exists()
 
 
 def _video_tenant_id(video) -> int | None:
@@ -485,15 +471,11 @@ def resolve_student_video_access_context(
     if is_public_video(video):
         if not student_can_access_video(request, video):
             raise StudentVideoAccessError("공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다.")
-        enrollment = (
-            ensure_public_video_enrollment(request, video)
-            if allow_public_enrollment_write
-            else find_active_enrollment_for_video(
-                request,
-                video,
-                explicit_enrollment_id=explicit_enrollment_id,
-            )
-        )
+        enrollment = _public_video_enrollment(request, video, explicit_enrollment_id, allow_write=allow_public_enrollment_write)
+        if enrollment:
+            permission = video_repo.video_access_get(video, enrollment)
+            if permission and (permission.access_mode == AccessMode.BLOCKED or permission.rule == "blocked"):
+                raise StudentVideoAccessError("이 영상은 시청이 제한되었습니다.")
         return StudentVideoAccessContext(
             enrollment=enrollment,
             access_mode=None,

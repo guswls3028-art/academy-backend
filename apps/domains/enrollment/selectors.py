@@ -53,23 +53,16 @@ def session_enrollments_for_tenant(tenant):
 
 
 def active_session_enrollments_for_session(*, tenant, session_id: int):
-    tenant = require_tenant(tenant)
-    return (
-        SessionEnrollment.objects
-        .filter(
-            tenant=tenant,
-            session_id=session_id,
-            session__lecture__tenant=tenant,
-            enrollment__tenant=tenant,
-            enrollment__status="ACTIVE",
-            enrollment__student__deleted_at__isnull=True,
-        )
-        .select_related("enrollment", "enrollment__student", "enrollment__lecture")
-        .order_by(*student_name_codepoint_ordering(
-            ("enrollment__student__name", "enrollment_id", "id"),
-            name_field="enrollment__student__name",
-        ))
-    )
+    from apps.support.attendance.learning_todo_eligibility import eligible_session_enrollments
+
+    return eligible_session_enrollments(
+        tenant=require_tenant(tenant),
+        session_id=session_id,
+        excluded_statuses=("SECESSION",),  # Staff may explicitly assign an exam to an absent student.
+    ).order_by(*student_name_codepoint_ordering(
+        ("enrollment__student__name", "enrollment_id", "id"),
+        name_field="enrollment__student__name",
+    ))
 
 
 def active_enrollment_ids_for_session(*, tenant, session_id: int) -> set[int]:
