@@ -155,6 +155,31 @@ class OnlineSubmissionIdempotencyTests(TestCase):
         self.assertFalse(apps.get_model("submissions", "Submission").objects.exists())
         self.assertEqual(self.attempts().count(), 0)
 
+    def test_recorded_source_survives_a_withdrawn_score_session_and_opens_history(self):
+        first = self.submit(uuid.uuid4(), entry_session_id=self.session.pk)
+        self.assertEqual(first.status_code, 201, first.data)
+        sid = first.data["submission_id"]
+        self.assertNotIn("session_history_only", self.inbox(sid))
+        apps.get_model("attendance", "Attendance").objects.create(
+            tenant=self.tenant, session=self.session, enrollment=self.enrollment, status="SECESSION")
+        row = self.inbox(sid)
+        self.assertEqual((row["target_resolved"], row["session_history_only"], row["session_origin_recorded"]),
+                         (True, True, True))
+        self.assertEqual((row["session_id"], row["session_title"], row["score_lecture_id"]),
+                         (self.session.pk, self.session.title, self.enrollment.lecture_id))
+        path = "/api/v1/results/admin/landing-stats/"
+        for params in ({}, {"session_choices": "1"}):
+            request = self.factory.get(path, params)
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.staff)
+            summary = resolve(path).func(request)
+            recent = next(item for item in summary.data["recent_done_top"] if item["id"] == sid)
+            if params:
+                self.assertEqual((recent["session_history_only"], recent["session_title"]), (True, self.session.title))
+            else:
+                self.assertNotIn("session_title", recent)
+                self.assertNotIn("session_history_only", recent)
+
     def test_response_loss_retry_returns_original_without_consuming_retake(self):
         self.exam.allow_retake = True
         self.exam.max_attempts = 2

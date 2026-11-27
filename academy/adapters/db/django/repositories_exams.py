@@ -185,9 +185,16 @@ def submission_exam_contexts(submissions, enrollment_map, *, tenant, supports_se
         elif not recorded and len(candidates) == 1:
             chosen = candidates[0]
 
+        history_only = bool(enrollment and exam.inbox_sessions and not candidates)
+        if recorded and enrollment:
+            # Keep the recorded location as provenance even after its score course is withdrawn.
+            history_only = (
+                enrollment.status != "ACTIVE" or not chosen.lecture.is_active
+                or (chosen.lecture_id == enrollment.lecture_id and chosen.id in withdrawn[enrollment.id])
+            )
         contexts[submission.id] = {
             "target_title": exam.title,
-            **({"session_history_only": True} if exam.inbox_sessions and enrollment and not candidates else {}),
+            **({"session_history_only": True} if history_only else {}),
             "session_origin_recorded": recorded,
             "score_lecture_id": enrollment.lecture_id if enrollment else None,
             "session_choices": [_session_location(s) for s in candidates] if not chosen else [],
