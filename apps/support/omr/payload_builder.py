@@ -139,6 +139,24 @@ def build_omr_payload(submission: Submission) -> dict[str, Any]:
                     question_count=contract.choice_count,
                     essay_question_numbers=essay_numbers,
                 )
+        # Independently printed, unsigned paper carries geometry but no question IDs.
+        # Keep its evidence apart from the signed/legacy print contract. Only a
+        # contiguous mixed form can be mapped by its physical row order.
+        if (
+            sheet.essay_score_marks
+            and contract.choice_count > 0
+            and contract.essay_count > 0
+            and contract.objective_question_numbers == tuple(range(1, contract.choice_count + 1))
+            and contract.essay_question_numbers == tuple(range(contract.choice_count + 1, contract.total_questions + 1))
+            and any(q.kind == "essay" and (q.score or 0) > 0 for q in contract.questions)
+        ):
+            if not template_meta.get("essay_score_questions"):
+                template_meta.update(build_essay_score_grid_metadata(
+                    choice_numbers=list(contract.objective_question_numbers),
+                    essay_numbers=list(contract.essay_question_numbers),
+                ))
+            if template_meta.get("essay_score_questions"):
+                template_meta["allow_unsigned_essay_score_grid"] = True
         payload["template_meta"] = template_meta
 
     return payload

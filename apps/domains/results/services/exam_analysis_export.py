@@ -21,6 +21,7 @@ from apps.domains.results.services.exam_analysis_metrics import load_exam_analys
 from apps.domains.results.services.exam_result_excel_import import ExamResultWorkbookError
 from apps.domains.results.services.question_stats_service import QuestionStatsService
 from apps.support.results.exam_result_excel_import_dependencies import get_result_import_questions
+from apps.support.omr.contract_builder import build_omr_sheet_contract
 from apps.support.omr.sheet_resolver import resolve_omr_sheet_for_exam
 
 
@@ -208,6 +209,13 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
         sheet = None
     questions = get_result_import_questions(sheet=sheet) if sheet is not None else []
     question_by_id = {int(question.question_id): question for question in questions}
+    essay_labels = {}
+    if sheet is not None and exam.essay_numbering == "separate":
+        contract = build_omr_sheet_contract(sheet=sheet, exam=exam)
+        essay_labels = {
+            number: f"서술형 {index}번"
+            for index, number in enumerate(contract.essay_question_numbers, start=1)
+        }
 
     result_by_id = analysis.results
     results = list(result_by_id.values())
@@ -369,7 +377,8 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
     weakest = question_stats[:5]
     for offset, row_data in enumerate(weakest, start=1):
         row = 24 + offset
-        overview.cell(row, 1, f"{int(row_data['question_number'])}번")
+        number = int(row_data["question_number"])
+        overview.cell(row, 1, essay_labels.get(number, f"{number}번"))
         overview.cell(row, 2, float(row_data.get("accuracy") or 0.0)).number_format = "0.0%"
         overview.cell(row, 3, int(row_data.get("correct") or 0))
         overview.cell(row, 4, int(row_data.get("attempts") or 0))
@@ -399,9 +408,10 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
     _table_header(priority_sheet, 5, headers)
     for offset, row_data in enumerate(question_stats, start=1):
         accuracy = float(row_data.get("accuracy") or 0.0)
+        number = int(row_data["question_number"])
         values = [
             offset,
-            int(row_data["question_number"]),
+            essay_labels.get(number, number),
             accuracy,
             int(row_data.get("correct") or 0),
             int(row_data.get("attempts") or 0),
@@ -422,7 +432,7 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
             ),
         )
         priority_sheet.auto_filter.ref = f"A5:G{5 + len(question_stats)}"
-    _finalize_sheet(priority_sheet, [12, 10, 12, 11, 11, 13, 12], freeze="A6")
+    _finalize_sheet(priority_sheet, [12, 16, 12, 11, 11, 13, 12], freeze="A6")
 
     _add_trends_sheet(workbook, exam.title, analysis.insights)
 
@@ -485,7 +495,7 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
             pass_score,
             verdict,
             status,
-            ", ".join(str(number) for number in wrong_numbers),
+            ", ".join(essay_labels.get(number, str(number)) for number in wrong_numbers),
             (
                 timezone.localtime(initial_scores[enrollment_id].recorded_at).strftime("%Y-%m-%d %H:%M")
                 if result is not None and initial_scores[enrollment_id].recorded_at is not None
@@ -528,7 +538,7 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
         last_column=answer_last_column,
     )
     answer_headers = ["등수", "학교", "이름", "강의", "1차 점수", "만점", "판정"] + [
-        f"{question.number}번" for question in questions
+        essay_labels.get(question.number, f"{question.number}번") for question in questions
     ]
     _table_header(answers_sheet, 5, answer_headers)
     for offset, (_, enrollment_id, ranked_values) in enumerate(ranked_rows, start=1):
@@ -557,7 +567,7 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
     answers_sheet.auto_filter.ref = f"A5:{get_column_letter(len(answer_headers))}{5 + len(ranked_rows)}"
     _finalize_sheet(
         answers_sheet,
-        [9, 16, 12, 19, 10, 10, 13] + [11] * len(questions),
+        [9, 16, 12, 19, 10, 10, 13] + [16 if q.number in essay_labels else 11 for q in questions],
         freeze="H6",
     )
 

@@ -539,6 +539,18 @@ def handle_ai_job(job: AIJob) -> AIResult:
                             row["status"] not in (STATUS_ERROR, STATUS_NO_SCORE_AREA) for row in legacy_scores
                         ):
                             essay_scores = legacy_scores
+                if meta.get("allow_unsigned_essay_score_grid") and (
+                    not essay_scores or all(row["status"] == "no_score_area" for row in essay_scores)
+                ):
+                    from academy.adapters.ai.omr.paper_essay_scores import detect_paper_essay_scores
+
+                    paper_scores = detect_paper_essay_scores(
+                        meta=meta,
+                        prepared_images=prepared_images,
+                        alignment_confirmed=align_result.success and align_result.method == "marker_homography",
+                    )
+                    if paper_scores:
+                        essay_scores = paper_scores
             except Exception:  # noqa: BLE001 — never block objective grading
                 logger.exception("OMR essay score read failed job=%s", job.id)
                 essay_scores = []
