@@ -356,7 +356,7 @@ def _snapshot_signature(inventory, capability):
     return hmac.digest(capability.encode(), b"clinic-notice-cleanup/v1\0" + data, "sha256").hex()
 
 
-def cleanup(code, capability):
+def cleanup(code, capability, *, general_cleanup=None):
     """Keep the fixture on uncertainty. Pin physical owner rows before the source FK is removed."""
     from apps.core.management.commands.verify_development_wrong_notes import cleanup as cleanup_fixture
     check_mock()
@@ -396,7 +396,9 @@ def cleanup(code, capability):
                 rows = NotificationLog.objects.select_for_update().filter(
                     tenant_id=scope.payload["owner_id"], source_tenant_id=tid, pk__in=inv["logs"])
                 require(set(rows.values_list("pk", flat=True)) == set(inv["logs"]), "Common owner rows changed.")
-                rows.delete()
+                boxes = ScheduledNotification.objects.select_for_update().filter(
+                    tenant_id=tid, trigger=TRIGGER, status="sent", pk__in=inv["outboxes"])
+                require(set(boxes.values_list("pk", flat=True)) == set(inv["outboxes"]), "Clinic outboxes changed.")
                 OpsAuditLog.objects.filter(pk__in=inv["events"], target_tenant_id=tid).delete()
                 inv.pop("deliveries")
             else:
@@ -407,9 +409,14 @@ def cleanup(code, capability):
                        scope_id=scope.pk, plan_id=plan.pk if plan else 0, session_id=session.pk if session else 0,
                        participant_id=part.pk if part else 0)
             OpsAuditLog.objects.filter(pk__in=[inv["scope_id"], inv["plan_id"]], target_tenant_id=tid).delete()
+            # Let normal FE scenario destruction remove the verified rows, then check the original PKs after commit.
+            deleted = {}
+            cleanup_fixture(code, capability, deleted_counts=deleted)
+            count = deleted.get("clinic_mock_receipts")
+            require(type(count) is int and count == len(inv["logs"]), "General clinic receipt cleanup count mismatch.")
+            inv["general_clinic_receipts"] = count
             OpsAuditLog.objects.create(action=PREFIX + "cleanup", actor_username=ACTOR, result="success",
                                        summary=_snapshot_signature(inv, capability), payload=inv)
-            cleanup_fixture(code, capability)
     require(not connection.in_atomic_block, "Clinic residue requires committed reads.")
     residue = cleanup_fixture(code, capability)
     cache_remaining = 0
@@ -429,4 +436,6 @@ def cleanup(code, capability):
         messaging_redis=cache_remaining,
     )
     require(not any(residue.values()), "Clinic messaging cleanup did not reach zero.")
+    if general_cleanup is not None and "general_clinic_receipts" in inv:
+        general_cleanup["clinic_mock_receipts"] = inv["general_clinic_receipts"]
     return residue

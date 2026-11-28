@@ -71,7 +71,7 @@ def setup(code, capability, password):
     return tenant
 
 
-def cleanup(code, capability):
+def cleanup(code, capability, *, deleted_counts=None):
     seal = OpsAuditLog.objects.get(action="development.wrong-note.setup", result="success", payload__tenant_code=code)
     tenant_id = seal.payload["tenant_id"]
     ai = OwnedQaAI(code, tenant_id, capability, wrong_note_smoke=True)
@@ -99,6 +99,8 @@ def cleanup(code, capability):
             if (destroyed.get("tenant_id") != tenant_id or any(destroyed["residue"].values())
                     or get_user_model().objects.filter(pk__in=user_ids).exists()):
                 raise CommandError("QA account cleanup incomplete")
+            if deleted_counts is not None:
+                deleted_counts.update(destroyed["deleted"])
     residue = {
         **Scenario._remaining_for_code(code),
         **Scenario._non_database_residue(tenant_id=tenant_id, tenant_code=code),
@@ -220,7 +222,11 @@ class Command(BaseCommand):
                 cleanup_scope(code, capability)
                 state.unlink()
                 raise
-            residue = cleanup_scope(code, capability)
+            if clinic:
+                result["general_cleanup"] = {}
+                residue = clinic_notice.cleanup(code, capability, general_cleanup=result["general_cleanup"])
+            else:
+                residue = cleanup_scope(code, capability)
             state.unlink()
             self.stdout.write(json.dumps({"status": f"{status_prefix}_REAL_USE_PASS", **result, "remaining": residue}))
         finally:

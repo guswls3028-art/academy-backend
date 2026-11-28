@@ -61,8 +61,11 @@ class ClinicNoticeDevelopmentTests(TransactionTestCase):
         TenantMembership.objects.create(tenant=self.source, user=user, role=role, is_active=True)
         return user
 
-    def destroy(self, code, capability):
+    def destroy(self, code, capability, *, deleted_counts=None):
         self.assertEqual((code, capability), (self.code, self.cap))
+        if deleted_counts is not None:
+            rows = NotificationLog.objects.filter(tenant=self.owner, source_tenant=self.source, origin_type=f"clinic.{qa.TRIGGER}")
+            deleted_counts["clinic_mock_receipts"], _ = rows.delete()
         Tenant.objects.filter(pk=self.source.pk, code=self.code).delete()
         return {"tenants": 0, "users": 0}
 
@@ -125,6 +128,18 @@ class ClinicNoticeDevelopmentTests(TransactionTestCase):
                          {(p, r) for p, roles in qa.ROLES.items() for r in roles})
         forced, = [r for r in evidence["deliveries"] if r["deduplicated"]]
         self.assertEqual((forced["phase"], forced["role"], forced["receive_count"]), (qa.PENDING, "clinic_teacher", 2))
+
+        def omit_count(code, capability, *, deleted_counts):
+            residue = self.destroy(code, capability, deleted_counts=deleted_counts)
+            deleted_counts.pop("clinic_mock_receipts")
+            return residue
+
+        with patch("apps.core.management.commands.verify_development_wrong_notes.cleanup", side_effect=omit_count):
+            with self.assertRaisesMessage(CommandError, "General clinic receipt cleanup count mismatch"):
+                self.clean()
+        self.assertTrue(Tenant.objects.filter(pk=self.source.pk).exists())
+        self.assertEqual(NotificationLog.objects.filter(pk__in=evidence["logs"]).count(), 5)
+        self.assertEqual(ScheduledNotification.objects.filter(pk__in=evidence["outboxes"]).count(), 5)
         self.cache.delete.side_effect = [ConnectionError("cache readback interrupted"), 0, 0]
         with self.assertRaises(ConnectionError):
             self.clean()

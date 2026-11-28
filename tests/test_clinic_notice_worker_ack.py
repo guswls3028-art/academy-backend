@@ -240,7 +240,11 @@ class ClinicDevelopmentScenarioTests(LocalClinicQueue, APITransactionTestCase):
             self.assertEqual(result["source_tenant_id"], tenant.pk)
             self.assertEqual(result["owner_tenant_id"], self.owner.pk)
             self.assertEqual(len({r["business_key"] for r in result["deliveries"]}), 5)
-            residue = clinic.cleanup(code, capability)
-            self.assertEqual(residue, clinic.cleanup(code, capability))
+            general_cleanup = {}
+            residue = clinic.cleanup(code, capability, general_cleanup=general_cleanup)
+            self.assertEqual(general_cleanup, {"clinic_mock_receipts": 5})
+            retry_summary = {}
+            self.assertEqual(residue, clinic.cleanup(code, capability, general_cleanup=retry_summary))
+            self.assertEqual(retry_summary, general_cleanup)
             self.assertFalse(any(residue.values()), residue)
             self.assertTrue(Tenant.objects.filter(pk=self.owner.pk).exists())
