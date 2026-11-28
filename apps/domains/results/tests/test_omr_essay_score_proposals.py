@@ -248,6 +248,7 @@ class OmrEssayScoreProposalTests(TestCase):
         self.assertEqual(response.data["max_score"], 36)
         self.sheet.refresh_from_db()
         self.assertTrue(self.sheet.essay_score_marks)
+        self.assertTrue(build_omr_payload(scan)["template_meta"]["allow_unsigned_essay_score_grid"])
 
         contract = build_omr_sheet_contract(sheet=self.sheet)
         self.assertNotEqual(contract.fingerprint(), before)

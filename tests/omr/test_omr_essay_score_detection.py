@@ -6,6 +6,7 @@ from pdf2image import convert_from_bytes
 
 from academy.adapters.ai.omr.engine import AnswerDetectConfig, detect_omr_answers_v7, prepare_omr_images
 from academy.adapters.ai.omr.essay_scores import detect_additive_essay_score_marks
+from academy.adapters.ai.omr.paper_essay_scores import detect_paper_essay_scores
 from academy.adapters.ai.omr.warp import align_to_a4_landscape
 from apps.domains.assets.omr.dto.omr_document import OMRDocument
 from apps.domains.assets.omr.renderer.pdf_renderer import OMRPdfRenderer
@@ -153,3 +154,45 @@ def test_rendered_pdf_roundtrip_keeps_printed_digits_blank_and_reads_marks(dpi):
         **build_essay_score_grid_metadata(choice_numbers=choices, essay_numbers=[21, 24]),
     }
     assert [result["status"] for result in _read(aligned_marked, wrong_exam_meta)] == ["no_score_area"] * 2
+
+
+def test_unsigned_paper_requires_matching_print_geometry_and_preserves_zero_and_blank():
+    objective = list(range(1, 19))
+    essays = list(range(19, 23))
+    meta = {
+        **build_omr_meta(question_count=len(objective)),
+        **build_essay_score_grid_metadata(choice_numbers=objective, essay_numbers=essays),
+        "allow_unsigned_essay_score_grid": True,
+    }
+    doc = OMRDocument(exam_title="Paper form", mc_count=18, essay_count=4).with_paper_score_grid()
+    rendered, = convert_from_bytes(OMRPdfRenderer().render(doc), dpi=180)
+    page = cv2.cvtColor(np.asarray(rendered), cv2.COLOR_RGB2BGR)
+    sx, sy = page.shape[1] / 297, page.shape[0] / 210
+    for question, values in zip(meta["essay_score_questions"], [[0], [3], [], [7, 8]]):
+        for value in values:
+            center = question["choices"][value]["center"]
+            cv2.ellipse(page, (round(center["x"]*sx), round(center["y"]*sy)),
+                        (round(1.55*sx), round(2.15*sy)), 0, 0, 360, (30, 30, 30), -1)
+    aligned = align_to_a4_landscape(image_bgr=page, meta=meta)
+    assert aligned.success
+
+    def read(image, metadata=meta, aligned_ok=True):
+        prepared = prepare_omr_images(image_bgr=image, meta=metadata, config=AnswerDetectConfig())
+        return detect_paper_essay_scores(meta=metadata, prepared_images=prepared, alignment_confirmed=aligned_ok)
+
+    assert [(r["status"], r["score"]) for r in read(aligned.image)] == [
+        ("ok", 0), ("ok", 3), ("blank", None), ("ok", 15),
+    ]
+    assert read(aligned.image, aligned_ok=False) == []
+    assert read(aligned.image, {**meta, "allow_unsigned_essay_score_grid": False}) == []
+    wrong_rows = {**meta, **build_omr_meta(question_count=17)}
+    assert read(aligned.image, wrong_rows) == []
+
+    signed = aligned.image.copy()
+    sx, sy = signed.shape[1] / 297, signed.shape[0] / 210
+    for mark in meta["essay_score_layout_marks"]:
+        if not mark["filled"]:  # A different physical signature.
+            x, y = mark["x"], mark["y"]
+            cv2.rectangle(signed, (round((x-.75)*sx), round((y-.75)*sy)),
+                          (round((x+.75)*sx), round((y+.75)*sy)), (0, 0, 0), -1)
+    assert read(signed) == []

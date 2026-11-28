@@ -1578,6 +1578,24 @@ class ExamResultExcelImportTests(TestCase):
         self.assertEqual(answers.cell(5, 8).value, "1번")
         self.assertEqual(answers.cell(6, 8).value, "'=1+1")
 
+    def test_analysis_export_uses_separate_essay_labels_across_sheets(self):
+        self.exam.essay_numbering = "separate"
+        self.exam.save(update_fields=["essay_numbering"])
+        apply_exam_result_import(plan=plan_exam_result_import(
+            exam=self.exam, tenant=self.tenant, filename="analysis.xlsx",
+            workbook_bytes=_workbook_bytes([
+                ["수강등록ID", "이름", 1, 2],
+                [self.enrollment.id, "김학생", "O", "X"],
+            ]),
+        ))
+        workbook = load_workbook(io.BytesIO(build_exam_analysis_export(exam=self.exam, tenant=self.tenant)))
+        self.assertEqual(workbook["시험 요약"]["A25"].value, "서술형 1번")
+        self.assertEqual(workbook["문항 우선순위"]["B6"].value, "서술형 1번")
+        self.assertEqual(workbook["문항 우선순위"]["B7"].value, 1)
+        self.assertEqual(workbook["학생별 등수"]["L6"].value, "서술형 1번")
+        self.assertEqual(workbook["학생별 답안"]["H5"].value, "1번")
+        self.assertEqual(workbook["학생별 답안"]["I5"].value, "서술형 1번")
+
     def test_analysis_export_preserves_question_points_when_all_answers_are_wrong(self):
         apply_exam_result_import(
             plan=plan_exam_result_import(
