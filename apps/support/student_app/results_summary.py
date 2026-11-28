@@ -38,7 +38,7 @@ from apps.support.submissions.dependencies import (
     homework_submission_media_lock_keys,
     homework_submission_revisions,
 )
-from apps.support.attendance.learning_todo_eligibility import actual_absent_learning_todo_pairs
+from apps.support.attendance.learning_todo_eligibility import ineligible_learning_todo_pairs
 from apps.support.student_app.learning_todo_policy import (
     lecture_has_current_learning_todos,
     lecture_is_ongoing,
@@ -421,7 +421,7 @@ def build_student_grades_summary(
         (int(exam["enrollment_id"]), int(exam["session_id"]))
         for exam in totals_exam_rows if exam.get("session_id") is not None
     }
-    absent_learning_pairs = actual_absent_learning_todo_pairs(
+    absent_learning_pairs = ineligible_learning_todo_pairs(
         tenant=tenant, enrollment_session_pairs=learning_pairs,
     )
     assigned_homework_ids = {assignment.homework_id for assignment in assigned_homeworks}

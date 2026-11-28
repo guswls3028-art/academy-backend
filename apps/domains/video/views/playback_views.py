@@ -153,7 +153,9 @@ def _is_policy_token_valid(payload: dict) -> bool:
         from ..services.access_resolver import get_effective_access_mode
 
         enrollment = video_repo.enrollment_get_by_id_with_relations(enrollment_id)
-        if enrollment.lecture_id != getattr(v.session, "lecture_id", None):
+        if payload.get("public_video") and v.visibility != Video.Visibility.PUBLIC:
+            return False
+        if v.visibility != Video.Visibility.PUBLIC and enrollment.lecture_id != getattr(v.session, "lecture_id", None):
             return False
         current_access_mode = get_effective_access_mode(video=v, enrollment=enrollment)
         if current_access_mode == AccessMode.BLOCKED:
@@ -190,6 +192,19 @@ def _playback_token_request_error(payload: dict, request) -> str | None:
     tenant = getattr(request, "tenant", None)
     if not tenant:
         return "token_tenant_mismatch"
+    if payload.get("public_video"):
+        try:
+            video = video_repo.video_get_by_id_with_relations(payload["video_id"])
+            if video.visibility != Video.Visibility.PUBLIC:
+                return "policy_changed"
+            context = resolve_student_video_access_context(
+                request, video, explicit_enrollment_id=payload["enrollment_id"], allow_public_enrollment_write=False,
+            )
+            if (not context.enrollment or context.enrollment.student_id != payload.get("student_id")
+                    or context.enrollment.pk != payload["enrollment_id"]):
+                return "token_student_mismatch"
+        except (KeyError, Video.DoesNotExist, StudentVideoAccessError):
+            return "policy_changed"
     token_tenant_id = payload.get("tenant_id")
     if token_tenant_id is not None:
         try:
@@ -395,7 +410,7 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
         watch = None
 
         media_expires_at = expires_at
-        if enrollment.status != "INACTIVE":
+        if is_public_video or enrollment.status != "INACTIVE":
             media_expires_at = bounded_ordinary_media_expiry(video)
         play_url = self._public_play_url(
             video=video,
@@ -610,7 +625,8 @@ class PlaybackRenewView(APIView):
 
                 tenant_id = int(request.tenant.id)
                 expected_policy_version = int(payload.get("pv") or 0)
-                if access_context.enrollment.status == "INACTIVE":
+                inactive_grant = access_context.inactive_entitlement is not None
+                if inactive_grant:
                     try:
                         locked_inactive = lock_and_revalidate_inactive_video_write_access(
                             tenant_id=tenant_id,
@@ -639,6 +655,8 @@ class PlaybackRenewView(APIView):
                     if not lecture_allows_student_learning(lecture):
                         return _deny("policy_changed", code=403)
                     if enrollment is None or locked_session is None or current_video is None:
+                        return _deny("policy_changed", code=403)
+                    if payload.get("public_video") and current_video.visibility != Video.Visibility.PUBLIC:
                         return _deny("policy_changed", code=403)
                     if (
                         current_video.visibility != Video.Visibility.PUBLIC
@@ -701,7 +719,7 @@ class PlaybackRenewView(APIView):
 
                 now_timestamp = int(now.timestamp())
                 expires_at = now_timestamp + ttl_seconds
-                if enrollment.status == "INACTIVE":
+                if inactive_grant:
                     expires_at = bounded_inactive_media_expiry(entitlement, now=now)
                     renewed_play_url, _ = pick_video_urls(
                         current_video,
@@ -709,7 +727,7 @@ class PlaybackRenewView(APIView):
                         expires_at=expires_at,
                     )
 
-                if enrollment.status == "INACTIVE" and not renewed_play_url:
+                if inactive_grant and not renewed_play_url:
                     return _deny("playback_url_unavailable", code=503)
 
             # A grant issued before activation may finish its already-admitted viewing.

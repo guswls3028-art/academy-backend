@@ -11,7 +11,7 @@ from rest_framework.filters import SearchFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.exceptions import ValidationError, NotFound
+from rest_framework.exceptions import ValidationError, NotFound, PermissionDenied
 from rest_framework.parsers import MultiPartParser
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 
@@ -26,6 +26,11 @@ from .serializers import (
     EnrollmentExcelUploadAcceptedSerializer,
     EnrollmentExcelUploadRequestSerializer,
     EnrollmentSerializer,
+    EnrollmentNoticeQuerySerializer,
+    EnrollmentNoticeVerifySerializer,
+    EnrollmentNoticeProviderSerializer,
+    EnrollmentNoticeResultSerializer,
+    RegisterWithNoticesSerializer,
     LectureMemoResultSerializer,
     LectureMemoSerializer,
     SessionEnrollmentSerializer,
@@ -116,6 +121,38 @@ class EnrollmentViewSet(ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
+    @extend_schema(request=RegisterWithNoticesSerializer, responses={201: EnrollmentNoticeResultSerializer})
+    @action(detail=False, methods=["post"], url_path="register-with-notices")
+    def register_with_notices(self, request):
+        from apps.support.enrollment.registration_notices import (
+            can_select_notice_modes, register_with_notices, registration_result,
+        )
+        payload = RegisterWithNoticesSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        choices = payload.validated_data
+        if (choices["student_notice"], choices["parent_notice"]) != ("auto", "auto") and not can_select_notice_modes(request):
+            raise PermissionDenied("알림톡 발송 대상을 선택할 권한이 없습니다.")
+        batch = register_with_notices(tenant=request.tenant, actor_id=request.user.pk, **choices)
+        return Response(registration_result(batch), status=status.HTTP_201_CREATED)
+
+    @extend_schema(parameters=[EnrollmentNoticeQuerySerializer], responses={200: EnrollmentNoticeResultSerializer, 204: None})
+    @action(detail=False, methods=["get"], url_path="registration-notices", pagination_class=None, filter_backends=[])
+    def registration_notices(self, request):
+        from apps.support.enrollment.registration_notices import find_registration, registration_result
+        query = EnrollmentNoticeQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        batch = find_registration(tenant=request.tenant, actor_id=request.user.pk, **query.validated_data)
+        return Response(registration_result(batch)) if batch else Response(status=status.HTTP_204_NO_CONTENT)
+
+    @extend_schema(request=EnrollmentNoticeVerifySerializer, responses={200: EnrollmentNoticeProviderSerializer})
+    @action(detail=False, methods=["post"], url_path="verify-registration-notice")
+    def verify_registration_notice(self, request):
+        from apps.support.enrollment.registration_notices import verify_registration_notice
+        payload = EnrollmentNoticeVerifySerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        result = verify_registration_notice(tenant=request.tenant, actor_id=request.user.pk, **payload.validated_data)
+        return Response(result)
+
     @transaction.atomic
     def perform_update(self, serializer):
         target_status = serializer.validated_data.get("status", serializer.instance.status)
@@ -127,6 +164,11 @@ class EnrollmentViewSet(ModelViewSet):
             raise ValidationError(
                 {"status": "삭제된 학생의 수강 상태는 활성 또는 대기로 변경할 수 없습니다."}
             )
+        serializer.instance = get_object_or_404(
+            self.get_queryset().select_for_update(of=("self",)), pk=serializer.instance.pk,
+        )
+        if serializer.validated_data.get("status") in {"ACTIVE", "PENDING"}:
+            enroll_repo.preserve_prior_lecture_withdrawal(tenant=self.request.tenant, enrollment=serializer.instance)
         enrollment = serializer.save()
         sync_enrollment_status_side_effects(enrollment)
 
@@ -171,7 +213,9 @@ class EnrollmentViewSet(ModelViewSet):
             try:
                 session_id = int(session_id_raw)
             except (TypeError, ValueError):
-                session_id = None
+                raise ValidationError({"session_id": "차시 번호를 확인해 주세요."})
+            if not 1 <= session_id <= 2**63 - 1:
+                raise ValidationError({"session_id": "차시 번호를 확인해 주세요."})
         if not upload_file or not lecture_id:
             return Response(
                 {"detail": "file(엑셀), lecture_id는 필수입니다."},

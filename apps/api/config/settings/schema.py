@@ -22,6 +22,7 @@ SPECTACULAR_SETTINGS = {
     "ENUM_NAME_OVERRIDES": {
         "ClinicAvailabilityResponseBookingModeEnum": ["fixed_slot", "time_range"],
         "IntervalMinutesEnum": [(30, 30), (60, 60)],
+        "EnrollmentNoticeMode": "apps.domains.enrollment.serializers.ENROLLMENT_NOTICE_MODES",
         "WrongNoteDocumentStatus": "apps.domains.results.models.WrongNotePDF.Status",
         "StaffBoardCategory": "apps.domains.staffs.models.StaffBoardPost.Category",
         "SurveyKind": "apps.domains.surveys.models.Survey.Kind",
@@ -32,6 +33,7 @@ SPECTACULAR_SETTINGS = {
         "PublicVideoStatus": ["draft", "published", "unpublished"],
         "AccountPasswordModeEnum": "apps.core.services.initial_password_policy.MODES",
         "SessionAttendanceStatus": "apps.domains.attendance.serializers.attendance_status_choices",
+        "SecessionScopeEnum": [("session", "session"), ("lecture", "lecture")],
         "EventTypeEnum": "apps.domains.video.models.VideoPlaybackEvent.EventType",
         "TypeEnum": [("exam", "exam"), ("homework", "homework")],
         "ExamGradingMode": "apps.domains.exams.models.Exam.GradingMode",

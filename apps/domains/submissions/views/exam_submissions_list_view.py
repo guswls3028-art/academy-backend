@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from django.db.models import Exists, OuterRef, Q
+from drf_spectacular.utils import OpenApiParameter, PolymorphicProxySerializer, extend_schema
 from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -19,6 +20,13 @@ from apps.support.submissions.dependencies import (
     exam_submission_list_allowed,
     score_map_for_exam_submission_list,
 )
+
+
+from apps.api.common.submission_inbox_schema import (
+    STAFF_SUBMISSION_ERRORS,
+    SUBMISSION_QUERY_ERROR,
+)
+from .submission_list_schema import StaffExamReviewIssuesSerializer, StaffExamSubmissionSerializer
 
 
 def _extract_name_from_enrollment(enrollment) -> str:
@@ -39,6 +47,42 @@ def _extract_name_from_enrollment(enrollment) -> str:
 class ExamSubmissionsListView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(
+        description=(
+            "현재 학원의 인증된 교직원이 시험 제출 이력을 조회합니다. 기본 응답은 최신 제출부터 최대 200건의 배열입니다. "
+            "조회 범위에 없는 시험은 빈 결과를 반환합니다. 차시를 지정하면 해당 시험에 연결된 차시여야 합니다."
+        ),
+        parameters=[
+            OpenApiParameter(
+                "focus_id", {"type": "integer", "format": "int64", "minimum": 1, "maximum": 2**63 - 1},
+                description="한 번만 지정합니다. 개수 제한을 적용하기 전에 해당 시험의 제출 한 건으로 좁힙니다.",
+            ),
+            OpenApiParameter(
+                "session_id", {"type": "integer", "format": "int64", "minimum": 1, "maximum": 2**63 - 1},
+                description="시험에 연결된 차시 하나를 지정합니다. 다른 차시에서 접수한 OMR 스캔은 제외합니다.",
+            ),
+            OpenApiParameter("review_issues", str, description="1이면 검토가 필요한 제출을 페이지당 최대 50건씩 반환합니다."),
+            OpenApiParameter(
+                "enrollment_ids", str, description="검토 목록에서만 사용합니다. 양의 수강 ID 1~1000개를 쉼표로 구분합니다.",
+            ),
+            OpenApiParameter(
+                "include_unbound", str, description="검토 목록에서 수강 ID를 지정해도 미지정 제출을 포함합니다. 0이면 제외합니다.",
+            ),
+            OpenApiParameter(
+                "cursor", {"type": "integer", "minimum": 1}, description="검토 목록에서 이 ID보다 작은 제출만 반환합니다.",
+            ),
+        ],
+        responses={
+            200: PolymorphicProxySerializer(
+                component_name="StaffExamSubmissionListOrIssues",
+                serializers=[StaffExamSubmissionSerializer(many=True), StaffExamReviewIssuesSerializer],
+                resource_type_field_name=None,
+                many=False,
+            ),
+            400: SUBMISSION_QUERY_ERROR,
+            **STAFF_SUBMISSION_ERRORS,
+        },
+    )
     def get(self, request, exam_id: int):
         issues_only = request.query_params.get("review_issues") == "1"
         tenant = getattr(request, "tenant", None)
@@ -65,6 +109,11 @@ class ExamSubmissionsListView(APIView):
             target_type=Submission.TargetType.EXAM,
             target_id=int(exam_id),
         )
+        focus_id = parse_query_int(request.query_params, "focus_id", min_value=1, max_value=2**63 - 1)
+        if "focus_id" in request.query_params:
+            if focus_id is None or len(request.query_params.getlist("focus_id")) != 1:
+                return Response({"detail": "focus_id must be a positive ID"}, status=400)
+            base = base.filter(id=focus_id)
         if session_id is not None:
             base = base.exclude(
                 Exists(omr_admissions_in_other_sessions(
@@ -94,11 +143,6 @@ class ExamSubmissionsListView(APIView):
                 if request.query_params.get("include_unbound", "1") != "0":
                     selected |= Q(enrollment_id__isnull=True)
                 base = base.filter(selected)
-            focus_id = request.query_params.get("focus_id")
-            if focus_id is not None:
-                if not focus_id.isdecimal() or int(focus_id) <= 0:
-                    return Response({"detail": "focus_id must be a positive ID"}, status=400)
-                base = base.filter(id=int(focus_id))
             total = base.count()
             raw_cursor = request.query_params.get("cursor")
             if raw_cursor is not None:
@@ -123,11 +167,9 @@ class ExamSubmissionsListView(APIView):
             enrollment_ids=enrollment_ids,
         )
 
-        submission_ids = [int(s.id) for s in qs]
-        # Result는 submission FK가 없고 attempt(ExamAttempt) 경유. submission 당 최신 Result 1건만
-        # 필요해서 attempt.submission_id 기준 첫 등장만 채택.
         score_map: Dict[int, float] = score_map_for_exam_submission_list(
-            submission_ids=submission_ids,
+            tenant=tenant, exam_id=int(exam_id), focus_id=focus_id if not issues_only else None,
+            submission_enrollments={s.id: s.enrollment_id for s in qs if s.enrollment_id in enrollment_map},
         )
 
         items: list[Dict[str, Any]] = []

@@ -269,8 +269,10 @@ def issue_playback_access_grant(
             .filter(
                 id=enrollment.id,
                 tenant_id=tenant_id,
-                lecture_id=lecture_id,
-                status__in=("ACTIVE", "INACTIVE"),
+                student_id=enrollment.student_id,
+                student__tenant_id=tenant_id,
+                student__deleted_at__isnull=True,
+                lecture__tenant_id=tenant_id,
             )
             .first()
         )
@@ -291,6 +293,11 @@ def issue_playback_access_grant(
         if current_video is None:
             return PlaybackAccessGrant(error="video_not_ready", status_code=404)
 
+        public = current_video.visibility == Video.Visibility.PUBLIC
+        if public != (video.visibility == Video.Visibility.PUBLIC):
+            return PlaybackAccessGrant(error="policy_changed")
+        if not public and (locked_enrollment.lecture_id != lecture_id or locked_enrollment.status not in ("ACTIVE", "INACTIVE")):
+            return PlaybackAccessGrant(error="enrollment_unavailable")
         access_mode = get_effective_access_mode(
             video=current_video,
             enrollment=locked_enrollment,
@@ -302,7 +309,7 @@ def issue_playback_access_grant(
         access_now = _playback_access_now()
         expires_at = int(access_now.timestamp()) + ttl
         inactive_expires_at = None
-        if locked_enrollment.status == "INACTIVE":
+        if not public and locked_enrollment.status == "INACTIVE":
             from apps.domains.video.services.inactive_entitlements import (
                 get_active_inactive_video_entitlement,
             )
@@ -379,6 +386,8 @@ def issue_playback_access_grant(
             "event_protocol_version": selected_event_protocol,
             "pv": int(getattr(current_video, "policy_version", 1) or 1),
         }
+        if public:
+            token_payload["public_video"] = True
         if request_id:
             token_payload["rid"] = request_id
         try:

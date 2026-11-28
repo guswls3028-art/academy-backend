@@ -234,7 +234,7 @@ def restore_enrollments_after_student_restore(*, tenant, student) -> StudentEnro
 
 
 @transaction.atomic
-def bulk_create_enrollments(*, tenant, lecture_id, student_ids) -> list[Enrollment]:
+def bulk_create_enrollments(*, tenant, lecture_id, student_ids, schedule_account_notice=True) -> list[Enrollment]:
     tenant = require_tenant(tenant)
     if not lecture_id:
         raise ValidationError({"detail": "lecture, students(list)는 필수입니다"})
@@ -266,6 +266,7 @@ def bulk_create_enrollments(*, tenant, lecture_id, student_ids) -> list[Enrollme
             defaults={"status": "ACTIVE"},
         )
         if not created_new and obj.status != "ACTIVE":
+            enroll_repo.preserve_prior_lecture_withdrawal(tenant=tenant, enrollment=obj)
             obj.status = "ACTIVE"
             obj.save(update_fields=["status"])
         created.append(obj)
@@ -273,7 +274,8 @@ def bulk_create_enrollments(*, tenant, lecture_id, student_ids) -> list[Enrollme
         student = getattr(obj, "student", None)
         if student:
             auto_assign_fees_on_enrollment(tenant, student, lecture, obj)
-            schedule_pending_account_notice(student_id=student.id)
+            if schedule_account_notice:
+                schedule_pending_account_notice(student_id=student.id)
 
     return created
 

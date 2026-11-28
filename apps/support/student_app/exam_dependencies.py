@@ -10,11 +10,12 @@ import logging
 import uuid
 from datetime import timedelta
 
-from django.db.models import Count, F, Q, Subquery, Value
+from django.db.models import BigIntegerField, Count, F, Q, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.support.student_app.learning_todo_policy import ongoing_lecture_filter
+from apps.support.attendance.learning_todo_eligibility import INELIGIBLE_LEARNING_TODO_STATUSES
 
 logger = logging.getLogger(__name__)
 MISSING_EXAM_ENROLLMENT: tuple[None, None] = (None, None)
@@ -54,10 +55,10 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0, in
     enrollment_ids = list(enrollments.values_list("id", flat=True))
     if not enrollment_ids:
         return Exam.objects.none()
-    absent_session_ids = Attendance.objects.filter(
+    excluded_session_ids = Attendance.objects.filter(
         tenant=tenant,
         enrollment_id__in=enrollment_ids,
-        status="ABSENT",
+        status__in=INELIGIBLE_LEARNING_TODO_STATUSES,
     ).values("session_id")
     # A different lecture's roster cannot make an unselected exam target actionable.
     eligible_session = (
@@ -72,7 +73,7 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0, in
             session__lecture__tenant=tenant,
             session__exams__id=OuterRef("pk"),
         )
-        .exclude(session_id__in=absent_session_ids)
+        .exclude(session_id__in=excluded_session_ids)
     )
     historical_result = Result.objects.filter(
         target_type="exam",
@@ -96,7 +97,7 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0, in
         target_id=OuterRef("pk"),
         enrollment_id__in=enrollment_ids,
     )
-    absent_linked_attendance = Attendance.objects.filter(
+    excluded_linked_attendance = Attendance.objects.filter(
         tenant=tenant,
         enrollment_id__in=enrollment_ids,
         enrollment__tenant=tenant,
@@ -106,7 +107,7 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0, in
         enrollment__exam_enrollments__exam_id=OuterRef("pk"),
         session__lecture__tenant=tenant,
         session__exams__id=OuterRef("pk"),
-        status="ABSENT",
+        status__in=INELIGIBLE_LEARNING_TODO_STATUSES,
     )
     return (
         Exam.objects.filter(
@@ -122,12 +123,17 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0, in
             Q() if include_closed else Q(close_at__isnull=True) | Q(close_at__gte=now),
         )
         .annotate(
-            student_session_id=Subquery(Session.objects.filter(
-                exams__id=OuterRef("pk"),
-                lecture__tenant=tenant,
-                lecture__enrollments__id__in=enrollment_ids,
-                lecture__enrollments__exam_enrollments__exam_id=OuterRef("pk"),
-            ).order_by("date", "order", "id").values("id")[:1]),
+            student_session_id=Coalesce(
+                Subquery(eligible_session.order_by("session__date", "session__order", "session_id")
+                         .values("session_id")[:1]),
+                Subquery(Session.objects.filter(
+                    exams__id=OuterRef("pk"),
+                    lecture__tenant=tenant,
+                    lecture__enrollments__id__in=enrollment_ids,
+                    lecture__enrollments__exam_enrollments__exam_id=OuterRef("pk"),
+                ).order_by("date", "order", "id").values("id")[:1]),
+                output_field=BigIntegerField(),
+            ),
             learning_todo_eligible=Exists(eligible_session),
             has_historical_result=Exists(historical_result),
             recorded_result_attempt_count=Coalesce(
@@ -139,11 +145,11 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0, in
             ),
             has_historical_attempt=Exists(historical_attempt),
             has_historical_submission=Exists(historical_submission),
-            has_absent_linked_attendance=Exists(absent_linked_attendance),
+            has_excluded_linked_attendance=Exists(excluded_linked_attendance),
         )
         .filter(
             Q(learning_todo_eligible=True)
-            | Q(has_absent_linked_attendance=False)
+            | Q(has_excluded_linked_attendance=False)
             | Q(has_historical_result=True)
             | Q(has_historical_attempt=True)
             | Q(has_historical_submission=True)
@@ -350,6 +356,8 @@ def create_online_exam_submission(
     answers,
     client_request_id=None,
     expected_attempt_count=None,
+    entry_session_id=None,
+    implicit_enrollment=False,
 ):
     from django.db import IntegrityError, transaction
 
@@ -371,6 +379,9 @@ def create_online_exam_submission(
         except (ValueError, TypeError, AttributeError) as exc:
             raise StudentExamSubmitError("제출 식별자가 올바르지 않습니다.", 400) from exc
     answers = sorted(answers, key=lambda row: row["exam_question_id"])
+    if entry_session_id is not None and (type(entry_session_id) is not int or not 0 < entry_session_id < 2**63):
+        raise StudentExamSubmitError("응시 차시가 올바르지 않습니다. 시험 목록에서 다시 열어 주세요.", 400,
+                                     "invalid_entry_session")
     if expected_attempt_count is not None and (
         type(expected_attempt_count) is not int or expected_attempt_count < 0
     ):
@@ -397,6 +408,10 @@ def create_online_exam_submission(
                     source=Submission.Source.ONLINE, client_request_id=client_request_id,
                 ).first()
                 if existing:
+                    saved_entry = existing.meta.get("student_entry_session_id") if isinstance(existing.meta, dict) else None
+                    if entry_session_id is not None and saved_entry != entry_session_id:
+                        raise StudentExamSubmitError("이 답안은 다른 경로에서 제출했습니다. 저장된 결과를 확인해 주세요.",
+                                                     409, "online_request_conflict")
                     if (existing.payload or {}).get("answers") != answers:
                         raise StudentExamSubmitError(
                             "이 제출의 답안이 변경되었습니다. 저장된 제출을 먼저 확인해 주세요.", 409,
@@ -411,6 +426,28 @@ def create_online_exam_submission(
                                                      "online_submission_processing")
                     if ExamAttempt.objects.filter(submission_id=existing.id).exists():
                         raise StudentExamSubmitError("이미 채점된 답안입니다. 결과를 확인해 주세요.", 409)
+                elif implicit_enrollment:
+                    # The exam-only student route may now resolve a different enrollment.
+                    # Keep the first submission and its grade under their original identity.
+                    if Submission.objects.filter(
+                        tenant=tenant, enrollment__tenant=tenant, enrollment__student=request_student,
+                        target_type=Submission.TargetType.EXAM, target_id=exam.id,
+                        source=Submission.Source.ONLINE, client_request_id=client_request_id,
+                    ).exclude(enrollment=enrollment).exists():
+                        raise StudentExamSubmitError("이 답안은 이전 수강에 저장했습니다. 기존 결과를 확인해 주세요.",
+                                                     409, "online_request_conflict")
+
+            if entry_session_id is not None and not existing:
+                from apps.support.attendance.learning_todo_eligibility import eligible_session_enrollments
+
+                allowed = eligible_session_enrollments(tenant=tenant, session_id=entry_session_id).filter(
+                    enrollment__student=request_student, enrollment__student__tenant=tenant,
+                    enrollment__exam_enrollments__exam=exam, session__exams=exam,
+                    session__lecture__is_active=True,
+                )
+                if not allowed.exists():
+                    raise StudentExamSubmitError("이 차시에서는 시험을 제출할 수 없습니다. 시험 목록에서 다시 열어 주세요.",
+                                                 403, "invalid_entry_session")
 
             # Read current policy after the same lock used by teacher edits.
             exam.refresh_from_db()
@@ -476,9 +513,11 @@ def create_online_exam_submission(
                 return existing
 
             submission_user = request_student.user if request_student.user_id else request_user
-            submission_meta = None
+            submission_meta = {}
             if getattr(submission_user, "id", None) != getattr(request_user, "id", None):
-                submission_meta = {"submitted_by_user_id": request_user.id}
+                submission_meta["submitted_by_user_id"] = request_user.id
+            if entry_session_id is not None:
+                submission_meta["student_entry_session_id"] = entry_session_id
             return Submission.objects.create(
                 tenant=tenant,
                 user=submission_user,
@@ -488,7 +527,7 @@ def create_online_exam_submission(
                 source=Submission.Source.ONLINE,
                 payload={"answers": answers},
                 client_request_id=client_request_id,
-                meta=submission_meta,
+                meta=submission_meta or None,
                 status=Submission.Status.SUBMITTED,
             )
     except IntegrityError as exc:
@@ -529,13 +568,15 @@ def dispatch_student_exam_submission(submission) -> None:
 
 
 def submit_online_exam(*, request_user, request_student, tenant, exam, enrollment,
-                       answers, client_request_id=None, expected_attempt_count=None):
+                       answers, client_request_id=None, expected_attempt_count=None, entry_session_id=None,
+                       implicit_enrollment=False):
     """Shared admission, idempotent dispatch and durable failure for both APIs."""
     answers = normalize_student_exam_answers(exam=exam, answers=answers)
     submission = create_online_exam_submission(
         request_user=request_user, request_student=request_student, tenant=tenant,
         exam=exam, enrollment=enrollment, answers=answers, client_request_id=client_request_id,
-        expected_attempt_count=expected_attempt_count,
+        expected_attempt_count=expected_attempt_count, entry_session_id=entry_session_id,
+        implicit_enrollment=implicit_enrollment,
     )
     try:
         dispatch_student_exam_submission(submission)

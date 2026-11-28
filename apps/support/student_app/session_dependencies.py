@@ -13,17 +13,12 @@ from apps.support.lectures.schedule_queries import student_schedule_annotations
 def active_student_session_ids_query(
     *, student: Any, tenant: Any, session_ids: Iterable[int] | None = None,
 ):
-    from apps.domains.enrollment.models import SessionEnrollment
+    from academy.adapters.db.django.repositories_enrollment import session_memberships_for_access
 
-    memberships = SessionEnrollment.objects.filter(
-        tenant=tenant,
+    memberships = session_memberships_for_access(tenant_id=tenant.pk).filter(
         enrollment__student=student,
-        enrollment__tenant=tenant,
         enrollment__status="ACTIVE",
-        enrollment__lecture__is_active=True,
         session__lecture__is_active=True,
-        session__lecture__tenant=tenant,
-        enrollment__lecture_id=F("session__lecture_id"),
     )
     if session_ids is not None:
         memberships = memberships.filter(session_id__in=session_ids)
@@ -208,19 +203,7 @@ def get_future_hidden_clinic_participant_ids(
 
 
 def student_owns_session(*, student: Any, tenant: Any, session_id: Any) -> bool:
-    from apps.domains.enrollment.models import SessionEnrollment
-
-    return SessionEnrollment.objects.filter(
-        tenant=tenant,
-        enrollment__student=student,
-        enrollment__tenant=tenant,
-        enrollment__status="ACTIVE",
-        enrollment__lecture__is_active=True,
-        session__lecture__tenant=tenant,
-        session__lecture__is_active=True,
-        session_id=session_id,
-        enrollment__lecture_id=F("session__lecture_id"),
-    ).exists()
+    return active_student_session_ids_query(student=student, tenant=tenant, session_ids=[session_id]).exists()
 
 
 def student_owns_clinic_participant(

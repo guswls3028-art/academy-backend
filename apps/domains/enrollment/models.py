@@ -121,3 +121,50 @@ class SessionEnrollment(models.Model):
 
     def __str__(self):
         return f"{self.session} - {self.enrollment.student.name}"
+
+
+class EnrollmentNoticeRegistration(models.Model):
+    """One staff registration decision, replayable without repeating delivery."""
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    lecture = models.ForeignKey("lectures.Lecture", on_delete=models.CASCADE)
+    actor_id = models.PositiveBigIntegerField()
+    request_id = models.UUIDField()
+    student_ids = models.JSONField()
+    student_notice = models.CharField(max_length=8)
+    parent_notice = models.CharField(max_length=8)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "actor_id", "request_id"], name="enroll_notice_request_uniq"),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "lecture", "actor_id", "-id"], name="enroll_notice_latest"),
+        ]
+
+
+class EnrollmentNoticeRecipient(models.Model):
+    """An individual student's role decision. Contains no phone or credentials."""
+
+    registration = models.ForeignKey(EnrollmentNoticeRegistration, on_delete=models.CASCADE, related_name="recipients")
+    student_id = models.PositiveBigIntegerField()
+    role = models.CharField(max_length=8)
+    status = models.CharField(max_length=20)
+    recipient_fingerprint = models.CharField(max_length=64, blank=True)
+    initial_notice_since = models.DateTimeField(null=True)
+    source_origin_type = models.CharField(max_length=64, blank=True)
+    source_origin_id = models.CharField(max_length=128, blank=True)
+    account_id = models.PositiveBigIntegerField(null=True)
+    outbox_id = models.PositiveBigIntegerField(null=True)
+    business_key = models.CharField(max_length=64, blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(null=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["registration", "student_id", "role"], name="enroll_notice_role_uniq"),
+        ]
+        indexes = [
+            models.Index(fields=["status", "next_attempt_at", "id"], name="enroll_notice_due"),
+        ]

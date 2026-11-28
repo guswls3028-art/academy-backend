@@ -24,7 +24,7 @@ from django.db.models import F, Q
 from django.utils import timezone
 
 from apps.billing.models import Invoice
-from apps.billing.services import invoice_service, payment_service, subscription_service
+from apps.billing.services import invoice_service, payment_service, popbill_receipts, subscription_service
 from apps.billing.services.invoice_service import InvoiceTransitionError
 from apps.core.models.program import Program
 
@@ -313,6 +313,8 @@ class Command(BaseCommand):
         self._log(f"    Result: {cancel_count} transitions")
 
         self._log("")
+        if not dry_run:
+            popbill_receipts.reconcile_due()
         self.stdout.write(self.style.SUCCESS("=== process_billing complete ==="))
 
     def _earliest_billing(self, qs):

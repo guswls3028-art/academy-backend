@@ -649,8 +649,11 @@ class StudentVideoStatsView(APIView):
             })
 
         enrollments_by_lecture: Dict[int, list] = {}
+        library_enrollment_id = None
         for enrollment in enrollments:
             enrollments_by_lecture.setdefault(enrollment.lecture_id, []).append(enrollment)
+            if enrollment.lecture.is_system:
+                library_enrollment_id = enrollment.pk
 
         videos = list(
             Video.objects.filter(
@@ -663,7 +666,7 @@ class StudentVideoStatsView(APIView):
                     tenant_id=tenant.id, enrollment_ids=enrollment_ids,
                 ).values("session_id"))
                 | Q(session__lecture__is_system=True)
-            ).values("id", "duration", "session__lecture_id")
+            ).values("id", "duration", "session__lecture_id", "visibility")
         )
 
         progress_map = {}
@@ -692,6 +695,8 @@ class StudentVideoStatsView(APIView):
             for enrollment in enrollments_by_lecture.get(lecture_id, []):
                 duration = _safe_video_duration(video.get("duration", 0))
                 progress_obj = progress_map.get((enrollment.id, video["id"]))
+                if progress_obj is None and video["visibility"] == Video.Visibility.PUBLIC:
+                    progress_obj = progress_map.get((library_enrollment_id, video["id"]))
                 progress = _safe_video_progress(progress_obj.get("progress", 0)) if progress_obj else 0
                 completed = is_video_progress_complete(
                     progress,
@@ -832,18 +837,19 @@ class StudentSessionVideoListView(APIView):
         perm_map = {}
         attendance_status = None
         if enrollment_obj and video_ids:
-            progresses = video_repo.video_progress_filter_video_enrollment_ids(
-                video=None,
-                enrollment_ids=[enrollment_obj.id],
-            ).filter(video_id__in=video_ids)
+            scope = Q(enrollment_id=enrollment_obj.pk)
+            public_ids = [v.pk for v in videos if v.visibility == Video.Visibility.PUBLIC]
+            if public_ids and not session.lecture.is_system:
+                scope |= Q(video_id__in=public_ids, enrollment__lecture__is_system=True,
+                           enrollment__lecture__tenant=tenant, enrollment__tenant=tenant, enrollment__student_id=enrollment_obj.student_id)
+            # Course history wins when both rows exist. A block from either row wins.
+            progresses = get_video_progress_model().objects.filter(scope, video_id__in=video_ids).order_by("-enrollment__lecture__is_system")
             progress_map = {p.video_id: p for p in progresses}
-
             if VideoPermission:
-                perms = VideoPermission.objects.filter(
-                    video_id__in=video_ids,
-                    enrollment_id=enrollment_obj.id,
-                )
-                perm_map = {p.video_id: p for p in perms}
+                perms = VideoPermission.objects.filter(scope, video_id__in=video_ids).order_by("enrollment__lecture__is_system")
+                for perm in perms:
+                    if perm.video_id not in perm_map or perm.rule == "blocked" or perm.access_mode == AccessMode.BLOCKED:
+                        perm_map[perm.video_id] = perm
 
             attendance = (
                 video_repo.attendance_filter_session_enrollment(session, enrollment_obj)
@@ -1128,11 +1134,7 @@ class StudentVideoPlaybackView(APIView):
 
         perm_obj = None
         if VideoPermission and enrollment_obj:
-            perm_obj = (
-                VideoPermission.objects
-                .filter(video_id=video.id, enrollment_id=enrollment_obj.id)
-                .first()
-            )
+            perm_obj = video_repo.video_access_get(video, enrollment_obj)
 
         rule = _effective_rule(perm_obj)
         if rule == "blocked":
@@ -1251,8 +1253,6 @@ class StudentVideoPlaybackView(APIView):
 
         progress_obj = None
         if enrollment_obj:
-            from academy.adapters.db.django import repositories_video as video_repo
-
             progress_obj = video_repo.video_progress_get(video, enrollment_obj)
         playback_policy_version = int(getattr(video, "policy_version", 1) or 1)
         if not support_preview and (enrollment_obj or direct_entitlement is not None):
@@ -1400,8 +1400,6 @@ class StudentVideoPlaybackView(APIView):
                     if video.session and video.session.lecture else None
                 )
             if video_tenant_id:
-                from academy.adapters.db.django import repositories_video as video_repo
-
                 is_liked = video_repo.video_like_exists(
                     video_id=video_id,
                     student=student,
@@ -1648,7 +1646,7 @@ class StudentVideoProgressView(APIView):
         return Response({
             "id": progress_obj.id,
             "video_id": video.id,
-            "enrollment_id": enrollment.id,
+            "enrollment_id": progress_obj.enrollment_id,
             "progress": progress_obj.progress,
             "progress_percent": round(float(progress_obj.progress) * 100, 1),
             "completed": is_video_progress_complete(progress_obj.progress, progress_obj.completed),

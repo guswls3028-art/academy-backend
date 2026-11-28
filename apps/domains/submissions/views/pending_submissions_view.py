@@ -10,7 +10,7 @@ from django.core.paginator import Paginator
 from django.db.models import Count, Q
 from django.utils import timezone
 
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import PolymorphicProxySerializer, extend_schema
 from rest_framework import serializers
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -21,6 +21,12 @@ from academy.adapters.db.django import repositories_exams as exams_repo
 from academy.adapters.db.django import repositories_submissions as submissions_repo
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.api.common.query_params import parse_query_int
+from apps.api.common.submission_inbox_schema import (
+    STAFF_SUBMISSION_ERRORS,
+    SUBMISSION_QUERY_ERROR,
+    PendingExamSubmissionPageSerializer,
+    PendingExamSubmissionSerializer,
+)
 from apps.infrastructure.storage.r2 import generate_presigned_get_url
 from apps.support.submissions.grading_contract_dependencies import omr_grading_configuration_missing
 
@@ -61,6 +67,7 @@ class PendingInboxQuerySerializer(serializers.Serializer):
     page = serializers.IntegerField(min_value=1, max_value=1_000_000, default=1)
     page_size = serializers.IntegerField(min_value=1, max_value=200, default=50)
     filter = serializers.ChoiceField(choices=("all", "pending", "done", "failed"), default="all")
+    session_choices = serializers.ChoiceField(choices=("0", "1"), default="0")
     failed_type = serializers.ChoiceField(choices=("all", "real_failed", "discarded"), default="all")
 
     def to_internal_value(self, data):
@@ -85,7 +92,23 @@ class PendingSubmissionsView(APIView):
 
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
-    @extend_schema(parameters=[PendingInboxQuerySerializer])
+    @extend_schema(
+        description=(
+            "현재 학원의 교직원용 시험 제출함입니다. page 또는 page_size를 지정하면 건수와 요약을 포함한 "
+            "페이지를 반환하고, 둘 다 생략하면 최근순 최대 200건의 배열을 반환합니다. "
+            "session_choices=1은 기록된 출처·원래 성적 강의·조회 가능한 차시 후보 및 해당하는 경우 과거 제출 표시를 포함합니다."
+        ),
+        parameters=[PendingInboxQuerySerializer],
+        responses={
+            200: PolymorphicProxySerializer(
+                component_name="PendingExamSubmissionListOrPage",
+                serializers=[PendingExamSubmissionSerializer(many=True), PendingExamSubmissionPageSerializer],
+                resource_type_field_name=None, many=False,
+            ),
+            400: SUBMISSION_QUERY_ERROR,
+            **STAFF_SUBMISSION_ERRORS,
+        },
+    )
     def get(self, request):
         tenant = getattr(request, "tenant", None)
         if not tenant:
@@ -132,13 +155,11 @@ class PendingSubmissionsView(APIView):
 
         # ── Batch-collect IDs for efficient lookups ─────────────
         enrollment_ids: set[int] = set()
-        exam_ids: set[int] = set()
 
         for s in submissions:
             eid = s.enrollment_id
             if eid:
                 enrollment_ids.add(int(eid))
-            exam_ids.add(int(s.target_id))
 
         # ── Enrollment → student + lecture (batch) ──────────────
         # 🔐 tenant 필터: Submission이 tenant 스코프라도 enrollment_id 자체에는
@@ -149,9 +170,10 @@ class PendingSubmissionsView(APIView):
             enrollment_map = enrollment_repo.enrollment_student_map_by_ids(enrollment_ids, tenant=tenant)
 
         # ── Exam targets → title + session info (batch) ────────
-        exam_map: Dict[int, Dict[str, Any]] = {}
-        if exam_ids:
-            exam_map = exams_repo.exam_target_info_map(exam_ids, tenant=tenant)
+        supports_session_choices = params["session_choices"] == "1"
+        exam_map = exams_repo.submission_exam_contexts(
+            submissions, enrollment_map, tenant=tenant, supports_session_choices=supports_session_choices,
+        )
 
         # ── Build response items ────────────────────────────────
         items: list[Dict[str, Any]] = []
@@ -173,7 +195,7 @@ class PendingSubmissionsView(APIView):
                 student_name = getattr(student, "name", "") or ""
 
             # Target info (title, session, lecture)
-            target_info = exam_map.get(int(s.target_id), {})
+            target_info = exam_map.get(s.id, {})
 
             # File type from file_key extension
             file_key = s.file_key or ""
@@ -188,13 +210,12 @@ class PendingSubmissionsView(APIView):
             #   target_missing  — Exam/Homework 본체가 없음 (삭제 또는 cross-tenant)
             #   session_missing — Exam/Homework 는 있으나 sessions 매칭 실패
             #   (target_resolved=True 일 때는 None)
-            target_title = target_info.get("target_title")
-            target_lecture_id = target_info.get("lecture_id")
             target_session_id = target_info.get("session_id")
-            target_resolved = bool(target_title and target_lecture_id and target_session_id)
+            history_only = target_info.get("session_history_only", False)
+            target_resolved = bool(target_session_id or target_info.get("session_choices") or history_only)
             if target_resolved:
                 target_resolved_reason = None
-            elif not target_title:
+            elif not target_info:
                 target_resolved_reason = "target_missing"
             else:
                 target_resolved_reason = "session_missing"
@@ -244,6 +265,13 @@ class PendingSubmissionsView(APIView):
                     "lecture_id": target_info.get("lecture_id"),
                     "lecture_title": target_info.get("lecture_title", ""),
                     "session_id": target_info.get("session_id"),
+                    **({
+                        "session_title": target_info.get("session_title", ""),
+                        "session_choices": target_info.get("session_choices", []),
+                        "session_origin_recorded": target_info.get("session_origin_recorded", False),
+                        "score_lecture_id": target_info.get("score_lecture_id"),
+                        **({"session_history_only": True} if history_only else {}),
+                    } if supports_session_choices else {}),
                     "target_resolved": target_resolved,
                     "target_resolved_reason": target_resolved_reason,
                     "omr_readiness": omr_readiness,

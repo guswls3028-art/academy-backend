@@ -6,7 +6,7 @@ send_at이 도래한 ScheduledNotification을 SQS로 전달.
 """
 
 import logging
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,9 @@ class Command(BaseCommand):
                 batch_size=500,
                 max_batches=1,
             )
+            from apps.support.enrollment.notice_dispatch import process_registration_notices
+
+            failed_notices = process_registration_notices(limit=batch_size)
 
         if stats["processed"]:
             self.stdout.write(
@@ -50,3 +53,5 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"Expired preview tokens deleted: {expired_preview_tokens_deleted}"
             )
+        if failed_notices:
+            raise CommandError(f"Enrollment account notice admission failed for {failed_notices} recipient(s).")

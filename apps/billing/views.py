@@ -13,6 +13,7 @@ import re
 from django.db.models import Q
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -44,6 +45,7 @@ from apps.billing.serializers import (
 from apps.billing.services import (
     bank_transfer_service,
     billing_key_service,
+    popbill_receipts,
     invoice_service,
     subscription_service,
     webhook_service,
@@ -235,7 +237,7 @@ class AdminBankTransferNoticeListView(generics.ListAPIView):
         qs = BankTransferNotice.objects.select_related(
             "invoice",
             "invoice__tenant",
-            "invoice__tax_invoice_issue",
+            "invoice__tax_invoice_issue__popbill",
             "reviewed_by",
         ).order_by("-submitted_at", "-id")
         if parse_query_bool(
@@ -246,6 +248,7 @@ class AdminBankTransferNoticeListView(generics.ListAPIView):
             qs = qs.filter(
                 Q(status="SUBMITTED")
                 | Q(invoice__tax_invoice_issue__status="READY")
+                | Q(invoice__tax_invoice_issue__popbill__next_attempt_at__isnull=False)
             )
         status_filter = self.request.query_params.get("status")
         if status_filter:
@@ -261,6 +264,7 @@ class AdminBankTransferNoticeConfirmView(APIView):
 
     permission_classes = [IsAuthenticated, IsPlatformAdmin]
 
+    @extend_schema(request=None, responses=BankTransferNoticeSerializer)
     def post(self, request, pk):
         try:
             notice = bank_transfer_service.confirm_notice(
@@ -299,7 +303,7 @@ class AdminBankTransferNoticeConfirmView(APIView):
             BankTransferNotice.objects.select_related(
                 "invoice",
                 "invoice__tenant",
-                "invoice__tax_invoice_issue",
+                "invoice__tax_invoice_issue__popbill",
                 "reviewed_by",
             )
             .get(pk=pk)
@@ -346,7 +350,7 @@ class AdminBankTransferNoticeRejectView(APIView):
             BankTransferNotice.objects.select_related(
                 "invoice",
                 "invoice__tenant",
-                "invoice__tax_invoice_issue",
+                "invoice__tax_invoice_issue__popbill",
                 "reviewed_by",
             )
             .get(pk=pk)
@@ -393,7 +397,7 @@ class AdminTaxInvoiceMarkIssuedView(APIView):
             BankTransferNotice.objects.select_related(
                 "invoice",
                 "invoice__tenant",
-                "invoice__tax_invoice_issue",
+                "invoice__tax_invoice_issue__popbill",
                 "reviewed_by",
             )
             .filter(invoice_id=issue.invoice_id)
@@ -605,7 +609,7 @@ def _bank_transfer_summary(tenant) -> dict:
         )
         .select_related(
             "bank_transfer_notice",
-            "tax_invoice_issue",
+            "tax_invoice_issue__popbill",
         )
         .order_by("-period_start", "-pk")
     )
@@ -630,6 +634,7 @@ def _bank_transfer_summary(tenant) -> dict:
     profile = BusinessProfile.objects.filter(tenant=tenant).first()
     return {
         "bank_account": bank_transfer_service.get_bank_account(),
+        "popbill_enabled": popbill_receipts.enabled(),
         "billing_mode": tenant.program.billing_mode,
         "business_profile": (
             BusinessProfileSerializer(profile).data if profile else None
@@ -683,6 +688,7 @@ class MyBankTransferNoticeSubmitView(APIView):
 
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
+    @extend_schema(request=BankTransferNoticeSubmitSerializer, responses={201: BankTransferNoticeSerializer})
     def post(self, request):
         serializer = BankTransferNoticeSubmitSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -710,7 +716,7 @@ class MyBankTransferNoticeSubmitView(APIView):
             BankTransferNotice.objects.select_related(
                 "invoice",
                 "invoice__tenant",
-                "invoice__tax_invoice_issue",
+                "invoice__tax_invoice_issue__popbill",
                 "reviewed_by",
             )
             .get(pk=notice.pk)

@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from drf_spectacular.utils import extend_schema
 
 from apps.api.common.query_params import parse_query_bool
 from rest_framework import status
@@ -26,7 +27,7 @@ from apps.support.student_app.exam_dependencies import (
     student_exam_questions,
     submission_status_map_for_student_exams,
 )
-from .serializers import StudentExamSerializer
+from .serializers import StudentExamSerializer, StudentExamSubmitReceiptSerializer, StudentExamSubmitRequestSerializer
 
 
 def _exam_queryset_for_student(student, tenant, *, include_upcoming_days: int = 0):
@@ -68,7 +69,7 @@ def _serialize_exam(exam, *, submission_status_map=None):
         "submission_pending": sub_info.get("submission_pending", False),
         "learning_todo_eligible": bool(
             getattr(exam, "learning_todo_eligible", False)
-            or not getattr(exam, "has_absent_linked_attendance", False)
+            or not getattr(exam, "has_excluded_linked_attendance", False)
         ),
         "attempt_count": max(sub_info.get("attempt_count", 0), recorded_attempt_count),
         "student_results_published": bool(
@@ -183,6 +184,7 @@ class StudentExamSubmitView(APIView):
     """POST /student/exams/<pk>/submit/ — ONLINE 답안 제출 (payload.answers: [{ exam_question_id, answer }])"""
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
+    @extend_schema(request=StudentExamSubmitRequestSerializer, responses={201: StudentExamSubmitReceiptSerializer})
     def post(self, request, pk):
         exam_id = int(pk)
         tenant = getattr(request, "tenant", None)
@@ -222,6 +224,8 @@ class StudentExamSubmitView(APIView):
                 answers=request.data.get("answers"),
                 client_request_id=request.data.get("client_request_id"),
                 expected_attempt_count=request.data.get("expected_attempt_count"),
+                entry_session_id=request.data.get("entry_session_id"),
+                implicit_enrollment=True,
             )
         except StudentExamSubmitError as exc:
             return Response({"detail": exc.detail, "code": exc.code}, status=exc.status_code)

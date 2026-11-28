@@ -157,7 +157,9 @@ class Command(BaseCommand):
             ],
             text="",
         )
-        provider_id = str(result.get("group_id") or "").strip()
+        from apps.worker.messaging_worker.solapi_receipts import receipt_reference
+
+        provider_id, log.provider_reference_kind = receipt_reference(result)
         if result.get("status") == "ok" and provider_id:
             log.status = "sent"
             log.success = True
@@ -165,7 +167,7 @@ class Command(BaseCommand):
             channel.last_test_status = AlimtalkChannelBinding.TestStatus.SENT
         else:
             reason = str(result.get("reason") or "")
-            definitely_rejected = _is_non_retryable_send_failure(reason)
+            definitely_rejected = result.get("definitely_not_accepted") or _is_non_retryable_send_failure(reason)
             log.status = "failed" if definitely_rejected else "ambiguous"
             log.failure_reason = (
                 "provider_rejected"
@@ -183,6 +185,7 @@ class Command(BaseCommand):
                 "status",
                 "success",
                 "provider_message_id",
+                "provider_reference_kind",
                 "failure_reason",
             ]
         )

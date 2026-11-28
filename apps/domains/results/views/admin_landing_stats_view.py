@@ -15,6 +15,7 @@ from datetime import timedelta
 from django.db.models import Count, Q
 from django.utils import timezone
 
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -22,17 +23,13 @@ from rest_framework.permissions import IsAuthenticated
 from academy.adapters.db.django import repositories_enrollment as enrollment_repo
 from academy.adapters.db.django import repositories_exams as exams_repo
 from academy.adapters.db.django import repositories_submissions as submissions_repo
+from apps.api.common.submission_inbox_schema import STAFF_SUBMISSION_ERRORS, ResultsLandingStatsSerializer
 from apps.core.permissions import TenantResolvedAndStaff
 
 
 SUBMISSION_STATUS_DONE = submissions_repo.status_done()
 SUBMISSION_STATUS_FAILED = submissions_repo.status_failed()
 PENDING_STATUSES = submissions_repo.pending_statuses()
-
-
-def _resolve_target_titles(submissions, tenant):
-    """exam_id → title, lecture/session 정보 일괄 매핑."""
-    return exams_repo.exam_target_info_map({int(s.target_id) for s in submissions}, tenant=tenant)
 
 
 def _enrollment_student_map(submissions, tenant):
@@ -46,7 +43,7 @@ def _enrollment_student_map(submissions, tenant):
 def _serialize_submissions(submissions, exam_map, enrollment_map):
     items = []
     for s in submissions:
-        t = exam_map.get(int(s.target_id), {})
+        t = exam_map.get(s.id, {})
 
         student_name = ""
         if s.enrollment_id:
@@ -64,6 +61,13 @@ def _serialize_submissions(submissions, exam_map, enrollment_map):
                 "lecture_id": t.get("lecture_id"),
                 "lecture_title": t.get("lecture_title", ""),
                 "session_id": t.get("session_id"),
+                **({
+                    "session_choices": t["session_choices"],
+                    "session_origin_recorded": t["session_origin_recorded"],
+                    "score_lecture_id": t["score_lecture_id"],
+                    "session_title": t.get("session_title", ""),
+                } if "session_choices" in t else {}),
+                **({"session_history_only": True} if t.get("session_history_only") else {}),
                 "enrollment_id": int(s.enrollment_id) if s.enrollment_id else None,
                 "student_name": student_name,
                 "status": s.status,
@@ -91,6 +95,14 @@ class AdminResultsLandingStatsView(APIView):
 
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(
+        description="현재 학원 교직원의 성적 집계와 최근 대기·완료 시험 제출을 각각 최대 5건 반환합니다.",
+        parameters=[OpenApiParameter(
+            "session_choices", str, enum=["0", "1"], required=False, default="0",
+            description="1이면 확인된 시험의 차시 후보·출처와 원래 성적 강의를 포함합니다. 생략하면 기존 요약을 반환합니다.",
+        )],
+        responses={200: ResultsLandingStatsSerializer, **STAFF_SUBMISSION_ERRORS},
+    )
     def get(self, request):
         tenant = getattr(request, "tenant", None)
         if not tenant:
@@ -133,8 +145,11 @@ class AdminResultsLandingStatsView(APIView):
         )
 
         all_subs = pending_subs + recent_done
-        exam_map = _resolve_target_titles(all_subs, tenant)
         enrollment_map = _enrollment_student_map(all_subs, tenant)
+        exam_map = exams_repo.submission_exam_contexts(
+            all_subs, enrollment_map, tenant=tenant,
+            supports_session_choices=request.query_params.get("session_choices") == "1",
+        )
 
         return Response(
             {
