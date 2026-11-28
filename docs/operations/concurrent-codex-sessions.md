@@ -129,36 +129,23 @@ Safety, successful outcomes, current HOLDs, required CI and delivery still apply
 Keep the primary model/effort selected by the user. Match analysis and review to
 actual risk: ordinary edits use existing patterns and focused checks; tenant,
 auth, data integrity, retries, migrations and release/recovery changes require
-explicit invariant/failure review. Prefer an independent Web Pro reviewer when
-it adds evidence or catches a consequential risk, not merely to satisfy an
-effort label. Do not block a task solely because the active effort is unknown,
-or change global settings to satisfy prose. Pause only work with a concrete
+explicit invariant/failure review. Use an independent Codex review when it can
+test an assumption or catch a consequential risk. Do not block a task solely
+because the active effort is unknown, or change global settings to satisfy
+prose. Pause only work with a concrete
 unresolved safety, authorization or acceptance gap; continue independent work.
 Repeated failure without new evidence calls for a changed approach. Missing
 context, truncated output and environment faults need recovery, not more effort.
 
 ### Valuable delegation and context
 
-Prefer one concurrent `chatgpt-web/gpt-6-pro` / `max` worker for meaningful
-independent work, dispatched early while Codex advances a disjoint scope.
-Small, tightly coupled, duplicate or coordination-heavy work stays local.
-Lower Web models are for genuinely trivial work only. Workers execute their
-bounded assignment directly; do not spawn recursively to fulfill this preference.
+Use a native Codex subagent for an independent assignment when it saves time
+or adds a distinct review. Let it inherit the selected model and reasoning
+effort. Keep tightly coupled work in the primary session.
 
-Give objective, owned worktree/disjoint files, acceptance criteria, relevant
-rules, exact paths/SHA and established evidence; use `fork_context: false`.
-Runtime/project/tool instructions may still be inherited. Reuse the worker for
-follow-ups, sending only changes/new evidence. Codex integrates and owns release.
-Verify the actual selected model on spawn/resume; saved defaults do not prove
-successful Web execution. Preserve primary settings and protected-data blocks.
-
-Retry once for an actual capacity error; do not silently downgrade. Other bridge
-or Native2 failures: preserve work, report once and continue locally. Diagnose
-the bridge only when needed for the task; a generic spawn error is not proof of
-an account limit. Defer if another task owns the launcher; never cancel its turn
-or restart shared runtime. Specific recovery is in [Web bridge recovery](#web-bridge-recovery).
-Remote hosts have their own configuration; verify the execution host before
-claiming Web routing. Use only model/effort values advertised by the interface.
+Give the subagent its objective, owned worktree or files, acceptance criteria
+and relevant evidence. Reuse it for follow-ups. The primary agent verifies the
+result and owns delivery. If delegation is unavailable, continue directly.
 
 ### Output recovery and complete review
 
@@ -542,9 +529,7 @@ git clone --filter=blob:none --single-branch --branch main \
 
 Install dependencies only for the current task.
 Authenticate the remote Codex CLI with the user's account; never commit its
-authentication file. The local ChatGPT Web bridge configuration does not carry
-over to the Codespace. Verify the selected remote model and runtime before
-claiming Web Pro delegation there.
+authentication file. The remote Codex CLI uses the Codespace's own settings.
 
 The Windows `session-worktree.ps1` uses `C:\academy` paths and does not run in
 the Linux Codespace. Preserve the same ownership and release rules with Git's
@@ -593,8 +578,8 @@ frontend live revision without inventing a shared Git transaction.
 
 ## Web bridge recovery
 
-Load only for an observed bridge failure that needs recovery. Not a routine
-preflight or required extra review. Preserve other tasks and managed controls.
+Use this procedure only when the user explicitly requests Web bridge recovery.
+Preserve other tasks and managed controls.
 
 If a Web follow-up fails with `MissingTrustedCodexEnvironmentError` / missing
 `cwd` in trusted context, preserve its diff and stop sending the same request.

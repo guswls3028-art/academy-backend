@@ -31,12 +31,9 @@ Self-contained instructions for the backend Git root.
 - Reuse rules already in context; read only relevant changed/missing sections.
   Use scoped searches and bounded output. Save long logs only when needed for
   recovery; reuse passing checks on unchanged relevant inputs, retaining CI.
-- Keep the primary model/settings. Prefer one bounded `chatgpt-web/gpt-6-pro`
-  at `max` early when independent work advances the task. Small, coupled or
-  duplicate work stays local. Use a lower Web model only for trivial work.
-  Verify the selected model; retry capacity once, never silently downgrade.
-  Bridge/Native2 failure: continue locally and report once; do not interrupt
-  another task's launcher. Codex owns integration, checks and release.
+- Use the selected Codex model and reasoning effort. Delegate independent
+  work to a native Codex subagent when parallel work helps. The primary agent
+  verifies the result and owns release.
 - Detailed reasoning, output recovery and evidence policy:
   `docs/operations/concurrent-codex-sessions.md` → Execution efficiency.
   Read the needed subsection when these defaults leave a decision unresolved;
