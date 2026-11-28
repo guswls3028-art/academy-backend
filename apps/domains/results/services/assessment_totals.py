@@ -33,6 +33,13 @@ def total_config(session, exams, homeworks):
     }
 
 
+def confirmed_score(block):
+    if (block.get("is_provisional") or block.get("grading_status")
+            or (block.get("meta") or {}).get("status") == "NOT_SUBMITTED"):
+        return None
+    return block.get("score")
+
+
 def selected_total(options, entries, selected_ids, *, id_key):
     selected = set(selected_ids)
     by_id = {int(entry[id_key]): entry for entry in entries}
@@ -46,13 +53,10 @@ def selected_total(options, entries, selected_ids, *, id_key):
         selected_count += 1
         block = by_id[item_id].get("block") or {}
         maximum += Decimal(str(option.get("max_score") or block.get("max_score") or 0))
-        pending = (
-            block.get("is_provisional") or block.get("grading_status")
-            or (block.get("meta") or {}).get("status") == "NOT_SUBMITTED"
-        )
-        if block.get("score") is not None and not pending:
+        confirmed = confirmed_score(block)
+        if confirmed is not None:
             scored_count += 1
-            score += Decimal(str(block["score"]))
+            score += Decimal(str(confirmed))
     return {
         "score": float(score) if scored_count else None,
         "max_score": float(maximum),
