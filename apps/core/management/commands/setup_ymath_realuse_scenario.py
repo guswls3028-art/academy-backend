@@ -449,6 +449,7 @@ class Command(BaseCommand):
                             "users": deleted["users"],
                             "activity_audits": deleted["activity_audits"],
                             "outstanding_tokens": deleted["outstanding_tokens"],
+                            "clinic_mock_receipts": deleted["clinic_mock_receipts"],
                         },
                         "remaining": remaining,
                         "residue": residue,
@@ -491,9 +492,10 @@ class Command(BaseCommand):
             existing = self._exact_tenant_or_fail_on_case_variant(tenant_code)
             if login_uat and existing is not None and not options["reset"]:
                 raise CommandError("--login-uat requires --reset when the tenant already exists.")
-            reset_counts = self._tenant_counts(existing) if existing and options["reset"] else None
             if existing and options["reset"]:
-                self._delete_scenario_tenant(existing)
+                reset_counts = self._tenant_counts(existing)
+                evidence = self._delete_scenario_tenant(existing)
+                reset_counts["clinic_mock_receipts"] = evidence["deleted"]["clinic_mock_receipts"]
 
             tenant, _ = Tenant.objects.get_or_create(
                 code=tenant_code,
@@ -966,20 +968,33 @@ class Command(BaseCommand):
             NotificationLog = apps.get_model("messaging", "NotificationLog")
             if NotificationLog.objects.filter(pk__in=notification_ids).exists():
                 raise CommandError("Isolated clinic cleanup left a verified mock receipt.")
-            evidence["deleted"]["clinic_mock_receipts"] = len(notification_ids)
+        evidence["deleted"]["clinic_mock_receipts"] = len(notification_ids)
         return evidence
 
     @staticmethod
     def _delete_clinic_mock_receipts(tenant) -> list[int]:
         """Reconcile common-owner receipts with the sealed source's automatic clinic outbox."""
+        from apps.core.services.development_qa_clinic_receipts import TRIGGERS, verified_route
+
         NotificationLog = apps.get_model("messaging", "NotificationLog")
         ScheduledNotification = apps.get_model("messaging", "ScheduledNotification")
-        triggers = ("clinic_reservation_created", "clinic_cancelled")
+        origins = [f"clinic.{trigger}" for trigger in TRIGGERS]
+        outboxes = ScheduledNotification.objects.select_for_update().filter(
+            tenant=tenant, origin_type__in=origins,
+        ).exclude(status=ScheduledNotification.Status.CANCELLED).order_by("pk")
+        # Direct, source-owned deliveries cascade normally. Common-owner sends need separate receipts.
+        boxes = []
+        for box in outboxes:
+            if not isinstance(box.payload, dict):
+                raise CommandError("Cannot identify the source of a development clinic outbox.")
+            if box.payload.get("tenant_id") == tenant.pk and box.payload.get("source_tenant_id") is None:
+                continue
+            boxes.append(box)
         receipts = NotificationLog.objects.filter(
-            source_tenant=tenant, origin_type__in=[f"clinic.{trigger}" for trigger in triggers],
+            source_tenant=tenant, origin_type__in=origins,
         ).exclude(tenant=tenant)
         rows = list(receipts.select_for_update().order_by("pk"))
-        if not rows:
+        if not boxes and not rows:
             return []
         owner_id = int(getattr(settings, "OWNER_TENANT_ID", 1))
         started = Command._scenario_ownership_start(tenant)
@@ -989,18 +1004,13 @@ class Command(BaseCommand):
         if not started or not owner_matches or any(row.tenant_id != owner_id for row in rows):
             raise CommandError("Cannot prove the development clinic receipt owner or scenario seal.")
 
-        outboxes = ScheduledNotification.objects.select_for_update().filter(
-            tenant=tenant, created_at__gte=started, trigger__in=triggers,
-            business_idempotency_key__in=[row.business_idempotency_key for row in rows],
-        ).order_by("pk")
-        by_key = {}
-        for box in outboxes:
-            if box.business_idempotency_key in by_key:
-                raise CommandError("Ambiguous development clinic receipt outbox.")
-            by_key[box.business_idempotency_key] = box
+        by_key = {box.business_idempotency_key: box for box in boxes}
+        if (len(by_key) != len(boxes) or len(rows) != len(boxes)
+                or by_key.keys() != {row.business_idempotency_key for row in rows}):
+            raise CommandError("Development clinic outbox and receipt inventories differ. Retry after delivery.")
         for row in rows:
-            box = by_key.get(row.business_idempotency_key)
-            if (not box or box.status != "sent" or not box.origin_id or box.origin_type != f"clinic.{box.trigger}"
+            box = by_key[row.business_idempotency_key]
+            if (box.created_at < started or box.status != "sent" or not box.origin_id or box.origin_type != f"clinic.{box.trigger}"
                     or not row.success or row.status != "sent" or row.sent_at < started
                     or not re.fullmatch(r"mock-[0-9a-f]{12}", row.provider_message_id)
                     or not re.fullmatch(r"[0-9a-f]{64}", row.business_idempotency_key)
@@ -1017,6 +1027,8 @@ class Command(BaseCommand):
             }
             if any(getattr(row, field) != value for field, value in expected.items()):
                 raise CommandError("Cannot verify an automatic clinic mock receipt against its source outbox.")
+            if not verified_route(box, row):
+                raise CommandError("Cannot verify the original development clinic recipient.")
 
         ids = [row.pk for row in rows]
         deleted, _ = receipts.filter(tenant_id=owner_id, pk__in=ids).delete()

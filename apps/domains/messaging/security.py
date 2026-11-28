@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import re
 from typing import Any
 
@@ -237,6 +238,17 @@ def redact_terminal_delivery_payload(*, trigger: str, payload: object) -> object
         redacted["target_id"] = sanitize_notification_target_id(
             redacted["target_id"]
         )
+    if (trigger in {"clinic_reservation_created", "clinic_cancelled"}
+            and os.environ.get("ACADEMY_RUNTIME_ENV") == "development"
+            and os.environ.get("SOLAPI_MOCK", "").lower() in {"true", "1", "yes"}):
+        if payload.get("redacted") is True:
+            proof = payload.get("qa_clinic_route_proof")
+        else:
+            from apps.core.services.development_qa_clinic_receipts import terminal_proof
+
+            proof = terminal_proof(payload, trigger)
+        if isinstance(proof, str) and re.fullmatch(r"[a-zA-Z0-9_-]{43}", proof):
+            redacted["qa_clinic_route_proof"] = proof
     return redacted
 
 

@@ -842,31 +842,56 @@ class SetupYmathRealuseScenarioTests(TestCase):
 
         self.assertIn("YMATH_REALUSE_SCENARIO_DESTROYED", out.getvalue())
         self.assertIn('"remaining": {"tenants": 0, "users": 0}', out.getvalue())
+        self.assertEqual(json.loads(out.getvalue().splitlines()[-1])["deleted"]["clinic_mock_receipts"], 0)
         self.assertFalse(Tenant.objects.filter(id=tenant_id).exists())
         self.assertFalse(get_user_model().objects.filter(id__in=user_ids).exists())
 
     def test_clinic_mock_receipt_cleanup_is_scoped_atomic_and_retryable(self):
         from apps.core.management.commands import setup_ymath_realuse_scenario as scenario
+        from apps.domains.messaging.security import build_recipient_fingerprint, redact_terminal_delivery_payload
+        from apps.domains.messaging.services.queue_service import build_enqueued_business_key
+        from apps.domains.students.models import Student
+        from apps.domains.students.services.lifecycle import permanently_delete_students, soft_delete_student
 
         owner = Tenant.objects.create(code=scenario.DEVELOPMENT_MESSAGING_OWNER_CODE,
                                       name=scenario.DEVELOPMENT_MESSAGING_OWNER_NAME)
-        foreign = Tenant.objects.create(code="qa-unrelated-clinic-receipts", name="Other QA")
+        foreign_code = "qa-ymath-realuse-foreign-clinic-receipts"
+        self._call_command(tenant_code=foreign_code, student_count=1, session_count=1)
+        foreign = Tenant.objects.get(code=foreign_code)
+        foreign_student = Student.objects.get(tenant=foreign)
         for index, action in enumerate(("destroy", "reset"), start=1):
             with self.subTest(action=action):
                 code = f"qa-ymath-realuse-clinic-{action}"
                 self._call_command(tenant_code=code, student_count=1, session_count=1)
                 source = Tenant.objects.get(code=code)
+                student = Student.objects.get(tenant=source)
+                student.phone = f"0109500000{index}"
+                student.uses_identifier = False
+                student.save(update_fields=["phone", "uses_identifier"])
                 trigger = "clinic_reservation_created" if action == "destroy" else "clinic_cancelled"
-                identity = dict(origin_id=f"clinic_participant:{index}", origin_type=f"clinic.{trigger}",
-                                business_idempotency_key=f"{index:064x}", recipient_fingerprint="a" * 64)
-                target = {"tenant_id": owner.pk, "source_tenant_id": source.pk, "message_mode": "alimtalk",
-                          "target_type": "student", "target_id": index}
+                origin = f"clinic_participant:{index}"
+                fingerprint = build_recipient_fingerprint(student.phone)
+                payload = {"tenant_id": owner.pk, "source_tenant_id": source.pk, "message_mode": "alimtalk",
+                           "event_type": trigger, "origin_id": origin, "origin_type": f"clinic.{trigger}",
+                           "occurrence_key": f"{trigger}:{origin}", "target_type": "student", "target_id": student.pk,
+                           "recipient_fingerprint": fingerprint, "to": student.phone}
+                with (override_settings(OWNER_TENANT_ID=owner.pk, SOLAPI_KAKAO_PF_ID="development-mock-pfid"),
+                      patch.dict(os.environ, {"SOLAPI_MOCK": "true", "ACADEMY_RUNTIME_ENV": "development"})):
+                    business_key = build_enqueued_business_key(tenant_id=source.pk, payload=payload)
+                    target = redact_terminal_delivery_payload(trigger=trigger, payload=payload)
+                self.assertIn("qa_clinic_route_proof", target)
+                self.assertNotIn("to", target)
+                with patch.dict(os.environ, {"ACADEMY_RUNTIME_ENV": "production", "SOLAPI_MOCK": "false"}):
+                    legacy = redact_terminal_delivery_payload(trigger=trigger, payload=payload)
+                    self.assertEqual(legacy, {key: value for key, value in target.items() if key != "qa_clinic_route_proof"})
+                identity = dict(origin_id=origin, origin_type=f"clinic.{trigger}",
+                                business_idempotency_key=business_key, recipient_fingerprint=fingerprint)
                 box = ScheduledNotification.objects.create(
                     tenant=source, trigger=trigger, send_at=timezone.now(), status="sent", payload=target, **identity,
                 )
                 owned = NotificationLog.objects.create(
                     tenant=owner, source_tenant=source, notification_type=trigger, status="sent", success=True,
-                    target_type="student", target_id=str(index), message_mode="alimtalk",
+                    target_type="student", target_id=str(student.pk), message_mode="alimtalk",
                     provider_message_id=f"mock-{index:012x}", **identity,
                 )
                 manual = NotificationLog.objects.create(
@@ -882,6 +907,20 @@ class SetupYmathRealuseScenarioTests(TestCase):
                         with self.assertRaisesRegex(CommandError, "receipt owner"):
                             self._call_command(**options)
                     with transaction.atomic():
+                        NotificationLog.objects.filter(pk=owned.pk).delete()
+                        with self.assertRaisesRegex(CommandError, "inventories differ"):
+                            self._call_command(**options)
+                        self.assertTrue(ScheduledNotification.objects.filter(pk=box.pk, tenant=source).exists())
+                        transaction.set_rollback(True)
+                    for bad_id in (foreign_student.pk, 99999999):
+                        with transaction.atomic():
+                            ScheduledNotification.objects.filter(pk=box.pk).update(payload={**target, "target_id": str(bad_id)})
+                            NotificationLog.objects.filter(pk=owned.pk).update(target_id=str(bad_id))
+                            with self.assertRaisesRegex(CommandError, "original development clinic recipient"):
+                                self._call_command(**options)
+                            self.assertTrue(Tenant.objects.filter(pk=source.pk).exists())
+                            transaction.set_rollback(True)
+                    with transaction.atomic():
                         OpsAuditLog.objects.filter(target_tenant=source, action=scenario.SCENARIO_PROVENANCE_ACTION).delete()
                         with self.assertRaisesRegex(CommandError, "scenario seal"):
                             self._call_command(**options)
@@ -893,13 +932,25 @@ class SetupYmathRealuseScenarioTests(TestCase):
                     self.assertTrue(NotificationLog.objects.filter(pk=owned.pk, source_tenant=source).exists())
                     box.payload = target
                     box.save(update_fields=["payload"])
+                    if action == "destroy":
+                        soft_delete_student(student, tenant=source)
+                        permanently_delete_students(tenant=source, student_ids=[student.pk])
+                        self.assertFalse(Student._base_manager.filter(pk=student.pk).exists())
+                    else:
+                        # Older receipts have no route proof and use the still-owned contact.
+                        box.payload.pop("qa_clinic_route_proof")
+                        box.save(update_fields=["payload"])
                     with patch.object(Tenant, "delete", side_effect=RuntimeError("injected after receipt deletion")):
                         with self.assertRaisesRegex(RuntimeError, "after receipt deletion"):
                             self._call_command(**options)
                     self.assertTrue(NotificationLog.objects.filter(pk=owned.pk, source_tenant=source).exists())
-                    self._call_command(**options)
+                    output = self._call_command(**options)
                     if action == "destroy":
+                        self.assertEqual(json.loads(output.splitlines()[-1])["deleted"]["clinic_mock_receipts"], 1)
                         self._call_command(**options)
+                    else:
+                        reset_line = next(line for line in output.splitlines() if line.startswith("Deleted isolated"))
+                        self.assertEqual(json.loads(reset_line.split(": ", 1)[1])["clinic_mock_receipts"], 1)
                 self.assertFalse(Tenant.objects.filter(pk=source.pk).exists())
                 self.assertFalse(NotificationLog.objects.filter(pk=owned.pk).exists())
                 self.assertFalse(ScheduledNotification.objects.filter(pk=box.pk).exists())

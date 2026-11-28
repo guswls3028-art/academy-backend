@@ -396,7 +396,11 @@ def cleanup(code, capability):
                 rows = NotificationLog.objects.select_for_update().filter(
                     tenant_id=scope.payload["owner_id"], source_tenant_id=tid, pk__in=inv["logs"])
                 require(set(rows.values_list("pk", flat=True)) == set(inv["logs"]), "Common owner rows changed.")
+                boxes = ScheduledNotification.objects.select_for_update().filter(
+                    tenant_id=tid, trigger=TRIGGER, status="sent", pk__in=inv["outboxes"])
+                require(set(boxes.values_list("pk", flat=True)) == set(inv["outboxes"]), "Clinic outboxes changed.")
                 rows.delete()
+                boxes.delete()
                 OpsAuditLog.objects.filter(pk__in=inv["events"], target_tenant_id=tid).delete()
                 inv.pop("deliveries")
             else:
