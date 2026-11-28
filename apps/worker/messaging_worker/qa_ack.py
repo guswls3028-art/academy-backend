@@ -1,4 +1,4 @@
-"""SQS evidence for the fixed, two-student development registration scenario."""
+"""Mock provider and SQS deletion receipts for sealed development scenarios."""
 
 import logging
 import os
@@ -39,6 +39,15 @@ def _development_release(queue_name):
     return None
 
 
+def development_ack_scope(cfg, raw, data, owner_id, source_id):
+    if os.environ.get("ACADEMY_RUNTIME_ENV") != "development":
+        return None
+    if data.get("event_type") == "clinic_reservation_created":
+        from .clinic_qa_ack import clinic_ack_scope
+        return clinic_ack_scope(cfg, raw, data, owner_id, source_id)
+    return enrollment_ack_scope(cfg, raw, data, owner_id, source_id)
+
+
 def enrollment_ack_scope(cfg, raw, data, owner_id, source_id):
     """Return None for ordinary jobs without importing ORM or looking up production data."""
     if os.environ.get("ACADEMY_RUNTIME_ENV") != "development":
@@ -52,7 +61,6 @@ def enrollment_ack_scope(cfg, raw, data, owner_id, source_id):
     role = event_type.removeprefix("registration_approved_")
 
     from apps.core.models import OpsAuditLog
-    from apps.core.services.development_qa_ownership import WRONG_NOTE_SETUP_SCHEMA
     from apps.domains.enrollment.models import EnrollmentNoticeRecipient
 
     recipient = EnrollmentNoticeRecipient.objects.select_related("registration").filter(
@@ -93,6 +101,20 @@ def enrollment_ack_scope(cfg, raw, data, owner_id, source_id):
             or recipient.student_id not in students or fields.get("redelivery_student_id") not in students
             or plan.created_at > batch.created_at):
         raise ValueError("Enrollment notice QA plan does not match registration")
+    envelope = sealed_delivery(plan, source_id, raw)
+    return _Scope({
+        **envelope, "schema": SCHEMA, "plan_id": plan.pk, "release": release,
+        "request_id": request_id, "actor_id": actor_id, "source_tenant_id": source_id, "owner_tenant_id": owner_id,
+        "recipient_id": recipient.pk, "student_id": recipient.student_id, "role": recipient.role,
+        "business_key": recipient.business_key,
+    }, recipient.student_id == fields["redelivery_student_id"])
+
+
+def sealed_delivery(plan, source_id, raw):
+    from apps.core.models import OpsAuditLog
+    from apps.core.services.development_qa_ownership import WRONG_NOTE_SETUP_SCHEMA
+
+    fields = plan.payload
     setup = OpsAuditLog.objects.filter(
         pk=fields.get("setup_id"), action="development.wrong-note.setup", actor_username="wrong-note-development-runner",
         result="success", target_tenant_id=source_id, target_tenant__is_active=True, payload__tenant_id=source_id,
@@ -102,19 +124,13 @@ def enrollment_ack_scope(cfg, raw, data, owner_id, source_id):
             or setup["payload"].get("tenant_code") != setup["target_tenant__code"]
             or not re.fullmatch(r"qa-ymath-realuse-wn-[0-9]+-[0-9]+-[0-9a-f]{12}", setup["target_tenant__code"])
             or not re.fullmatch(r"[0-9a-f]{64}", str(setup["payload"].get("owner_sha256")))):
-        raise ValueError("Enrollment notice QA ownership mismatch")
+        raise ValueError("Notification QA ownership mismatch")
     # Only the authentic SQS envelope supplies these values. Never use ReceiptHandle as an ID.
     message_id = str(UUID(raw["MessageId"]))
     receive_count = int(raw["Attributes"]["ApproximateReceiveCount"])
     if receive_count < 1:
         raise ValueError("Invalid SQS receive count")
-    return _Scope({
-        "schema": SCHEMA, "setup_id": setup["pk"], "plan_id": plan.pk, "release": release,
-        "request_id": request_id, "actor_id": actor_id, "source_tenant_id": source_id, "owner_tenant_id": owner_id,
-        "recipient_id": recipient.pk, "student_id": recipient.student_id, "role": recipient.role,
-        "business_key": recipient.business_key, "message_id": message_id, "queue": QUEUE,
-        "receive_count": receive_count,
-    }, recipient.student_id == fields["redelivery_student_id"])
+    return {"setup_id": setup["pk"], "message_id": message_id, "queue": QUEUE, "receive_count": receive_count}
 
 
 @dataclass
@@ -122,20 +138,26 @@ class _Scope:
     payload: dict
     redeliver: bool
 
+    prefix = PREFIX
+
+    def _log_target(self):
+        p = self.payload
+        return {"target_type": "account", "target_id": f"{p['role']}:{p['student_id']}"}, f"registration_approved_{p['role']}"
+
     def _log(self, *, log_id, committed):
         from apps.domains.messaging.models import NotificationLog
 
         p = self.payload
+        target, event_type = self._log_target()
         rows = NotificationLog.objects.filter(
             tenant_id=p["owner_tenant_id"], tenant__code="academy-development-owner", tenant__is_active=True,
-            source_tenant_id=p["source_tenant_id"], target_type="account",
-            target_id=f"{p['role']}:{p['student_id']}", message_mode="alimtalk",
+            source_tenant_id=p["source_tenant_id"], message_mode="alimtalk", **target,
             business_idempotency_key=p["business_key"], sqs_message_id=p["message_id"],
         )
         if log_id is not None:
             rows = rows.filter(pk=log_id)
         if committed:
-            rows = rows.filter(status="sent", success=True, notification_type=f"registration_approved_{p['role']}",
+            rows = rows.filter(status="sent", success=True, notification_type=event_type,
                                provider_reference_kind="group")
         else:
             rows = rows.filter(pk=log_id, status="sending")
@@ -154,7 +176,7 @@ class _Scope:
             action=action, summary=self.payload["request_id"], actor_username=WORKER, result="success",
             target_tenant_id=self.payload["source_tenant_id"], payload={**self.payload, "log_id": log_id, **extra},
         )
-        if action != ACK:
+        if action != self.prefix + "ack":
             OpsAuditLog.objects.create(**event)
             return
         # SQS has already deleted the message. Retry this exact receipt if the DB
@@ -181,7 +203,7 @@ class _Scope:
 
         def send(message):
             response = client.send(message)
-            self._record(MOCK_SEND, log_id, provider_message_id=response.group_info.group_id)
+            self._record(self.prefix + "mock-send", log_id, provider_message_id=response.group_info.group_id)
             return response
 
         return SimpleNamespace(send=send)
@@ -193,7 +215,7 @@ class _Scope:
         return row["pk"]
 
     def observed_first_delivery(self, log_id):
-        return self._events().filter(action=REDELIVERY, payload={**self.payload, "log_id": log_id,
+        return self._events().filter(action=self.prefix + "redelivery", payload={**self.payload, "log_id": log_id,
                                                                   "receive_count": 1}).exists()
 
 
@@ -207,14 +229,14 @@ def acknowledge_sent(queue, queue_name, handle, scope, *, log_id, deduplicated):
         # The sent row is already durable. Shorten only this receipt's visibility.
         changed = queue.change_message_visibility(queue_name=queue_name, receipt_handle=handle, visibility_timeout=3)
         if changed:
-            scope._record(REDELIVERY, log_id)
+            scope._record(scope.prefix + "redelivery", log_id)
         return False, changed
     proven = not scope.redeliver or (not first and deduplicated and scope.observed_first_delivery(log_id))
     deleted = queue.delete_message(queue_name=queue_name, receipt_handle=handle)
     if deleted and proven:
         # SQS deletion is irreversible. A missing audit receipt fails the fixed probe.
         try:
-            scope._record(ACK, log_id, deduplicated=deduplicated)
+            scope._record(scope.prefix + "ack", log_id, deduplicated=deduplicated)
         except Exception:
-            logger.exception("Could not persist sealed development enrollment notice ACK")
+            logger.exception("Could not persist sealed development notification ACK")
     return deleted, False
