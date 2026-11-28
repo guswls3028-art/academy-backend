@@ -912,6 +912,15 @@ class SetupYmathRealuseScenarioTests(TestCase):
                             self._call_command(**options)
                         self.assertTrue(ScheduledNotification.objects.filter(pk=box.pk, tenant=source).exists())
                         transaction.set_rollback(True)
+                    with transaction.atomic():
+                        changed_origin = f"{origin}:another-event"
+                        ScheduledNotification.objects.filter(pk=box.pk).update(origin_id=changed_origin)
+                        NotificationLog.objects.filter(pk=owned.pk).update(origin_id=changed_origin)
+                        with self.assertRaisesRegex(CommandError, "original delivery payload"):
+                            self._call_command(**options)
+                        self.assertTrue(NotificationLog.objects.filter(pk=owned.pk, source_tenant=source).exists())
+                        self.assertTrue(ScheduledNotification.objects.filter(pk=box.pk, tenant=source).exists())
+                        transaction.set_rollback(True)
                     for bad_id in (foreign_student.pk, 99999999):
                         with transaction.atomic():
                             ScheduledNotification.objects.filter(pk=box.pk).update(payload={**target, "target_id": str(bad_id)})

@@ -1010,6 +1010,9 @@ class Command(BaseCommand):
             raise CommandError("Development clinic outbox and receipt inventories differ. Retry after delivery.")
         for row in rows:
             box = by_key[row.business_idempotency_key]
+            event = (box.payload.get("event_type"), box.payload.get("origin_type"), box.payload.get("origin_id"))
+            if event != (box.trigger, box.origin_type, box.origin_id):
+                raise CommandError("Cannot verify the clinic outbox event against its original delivery payload.")
             if (box.created_at < started or box.status != "sent" or not box.origin_id or box.origin_type != f"clinic.{box.trigger}"
                     or not row.success or row.status != "sent" or row.sent_at < started
                     or not re.fullmatch(r"mock-[0-9a-f]{12}", row.provider_message_id)
