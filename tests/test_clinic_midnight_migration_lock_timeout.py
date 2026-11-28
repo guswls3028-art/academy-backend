@@ -23,6 +23,10 @@ class ClinicMidnightMigrationLockTimeoutTests(TransactionTestCase, ClinicAPITest
     def _migrate(self, target):
         MigrationExecutor(connection).migrate([target])
 
+    def _restore_current_schema(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
+
     def _constraint_definition(self):
         with connection.cursor() as cursor:
             cursor.execute(
@@ -50,7 +54,6 @@ class ClinicMidnightMigrationLockTimeoutTests(TransactionTestCase, ClinicAPITest
         return lock_timeout, statement_timeout
 
     def test_lock_timeout_rolls_back_constraint_change_and_retry_preserves_rows(self):
-        self._migrate(self.migrate_from)
         data = self.setup_api_tenant("clinic_migration_lock", student_count=1)
         participant = self.make_participant(
             data["tenant"],
@@ -61,6 +64,10 @@ class ClinicMidnightMigrationLockTimeoutTests(TransactionTestCase, ClinicAPITest
         participant.booking_start_time = datetime.time(10, 0)
         participant.booking_end_time = datetime.time(11, 0)
         participant.save(update_fields=["booking_start_time", "booking_end_time", "updated_at"])
+        self.addCleanup(self._restore_current_schema)
+        self._migrate(self.migrate_from)
+        historical_apps = MigrationExecutor(connection).loader.project_state([self.migrate_from]).apps
+        participant = historical_apps.get_model("clinic", "SessionParticipant").objects.get(pk=participant.pk)
         original_constraint = self._constraint_definition()
 
         blocker = psycopg2.connect(**connection.get_connection_params())
@@ -108,43 +115,39 @@ class ClinicMidnightMigrationLockTimeoutTests(TransactionTestCase, ClinicAPITest
             if migration_thread is not None:
                 migration_thread.join(timeout=10)
 
-        try:
-            self.assertTrue(completed_while_locked, "migration exceeded its database lock budget")
-            self.assertFalse(migration_thread.is_alive(), "migration thread did not terminate")
-            self.assertEqual(len(migration_errors), 1)
-            error, elapsed = migration_errors[0]
-            self.assertIsInstance(error, OperationalError)
-            self.assertEqual(getattr(error.__cause__, "pgcode", None), "55P03")
-            self.assertIn("lock timeout", str(error.__cause__).lower())
-            self.assertLess(elapsed, 8)
-            self.assertEqual(timeout_observation_errors, [])
-            self.assertEqual(len(failure_timeout_settings), 1)
-            failure_before, failure_after = failure_timeout_settings[0]
-            self.assertIsNotNone(failure_before)
-            self.assertEqual(failure_after, failure_before)
-            self.assertFalse(self._migration_is_applied())
-            self.assertEqual(self._constraint_definition(), original_constraint)
+        self.assertTrue(completed_while_locked, "migration exceeded its database lock budget")
+        self.assertFalse(migration_thread.is_alive(), "migration thread did not terminate")
+        self.assertEqual(len(migration_errors), 1)
+        error, elapsed = migration_errors[0]
+        self.assertIsInstance(error, OperationalError)
+        self.assertEqual(getattr(error.__cause__, "pgcode", None), "55P03")
+        self.assertIn("lock timeout", str(error.__cause__).lower())
+        self.assertLess(elapsed, 8)
+        self.assertEqual(timeout_observation_errors, [])
+        self.assertEqual(len(failure_timeout_settings), 1)
+        failure_before, failure_after = failure_timeout_settings[0]
+        self.assertIsNotNone(failure_before)
+        self.assertEqual(failure_after, failure_before)
+        self.assertFalse(self._migration_is_applied())
+        self.assertEqual(self._constraint_definition(), original_constraint)
 
-            participant.refresh_from_db()
-            self.assertEqual(participant.booking_start_time, datetime.time(10, 0))
-            self.assertEqual(participant.booking_end_time, datetime.time(11, 0))
+        participant.refresh_from_db()
+        self.assertEqual(participant.booking_start_time, datetime.time(10, 0))
+        self.assertEqual(participant.booking_end_time, datetime.time(11, 0))
 
-            success_before = self._timeout_settings(connection)
-            self._migrate(self.migrate_to)
-            success_after = self._timeout_settings(connection)
-            self.assertTrue(self._migration_is_applied())
-            self.assertEqual(success_after, success_before)
-            participant.refresh_from_db()
-            self.assertEqual(participant.booking_start_time, datetime.time(10, 0))
-            self.assertEqual(participant.booking_end_time, datetime.time(11, 0))
+        success_before = self._timeout_settings(connection)
+        self._migrate(self.migrate_to)
+        success_after = self._timeout_settings(connection)
+        self.assertTrue(self._migration_is_applied())
+        self.assertEqual(success_after, success_before)
+        participant.refresh_from_db()
+        self.assertEqual(participant.booking_start_time, datetime.time(10, 0))
+        self.assertEqual(participant.booking_end_time, datetime.time(11, 0))
 
-            participant.booking_start_time = datetime.time(21, 0)
-            participant.booking_end_time = self.permitted_end_time
-            participant.save(
-                update_fields=["booking_start_time", "booking_end_time", "updated_at"]
-            )
-            participant.refresh_from_db()
-            self.assertEqual(participant.booking_end_time, self.permitted_end_time)
-        finally:
-            executor = MigrationExecutor(connection)
-            executor.migrate(executor.loader.graph.leaf_nodes())
+        participant.booking_start_time = datetime.time(21, 0)
+        participant.booking_end_time = self.permitted_end_time
+        participant.save(
+            update_fields=["booking_start_time", "booking_end_time", "updated_at"]
+        )
+        participant.refresh_from_db()
+        self.assertEqual(participant.booking_end_time, self.permitted_end_time)

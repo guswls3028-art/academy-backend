@@ -67,7 +67,7 @@ def build_messaging_observer_payloads(
 
     original_payload = dict(original_outbox.payload)
     if (
-        original_payload.get("target_type") == "messaging_observer"
+        original_payload.get("target_type") in ("messaging_observer", "clinic_teacher")
         or original_payload.get("origin_type") == "messaging_observer"
     ):
         return []

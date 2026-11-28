@@ -119,6 +119,7 @@ class Command(BaseCommand):
         modes = parser.add_mutually_exclusive_group()
         modes.add_argument("--enrollment-notices", action="store_true")
         modes.add_argument("--enrollment-tick", type=int, metavar="SEALED_PLAN_ID")
+        modes.add_argument("--clinic-notices", action="store_true")
         parser.add_argument("--enrollment-recipient", choices=("student", "parent"))
 
     def handle(self, *args, **options):
@@ -133,7 +134,14 @@ class Command(BaseCommand):
         if options["enrollment_recipient"] and (not notices or options["cleanup_only"]):
             raise CommandError("Recipient selection requires a new enrollment scenario.")
         cleanup_scope = cleanup
-        if notices or options["enrollment_tick"] is not None:
+        clinic = options["clinic_notices"]
+        if clinic:
+            from apps.core.services import clinic_notice_development_scenario as clinic_notice
+            from apps.core.services.enrollment_notice_development_scenario import check_mock
+
+            check_mock()
+            cleanup_scope = clinic_notice.cleanup
+        elif notices or options["enrollment_tick"] is not None:
             from apps.core.services import enrollment_notice_development_scenario as notice
             notice.check_mock()
             if options["enrollment_tick"] is not None:
@@ -142,8 +150,8 @@ class Command(BaseCommand):
                 notice.run_scheduler(options["enrollment_tick"], release, options["production_database"])
                 return
             cleanup_scope = notice.cleanup
-        scenario = "enrollment-notice" if notices else "wrong-note"
-        status_prefix = "ENROLLMENT_NOTICE" if notices else "WRONG_NOTE"
+        scenario = "clinic-notice" if clinic else "enrollment-notice" if notices else "wrong-note"
+        status_prefix = scenario.upper().replace("-", "_")
 
         directory = Path(gettempdir()) / f"academy-{scenario}-{hashlib.sha256(release.encode()).hexdigest()[:24]}"
         directory.mkdir(mode=0o700, exist_ok=True)
@@ -179,7 +187,11 @@ class Command(BaseCommand):
                 stream.flush()
                 os.fsync(stream.fileno())
             try:
-                if notices:
+                if clinic:
+                    with transaction.atomic():
+                        tenant = setup(code, capability, password)
+                        clinic_notice.mark_scope(tenant, release)
+                elif notices:
                     with transaction.atomic():
                         tenant = setup(code, capability, password)
                         notice.mark_scope(tenant, release, role)
@@ -193,7 +205,10 @@ class Command(BaseCommand):
                 raise
             self.stdout.write(f"{status_prefix}_QA_STARTED tenant={code} id={tenant.pk}")
             try:
-                if notices:
+                if clinic:
+                    result = clinic_notice.run(tenant, password, release=release,
+                                               production_database=options["production_database"])
+                elif notices:
                     result = notice.run(tenant, password, selected_role=role, release=release,
                                         production_database=options["production_database"])
                 else:

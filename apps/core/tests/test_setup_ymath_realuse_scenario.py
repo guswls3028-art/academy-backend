@@ -286,10 +286,19 @@ class SetupYmathRealuseScenarioTests(TestCase):
             ensure_development_notification_fixture(tenant, "clinic_cancelled")
             ensure_development_notification_fixture(tenant, "clinic_cancelled")
             ensure_development_notification_fixture(tenant, "assignment_not_submitted")
+            ensure_development_notification_fixture(tenant, "clinic_reservation_created")
+            ensure_development_notification_fixture(tenant, "clinic_reservation_created")
 
         manual = AutoSendConfig.objects.select_related("template").get(tenant=tenant, trigger="assignment_not_submitted")
         self.assertFalse(manual.enabled)
         self.assertEqual(manual.template.category, MessageTemplate.Category.ASSIGNMENT)
+
+        booking = AutoSendConfig.objects.select_related("template").get(tenant=tenant, trigger="clinic_reservation_created")
+        self.assertTrue(booking.enabled)
+        self.assertEqual(booking.message_mode, "alimtalk")
+        self.assertEqual(booking.template.tenant_id, tenant.id)
+        self.assertEqual(booking.template.category, MessageTemplate.Category.CLINIC)
+        self.assertEqual(booking.template.body, "#{예약상태} · #{날짜} #{시간}")
 
         config = AutoSendConfig.objects.select_related("template").get(
             tenant=tenant,

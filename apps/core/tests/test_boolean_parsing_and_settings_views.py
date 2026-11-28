@@ -28,7 +28,7 @@ class TestSettingsBooleanParsing(SimpleTestCase):
         self.assertTrue(Tenant().clinic_use_daily_random)
 
     def setUp(self):
-        self.tenant = SimpleNamespace(
+        self.tenant = Tenant(
             pk=1,
             student_registration_auto_approve=True,
             clinic_use_daily_random=True,

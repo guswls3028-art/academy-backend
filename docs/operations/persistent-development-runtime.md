@@ -602,6 +602,20 @@ OpenAI source/게시 권한은 [공급자 전환 계약](openai-provider.md)이 
 
 정리는 setup 소유권, 발신 owner 및 원래 학원, 수신자·등록·업무 키, 메시지·로그 PK를 확인한다. 소유한 임시 로그·진행 캐시와 합성 학원을 정리하고 트랜잭션 커밋 후 다시 조회한다. 다른 학원의 발송 기록과 개발 공용 owner는 보존한다. 작업이 진행 중이거나 소유권이 다르면 복구 파일을 유지한다. 같은 호스트와 release에서 작업 상태를 확인한 뒤 위 명령에 `-CleanupOnly`를 추가해 소유 범위만 다시 정리한다. 검사 결과에는 전화번호, 메시지 본문, 인증정보가 들어가지 않는다.
 
+### 클리닉 마감 후 예약 알림톡의 개발 실사용 검증
+
+정규 배포 담당자가 이전 호스트 종료 후 공유 lock을 보유한 상태에서 해당 후보의 API와 Messaging 워커로 실행한다.
+
+```powershell
+./scripts/v1/run-wrong-note-development-smoke.ps1 -ClinicNotices -ManifestPath $manifestPath -ReleaseId $releaseId -ProductionDatabase $productionDatabase -LockOwner $lockOwner
+```
+
+합성 학생이 마감된 회차에 신청하면 거절된다. 관리자가 마감 후 신청을 켜면 같은 학생의 신청이 대기 명단에 들어간다. 학생과 관리자가 저장된 상태를 각각 다시 조회한다. 워커는 신청 시 학생·학부모·지정 교직원 세 명에게, 승인 시 학생·학부모 두 명에게 승인 양식과 해당 상태의 선생님메모로 발송한다. 같은 신청과 승인을 한 번 더 제출해도 발송이 늘지 않아야 한다. 외부 공급사 경계에는 개발 모의를 사용한다.
+
+결과 `CLINIC_NOTICE_REAL_USE_PASS`의 다섯 행은 신청·승인 구분, 수신 역할, 원학원 outbox와 공용 발신 학원 로그, 모의 공급사 결과, SQS 메시지 및 ACK 기록을 연결한다. 담당자 사본은 결과 저장 후 가시성 시간을 줄여 실제 큐에서 한 번 더 수신한다. 같은 업무 키와 메시지 ID로 저장된 결과를 재사용하고, SQS 삭제 성공 뒤에만 ACK를 기록한다.
+
+정리는 setup 소유권과 정확한 행 ID를 대조하고 커밋 후 원학원의 계정·회차·예약·outbox, 공용 발신 학원의 해당 로그, 워커 기록과 진행 캐시의 잔여를 다시 조회한다. 다른 학원의 기록은 유지한다. 쓰기 결과가 불확실하거나 큐 처리가 끝나지 않았으면 복구 정보를 보존한다. 같은 release와 호스트에서 위 명령에 `-CleanupOnly`를 더해 정리를 재시도할 수 있다.
+
 ### 차시 범위 오답노트의 개발 실사용 검증
 
 `verify-api-development`의 학생별 PDF 검사는 마지막 성공 manifest부터 관련 파일이
@@ -657,10 +671,12 @@ pwsh scripts/v1/connect-api-development.ps1 -AwsProfile <profile>
 `setup_ymath_realuse_scenario`처럼 production DB/R2에서 실행을 거부하는 명령으로만
 만든다. 실제 학생·학부모·성적·연락처와 운영 비밀값은 복제하지 않는다.
 이 명령은 `SOLAPI_MOCK=true`, `MESSAGING_DRY_RUN_TRIGGERS` 빈 값인 상시 개발
-런타임에서만 `clinic_cancelled`의 승인된 공용 봉투 매핑을 확인하고, 일회용 QA
+런타임에서만 `clinic_cancelled`와 `clinic_reservation_created`의 승인된 공용 봉투 매핑을 확인하고, 일회용 QA
 tenant에 tenant-owned content template과 활성 알림톡 config를 만든다. 학생+학부모
 취소 접수 검증에는 합성 학생 연락처만 사용한다. 성공 판정은 취소 상태 저장과 두
 durable outbox 생성, 전용 개발 SQS·mock worker 처리이며 실제 Solapi 호출은 0건이다.
+마감 후 예약 신청은 학생·학부모·지정 교직원 3건, 뒤이은 승인은 학생·학부모 2건을
+각 예약 발생 식별자로 구분해 개발 worker의 성공 로그와 `mock-` 제공자 ID로 확인한다.
 
 검수는 desktop과 390px에서 로그인, 대상 화면 DOM, 상호작용, 새로고침 후 상태,
 가로 overflow와 콘솔/API 오류를 확인한다. 종료 시 같은 명령의 `--destroy`로 정확한

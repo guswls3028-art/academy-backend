@@ -17,11 +17,13 @@ from apps.domains.clinic.models import (
 )
 from apps.domains.clinic.time_ranges import (
     booking_window,
+    participant_booking_window,
     ends_after_next_day_midnight_values,
     is_supported_time_range_session,
     ranges_overlap,
     session_window,
 )
+from apps.domains.clinic.booking_cutoff import student_booking_status
 from apps.support.clinic.session_dependencies import (
     active_students_for_clinic_tenant,
     active_enrolled_lecture_ids_for_student,
@@ -75,6 +77,7 @@ class ParticipantTransitionResult:
 class ParticipantWriteResult:
     participant: SessionParticipant
     notification: ClinicNotificationEvent | None = None
+    teacher_notification: ClinicNotificationEvent | None = None
 
 
 @dataclass(frozen=True)
@@ -513,22 +516,42 @@ def session_change_notice_student_ids(*, tenant, session) -> list[int]:
     return list(dict.fromkeys(ids))
 
 
-def _reservation_notification(participant: SessionParticipant) -> ClinicNotificationEvent | None:
+def _reservation_notification(
+    participant: SessionParticipant, *, approved=False, notify_teacher=False,
+) -> ClinicNotificationEvent | None:
     if participant.status not in (
         SessionParticipant.Status.BOOKED,
         SessionParticipant.Status.PENDING,
     ):
         return None
     session = participant.session
+    day = ""
+    clock = ""
+    if session:
+        start, end = participant_booking_window(participant)
+        day = start.date().isoformat()
+        clock = start.strftime("%H:%M")
+        if participant.booking_start_time is not None:
+            clock += "–" + ("익일 " if end.date() > start.date() else "") + end.strftime("%H:%M")
+    pending = participant.status == SessionParticipant.Status.PENDING
+    state, occurrence = "booked", "reservation"
+    if approved:
+        state, occurrence = "approved", "approval"
+    elif pending:
+        state = "late_pending" if participant.requested_after_cutoff else "pending"
+        occurrence = "reservation_pending"
     return ClinicNotificationEvent(
         trigger="clinic_reservation_created",
         student=participant.student,
         context={
             "클리닉명": getattr(session, "title", "") if session else "",
             "장소": getattr(session, "location", "") if session else "",
-            "날짜": str(session.date) if session and session.date else "",
-            "시간": str(session.start_time)[:5] if session and getattr(session, "start_time", None) else "",
-            "_domain_object_id": f"clinic_participant:{participant.pk}:reservation",
+            "날짜": day,
+            "시간": clock,
+            "_reservation_state": state,
+            "_booking_teacher_id": session.notification_teacher_id if session and notify_teacher else None,
+            "_participant_id": participant.pk,
+            "_domain_object_id": f"clinic_participant:{participant.pk}:{occurrence}",
         },
     )
 
@@ -738,7 +761,8 @@ def change_participant_status(
     if participant.checked_out_at is not None:
         raise ValidationError({"detail": "하원 처리된 참가자의 등원 상태는 변경할 수 없습니다."})
     transitions = STUDENT_STATUS_TRANSITIONS if request_student else STAFF_STATUS_TRANSITIONS
-    valid_next = transitions.get(participant.status, set())
+    previous_status = participant.status
+    valid_next = transitions.get(previous_status, set())
     if next_status not in valid_next:
         raise ValidationError(
             {"detail": f"'{participant.status}'에서 '{next_status}'(으)로 변경할 수 없습니다."}
@@ -798,7 +822,10 @@ def change_participant_status(
             reason=f"booking_{next_status}",
             removed_at=changed_at,
         )
-    notification = _status_notification(participant, next_status, actor=actor)
+    if previous_status == SessionParticipant.Status.PENDING and next_status == SessionParticipant.Status.BOOKED:
+        notification = _reservation_notification(participant, approved=True)
+    else:
+        notification = _status_notification(participant, next_status, actor=actor)
     if request_student and next_status == SessionParticipant.Status.CANCELLED:
         if notification is None:
             raise ClinicNotificationOutboxUnavailable()
@@ -1435,9 +1462,6 @@ def create_participant(
         if not session:
             raise ValidationError({"detail": "등록 가능한 클리닉을 선택해주세요. 해당 날짜에 열린 클리닉만 신청할 수 있습니다."})
         _validate_student_session_eligibility(tenant=tenant, student=request_student, session=session)
-        requested_status = SessionParticipant.Status.PENDING
-        if getattr(tenant, "clinic_auto_approve_booking", False):
-            requested_status = SessionParticipant.Status.BOOKED
         if not student_request_memo:
             student_request_memo = memo
         memo = ""
@@ -1469,6 +1493,9 @@ def create_participant(
         booking_start_time=validated_data.get("booking_start_time"),
         booking_end_time=validated_data.get("booking_end_time"),
     )
+    late_request = False
+    if request_student:
+        requested_status, late_request = student_booking_status(tenant, session, booking_start_time, booking_end_time)
     if session:
         _assert_session_capacity(
             tenant=tenant,
@@ -1541,6 +1568,7 @@ def create_participant(
             clinic_reason=clinic_reason,
             memo=memo,
             student_request_memo=student_request_memo,
+            requested_after_cutoff=late_request,
             preferred_start_time=preferred_start_time,
             preferred_end_time=preferred_end_time,
             booking_start_time=booking_start_time,
@@ -1551,7 +1579,7 @@ def create_participant(
 
     return ParticipantWriteResult(
         participant=participant,
-        notification=_reservation_notification(participant),
+        notification=_reservation_notification(participant, notify_teacher=bool(request_student)),
     )
 
 
@@ -1818,9 +1846,10 @@ def change_participant_booking(
         preferred_end_time=preferred_end_time,
     )
 
-    new_status = SessionParticipant.Status.BOOKED if is_staff_change else SessionParticipant.Status.PENDING
-    if not is_staff_change and getattr(tenant, "clinic_auto_approve_booking", False):
-        new_status = SessionParticipant.Status.BOOKED
+    new_status = SessionParticipant.Status.BOOKED
+    late_request = False
+    if not is_staff_change:
+        new_status, late_request = student_booking_status(tenant, new_session, booking_start_time, booking_end_time)
 
     if is_staff_change:
         next_student_request_memo = old_booking.student_request_memo
@@ -1855,6 +1884,7 @@ def change_participant_booking(
             participant_role="manual",
             memo=old_booking.memo or "",
             student_request_memo=next_student_request_memo or "",
+            requested_after_cutoff=late_request,
             staff_memo=next_staff_memo or "",
             preferred_start_time=preferred_start_time,
             preferred_end_time=preferred_end_time,
@@ -1885,6 +1915,10 @@ def change_participant_booking(
 
     return ParticipantWriteResult(
         participant=new_booking,
+        teacher_notification=(
+            _reservation_notification(new_booking, notify_teacher=True)
+            if not is_staff_change and new_session.notification_teacher_id else None
+        ),
         notification=_booking_change_notification(
             new_booking=new_booking,
             old_session=old_session,

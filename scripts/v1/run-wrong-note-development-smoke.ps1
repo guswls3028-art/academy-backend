@@ -7,9 +7,12 @@ param(
     [Parameter(Mandatory)][string]$LockOwner,
     [switch]$CleanupOnly,
     [switch]$EnrollmentNotices,
+    [switch]$ClinicNotices,
     [ValidateSet("student", "parent")][string]$EnrollmentRecipient
 )
 $ErrorActionPreference = "Stop"
+if ($EnrollmentNotices -and $ClinicNotices) { throw "Select one notification scenario." }
+$messagingScenario = $EnrollmentNotices -or $ClinicNotices
 if ($EnrollmentRecipient -and (-not $EnrollmentNotices -or $CleanupOnly)) {
     throw "Select a recipient only for a new enrollment notification scenario."
 }
@@ -59,10 +62,10 @@ function Get-SoleActiveDevelopment {
 Assert-SmokeLock
 $instanceId = Get-SoleActiveDevelopment
 $manifest = Get-Content -Raw -LiteralPath $ManifestPath | ConvertFrom-Json
-if ($EnrollmentNotices -and ($manifest.schemaVersion -ne 1 -or $manifest.status -cne "candidate" -or
+if ($messagingScenario -and ($manifest.schemaVersion -ne 1 -or $manifest.status -cne "candidate" -or
     $manifest.releaseImageTag -cne $ReleaseId -or $manifest.gitSha -cnotmatch '^[0-9a-f]{40}$' -or
     -not $ReleaseId.StartsWith("sha-$($manifest.gitSha)-run-"))) {
-    throw "Enrollment QA requires the exact workflow candidate manifest."
+    throw "Messaging QA requires the exact workflow candidate manifest."
 }
 $registry = "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com"
 $command = @'
@@ -92,12 +95,12 @@ verify_runtime
 '@
 $images = @(@("api", "academy-api"), @("ai", "academy-ai-worker-cpu"), @("tools", "academy-tools-worker"))
 $containers = '"academy-api|__api__" "academy-ai-development|__ai__" "academy-tools-development|__tools__"'
-if ($EnrollmentNotices) {
+if ($messagingScenario) {
     $images = @(@("api", "academy-api"), @("msg", "academy-messaging-worker"))
     $containers = '"academy-api|__api__" "academy-messaging-development|__msg__"'
 }
 $command = $command.Replace("__CANDIDATE_CONTAINERS__", $containers)
-$command = $command.Replace("__NOTICE_MODE__", [string][int][bool]$EnrollmentNotices)
+$command = $command.Replace("__NOTICE_MODE__", [string][int][bool]$messagingScenario)
 foreach ($image in $images) {
     $repo = $image[1]
     $digest = [string]$manifest.images.$repo.digest
@@ -106,6 +109,7 @@ foreach ($image in $images) {
 }
 $option = if ($CleanupOnly) { "--cleanup-only" } else { "" }
 if ($EnrollmentNotices) { $option = "--enrollment-notices $option" }
+if ($ClinicNotices) { $option = "--clinic-notices $option" }
 if ($EnrollmentRecipient) { $option = "$option --enrollment-recipient $EnrollmentRecipient" }
 $command = $command.Replace("__RELEASE__", $ReleaseId).Replace("__PROD__", $ProductionDatabase).Replace("__OPTION__", $option).Replace("`r", "")
 $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($command))
@@ -114,7 +118,9 @@ $paramsRef = Convert-JsonArgToFileRef (@{
     executionTimeout = @("1600")
 } | ConvertTo-Json -Compress)
 try {
-    $description = if ($EnrollmentNotices) { "Exact development enrollment notification scenario" } else { "Exact development AI and Tools wrong-note print scenario" }
+    $description = if ($ClinicNotices) { "Exact development clinic booking notification scenario" }
+        elseif ($EnrollmentNotices) { "Exact development enrollment notification scenario" }
+        else { "Exact development AI and Tools wrong-note print scenario" }
     $sent = Invoke-AwsJson @("ssm","send-command","--instance-ids",$instanceId,"--document-name","AWS-RunShellScript",
         "--parameters",$paramsRef,"--timeout-seconds","1600","--region",$script:Region,"--output","json",
         "--comment",$description)
@@ -134,6 +140,9 @@ if ($read.Status -ne "Success") { throw "Development QA requires recovery: insta
 $expected = if ($CleanupOnly) { "WRONG_NOTE_CLEANUP_PASS" } else { "WRONG_NOTE_REAL_USE_PASS" }
 if ($EnrollmentNotices) {
     $expected = if ($CleanupOnly) { "ENROLLMENT_NOTICE_CLEANUP_PASS" } else { "ENROLLMENT_NOTICE_REAL_USE_PASS" }
+}
+if ($ClinicNotices) {
+    $expected = if ($CleanupOnly) { "CLINIC_NOTICE_CLEANUP_PASS" } else { "CLINIC_NOTICE_REAL_USE_PASS" }
 }
 $lines = @(([string]$read.StandardOutputContent) -split '\r?\n' | Where-Object { $_ -match "^\{.*$expected.*\}$" })
 if ($lines.Count -ne 1) { throw "Missing exact development smoke receipt." }
@@ -155,13 +164,38 @@ if ($EnrollmentNotices) {
             throw "Incomplete enrollment worker receipt for $EnrollmentRecipient."
         }
     }
+} elseif ($ClinicNotices) {
+    foreach ($field in @("clinic_sessions","clinic_participants","notice_outboxes","owner_notice_logs","worker_evidence","messaging_redis")) {
+        if ($null -eq $receipt.remaining.$field -or $receipt.remaining.$field -ne 0) { throw "Clinic residue: $field." }
+    }
+    if (-not $CleanupOnly) {
+        $recipients = @($receipt.deliveries | ForEach-Object { "$($_.phase)/$($_.role)" } | Sort-Object)
+        $expectedRecipients = @("approval/parent","approval/student","reservation_pending/clinic_teacher","reservation_pending/parent","reservation_pending/student")
+        foreach ($field in @("business_key","message_id","outbox_id","log_id","mock_event_id","ack_id")) {
+            $values = @($receipt.deliveries | ForEach-Object { $_.$field } | Where-Object { $_ } | Sort-Object -Unique)
+            if ($values.Count -ne 5) { throw "Missing or duplicate clinic delivery field: $field." }
+        }
+        foreach ($row in $receipt.deliveries) {
+            $retry = $row.phase -ceq "reservation_pending" -and $row.role -ceq "clinic_teacher"
+            if ($row.deduplicated -isnot [bool] -or $row.deduplicated -ne $retry -or
+                $row.receive_count -ne (1 + [int]$retry) -or [bool]$row.redelivery_event_id -ne $retry) {
+                throw "Unexpected clinic redelivery receipt."
+            }
+        }
+        if ($receipt.acknowledged -ne 5 -or $receipt.redelivered -ne 1 -or $receipt.mock_calls -ne 5 -or
+            $recipients.Count -ne 5 -or @(Compare-Object $expectedRecipients $recipients -CaseSensitive).Count -ne 0 -or
+            $receipt.participant_id -lt 1 -or $receipt.source_tenant_id -lt 1 -or $receipt.owner_tenant_id -lt 1 -or
+            $receipt.source_tenant_id -eq $receipt.owner_tenant_id) {
+            throw "Incomplete clinic booking worker receipt."
+        }
+    }
 } elseif (-not $CleanupOnly -and ($receipt.exam_questions -ne 25 -or $receipt.homework_questions -ne 5 -or
     $receipt.approved_answers -ne 30 -or $receipt.pdf_members -ne 2 -or
     @($receipt.acknowledged_segmentation_jobs | Sort-Object -Unique).Count -ne 2 -or
     @($receipt.acknowledged_print_jobs | Sort-Object -Unique).Count -ne 2)) { throw "Incomplete document or queue readback." }
 Assert-SmokeLock
 if ((Get-SoleActiveDevelopment) -ne $instanceId) { throw "Development host changed during the scenario." }
-if ($EnrollmentNotices) {
+if ($messagingScenario) {
     $receipt | Add-Member -NotePropertyMembers ([ordered]@{
         release_id = $ReleaseId
         api_digest = $manifest.images.'academy-api'.digest

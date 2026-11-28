@@ -35,12 +35,17 @@ not inherit test, development, worker, or production settings. Check mode fails 
 - the number of documented paths or schemas falls below the reviewed baseline;
 - the schema is not valid OpenAPI 3.
 
-The current reviewed baseline covers 687 paths and 699 schema components.
-Legacy APIView and serializer inference gaps are recorded as 1,311 generator
-errors (261 unique) and 299 warnings (134 unique). They are an explicit
+The current reviewed baseline covers 688 paths and 705 schema components.
+Legacy APIView and serializer inference gaps are recorded as 1,303 generator
+errors (260 unique) and 299 warnings (134 unique). They are an explicit
 no-regression ceiling, not a claim of complete endpoint typing. When an
 endpoint is touched, add its serializer/schema metadata and lower the baseline
 after regenerating; never raise the baseline merely to make CI pass.
+
+`/api/v1/clinic/settings/` publishes the same complete `ClinicSettings`
+response for GET and PATCH. Its PATCH request contains only writable fields
+and accepts partial updates. Role permissions, cutoff times and error handling
+are documented in [clinic booking](../domain/clinic-booking.md).
 
 Lecture roster attendance uses the `LectureAttendance` component, distinct from
 employee `Attendance`. Its memo projections include `lecture_memo`,

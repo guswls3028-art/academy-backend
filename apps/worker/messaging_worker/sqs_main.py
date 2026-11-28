@@ -22,7 +22,7 @@ from libs.queue import get_queue_client, QueueUnavailableError
 from libs.redis.idempotency import acquire_job_lock, release_job_lock, RedisLockUnavailableError
 
 from apps.worker.messaging_worker.config import load_config
-from apps.worker.messaging_worker.qa_ack import acknowledge_sent, enrollment_ack_scope
+from apps.worker.messaging_worker.qa_ack import acknowledge_sent, development_ack_scope
 from apps.worker.messaging_worker.solapi_receipts import receipt_reference, send_solapi_message
 
 # 트리거명 → 사용자 친화적 라벨 (발송 내역 표시용)
@@ -1185,7 +1185,7 @@ def main() -> int:
                     # Business-level atomic claim (Layer 2: DB dedup via unique constraint)
                     business_key = _resolve_worker_business_key(data, message_id)
                     ack_job_key = f"{tenant_id}:{business_key}"
-                    qa_scope = enrollment_ack_scope(cfg, raw, data, tenant_id, source_tenant_id_msg)
+                    qa_scope = development_ack_scope(cfg, raw, data, tenant_id, source_tenant_id_msg)
                     claim_log_id = None
                     if business_key and tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
                         try:
@@ -1417,6 +1417,11 @@ def main() -> int:
                         from apps.support.messaging.student_dependencies import assert_current_delivery_contact
 
                         assert_current_delivery_contact(data, business_tenant_id=business_tenant_id)
+                        if data.get("event_type") == "clinic_reservation_created":
+                            from apps.domains.clinic.contracts import booking_notice_is_current
+
+                            if not booking_notice_is_current(data, business_tenant_id):
+                                raise ValueError("clinic_booking_closed")
                         _assert_clinic_reminder_delivery_active(
                             data, business_tenant_id=business_tenant_id,
                         )

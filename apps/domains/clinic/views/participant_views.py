@@ -163,6 +163,8 @@ def _send_clinic_notification(
     event_context.setdefault("_source_domain", "clinic")
     event_context.setdefault("_source_use_case", f"clinic.{trigger}")
     targets = ("parent", "student") if send_to == "both" else (send_to,)
+    if send_to == "both" and trigger == "clinic_reservation_created" and event_context.get("_booking_teacher_id"):
+        targets += ("clinic_teacher",)
     requested = 0
     failed = 0
     target_results = []
@@ -297,6 +299,7 @@ class ParticipantViewSet(
             return ClinicSessionParticipantBulkCreateSerializer
         return ClinicSessionParticipantSerializer
 
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
         """
         ✅ 예약 생성
@@ -321,16 +324,8 @@ class ParticipantViewSet(
         )
         obj = result.participant
         if result.notification:
-            _t = tenant
-            _event = result.notification
-            transaction.on_commit(
-                lambda: _send_clinic_notification(
-                    _t,
-                    _event.student,
-                    _event.trigger,
-                    _event.context,
-                )
-            )
+            event = result.notification
+            _send_clinic_notification(tenant, event.student, event.trigger, event.context)
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
@@ -342,6 +337,7 @@ class ParticipantViewSet(
         responses={201: ClinicSessionParticipantBulkCreateResponseSerializer},
     )
     @action(detail=False, methods=["post"], url_path="bulk-create")
+    @transaction.atomic
     def bulk_create(self, request, *args, **kwargs):
         """Create every selected same-day slot atomically for a student or staff selection."""
         tenant = getattr(request, "tenant", None)
@@ -359,19 +355,8 @@ class ParticipantViewSet(
             **serializer.validated_data,
         )
 
-        if result.notifications:
-            events = result.notifications
-
-            def send_notifications():
-                for event in events:
-                    _send_clinic_notification(
-                        tenant,
-                        event.student,
-                        event.trigger,
-                        event.context,
-                    )
-
-            transaction.on_commit(send_notifications)
+        for event in result.notifications:
+            _send_clinic_notification(tenant, event.student, event.trigger, event.context)
 
         prefetch_related_objects(result.participants, *_participant_plan_prefetches())
         response_data = {
@@ -385,6 +370,7 @@ class ParticipantViewSet(
         return Response(response_data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["patch"])
+    @transaction.atomic
     def set_status(self, request, pk=None):
         """
         PATCH /clinic/participants/{id}/set_status/
@@ -447,7 +433,8 @@ class ParticipantViewSet(
                 result.notification.student,
                 result.notification.trigger,
                 result.notification.context,
-                send_to=send_to,
+                send_to=("both" if result.notification.context.get("_reservation_state") == "approved"
+                         and "send_to" not in request.data else send_to),
                 include_target_results=request_student is not None,
             )
 
@@ -713,6 +700,7 @@ class ParticipantViewSet(
         return Response(out)
 
     @action(detail=True, methods=["post"], url_path="change-booking")
+    @transaction.atomic
     def change_booking(self, request, pk=None):
         """
         POST /clinic/participants/{id}/change-booking/
@@ -762,6 +750,9 @@ class ParticipantViewSet(
             booking_end_time=booking_end_time,
         )
         new_booking = result.participant
+        if result.teacher_notification:
+            event = result.teacher_notification
+            _send_clinic_notification(tenant, event.student, event.trigger, event.context, send_to="clinic_teacher")
         notification_result = None
         if result.notification:
             notification_result = _send_clinic_notification(
