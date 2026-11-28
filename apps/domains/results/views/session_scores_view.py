@@ -37,6 +37,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -44,7 +45,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.models import Result, ExamAttempt
-from apps.domains.results.services.assessment_totals import row_totals, total_config, order_assessment_rows
+from apps.domains.results.services.assessment_totals import confirmed_score, row_totals, total_config, order_assessment_rows
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import (
     latest_results_for_targets_per_enrollment,
@@ -69,6 +70,7 @@ from apps.support.progress.session_calculator_dependencies import (
 from apps.domains.results.serializers.session_scores import (
     AssessmentCorrectionUpdateSerializer,
     SessionScoreRowSerializer,
+    SessionScoresResponseSerializer,
 )
 from apps.support.results.exam_policy_dependencies import (
     exam_pass_score_overrides,
@@ -248,6 +250,13 @@ def _build_exam_attempt_summary(
 class SessionScoresView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(
+        parameters=[OpenApiParameter(
+            "schedule", type=int, location=OpenApiParameter.QUERY,
+            description="Omit for all enrollments, use 0 for unassigned, or supply a schedule ID from this session.",
+        )],
+        responses=SessionScoresResponseSerializer,
+    )
     def get(self, request, session_id: int):
         tenant = getattr(request, "tenant", None)
         if not tenant:
@@ -987,6 +996,7 @@ class SessionScoresView(APIView):
                         "exam_id": exid,
                         "title": exam_title_map.get(exid, ""),
                         "pass_score": exam_pass_score_map.get(exid, 0.0),
+                        "ranking_score": confirmed_score(block),
                         "block": block,
                         "items": items_payload,
                         "attempt_count": max(

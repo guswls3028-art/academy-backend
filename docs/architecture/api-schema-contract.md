@@ -35,9 +35,9 @@ not inherit test, development, worker, or production settings. Check mode fails 
 - the number of documented paths or schemas falls below the reviewed baseline;
 - the schema is not valid OpenAPI 3.
 
-The current reviewed baseline covers 688 paths and 705 schema components.
-Legacy APIView and serializer inference gaps are recorded as 1,303 generator
-errors (260 unique) and 299 warnings (134 unique). They are an explicit
+The current reviewed baseline covers 688 paths and 717 schema components.
+Legacy APIView and serializer inference gaps are recorded as 1,299 generator
+errors (259 unique) and 299 warnings (134 unique). They are an explicit
 no-regression ceiling, not a claim of complete endpoint typing. When an
 endpoint is touched, add its serializer/schema metadata and lower the baseline
 after regenerating; never raise the baseline merely to make CI pass.
