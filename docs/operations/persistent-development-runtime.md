@@ -292,6 +292,15 @@ Inspect/Setup/Cleanup 출력은 tenant/user 수와 별도로 `outstanding_tokens
 object는 건드리지 않는다. process/listener 수는 원격 development API container 경계다. runner 로컬
 tunnel/process와 AWS Session tuple은 frontend 계약이 별도로 종료·증명한다. 이 변경은
 스키마나 기존 데이터 migration을 만들지 않는다.
+
+일반 FE QA 학원을 삭제하거나 재설정할 때, 공용 발신 학원에 저장된 클리닉 자동 예약·취소
+모의 발송 기록도 회수한다. 학원이 존재하는 동안 Setup 소유권, 공용 발신 학원, 모의 공급사
+접수 번호를 검증하고 원학원의 발송 대기열과 업무 키·수신자 지문·대상·원천을 대조한다.
+검증한 행만 삭제한 뒤 학원 삭제 후에도 같은 PK로 잔여를 확인한다. 삭제한 수는 일반 정리
+결과의 `deleted.clinic_mock_receipts`에 기록한다. 소유권이나 수신 증거가 맞지 않으면
+트랜잭션을 되돌려 같은 학원에서 재시도할 수 있다. 다른 학원, 수동 발송, 원학원 식별자가
+이미 비어 있는 과거 기록은 보존한다.
+
 기존 QA tenant를 Inspect할 때도 tenant-scoped 감사·토큰 residue 조회는 하나의
 `transaction.atomic()` 안에서 실행한다. 따라서 PostgreSQL의 transaction-local tenant
 context가 조회 도중 풀리지 않으며, 외부 R2/process/listener readback은 DB transaction을

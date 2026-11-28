@@ -953,6 +953,7 @@ class Command(BaseCommand):
                 raise CommandError("Cross-tenant payroll references prevent scenario deletion.")
         # Validate the whole bounded payroll graph before even token/audit deletion.
         evidence = Command._cleanup_ephemeral_evidence(tenant)
+        notification_ids = Command._delete_clinic_mock_receipts(tenant)
         # PROTECT is checked while Django collects the tenant cascade, before
         # any collected WorkRecord is deleted. Keep the product FK unchanged.
         WorkRecord = apps.get_model("staffs", "WorkRecord")
@@ -960,7 +961,68 @@ class Command(BaseCommand):
         if deleted != len(record_ids):
             raise CommandError("Scenario payroll deletion count mismatch.")
         tenant.delete()
+        if notification_ids:
+            # The source FK uses SET_NULL. Check the original PKs independently of that FK.
+            NotificationLog = apps.get_model("messaging", "NotificationLog")
+            if NotificationLog.objects.filter(pk__in=notification_ids).exists():
+                raise CommandError("Isolated clinic cleanup left a verified mock receipt.")
+            evidence["deleted"]["clinic_mock_receipts"] = len(notification_ids)
         return evidence
+
+    @staticmethod
+    def _delete_clinic_mock_receipts(tenant) -> list[int]:
+        """Reconcile common-owner receipts with the sealed source's automatic clinic outbox."""
+        NotificationLog = apps.get_model("messaging", "NotificationLog")
+        ScheduledNotification = apps.get_model("messaging", "ScheduledNotification")
+        triggers = ("clinic_reservation_created", "clinic_cancelled")
+        receipts = NotificationLog.objects.filter(
+            source_tenant=tenant, origin_type__in=[f"clinic.{trigger}" for trigger in triggers],
+        ).exclude(tenant=tenant)
+        rows = list(receipts.select_for_update().order_by("pk"))
+        if not rows:
+            return []
+        owner_id = int(getattr(settings, "OWNER_TENANT_ID", 1))
+        started = Command._scenario_ownership_start(tenant)
+        owner_matches = Tenant.objects.filter(
+            pk=owner_id, code=DEVELOPMENT_MESSAGING_OWNER_CODE, name=DEVELOPMENT_MESSAGING_OWNER_NAME, is_active=True,
+        ).exists()
+        if not started or not owner_matches or any(row.tenant_id != owner_id for row in rows):
+            raise CommandError("Cannot prove the development clinic receipt owner or scenario seal.")
+
+        outboxes = ScheduledNotification.objects.select_for_update().filter(
+            tenant=tenant, created_at__gte=started, trigger__in=triggers,
+            business_idempotency_key__in=[row.business_idempotency_key for row in rows],
+        ).order_by("pk")
+        by_key = {}
+        for box in outboxes:
+            if box.business_idempotency_key in by_key:
+                raise CommandError("Ambiguous development clinic receipt outbox.")
+            by_key[box.business_idempotency_key] = box
+        for row in rows:
+            box = by_key.get(row.business_idempotency_key)
+            if (not box or box.status != "sent" or not box.origin_id or box.origin_type != f"clinic.{box.trigger}"
+                    or not row.success or row.status != "sent" or row.sent_at < started
+                    or not re.fullmatch(r"mock-[0-9a-f]{12}", row.provider_message_id)
+                    or not re.fullmatch(r"[0-9a-f]{64}", row.business_idempotency_key)
+                    or not re.fullmatch(r"[0-9a-f]{64}", row.recipient_fingerprint)
+                    or row.target_type not in {"student", "parent", "clinic_teacher"}
+                    or not re.fullmatch(r"[1-9][0-9]*", row.target_id)
+                    or row.message_mode != "alimtalk"):
+                raise CommandError("Cannot verify a completed automatic clinic mock receipt.")
+            expected = {
+                "notification_type": box.trigger, "origin_type": box.origin_type, "origin_id": box.origin_id,
+                "recipient_fingerprint": box.recipient_fingerprint, "message_mode": box.payload.get("message_mode"),
+                "tenant_id": box.payload.get("tenant_id"), "source_tenant_id": box.payload.get("source_tenant_id"),
+                "target_type": box.payload.get("target_type"), "target_id": str(box.payload.get("target_id")),
+            }
+            if any(getattr(row, field) != value for field, value in expected.items()):
+                raise CommandError("Cannot verify an automatic clinic mock receipt against its source outbox.")
+
+        ids = [row.pk for row in rows]
+        deleted, _ = receipts.filter(tenant_id=owner_id, pk__in=ids).delete()
+        if deleted != len(ids):
+            raise CommandError("Development clinic receipt deletion count mismatch.")
+        return ids
 
     @staticmethod
     def _cleanup_ephemeral_evidence(tenant) -> dict[str, dict[str, int]]:
@@ -1009,6 +1071,17 @@ class Command(BaseCommand):
             actor_user_id__in=user_ids,
             created_at__lte=timezone.now(),
         )
+        ownership_started_at = Command._scenario_ownership_start(tenant)
+        if ownership_started_at is None:
+            if activity_rows.exists():
+                raise CommandError(
+                    "Refusing to delete scenario activity without an exact QA ownership provenance seal."
+                )
+            return activity_rows.none()
+        return activity_rows.filter(created_at__gte=ownership_started_at)
+
+    @staticmethod
+    def _scenario_ownership_start(tenant):
         ownership_started_at = (
             OpsAuditLog.objects.filter(
                 action="development.qa.setup",
@@ -1034,13 +1107,7 @@ class Command(BaseCommand):
                 .values_list("created_at", flat=True)
                 .first()
             )
-        if ownership_started_at is None:
-            if activity_rows.exists():
-                raise CommandError(
-                    "Refusing to delete scenario activity without an exact QA ownership provenance seal."
-                )
-            return activity_rows.none()
-        return activity_rows.filter(created_at__gte=ownership_started_at)
+        return ownership_started_at
 
     @staticmethod
     def _ensure_scenario_provenance(tenant) -> None:
