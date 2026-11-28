@@ -170,6 +170,10 @@ if ($EnrollmentNotices) {
     }
     if (-not $CleanupOnly) {
         $recipients = @($receipt.deliveries | ForEach-Object { "$($_.phase)/$($_.role)" } | Sort-Object)
+        $deletedClinicReceipts = $receipt.general_cleanup.clinic_mock_receipts
+        if (($deletedClinicReceipts -isnot [long] -and $deletedClinicReceipts -isnot [int]) -or $deletedClinicReceipts -ne 5) {
+            throw "General clinic cleanup did not report five receipts."
+        }
         $expectedRecipients = @("approval/parent","approval/student","reservation_pending/clinic_teacher","reservation_pending/parent","reservation_pending/student")
         foreach ($field in @("business_key","message_id","outbox_id","log_id","mock_event_id","ack_id")) {
             $values = @($receipt.deliveries | ForEach-Object { $_.$field } | Where-Object { $_ } | Sort-Object -Unique)
